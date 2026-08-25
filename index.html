@@ -9,6 +9,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-storage-compat.js"></script>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <style>
@@ -94,6 +95,13 @@
   .starBtns button{ border:none; background:none; cursor:pointer; font-size:18px; padding:2px; opacity:.35; }
   .starBtns button.on{ opacity:1; }
   .shopBadge{ font-size:10.5px; font-weight:700; color:var(--inkSoft); background:#F0EEE2; padding:2px 8px; border-radius:20px; }
+  .photoGrid{ display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+  .photoThumb{ position:relative; width:78px; height:78px; border-radius:8px; overflow:hidden; border:1px solid var(--line); }
+  .photoThumb img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .photoThumb .rm{ position:absolute; top:2px; right:2px; background:rgba(35,49,41,.7); color:#fff; border:none; border-radius:50%; width:18px; height:18px; font-size:11px; line-height:18px; text-align:center; cursor:pointer; padding:0; }
+  .uploadBtn{ display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600; padding:8px 13px; border-radius:8px; border:1px dashed var(--line); background:#fff; color:var(--inkSoft); cursor:pointer; }
+  .uploadBtn input{ display:none; }
+  .readonlyBox{ background:var(--paper); border:1px solid var(--line); border-radius:8px; padding:9px 11px; font-size:12.5px; color:var(--ink); white-space:pre-wrap; min-height:38px; }
 
   @media (max-width:720px){
     .wrap{ padding:14px 12px 90px; }
@@ -119,6 +127,12 @@ const FIREBASE_CONFIG = {
 firebase.initializeApp(FIREBASE_CONFIG);
 const auth = firebase.auth();
 const db = firebase.firestore();
+const storage = firebase.storage();
+async function uploadImageFile(file, path){
+  const ref = storage.ref().child(path);
+  await ref.put(file);
+  return await ref.getDownloadURL();
+}
 
 const DEFAULT_SHOPS = ["SHOP0058","SHOP0059","SHOP0072","SHOP0074","SHOP0089","SHOP0095","SHOP0121","SHOP0122","SHOP0163"];
 const STAFF_ROLES = ["Nhân viên học việc","Nhân viên bán hàng","Cửa hàng trưởng"];
@@ -195,7 +209,7 @@ function StatusPill(text, tone){
 function StarSelect({ value, onChange, max }){
   const m = max || 5;
   return React.createElement("div", { className:"starBtns" }, Array.from({ length:m }).map((_,i) =>
-    React.createElement("button", { key:i, type:"button", className:(i<value?"on":""), onClick:()=>onChange(i+1) }, "⭐")
+    React.createElement("button", { key:i, type:"button", className:(i<value?"on":""), onClick:()=>onChange(i+1) }, "★")
   ));
 }
 
@@ -285,6 +299,18 @@ function DailyReviewModal({ report, tasks, onSave, onClose }){
         React.createElement("div",{key:"l",style:{fontWeight:700,marginBottom:2}},"Ghi chú của nhân viên"),
         report.ghiChu,
       ]),
+      (report.anhChecklist && report.anhChecklist.length>0) && React.createElement("div", { key:"pc", style:{ marginBottom:14 } }, [
+        React.createElement("div",{key:"l",style:{fontWeight:700,fontSize:12.5,marginBottom:4}},"Ảnh checklist hàng ngày"),
+        React.createElement("div", { key:"g", className:"photoGrid" }, report.anhChecklist.map((url,i)=>
+          React.createElement("a", { key:i, href:url, target:"_blank", rel:"noreferrer", className:"photoThumb" }, React.createElement("img",{src:url}))
+        )),
+      ]),
+      (report.anhCTKM && report.anhCTKM.length>0) && React.createElement("div", { key:"pk", style:{ marginBottom:14 } }, [
+        React.createElement("div",{key:"l",style:{fontWeight:700,fontSize:12.5,marginBottom:4}},"Ảnh trưng bày CTKM"),
+        React.createElement("div", { key:"g", className:"photoGrid" }, report.anhCTKM.map((url,i)=>
+          React.createElement("a", { key:i, href:url, target:"_blank", rel:"noreferrer", className:"photoThumb" }, React.createElement("img",{src:url}))
+        )),
+      ]),
       React.createElement("div", { key:"score", className:"field", style:{ marginBottom:10 } }, [
         React.createElement("label",{key:"l"},"Chấm điểm hiệu suất"),
         React.createElement(StarSelect, { key:"i", value:diem, onChange:setDiem }),
@@ -301,12 +327,30 @@ function DailyReviewModal({ report, tasks, onSave, onClose }){
   );
 }
 
+function PhotoUploadField({ label, photos, uploading, onUpload, onRemove }){
+  return React.createElement("div", { style:{ marginTop:14 } }, [
+    React.createElement("label", { key:"l", style:{ display:"block", fontSize:12, fontWeight:600, marginBottom:6, color:"#4A4A40" } }, label),
+    React.createElement("label", { key:"u", className:"uploadBtn" }, [
+      React.createElement("input", { key:"i", type:"file", accept:"image/*", multiple:true, onChange:e=>{ const files=[...e.target.files]; if(files.length) onUpload(files); e.target.value=""; } }),
+      uploading ? "Đang tải ảnh lên..." : "Tải ảnh lên",
+    ]),
+    (photos && photos.length>0) && React.createElement("div", { key:"g", className:"photoGrid" }, photos.map((url,i) =>
+      React.createElement("div", { key:i, className:"photoThumb" }, [
+        React.createElement("img",{key:"img",src:url}),
+        React.createElement("button",{key:"rm", type:"button", className:"rm", onClick:()=>onRemove(i)}, "✕"),
+      ])
+    )),
+  ]);
+}
+
 function DailyChecklistView(){
   const [staff, setStaff] = useState([]);
   const [templates, setTemplates] = useState(DEFAULT_DAILY_CHECKLISTS);
   const [reports, setReports] = useState({});
   const [selfId, setSelfId] = useState("");
   const [note, setNote] = useState("");
+  const [uploadingChecklist, setUploadingChecklist] = useState(false);
+  const [uploadingCTKM, setUploadingCTKM] = useState(false);
   const [showTplEditor, setShowTplEditor] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
   const [adminShop, setAdminShop] = useState("Tất cả");
@@ -358,6 +402,31 @@ function DailyChecklistView(){
       updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
     }, { merge:true });
   }
+  async function addPhotos(field, files){
+    if(!selfStaff) return;
+    const setUploading = field==="anhChecklist" ? setUploadingChecklist : setUploadingCTKM;
+    setUploading(true);
+    try{
+      const urls = [];
+      for(const file of files){
+        const path = `dailyReports/${selfStaff.id}/${today}/${field}/${Date.now()}_${file.name}`;
+        urls.push(await uploadImageFile(file, path));
+      }
+      const current = selfReport ? (selfReport[field] || []) : [];
+      await db.collection("dailyReports").doc(selfReportId).set({
+        staffId:selfStaff.id, staffName:selfStaff.name, shop:selfStaff.shop, role:selfStaff.role,
+        ngay:today, [field]: [...current, ...urls],
+        trangThai: selfReport ? (selfReport.trangThai || "Nháp") : "Nháp",
+        updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
+      }, { merge:true });
+    } finally { setUploading(false); }
+  }
+  async function removePhoto(field, idx){
+    if(!selfStaff || !selfReport) return;
+    const current = [...(selfReport[field] || [])];
+    current.splice(idx,1);
+    await db.collection("dailyReports").doc(selfReportId).set({ [field]:current }, { merge:true });
+  }
   async function saveTemplate(role, items){
     const next = { ...templates, [role]:items };
     await saveConfigDoc("dailyChecklist", { byRole:next });
@@ -402,6 +471,16 @@ function DailyChecklistView(){
         React.createElement("div",{key:"pct", style:{ fontSize:12.5, fontWeight:700, color:"var(--pine)", whiteSpace:"nowrap" }}, `${doneCount}/${selfTasks.length} · ${pct}%`),
       ]),
       React.createElement("div", { key:"list" }, items),
+      React.createElement(PhotoUploadField, {
+        key:"photoCl", label:"Ảnh checklist hàng ngày (trưng bày, vệ sinh, hạn dùng...)",
+        photos: selfReport ? selfReport.anhChecklist : null, uploading:uploadingChecklist,
+        onUpload:files=>addPhotos("anhChecklist", files), onRemove:idx=>removePhoto("anhChecklist", idx),
+      }),
+      React.createElement(PhotoUploadField, {
+        key:"photoCtkm", label:"Ảnh trưng bày CTKM (chương trình khuyến mãi)",
+        photos: selfReport ? selfReport.anhCTKM : null, uploading:uploadingCTKM,
+        onUpload:files=>addPhotos("anhCTKM", files), onRemove:idx=>removePhoto("anhCTKM", idx),
+      }),
       React.createElement("div", { key:"note", className:"field", style:{ marginTop:14 } }, [
         React.createElement("label",{key:"l"},"Ghi chú trong ngày (nếu có)"),
         React.createElement("textarea",{key:"i", rows:2, value:note, onChange:e=>setNote(e.target.value), onBlur:saveNote, placeholder:"VD: hết hàng mặt hàng X, cần hỗ trợ..." }),
@@ -410,7 +489,7 @@ function DailyChecklistView(){
         React.createElement("button", { key:"submit", type:"button", className:"btn btnPrimary", onClick:submitDaily }, (selfReport && selfReport.trangThai==="Đã nộp") ? "Cập nhật & nộp lại" : "Nộp báo cáo hôm nay")
       ),
       (selfReport && selfReport.diemChu!=null) && React.createElement("div", { key:"review", style:{ marginTop:12, background:"var(--pineSoft)", borderRadius:8, padding:"9px 12px", fontSize:12.5 } }, [
-        React.createElement("div",{key:"t",style:{fontWeight:700,marginBottom:2}}, `Quản lý chấm: ${"⭐".repeat(selfReport.diemChu)}`),
+        React.createElement("div",{key:"t",style:{fontWeight:700,marginBottom:2}}, `Quản lý chấm: ${"★".repeat(selfReport.diemChu)}`),
         selfReport.nhanXetChu && React.createElement("div",{key:"n",style:{color:"var(--inkSoft)"}}, selfReport.nhanXetChu),
       ]),
     ]);
@@ -457,7 +536,7 @@ function DailyChecklistView(){
           React.createElement("td",{key:"r"}, x.staff.role),
           React.createElement("td",{key:"p"}, `${x.done}/${x.total} · ${x.p}%`),
           React.createElement("td",{key:"st"}, StatusPill(x.status.text, x.status.tone)),
-          React.createElement("td",{key:"d"}, (x.r && x.r.diemChu!=null) ? "⭐".repeat(x.r.diemChu) : "—"),
+          React.createElement("td",{key:"d"}, (x.r && x.r.diemChu!=null) ? "★".repeat(x.r.diemChu) : "—"),
           React.createElement("td",{key:"a"}, x.r ? React.createElement("button",{className:"btn", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>setReviewReportId(x.r.id)}, "Xem & chấm") : "—"),
         ]))),
       ]));
@@ -470,7 +549,7 @@ function DailyChecklistView(){
   const adminSection = React.createElement("div", { key:"admin", style:{ marginTop:26 } }, [
     React.createElement("div", { key:"tgl", className:"btnRow", style:{ marginBottom:14, justifyContent:"space-between" } }, [
       React.createElement("button", { key:"b", type:"button", className:"btn btnGhost", onClick:()=>setAdminOpen(!adminOpen) }, adminOpen ? "▲ Ẩn báo cáo tất cả cửa hàng" : "▾ Xem báo cáo tất cả cửa hàng (Quản lý)"),
-      React.createElement("button", { key:"tpl", type:"button", className:"btn", onClick:()=>setShowTplEditor(true) }, "⚙️ Chỉnh checklist theo vai trò"),
+      React.createElement("button", { key:"tpl", type:"button", className:"btn", onClick:()=>setShowTplEditor(true) }, "Chỉnh checklist theo vai trò"),
     ]),
     adminOpen && React.createElement(React.Fragment, null, [ adminMetrics, adminFilterRow, adminTable ]),
   ]);
@@ -491,15 +570,19 @@ function mondayOf(iso){
   return d.toISOString().slice(0,10);
 }
 
-function WeeklyReviewModal({ report, onSave, onClose }){
+function weeklyReportId(shop, monday){ return shop + "_" + monday; }
+
+function WeeklyReviewModal({ report, prevReport, onSave, onClose }){
   const [diem, setDiem] = useState(report.diemChu || 0);
   const [nhanXet, setNhanXet] = useState(report.nhanXetChu || "");
   return React.createElement("div", { className:"modalOverlay", onClick:onClose },
     React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
-      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:2 } }, `${report.staffName} — Tuần ${report.tuanNgay}`),
-      React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } }, `${report.shop} · ${report.role}`),
-      React.createElement("div", { key:"n1", style:{ marginBottom:10, fontSize:13 } }, [ React.createElement("b",{key:"b"},"Công việc chính: "), report.noiDungChinh ]),
-      report.khoKhan && React.createElement("div", { key:"n2", style:{ marginBottom:14, fontSize:13, color:"var(--inkSoft)" } }, [ React.createElement("b",{key:"b"},"Khó khăn/đề xuất: "), report.khoKhan ]),
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:2 } }, `${report.shop} — Tuần ${report.tuanNgay}`),
+      React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } }, report.nguoiBaoCao ? `Người báo cáo: ${report.nguoiBaoCao}` : "Chưa ghi người báo cáo"),
+      React.createElement("div", { key:"n0", style:{ marginBottom:10, fontSize:13 } }, [ React.createElement("b",{key:"b"},"Chỉ tiêu cam kết (đặt ra tuần trước): "), (prevReport && prevReport.chiTieuTuanNay) || "—" ]),
+      React.createElement("div", { key:"n1", style:{ marginBottom:10, fontSize:13 } }, [ React.createElement("b",{key:"b"},"Kết quả tuần này: "), report.ketQuaTuanNay || "—" ]),
+      React.createElement("div", { key:"n2", style:{ marginBottom:10, fontSize:13 } }, [ React.createElement("b",{key:"b"},"Báo cáo tuần này: "), report.baoCaoTuanNay || "—" ]),
+      React.createElement("div", { key:"n3", style:{ marginBottom:14, fontSize:13 } }, [ React.createElement("b",{key:"b"},"Chỉ tiêu cam kết tuần tới: "), report.chiTieuTuanNay || "—" ]),
       React.createElement("div", { key:"score", className:"field", style:{ marginBottom:10 } }, [
         React.createElement("label",{key:"l"},"Chấm điểm hiệu suất"),
         React.createElement(StarSelect, { key:"i", value:diem, onChange:setDiem }),
@@ -518,88 +601,125 @@ function WeeklyReviewModal({ report, onSave, onClose }){
 
 function WeeklyReportView(){
   const [staff, setStaff] = useState([]);
-  const [reports, setReports] = useState([]);
-  const [selfId, setSelfId] = useState("");
-  const [form, setForm] = useState({ noiDungChinh:"", khoKhan:"", tuDanhGia:3 });
+  const [reportsMap, setReportsMap] = useState({});
+  const [selfShop, setSelfShop] = useState("");
+  const [nguoiBaoCao, setNguoiBaoCao] = useState("");
+  const [form, setForm] = useState({ ketQuaTuanNay:"", baoCaoTuanNay:"", chiTieuTuanNay:"" });
   const [adminOpen, setAdminOpen] = useState(false);
   const [adminShop, setAdminShop] = useState("Tất cả");
   const [reviewId, setReviewId] = useState(null);
 
   useEffect(()=>{
     const u1 = subscribeCol("staff", setStaff);
-    const u2 = subscribeCol("weeklyReports", setReports, "createdAtTs");
+    const u2 = subscribeCol("weeklyReports", rows => { const map = {}; rows.forEach(r => map[r.id] = r); setReportsMap(map); });
     return ()=>{ u1(); u2(); };
   }, []);
 
   const currentMonday = mondayOf(todayISO());
-  const selfStaff = staff.find(s => s.id===selfId);
-  const myReports = selfStaff ? reports.filter(r => r.staffId===selfStaff.id) : [];
-  const submittedThisWeek = myReports.some(r => r.tuanNgay===currentMonday);
+  const prevMonday = addDays(currentMonday, -7);
+  const thisId = selfShop ? weeklyReportId(selfShop, currentMonday) : null;
+  const prevId = selfShop ? weeklyReportId(selfShop, prevMonday) : null;
+  const thisReport = thisId ? reportsMap[thisId] : null;
+  const prevReport = prevId ? reportsMap[prevId] : null;
+  const shopStaffOptions = selfShop ? staff.filter(s => s.shop===selfShop) : [];
+
+  useEffect(()=>{
+    setForm({
+      ketQuaTuanNay: thisReport ? (thisReport.ketQuaTuanNay || "") : "",
+      baoCaoTuanNay: thisReport ? (thisReport.baoCaoTuanNay || "") : "",
+      chiTieuTuanNay: thisReport ? (thisReport.chiTieuTuanNay || "") : "",
+    });
+    setNguoiBaoCao(thisReport ? (thisReport.nguoiBaoCao || "") : "");
+  }, [thisId, thisReport && thisReport.updatedAtTs]);
 
   async function submitWeekly(e){
     e.preventDefault();
-    if(!selfStaff || !form.noiDungChinh.trim()) return;
-    await addDoc("weeklyReports", {
-      staffId:selfStaff.id, staffName:selfStaff.name, shop:selfStaff.shop, role:selfStaff.role,
-      tuanNgay:currentMonday, noiDungChinh:form.noiDungChinh.trim(), khoKhan:form.khoKhan.trim(),
-      tuDanhGia:Number(form.tuDanhGia), diemChu:null, nhanXetChu:"", ngayGui:todayISO(),
-    });
-    setForm({ noiDungChinh:"", khoKhan:"", tuDanhGia:3 });
+    if(!selfShop || !form.baoCaoTuanNay.trim()) return;
+    await db.collection("weeklyReports").doc(thisId).set({
+      shop:selfShop, tuanNgay:currentMonday, nguoiBaoCao:nguoiBaoCao.trim(),
+      ketQuaTuanNay:form.ketQuaTuanNay.trim(), baoCaoTuanNay:form.baoCaoTuanNay.trim(), chiTieuTuanNay:form.chiTieuTuanNay.trim(),
+      ngayGui:todayISO(), updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
+    }, { merge:true });
   }
-  async function saveReview(id, diem, nhanXet){ await updateDoc("weeklyReports", id, { diemChu:diem, nhanXetChu:nhanXet }); setReviewId(null); }
+  async function saveReview(id, diem, nhanXet){
+    await db.collection("weeklyReports").doc(id).set({ diemChu:diem, nhanXetChu:nhanXet }, { merge:true });
+    setReviewId(null);
+  }
 
-  const whoBar = React.createElement("div", { className:"whoBar" },
-    React.createElement("div", { className:"field", style:{ minWidth:240 } }, [
-      React.createElement("label",{key:"l"},"Bạn là ai?"),
-      React.createElement("select", { key:"i", value:selfId, onChange:e=>setSelfId(e.target.value) }, [
-        React.createElement("option",{key:"",value:""},"— chọn tên bạn —"),
-        ...staff.map(s => React.createElement("option",{key:s.id,value:s.id}, `${s.name} · ${s.shop} · ${s.role}`)),
+  const whoBar = React.createElement("div", { className:"whoBar" }, [
+    React.createElement("div", { key:"w", className:"field", style:{ minWidth:220 } }, [
+      React.createElement("label",{key:"l"},"Nhà thuốc"),
+      React.createElement("select", { key:"i", value:selfShop, onChange:e=>setSelfShop(e.target.value) }, [
+        React.createElement("option",{key:"",value:""},"— chọn cửa hàng —"),
+        ...DEFAULT_SHOPS.map(s => React.createElement("option",{key:s,value:s},s)),
       ]),
-    ])
-  );
-
-  const selfCard = selfStaff && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
-    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15, marginBottom:2 } }, `${selfStaff.name} — Tuần bắt đầu ${currentMonday}`),
-    React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } }, `${selfStaff.shop} · ${selfStaff.role}`),
-    submittedThisWeek
-      ? StatusPill("Đã gửi báo cáo tuần này", "good")
-      : React.createElement("form", { key:"f", onSubmit:submitWeekly }, [
-          React.createElement("div", { key:"a", className:"field", style:{ marginBottom:10 } }, [
-            React.createElement("label",{key:"l"},"Công việc chính đã làm trong tuần"),
-            React.createElement("textarea",{key:"i", rows:3, value:form.noiDungChinh, onChange:e=>setForm({...form,noiDungChinh:e.target.value}), required:true }),
-          ]),
-          React.createElement("div", { key:"b", className:"field", style:{ marginBottom:10 } }, [
-            React.createElement("label",{key:"l"},"Khó khăn / đề xuất (nếu có)"),
-            React.createElement("textarea",{key:"i", rows:2, value:form.khoKhan, onChange:e=>setForm({...form,khoKhan:e.target.value}) }),
-          ]),
-          React.createElement("div", { key:"c", className:"field", style:{ marginBottom:14 } }, [
-            React.createElement("label",{key:"l"},"Bạn tự đánh giá hiệu suất tuần này"),
-            React.createElement(StarSelect, { key:"i", value:Number(form.tuDanhGia), onChange:v=>setForm({...form,tuDanhGia:v}) }),
-          ]),
-          React.createElement("button", { key:"s", type:"submit", className:"btn btnPrimary" }, "Gửi báo cáo tuần"),
-        ]),
+    ]),
+    selfShop && React.createElement("div", { key:"p", className:"field", style:{ minWidth:200 } }, [
+      React.createElement("label",{key:"l"},"Người báo cáo"),
+      React.createElement("select", { key:"i", value:nguoiBaoCao, onChange:e=>setNguoiBaoCao(e.target.value) }, [
+        React.createElement("option",{key:"",value:""},"— chọn tên —"),
+        ...shopStaffOptions.map(s => React.createElement("option",{key:s.id,value:s.name},s.name)),
+      ]),
+    ]),
   ]);
 
-  const myHistory = myReports.length>0 && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
-    React.createElement("div", { key:"t", className:"cardTitle" }, "Lịch sử báo cáo tuần của bạn"),
-    React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8 } }, myReports.map(r =>
+  const selfCard = selfShop && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10, marginBottom:14 } }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15 } }, `${selfShop} — Tuần bắt đầu ${currentMonday}`),
+      thisReport ? StatusPill("Đã gửi — có thể cập nhật lại", "good") : StatusPill("Chưa gửi báo cáo tuần này", "warn"),
+    ]),
+    React.createElement("div", { key:"prev0", className:"field", style:{ marginBottom:10 } }, [
+      React.createElement("label",{key:"l"},"Nội dung báo cáo tuần trước"),
+      React.createElement("div", { key:"i", className:"readonlyBox" }, (prevReport && prevReport.baoCaoTuanNay) || "Chưa có dữ liệu tuần trước."),
+    ]),
+    React.createElement("div", { key:"prev1", className:"field", style:{ marginBottom:16 } }, [
+      React.createElement("label",{key:"l"},"Chỉ tiêu cam kết (đã đặt ra từ tuần trước)"),
+      React.createElement("div", { key:"i", className:"readonlyBox" }, (prevReport && prevReport.chiTieuTuanNay) || "Chưa có dữ liệu tuần trước."),
+    ]),
+    React.createElement("form", { key:"f", onSubmit:submitWeekly }, [
+      React.createElement("div", { key:"a", className:"field", style:{ marginBottom:10 } }, [
+        React.createElement("label",{key:"l"},"Kết quả tuần này (so với chỉ tiêu cam kết ở trên)"),
+        React.createElement("textarea",{key:"i", rows:3, value:form.ketQuaTuanNay, onChange:e=>setForm({...form,ketQuaTuanNay:e.target.value}) }),
+      ]),
+      React.createElement("div", { key:"b", className:"field", style:{ marginBottom:10 } }, [
+        React.createElement("label",{key:"l"},"Báo cáo tuần này"),
+        React.createElement("textarea",{key:"i", rows:3, value:form.baoCaoTuanNay, onChange:e=>setForm({...form,baoCaoTuanNay:e.target.value}), required:true }),
+      ]),
+      React.createElement("div", { key:"c", className:"field", style:{ marginBottom:16 } }, [
+        React.createElement("label",{key:"l"},"Chỉ tiêu cam kết tuần này (cho tuần tới)"),
+        React.createElement("textarea",{key:"i", rows:2, value:form.chiTieuTuanNay, onChange:e=>setForm({...form,chiTieuTuanNay:e.target.value}) }),
+      ]),
+      React.createElement("button", { key:"s", type:"submit", className:"btn btnPrimary" }, thisReport ? "Cập nhật báo cáo tuần" : "Gửi báo cáo tuần"),
+    ]),
+    (thisReport && thisReport.diemChu!=null) && React.createElement("div", { key:"review", style:{ marginTop:14, background:"var(--pineSoft)", borderRadius:8, padding:"9px 12px", fontSize:12.5 } }, [
+      React.createElement("div",{key:"t",style:{fontWeight:700,marginBottom:2}}, `Quản lý chấm: ${"★".repeat(thisReport.diemChu)}`),
+      thisReport.nhanXetChu && React.createElement("div",{key:"n",style:{color:"var(--inkSoft)"}}, thisReport.nhanXetChu),
+    ]),
+  ]);
+
+  const allReports = Object.values(reportsMap);
+  const shopHistory = selfShop
+    ? allReports.filter(r => r.shop===selfShop && r.tuanNgay!==currentMonday).sort((a,b)=> a.tuanNgay<b.tuanNgay?1:-1)
+    : [];
+  const shopHistoryCard = (selfShop && shopHistory.length>0) && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"t", className:"cardTitle" }, `Lịch sử báo cáo tuần — ${selfShop}`),
+    React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8 } }, shopHistory.map(r =>
       React.createElement("div", { key:r.id, style:{ background:"var(--paper)", borderRadius:8, padding:"9px 12px", fontSize:12.5 } }, [
-        React.createElement("div",{key:"h",style:{fontWeight:700,marginBottom:2}}, `Tuần ${r.tuanNgay} · Tự đánh giá ${"⭐".repeat(r.tuDanhGia)}`),
-        React.createElement("div",{key:"b",style:{marginBottom:2}}, r.noiDungChinh),
-        r.khoKhan && React.createElement("div",{key:"k",style:{color:"var(--inkSoft)",marginBottom:2}}, `Khó khăn/đề xuất: ${r.khoKhan}`),
-        r.diemChu!=null && React.createElement("div",{key:"d",style:{color:"var(--pine)",fontWeight:600}}, `Quản lý chấm: ${"⭐".repeat(r.diemChu)}${r.nhanXetChu ? " — "+r.nhanXetChu : ""}`),
+        React.createElement("div",{key:"h",style:{fontWeight:700,marginBottom:2}}, `Tuần ${r.tuanNgay}${r.nguoiBaoCao ? " · "+r.nguoiBaoCao : ""}`),
+        React.createElement("div",{key:"b",style:{marginBottom:2}}, r.baoCaoTuanNay),
+        r.diemChu!=null && React.createElement("div",{key:"d",style:{color:"var(--pine)",fontWeight:600}}, `Quản lý chấm: ${"★".repeat(r.diemChu)}${r.nhanXetChu ? " — "+r.nhanXetChu : ""}`),
       ])
     )),
   ]);
 
-  const shopReports = adminShop==="Tất cả" ? reports : reports.filter(r => r.shop===adminShop);
+  const shopReports = adminShop==="Tất cả" ? allReports : allReports.filter(r => r.shop===adminShop);
   const thisWeekReports = shopReports.filter(r => r.tuanNgay===currentMonday);
-  const shopStaffCount = (adminShop==="Tất cả" ? staff : staff.filter(s => s.shop===adminShop)).length;
+  const shopsInFilter = adminShop==="Tất cả" ? DEFAULT_SHOPS : [adminShop];
 
   const adminMetrics = React.createElement("div", { className:"metrics" }, [
-    React.createElement("div", { key:"1", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"NV trong bộ lọc"), React.createElement("div",{key:"v",className:"value"}, fmtNum(shopStaffCount)) ]),
+    React.createElement("div", { key:"1", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Cửa hàng trong bộ lọc"), React.createElement("div",{key:"v",className:"value"}, fmtNum(shopsInFilter.length)) ]),
     React.createElement("div", { key:"2", className:"metric good" }, [ React.createElement("div",{key:"l",className:"label"},"Đã gửi tuần này"), React.createElement("div",{key:"v",className:"value"}, fmtNum(thisWeekReports.length)) ]),
-    React.createElement("div", { key:"3", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Thiếu báo cáo tuần này"), React.createElement("div",{key:"v",className:"value"}, fmtNum(Math.max(shopStaffCount-thisWeekReports.length,0))) ]),
+    React.createElement("div", { key:"3", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Chưa gửi tuần này"), React.createElement("div",{key:"v",className:"value"}, fmtNum(Math.max(shopsInFilter.length-thisWeekReports.length,0))) ]),
   ]);
 
   const adminFilterRow = React.createElement("div", { className:"btnRow", style:{ marginBottom:14 } },
@@ -607,22 +727,23 @@ function WeeklyReportView(){
       ["Tất cả", ...DEFAULT_SHOPS].map(s => React.createElement("option",{key:s,value:s},s)))
   );
 
-  const adminTable = shopReports.length===0
+  const sortedReports = [...shopReports].sort((a,b)=> a.tuanNgay<b.tuanNgay?1:-1);
+  const adminTable = sortedReports.length===0
     ? React.createElement("div",{className:"emptyState"}, "Chưa có báo cáo tuần nào trong bộ lọc này.")
     : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
-        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Nhân viên","Cửa hàng","Tuần","Tự đánh giá","Điểm chủ chấm",""].map((h,i)=>React.createElement("th",{key:i},h)))),
-        React.createElement("tbody",{key:"b"}, [...shopReports].reverse().map(r => React.createElement("tr",{key:r.id}, [
-          React.createElement("td",{key:"n"}, r.staffName),
+        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Cửa hàng","Tuần","Người báo cáo","Điểm chủ chấm",""].map((h,i)=>React.createElement("th",{key:i},h)))),
+        React.createElement("tbody",{key:"b"}, sortedReports.map(r => React.createElement("tr",{key:r.id}, [
           React.createElement("td",{key:"sh"}, r.shop),
           React.createElement("td",{key:"w"}, r.tuanNgay),
-          React.createElement("td",{key:"t"}, "⭐".repeat(r.tuDanhGia)),
-          React.createElement("td",{key:"d"}, r.diemChu!=null ? "⭐".repeat(r.diemChu) : "—"),
+          React.createElement("td",{key:"n"}, r.nguoiBaoCao || "—"),
+          React.createElement("td",{key:"d"}, r.diemChu!=null ? "★".repeat(r.diemChu) : "—"),
           React.createElement("td",{key:"a"}, React.createElement("button",{className:"btn", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>setReviewId(r.id)}, "Xem & chấm")),
         ]))),
       ]));
 
-  const reviewingReport = reviewId ? reports.find(r => r.id===reviewId) : null;
-  const reviewModal = reviewingReport && React.createElement(WeeklyReviewModal, { report:reviewingReport, onSave:saveReview, onClose:()=>setReviewId(null) });
+  const reviewingReport = reviewId ? reportsMap[reviewId] : null;
+  const reviewingPrev = reviewingReport ? reportsMap[weeklyReportId(reviewingReport.shop, addDays(reviewingReport.tuanNgay,-7))] : null;
+  const reviewModal = reviewingReport && React.createElement(WeeklyReviewModal, { report:reviewingReport, prevReport:reviewingPrev, onSave:saveReview, onClose:()=>setReviewId(null) });
 
   const adminSection = React.createElement("div", { key:"admin", style:{ marginTop:26 } }, [
     React.createElement("button", { key:"tgl", type:"button", className:"btn btnGhost", style:{ marginBottom:14 }, onClick:()=>setAdminOpen(!adminOpen) }, adminOpen ? "▲ Ẩn báo cáo tất cả cửa hàng" : "▾ Xem báo cáo tất cả cửa hàng (Quản lý)"),
@@ -631,8 +752,8 @@ function WeeklyReportView(){
 
   return React.createElement(React.Fragment, null, [
     React.createElement("h2", { key:"t", className:"pagetitle" }, "Báo cáo công việc tuần"),
-    React.createElement("p", { key:"s", className:"pagesub" }, "Mỗi nhân viên tổng kết công việc & tự đánh giá cuối tuần; quản lý xem và chấm điểm."),
-    whoBar, selfCard, myHistory, adminSection, reviewModal,
+    React.createElement("p", { key:"s", className:"pagesub" }, "Mỗi nhà thuốc báo cáo theo tuần: đối chiếu chỉ tiêu tuần trước, báo cáo kết quả và đặt chỉ tiêu cho tuần tới."),
+    whoBar, selfCard, shopHistoryCard, adminSection, reviewModal,
   ]);
 }
 
@@ -654,7 +775,7 @@ function PerformanceView(){
   const shopStats = DEFAULT_SHOPS.map(shop => {
     const shopStaff = staff.filter(s => s.shop===shop);
     const todaySubmitted = shopStaff.filter(s => dailyReports.some(r => r.staffId===s.id && r.ngay===today && r.trangThai==="Đã nộp")).length;
-    const weekSubmitted = shopStaff.filter(s => weeklyReports.some(r => r.staffId===s.id && r.tuanNgay===currentMonday)).length;
+    const weekSubmitted = weeklyReports.some(r => r.shop===shop && r.tuanNgay===currentMonday);
     const scores = dailyReports.filter(r => r.shop===shop && r.diemChu!=null).map(r => r.diemChu);
     const avgScore = scores.length ? (scores.reduce((a,b)=>a+b,0)/scores.length) : null;
     return { shop, staffCount:shopStaff.length, todaySubmitted, weekSubmitted, avgScore, hasManager: shopStaff.some(s => s.role==="Cửa hàng trưởng") };
@@ -662,8 +783,10 @@ function PerformanceView(){
 
   const noManagerShops = shopStats.filter(s => !s.hasManager && s.staffCount>0);
   const noReportTodayShops = shopStats.filter(s => s.staffCount>0 && s.todaySubmitted===0);
+  const noWeeklyShops = shopStats.filter(s => !s.weekSubmitted);
   const totalStaff = staff.length;
   const totalSubmittedToday = shopStats.reduce((s,x)=>s+x.todaySubmitted,0);
+  const shopsSubmittedWeekly = shopStats.filter(s => s.weekSubmitted).length;
   const combinedScores = [
     ...dailyReports.filter(r=>r.diemChu!=null).map(r=>r.diemChu),
     ...weeklyReports.filter(r=>r.diemChu!=null).map(r=>r.diemChu),
@@ -674,26 +797,28 @@ function PerformanceView(){
     React.createElement("div", { key:"1", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Tổng nhân viên"), React.createElement("div",{key:"v",className:"value"}, fmtNum(totalStaff)) ]),
     React.createElement("div", { key:"2", className:"metric good" }, [ React.createElement("div",{key:"l",className:"label"},"Đã nộp báo cáo hôm nay"), React.createElement("div",{key:"v",className:"value"}, `${fmtNum(totalSubmittedToday)}/${fmtNum(totalStaff)}`) ]),
     React.createElement("div", { key:"3", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Cửa hàng chưa ai báo cáo hôm nay"), React.createElement("div",{key:"v",className:"value"}, fmtNum(noReportTodayShops.length)) ]),
-    React.createElement("div", { key:"4", className:"metric gold" }, [ React.createElement("div",{key:"l",className:"label"},"Điểm đánh giá TB toàn hệ thống"), React.createElement("div",{key:"v",className:"value"}, systemAvgScore==="—" ? "—" : systemAvgScore+"⭐") ]),
+    React.createElement("div", { key:"4", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Cửa hàng đã gửi báo cáo tuần"), React.createElement("div",{key:"v",className:"value"}, `${fmtNum(shopsSubmittedWeekly)}/${fmtNum(DEFAULT_SHOPS.length)}`) ]),
+    React.createElement("div", { key:"5", className:"metric gold" }, [ React.createElement("div",{key:"l",className:"label"},"Điểm đánh giá TB toàn hệ thống"), React.createElement("div",{key:"v",className:"value"}, systemAvgScore==="—" ? "—" : systemAvgScore+"★") ]),
   ]);
 
-  const alertCard = (noManagerShops.length>0 || noReportTodayShops.length>0) && React.createElement("div", { className:"card", style:{ marginBottom:20, borderColor:"var(--claySoft)" } }, [
-    React.createElement("div", { key:"t", className:"cardTitle", style:{ color:"var(--clay)" } }, "⚠️ Cần chú ý"),
+  const alertCard = (noManagerShops.length>0 || noReportTodayShops.length>0 || noWeeklyShops.length>0) && React.createElement("div", { className:"card", style:{ marginBottom:20, borderColor:"var(--claySoft)" } }, [
+    React.createElement("div", { key:"t", className:"cardTitle", style:{ color:"var(--clay)" } }, "Cần chú ý"),
     React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:6, fontSize:12.5 } }, [
       noReportTodayShops.length>0 && React.createElement("div", {key:"a"}, `Chưa có báo cáo hôm nay: ${noReportTodayShops.map(s=>s.shop).join(", ")}`),
+      noWeeklyShops.length>0 && React.createElement("div", {key:"c"}, `Chưa gửi báo cáo tuần này: ${noWeeklyShops.map(s=>s.shop).join(", ")}`),
       noManagerShops.length>0 && React.createElement("div", {key:"b"}, `Không có cửa hàng trưởng: ${noManagerShops.map(s=>s.shop).join(", ")}`),
     ]),
   ]);
 
   const table = React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
-    React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Cửa hàng","Số NV","Cửa hàng trưởng","Đã nộp hôm nay","Đã nộp tuần này","Điểm TB"].map((h,i)=>React.createElement("th",{key:i},h)))),
+    React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Cửa hàng","Số NV","Cửa hàng trưởng","Đã nộp hôm nay","Báo cáo tuần này","Điểm TB"].map((h,i)=>React.createElement("th",{key:i},h)))),
     React.createElement("tbody",{key:"b"}, shopStats.map(s => React.createElement("tr",{key:s.shop}, [
       React.createElement("td",{key:"sh"}, s.shop),
       React.createElement("td",{key:"c"}, fmtNum(s.staffCount)),
       React.createElement("td",{key:"m"}, s.hasManager ? StatusPill("Có","good") : StatusPill("Không","warn")),
       React.createElement("td",{key:"d"}, s.staffCount ? `${s.todaySubmitted}/${s.staffCount}` : "—"),
-      React.createElement("td",{key:"w"}, s.staffCount ? `${s.weekSubmitted}/${s.staffCount}` : "—"),
-      React.createElement("td",{key:"sc"}, s.avgScore!=null ? s.avgScore.toFixed(1)+"⭐" : "—"),
+      React.createElement("td",{key:"w"}, s.weekSubmitted ? StatusPill("Đã gửi","good") : StatusPill("Chưa gửi","warn")),
+      React.createElement("td",{key:"sc"}, s.avgScore!=null ? s.avgScore.toFixed(1)+"★" : "—"),
     ]))),
   ]));
 
@@ -715,7 +840,7 @@ const DEFAULT_CHECKLIST = [
   { id:"d7", offset:13, label:"Kiến thức nhóm sản phẩm mạn tính (tim mạch, tiểu đường, huyết áp)" },
   { id:"d8", offset:13, label:"Xử lý tình huống khách hàng khó, khiếu nại" },
   { id:"d9", offset:29, label:"Đánh giá cuối thử việc — kiểm tra kiến thức tổng hợp" },
-  { id:"d10", offset:29, label:"Phỏng vấn phản hồi 2 chiều (nhân viên mới ⇄ quản lý)" },
+  { id:"d10", offset:29, label:"Phỏng vấn phản hồi 2 chiều (nhân viên mới và quản lý)" },
 ];
 function taskDueDate(joinDate, offset){ return addDays(joinDate, offset); }
 
@@ -831,14 +956,14 @@ function TrainingView(){
               hireReports.length===0 ? React.createElement("div",{key:"e",style:{fontSize:12,color:"var(--inkSoft)"}}, "Chưa có báo cáo nào.") :
                 React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8, marginBottom:10 } }, hireReports.map(r=>
                   React.createElement("div", { key:r.id, style:{ background:"var(--paper)", borderRadius:8, padding:"8px 10px", fontSize:12 } }, [
-                    React.createElement("div", { key:"h", style:{ fontWeight:600, marginBottom:2 } }, `Tuần ${r.tuan} — ${"⭐".repeat(r.danhGia)} (${r.ngay})`),
+                    React.createElement("div", { key:"h", style:{ fontWeight:600, marginBottom:2 } }, `Tuần ${r.tuan} — ${"★".repeat(r.danhGia)} (${r.ngay})`),
                     React.createElement("div", { key:"b", style:{ color:"var(--inkSoft)" } }, r.noiDung),
                   ])
                 )),
               React.createElement("form", { key:"f", onSubmit:submitReport, style:{ display:"flex", flexDirection:"column", gap:6 } }, [
                 React.createElement("div", { key:"r", style:{ display:"flex", gap:6 } }, [
                   React.createElement("input", { key:"w", type:"number", min:1, value:selectedHireId===h.id?reportForm.tuan:1, onChange:e=>setReportForm({...reportForm,tuan:e.target.value}), style:{ width:60, padding:"6px 8px", borderRadius:6, border:"1px solid var(--line)", fontSize:12 }, placeholder:"Tuần" }),
-                  React.createElement("select", { key:"s", value:reportForm.danhGia, onChange:e=>setReportForm({...reportForm,danhGia:e.target.value}), style:{ padding:"6px 8px", borderRadius:6, border:"1px solid var(--line)", fontSize:12 } }, [1,2,3,4,5].map(n=>React.createElement("option",{key:n,value:n},"⭐".repeat(n)))),
+                  React.createElement("select", { key:"s", value:reportForm.danhGia, onChange:e=>setReportForm({...reportForm,danhGia:e.target.value}), style:{ padding:"6px 8px", borderRadius:6, border:"1px solid var(--line)", fontSize:12 } }, [1,2,3,4,5].map(n=>React.createElement("option",{key:n,value:n},"★".repeat(n)))),
                 ]),
                 React.createElement("textarea", { key:"n", rows:2, placeholder:"Nhận xét tuần này...", value:reportForm.noiDung, onChange:e=>{ setSelectedHireId(h.id); setReportForm({...reportForm,noiDung:e.target.value}); }, style:{ padding:"7px 9px", borderRadius:6, border:"1px solid var(--line)", fontSize:12.5 } }),
                 React.createElement("button", { key:"btn", type:"submit", className:"btn btnAmber", style:{ padding:"6px 12px", fontSize:12, alignSelf:"flex-start" }, onClick:()=>setSelectedHireId(h.id) }, "Gửi báo cáo"),
@@ -948,11 +1073,11 @@ function KudosView(){
   ]);
 
   const feed = React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
-    React.createElement("div", { key:"t", className:"cardTitle" }, "🌟 Tường ghi nhận gần đây"),
+    React.createElement("div", { key:"t", className:"cardTitle" }, "Tường ghi nhận gần đây"),
     kudos.length===0 ? React.createElement("div",{key:"e",className:"emptyState"},"Chưa có lượt ghi nhận nào — hãy là người đầu tiên!") :
       React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8, maxHeight:340, overflowY:"auto" } }, kudos.slice(0,40).map(k =>
         React.createElement("div", { key:k.id, style:{ background:"var(--goldSoft)", borderRadius:9, padding:"9px 12px", fontSize:13 } }, [
-          React.createElement("div", { key:"h", style:{ fontWeight:700, marginBottom:2 } }, `${k.fromName} ➜ ${k.toName}  ·  ${"⭐".repeat(Math.min(k.stars,5))}${k.stars>5?" +"+(k.stars-5):""} (${k.stars} sao)`),
+          React.createElement("div", { key:"h", style:{ fontWeight:700, marginBottom:2 } }, `${k.fromName} ➜ ${k.toName}  ·  ${"★".repeat(Math.min(k.stars,5))}${k.stars>5?" +"+(k.stars-5):""} (${k.stars} sao)`),
           React.createElement("div", { key:"m", style:{ color:"var(--ink)" } }, k.message),
           React.createElement("div", { key:"d", style:{ color:"var(--inkSoft)", fontSize:11, marginTop:2 } }, k.ngay),
         ])
@@ -960,28 +1085,28 @@ function KudosView(){
   ]);
 
   const leaderboardCard = React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
-    React.createElement("div", { key:"t", className:"cardTitle" }, "🏆 Bảng xếp hạng tích luỹ"),
+    React.createElement("div", { key:"t", className:"cardTitle" }, "Bảng xếp hạng tích luỹ"),
     leaderboard.length===0 ? React.createElement("div",{key:"e",className:"emptyState"},"Chưa có nhân viên nào — thêm ở tab Nhân viên.") :
       React.createElement("div", { key:"tw", className:"tableWrap", style:{ border:"none" } }, React.createElement("table",{className:"data"}, [
         React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["#","Nhân viên","Đã nhận","Số dư khả dụng","Đổi quà"].map((h,i)=>React.createElement("th",{key:i},h)))),
         React.createElement("tbody",{key:"b"}, leaderboard.map((s,i)=> React.createElement("tr",{key:s.id}, [
           React.createElement("td",{key:"i"}, i+1),
           React.createElement("td",{key:"n"}, s.name),
-          React.createElement("td",{key:"r"}, fmtNum(s.received)+" ⭐"),
-          React.createElement("td",{key:"b", style:{fontWeight:700,color:"var(--gold)"}}, fmtNum(s.balance)+" ⭐"),
+          React.createElement("td",{key:"r"}, fmtNum(s.received)+" ★"),
+          React.createElement("td",{key:"b", style:{fontWeight:700,color:"var(--gold)"}}, fmtNum(s.balance)+" ★"),
           React.createElement("td",{key:"redeem"}, React.createElement("select", { defaultValue:"", onChange:e=>{ const r = rewards.find(x=>x.id===e.target.value); if(r) redeem(s.id, r); e.target.value=""; }, style:{ padding:"5px 7px", borderRadius:6, border:"1px solid var(--line)", fontSize:12 } }, [
             React.createElement("option",{key:"",value:""},"Chọn quà đổi..."),
-            ...rewards.map(r=>React.createElement("option",{key:r.id,value:r.id,disabled:s.balance<r.stars}, `${r.name} (${r.stars}⭐)`)),
+            ...rewards.map(r=>React.createElement("option",{key:r.id,value:r.id,disabled:s.balance<r.stars}, `${r.name} (${r.stars}★)`)),
           ])),
         ]))),
       ])),
   ]);
 
   const redemptionsCard = redemptions.length>0 && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
-    React.createElement("div", { key:"t", className:"cardTitle" }, "🎁 Yêu cầu đổi quà"),
+    React.createElement("div", { key:"t", className:"cardTitle" }, "Yêu cầu đổi quà"),
     React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:6 } }, [...redemptions].reverse().map(r =>
       React.createElement("div", { key:r.id, style:{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"7px 0", borderBottom:"1px solid var(--line)", fontSize:12.5, flexWrap:"wrap", gap:6 } }, [
-        React.createElement("div", { key:"l" }, `${r.staffName} — ${r.rewardName} (${r.stars}⭐) · ${r.ngay}`),
+        React.createElement("div", { key:"l" }, `${r.staffName} — ${r.rewardName} (${r.stars}★) · ${r.ngay}`),
         r.trangThai==="Chờ trao"
           ? React.createElement("button",{key:"b", className:"btn btnAmber", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>markGiven(r.id)}, "Đánh dấu đã trao")
           : StatusPill("Đã trao", "good"),
@@ -1012,7 +1137,7 @@ function KudosView(){
     React.createElement("p", { key:"s", className:"pagesub" }, "Nhân viên ghi nhận & tặng sao cho nhau, tích luỹ đổi quà — tăng gắn kết đội ngũ."),
     metrics,
     React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:18 } }, [
-      React.createElement("button", { key:"give", className:"btn btnAmber", onClick:()=>setShowGiveForm(true) }, "⭐ Tặng sao"),
+      React.createElement("button", { key:"give", className:"btn btnAmber", onClick:()=>setShowGiveForm(true) }, "Tặng sao"),
     ]),
     feed, leaderboardCard, redemptionsCard, giveModal,
   ]);
@@ -1073,12 +1198,12 @@ function StaffView(){
 
 // ================= APP SHELL =================
 const OPS_TABS = [
-  { id:"checklist", label:"✅ Checklist ngày" },
-  { id:"weekly", label:"🗓️ Báo cáo tuần" },
-  { id:"performance", label:"📊 Hiệu suất" },
-  { id:"training", label:"🧑‍🏫 Đào tạo & Buddy" },
-  { id:"kudos", label:"⭐ Ghi nhận & Quà" },
-  { id:"staff", label:"👥 Nhân viên" },
+  { id:"checklist", label:"Checklist ngày" },
+  { id:"weekly", label:"Báo cáo tuần" },
+  { id:"performance", label:"Hiệu suất" },
+  { id:"training", label:"Đào tạo & Buddy" },
+  { id:"kudos", label:"Ghi nhận & Quà" },
+  { id:"staff", label:"Nhân viên" },
 ];
 function Dashboard({ user }){
   const [activeTab, setActiveTab] = useState("checklist");
