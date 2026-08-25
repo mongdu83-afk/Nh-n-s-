@@ -1153,6 +1153,7 @@ const DEFAULT_REWARDS = [
   { id:"r6", name:"Phiếu quà 500.000đ + Giấy khen \"Ngôi sao của tháng\"", stars:100 },
 ];
 const MONTHLY_GIVE_CAP = 30; // số sao tối đa 1 người có thể TẶNG trong 1 tháng, chống lạm dụng
+const ADMIN_PIN = "1907"; // mã quản lý — đổi số này thành mã riêng của bạn, chỉ ai biết mã mới xoá được lượt tặng sao
 
 function KudosView(){
   const [staff, setStaff] = useState([]);
@@ -1221,14 +1222,22 @@ function KudosView(){
     React.createElement("div", { key:"3", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Yêu cầu đổi quà chờ trao"), React.createElement("div",{key:"v",className:"value"}, fmtNum(redemptions.filter(r=>r.trangThai==="Chờ trao").length)) ]),
   ]);
 
+  async function removeKudos(id){
+    const pin = window.prompt("Nhập mã quản lý để xoá lượt tặng sao này:");
+    if(pin===null) return;
+    if(pin!==ADMIN_PIN){ window.alert("Sai mã quản lý."); return; }
+    if(window.confirm("Xác nhận xoá? Số sao sẽ bị trừ khỏi bảng xếp hạng.")) await deleteDoc("kudos", id);
+  }
+
   const feed = React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
     React.createElement("div", { key:"t", className:"cardTitle" }, "Tường ghi nhận gần đây"),
     kudos.length===0 ? React.createElement("div",{key:"e",className:"emptyState"},"Chưa có lượt ghi nhận nào — hãy là người đầu tiên!") :
       React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8, maxHeight:340, overflowY:"auto" } }, kudos.slice(0,40).map(k =>
-        React.createElement("div", { key:k.id, style:{ background:"var(--goldSoft)", borderRadius:9, padding:"9px 12px", fontSize:13 } }, [
-          React.createElement("div", { key:"h", style:{ fontWeight:700, marginBottom:2 } }, `${k.fromName} ➜ ${k.toName}  ·  ${"★".repeat(Math.min(k.stars,5))}${k.stars>5?" +"+(k.stars-5):""} (${k.stars} sao)`),
+        React.createElement("div", { key:k.id, style:{ background:"var(--goldSoft)", borderRadius:9, padding:"9px 12px", fontSize:13, position:"relative" } }, [
+          React.createElement("div", { key:"h", style:{ fontWeight:700, marginBottom:2, paddingRight:50 } }, `${k.fromName} ➜ ${k.toName}  ·  ${"★".repeat(Math.min(k.stars,5))}${k.stars>5?" +"+(k.stars-5):""} (${k.stars} sao)`),
           React.createElement("div", { key:"m", style:{ color:"var(--ink)" } }, k.message),
           React.createElement("div", { key:"d", style:{ color:"var(--inkSoft)", fontSize:11, marginTop:2 } }, k.ngay),
+          React.createElement("button", { key:"del", type:"button", className:"btn btnDanger", style:{ position:"absolute", top:8, right:8, padding:"3px 9px", fontSize:11 }, onClick:()=>removeKudos(k.id) }, "Xoá"),
         ])
       )),
   ]);
