@@ -1163,6 +1163,8 @@ function KudosView(){
   const [notifyEmails, setNotifyEmails] = useState([]);
   const [showGiveForm, setShowGiveForm] = useState(false);
   const [showEmailEditor, setShowEmailEditor] = useState(false);
+  const [showRewardsEditor, setShowRewardsEditor] = useState(false);
+  const [showAllLeaderboard, setShowAllLeaderboard] = useState(false);
   const [giveForm, setGiveForm] = useState({ fromId:"", toId:"", stars:5, message:"" });
 
   useEffect(()=>{
@@ -1203,8 +1205,14 @@ function KudosView(){
     });
     setGiveForm({ fromId:giveForm.fromId, toId:"", stars:5, message:"" }); setShowGiveForm(false);
   }
-  async function saveRewards(items){ await saveConfigDoc("rewards", { items }); }
+  async function saveRewards(items){ await saveConfigDoc("rewards", { items }); setShowRewardsEditor(false); }
   async function saveNotifyEmails(emails){ await saveConfigDoc("kudosNotifyEmails", { emails }); setShowEmailEditor(false); }
+  function openRewardsEditor(){
+    const pin = window.prompt("Nhập mã quản lý để chỉnh danh sách quà tặng:");
+    if(pin===null) return;
+    if(pin!==ADMIN_PIN){ window.alert("Sai mã quản lý."); return; }
+    setShowRewardsEditor(true);
+  }
   async function redeem(staffId, reward){
     const bal = balanceOf(staffId);
     if(bal < reward.stars){ window.alert("Không đủ sao để đổi quà này."); return; }
@@ -1212,6 +1220,12 @@ function KudosView(){
     await addDoc("redemptions", { staffId, staffName:s?s.name:"", rewardName:reward.name, stars:reward.stars, trangThai:"Chờ trao", ngay:todayISO() });
   }
   async function markGiven(id){ await updateDoc("redemptions", id, { trangThai:"Đã trao" }); }
+  async function removeRedemption(id){
+    const pin = window.prompt("Nhập mã quản lý để xoá yêu cầu đổi quà này:");
+    if(pin===null) return;
+    if(pin!==ADMIN_PIN){ window.alert("Sai mã quản lý."); return; }
+    if(window.confirm("Xác nhận xoá? Số sao đã trừ sẽ được hoàn lại cho nhân viên.")) await deleteDoc("redemptions", id);
+  }
 
   const leaderboard = [...staff].map(s => ({ ...s, balance: balanceOf(s.id), received:(totalsByStaff[s.id]||{received:0}).received }))
     .sort((a,b)=> b.received - a.received);
@@ -1242,12 +1256,13 @@ function KudosView(){
       )),
   ]);
 
+  const leaderboardVisible = showAllLeaderboard ? leaderboard : leaderboard.slice(0,8);
   const leaderboardCard = React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
     React.createElement("div", { key:"t", className:"cardTitle" }, "Bảng xếp hạng tích luỹ"),
     leaderboard.length===0 ? React.createElement("div",{key:"e",className:"emptyState"},"Chưa có nhân viên nào — thêm ở tab Nhân viên.") :
       React.createElement("div", { key:"tw", className:"tableWrap", style:{ border:"none" } }, React.createElement("table",{className:"data"}, [
         React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["#","Nhân viên","Đã nhận","Số dư khả dụng","Đổi quà"].map((h,i)=>React.createElement("th",{key:i},h)))),
-        React.createElement("tbody",{key:"b"}, leaderboard.map((s,i)=> React.createElement("tr",{key:s.id}, [
+        React.createElement("tbody",{key:"b"}, leaderboardVisible.map((s,i)=> React.createElement("tr",{key:s.id}, [
           React.createElement("td",{key:"i"}, i+1),
           React.createElement("td",{key:"n"}, s.name),
           React.createElement("td",{key:"r"}, fmtNum(s.received)+" ★"),
@@ -1258,6 +1273,8 @@ function KudosView(){
           ])),
         ]))),
       ])),
+    leaderboard.length>8 && React.createElement("button", { key:"toggle", type:"button", className:"btn btnGhost", style:{ marginTop:10 }, onClick:()=>setShowAllLeaderboard(!showAllLeaderboard) },
+      showAllLeaderboard ? "Thu gọn" : `Xem tất cả (${leaderboard.length})`),
   ]);
 
   const redemptionsCard = redemptions.length>0 && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
@@ -1265,9 +1282,12 @@ function KudosView(){
     React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:6 } }, [...redemptions].reverse().map(r =>
       React.createElement("div", { key:r.id, style:{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"7px 0", borderBottom:"1px solid var(--line)", fontSize:12.5, flexWrap:"wrap", gap:6 } }, [
         React.createElement("div", { key:"l" }, `${r.staffName} — ${r.rewardName} (${r.stars}★) · ${r.ngay}`),
-        r.trangThai==="Chờ trao"
-          ? React.createElement("button",{key:"b", className:"btn btnAmber", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>markGiven(r.id)}, "Đánh dấu đã trao")
-          : StatusPill("Đã trao", "good"),
+        React.createElement("div", { key:"r", style:{ display:"flex", gap:6, alignItems:"center" } }, [
+          r.trangThai==="Chờ trao"
+            ? React.createElement("button",{key:"b", className:"btn btnAmber", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>markGiven(r.id)}, "Đánh dấu đã trao")
+            : StatusPill("Đã trao", "good"),
+          React.createElement("button",{key:"d", type:"button", className:"btn btnDanger", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>removeRedemption(r.id)}, "Xoá"),
+        ]),
       ])
     )),
   ]);
@@ -1293,6 +1313,9 @@ function KudosView(){
   const emailEditor = showEmailEditor && React.createElement(EmailListEditor, {
     emails: notifyEmails, onSave: saveNotifyEmails, onClose: ()=>setShowEmailEditor(false),
   });
+  const rewardsEditor = showRewardsEditor && React.createElement(RewardsEditor, {
+    rewards, onSave: saveRewards, onClose: ()=>setShowRewardsEditor(false),
+  });
 
   return React.createElement(React.Fragment, null, [
     React.createElement("h2", { key:"t", className:"pagetitle" }, "Ghi nhận & Tặng sao"),
@@ -1300,11 +1323,54 @@ function KudosView(){
     metrics,
     React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:18, justifyContent:"space-between" } }, [
       React.createElement("button", { key:"give", className:"btn btnAmber", onClick:()=>setShowGiveForm(true) }, "Tặng sao"),
-      React.createElement("button", { key:"email", type:"button", className:"btn btnGhost", onClick:()=>setShowEmailEditor(true) },
-        `Email nhận thông báo (${notifyEmails.length})`),
+      React.createElement("div", { key:"admin", className:"btnRow" }, [
+        React.createElement("button", { key:"rewards", type:"button", className:"btn btnGhost", onClick:openRewardsEditor }, "Quản lý quà tặng"),
+        React.createElement("button", { key:"email", type:"button", className:"btn btnGhost", onClick:()=>setShowEmailEditor(true) },
+          `Email nhận thông báo (${notifyEmails.length})`),
+      ]),
     ]),
-    feed, leaderboardCard, redemptionsCard, giveModal, emailEditor,
+    feed, leaderboardCard, redemptionsCard, giveModal, emailEditor, rewardsEditor,
   ]);
+}
+
+function RewardsEditor({ rewards, onSave, onClose }){
+  const [items, setItems] = useState(rewards || []);
+  const [newName, setNewName] = useState("");
+  const [newStars, setNewStars] = useState(10);
+  function updateItem(id, field, value){ setItems(items.map(it => it.id===id ? { ...it, [field]:value } : it)); }
+  function removeItem(id){ setItems(items.filter(it => it.id!==id)); }
+  function addItem(){
+    if(!newName.trim()) return;
+    setItems([...items, { id:uid(), name:newName.trim(), stars:Number(newStars)||1 }]);
+    setNewName(""); setNewStars(10);
+  }
+  async function save(){
+    const cleaned = items.filter(it => it.name.trim()).map(it => ({ ...it, stars:Number(it.stars)||1 }));
+    await onSave(cleaned);
+  }
+  return React.createElement("div", { className:"modalOverlay", onClick:onClose },
+    React.createElement("div", { className:"modal modalWide", onClick:e=>e.stopPropagation() }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, "Danh sách quà tặng đổi sao"),
+      React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } }, "Chỉnh tên quà và số sao cần để đổi. Nhân viên sẽ thấy danh sách này khi đổi sao ở bảng xếp hạng."),
+      React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8, marginBottom:12, maxHeight:320, overflowY:"auto" } }, items.map(it =>
+        React.createElement("div", { key:it.id, style:{ display:"flex", gap:8, alignItems:"center" } }, [
+          React.createElement("input", { key:"n", value:it.name, onChange:e=>updateItem(it.id,"name",e.target.value), style:{ flex:1, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5 } }),
+          React.createElement("input", { key:"s", type:"number", min:1, value:it.stars, onChange:e=>updateItem(it.id,"stars",e.target.value), style:{ width:80, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5 } }),
+          React.createElement("span", { key:"u", style:{ fontSize:12, color:"var(--inkSoft)" } }, "★"),
+          React.createElement("button", { key:"d", type:"button", className:"btn btnDanger", style:{ padding:"6px 9px", fontSize:11.5 }, onClick:()=>removeItem(it.id) }, "Xoá"),
+        ])
+      )),
+      React.createElement("div", { key:"add", style:{ display:"flex", gap:8, marginBottom:16 } }, [
+        React.createElement("input", { key:"n", value:newName, onChange:e=>setNewName(e.target.value), placeholder:"Tên quà mới...", style:{ flex:1, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5 } }),
+        React.createElement("input", { key:"s", type:"number", min:1, value:newStars, onChange:e=>setNewStars(e.target.value), style:{ width:80, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5 } }),
+        React.createElement("button", { key:"b", type:"button", className:"btn", onClick:addItem }, "＋ Thêm"),
+      ]),
+      React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } }, [
+        React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:onClose }, "Huỷ"),
+        React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", onClick:save }, "Lưu danh sách quà"),
+      ]),
+    ])
+  );
 }
 
 function EmailListEditor({ emails, onSave, onClose }){
