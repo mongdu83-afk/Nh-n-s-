@@ -80,6 +80,20 @@
 
   .modalOverlay{ position:fixed; inset:0; background:rgba(35,49,41,.45); display:flex; align-items:center; justify-content:center; z-index:50; padding:16px; }
   .modal{ background:#fff; border-radius:14px; width:520px; max-width:100%; max-height:88vh; overflow-y:auto; padding:22px 22px 18px; }
+  .modalWide{ width:640px; }
+
+  .progressOuter{ background:#EFEDE0; border-radius:20px; height:8px; overflow:hidden; flex:1; }
+  .progressInner{ height:100%; border-radius:20px; background:var(--pine); transition:width .25s; }
+  .whoBar{ display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin-bottom:16px; }
+  .whoBar select{ padding:9px 10px; border:1px solid var(--line); border-radius:8px; font-size:13.5px; }
+  .checkItem{ display:flex; align-items:flex-start; gap:9px; padding:9px 4px; border-bottom:1px solid #F0EEE2; font-size:13px; cursor:pointer; }
+  .checkItem:last-child{ border-bottom:none; }
+  .checkItem input{ margin-top:2px; }
+  .checkItem.done span.lbl{ color:var(--inkSoft); text-decoration:line-through; }
+  .starBtns{ display:flex; gap:4px; }
+  .starBtns button{ border:none; background:none; cursor:pointer; font-size:18px; padding:2px; opacity:.35; }
+  .starBtns button.on{ opacity:1; }
+  .shopBadge{ font-size:10.5px; font-weight:700; color:var(--inkSoft); background:#F0EEE2; padding:2px 8px; border-radius:20px; }
 
   @media (max-width:720px){
     .wrap{ padding:14px 12px 90px; }
@@ -107,6 +121,7 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 
 const DEFAULT_SHOPS = ["SHOP0058","SHOP0059","SHOP0072","SHOP0074","SHOP0089","SHOP0095","SHOP0121","SHOP0122","SHOP0163"];
+const STAFF_ROLES = ["Nhân viên học việc","Nhân viên bán hàng","Cửa hàng trưởng"];
 
 function uid(){ return "id" + Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
 function todayISO(){ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
@@ -168,27 +183,6 @@ function LoginScreen(){
   );
 }
 
-// ================= MODULE 1: ĐẶT HÀNG & NHẬN HÀNG =================
-function orderStatus(o){
-  const today = todayISO();
-  if(o.ngayNhanThucTe){
-    const diff = daysBetween(o.ngayHenGiao, o.ngayNhanThucTe);
-    if(diff > 0) return { text:`Về trễ ${diff} ngày`, tone:"warn" };
-    return { text:"Đã nhận đúng/sớm hẹn", tone:"good" };
-  }
-  const diffToday = daysBetween(o.ngayHenGiao, today);
-  if(diffToday > 0) return { text:`Quá hẹn ${diffToday} ngày, chưa nhận`, tone:"warn" };
-  if(diffToday === 0) return { text:"Hẹn giao hôm nay", tone:"warn" };
-  return { text:`Còn ${Math.abs(diffToday)} ngày tới hẹn`, tone:"neutral" };
-}
-function supplyStatus(o){
-  if(!o.nhuCau) return null;
-  const nhan = o.ngayNhanThucTe ? (o.slNhanThucTe||0) : (o.slDat||0);
-  const diff = nhan - o.nhuCau;
-  if(diff < 0) return { text:`Thiếu ${Math.abs(diff)} so với nhu cầu`, tone:"warn" };
-  if(diff > 0) return { text:`Dư ${diff} so với nhu cầu`, tone:"neutral" };
-  return { text:"Đủ nhu cầu", tone:"good" };
-}
 const TONE_COLOR = {
   warn:{ fg:"var(--clay)", bg:"var(--claySoft)" }, good:{ fg:"var(--pine)", bg:"var(--pineSoft)" }, neutral:{ fg:"var(--inkSoft)", bg:"#F0EEE2" },
 };
@@ -197,132 +191,520 @@ function StatusPill(text, tone){
   return React.createElement("span", { className:"pill", style:{ color:c.fg, background:c.bg } }, text);
 }
 
-function OrdersView(){
-  const [orders, setOrders] = useState([]);
-  const [shopFilter, setShopFilter] = useState("Tất cả");
-  const [statusFilter, setStatusFilter] = useState("Tất cả");
-  const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState(blankOrderForm());
-  function blankOrderForm(){
-    return { ncc:"", shop:DEFAULT_SHOPS[0], tenSP:"", slDat:"", nhuCau:"", ngayDat:todayISO(), ngayHenGiao:addDays(todayISO(),3), ghiChu:"" };
-  }
-  useEffect(()=>{ const u = subscribeCol("orders", setOrders, "ngayHenGiao"); return u; }, []);
+// ================= HELPER: STAR PICKER =================
+function StarSelect({ value, onChange, max }){
+  const m = max || 5;
+  return React.createElement("div", { className:"starBtns" }, Array.from({ length:m }).map((_,i) =>
+    React.createElement("button", { key:i, type:"button", className:(i<value?"on":""), onClick:()=>onChange(i+1) }, "⭐")
+  ));
+}
 
-  const filtered = orders
-    .filter(o => shopFilter==="Tất cả" || o.shop===shopFilter)
-    .filter(o => {
-      if(statusFilter==="Tất cả") return true;
-      const st = orderStatus(o);
-      if(statusFilter==="Trễ hẹn") return st.tone==="warn" && !o.ngayNhanThucTe;
-      if(statusFilter==="Đã nhận") return !!o.ngayNhanThucTe;
-      if(statusFilter==="Đang chờ") return !o.ngayNhanThucTe && st.tone!=="warn";
-      return true;
-    });
+// ================= MODULE 1: CHECKLIST CÔNG VIỆC HÀNG NGÀY =================
+function dailyReportId(staffId, ngay){ return staffId + "_" + ngay; }
 
-  const pending = orders.filter(o => !o.ngayNhanThucTe);
-  const overdue = pending.filter(o => daysBetween(o.ngayHenGiao, todayISO()) >= 0);
-  const received = orders.filter(o => o.ngayNhanThucTe);
-  const onTimeReceived = received.filter(o => daysBetween(o.ngayHenGiao, o.ngayNhanThucTe) <= 0);
-  const onTimeRate = received.length ? Math.round((onTimeReceived.length/received.length)*100) : null;
-  const shortageCount = orders.filter(o => { const s = supplyStatus(o); return s && s.tone==="warn"; }).length;
+const DEFAULT_DAILY_CHECKLISTS = {
+  "Nhân viên học việc": [
+    { id:"hv1", label:"Có mặt đúng giờ, mặc đồng phục, đeo bảng tên" },
+    { id:"hv2", label:"Dọn dẹp, sắp xếp quầy kệ đầu ca" },
+    { id:"hv3", label:"Kiểm tra hạn sử dụng khu vực được phân công" },
+    { id:"hv4", label:"Quan sát & phụ tư vấn khách hàng cùng nhân viên chính" },
+    { id:"hv5", label:"Ghi chú lại câu hỏi/khó khăn trong ngày để hỏi buddy" },
+    { id:"hv6", label:"Vệ sinh khu vực làm việc cuối ca" },
+  ],
+  "Nhân viên bán hàng": [
+    { id:"bh1", label:"Kiểm tra quầy thuốc đầu ca — đủ hàng, sạch sẽ, đúng vị trí" },
+    { id:"bh2", label:"Kiểm tra hạn sử dụng, tách riêng hàng cận date" },
+    { id:"bh3", label:"Tư vấn & bán hàng đúng quy trình GPP" },
+    { id:"bh4", label:"Nhập/khớp hoá đơn bán hàng trong ca" },
+    { id:"bh5", label:"Xử lý đổi trả, khiếu nại (nếu có) đúng quy trình" },
+    { id:"bh6", label:"Kiểm kê quỹ tiền mặt cuối ca" },
+    { id:"bh7", label:"Bàn giao ca cho nhân viên ca sau (hàng hoá, tiền, sự vụ)" },
+    { id:"bh8", label:"Vệ sinh, tắt thiết bị, khoá cửa hàng (nếu là ca cuối)" },
+  ],
+  "Cửa hàng trưởng": [
+    { id:"ct1", label:"Kiểm tra tổng thể cửa hàng đầu ngày (nhân sự, hàng hoá, vệ sinh)" },
+    { id:"ct2", label:"Phân ca, phân công công việc cho nhân viên trong ngày" },
+    { id:"ct3", label:"Kiểm tra checklist & hỗ trợ nhân viên học việc, bán hàng" },
+    { id:"ct4", label:"Theo dõi doanh số, đối chiếu quỹ tiền mặt trong ngày" },
+    { id:"ct5", label:"Kiểm tra hạn sử dụng, đề xuất đặt hàng bổ sung" },
+    { id:"ct6", label:"Xử lý sự cố, khiếu nại khách hàng vượt thẩm quyền nhân viên" },
+    { id:"ct7", label:"Báo cáo nhanh tình hình cửa hàng cuối ngày" },
+    { id:"ct8", label:"Khoá quỹ, khoá cửa hàng cuối ngày" },
+  ],
+};
 
-  async function submitForm(e){
-    e.preventDefault();
-    if(!form.ncc.trim() || !form.tenSP.trim()) return;
-    await addDoc("orders", {
-      ncc:form.ncc.trim(), shop:form.shop, tenSP:form.tenSP.trim(),
-      slDat:Number(form.slDat)||0, nhuCau:form.nhuCau?Number(form.nhuCau):null,
-      ngayDat:form.ngayDat, ngayHenGiao:form.ngayHenGiao, ngayNhanThucTe:null, slNhanThucTe:null,
-      ghiChu:form.ghiChu.trim(),
-    });
-    setForm(blankOrderForm()); setShowForm(false);
-  }
-  async function markReceived(o, slNhan){
-    await updateDoc("orders", o.id, { ngayNhanThucTe: todayISO(), slNhanThucTe: Number(slNhan)||o.slDat });
-  }
-  async function undoReceived(o){ await updateDoc("orders", o.id, { ngayNhanThucTe:null, slNhanThucTe:null }); }
-  async function removeOrder(id){ if(window.confirm("Xoá đơn hàng này?")) await deleteDoc("orders", id); }
-
-  const metrics = React.createElement("div", { className:"metrics" }, [
-    React.createElement("div", { key:"1", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Đơn đang chờ"), React.createElement("div",{key:"v",className:"value"}, fmtNum(pending.length)) ]),
-    React.createElement("div", { key:"2", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Quá hẹn chưa nhận"), React.createElement("div",{key:"v",className:"value"}, fmtNum(overdue.length)) ]),
-    React.createElement("div", { key:"3", className:"metric good" }, [ React.createElement("div",{key:"l",className:"label"},"Tỉ lệ đúng hẹn"), React.createElement("div",{key:"v",className:"value"}, onTimeRate==null?"—":onTimeRate+"%") ]),
-    React.createElement("div", { key:"4", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Đơn thiếu so với nhu cầu"), React.createElement("div",{key:"v",className:"value"}, fmtNum(shortageCount)) ]),
-  ]);
-
-  const filterRow = React.createElement("div", { className:"btnRow", style:{ marginBottom:14 } }, [
-    React.createElement("select", { key:"s", value:shopFilter, onChange:e=>setShopFilter(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } },
-      ["Tất cả", ...DEFAULT_SHOPS].map(s => React.createElement("option",{key:s,value:s},s))),
-    React.createElement("select", { key:"st", value:statusFilter, onChange:e=>setStatusFilter(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } },
-      ["Tất cả","Đang chờ","Trễ hẹn","Đã nhận"].map(s => React.createElement("option",{key:s,value:s},s))),
-    React.createElement("button", { key:"add", className:"btn btnPrimary", onClick:()=>setShowForm(true) }, "＋ Thêm đơn hàng"),
-  ]);
-
-  const headerCells = ["NCC","Cửa hàng","Sản phẩm","SL đặt","Nhu cầu","Ngày đặt","Hẹn giao","Trạng thái","So với nhu cầu",""].map((h,i)=>
-    React.createElement("th",{key:i}, h));
-
-  const bodyRows = filtered.map(o => {
-    const st = orderStatus(o); const sup = supplyStatus(o);
-    return React.createElement("tr", { key:o.id }, [
-      React.createElement("td",{key:"ncc"}, o.ncc),
-      React.createElement("td",{key:"shop"}, o.shop),
-      React.createElement("td",{key:"sp"}, o.tenSP),
-      React.createElement("td",{key:"sd"}, fmtNum(o.slDat)),
-      React.createElement("td",{key:"nc"}, o.nhuCau!=null ? fmtNum(o.nhuCau) : "—"),
-      React.createElement("td",{key:"nd"}, o.ngayDat),
-      React.createElement("td",{key:"hg"}, o.ngayHenGiao),
-      React.createElement("td",{key:"st"}, StatusPill(st.text, st.tone)),
-      React.createElement("td",{key:"sup"}, sup ? StatusPill(sup.text, sup.tone) : "—"),
-      React.createElement("td",{key:"act", style:{ whiteSpace:"nowrap" }}, [
-        !o.ngayNhanThucTe && React.createElement("button", { key:"r", className:"btn", style:{ padding:"5px 10px", fontSize:11.5, marginRight:6 },
-          onClick:()=>{ const v = window.prompt("Số lượng thực nhận:", o.slDat); if(v!=null) markReceived(o, v); } }, "Đã nhận"),
-        o.ngayNhanThucTe && React.createElement("button", { key:"u", className:"btn btnGhost", style:{ padding:"5px 10px", fontSize:11.5, marginRight:6 }, onClick:()=>undoReceived(o) }, "Hoàn tác"),
-        React.createElement("button", { key:"d", className:"btn btnDanger", style:{ padding:"5px 10px", fontSize:11.5 }, onClick:()=>removeOrder(o.id) }, "Xoá"),
+function ChecklistTemplateEditor({ roles, templates, initialRole, onSave, onClose }){
+  const [role, setRole] = useState(initialRole);
+  const [items, setItems] = useState(templates[initialRole] || []);
+  const [newLabel, setNewLabel] = useState("");
+  useEffect(()=>{ setItems(templates[role] || []); setNewLabel(""); }, [role]);
+  function updateLabel(id, label){ setItems(items.map(it => it.id===id ? { ...it, label } : it)); }
+  function removeItem(id){ setItems(items.filter(it => it.id!==id)); }
+  function addItem(){ if(!newLabel.trim()) return; setItems([...items, { id:uid(), label:newLabel.trim() }]); setNewLabel(""); }
+  async function save(){ await onSave(role, items); }
+  return React.createElement("div", { className:"modalOverlay", onClick:onClose },
+    React.createElement("div", { className:"modal modalWide", onClick:e=>e.stopPropagation() }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, "Chỉnh checklist theo vai trò"),
+      React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } }, "Đây là mẫu — bạn có thể sửa lại đúng nội dung công việc thực tế cho từng vị trí."),
+      React.createElement("div", { key:"tabs", className:"btnRow", style:{ marginBottom:14 } }, roles.map(r =>
+        React.createElement("button", { key:r, type:"button", className:"btn"+(r===role?" btnPrimary":""), style:{ padding:"6px 12px", fontSize:12.5 }, onClick:()=>setRole(r) }, r)
+      )),
+      React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8, marginBottom:12, maxHeight:320, overflowY:"auto" } }, items.map(it =>
+        React.createElement("div", { key:it.id, style:{ display:"flex", gap:8, alignItems:"center" } }, [
+          React.createElement("input", { key:"i", value:it.label, onChange:e=>updateLabel(it.id, e.target.value), style:{ flex:1, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5 } }),
+          React.createElement("button", { key:"d", type:"button", className:"btn btnDanger", style:{ padding:"6px 9px", fontSize:11.5 }, onClick:()=>removeItem(it.id) }, "Xoá"),
+        ])
+      )),
+      React.createElement("div", { key:"add", style:{ display:"flex", gap:8, marginBottom:16 } }, [
+        React.createElement("input", { key:"i", value:newLabel, onChange:e=>setNewLabel(e.target.value), placeholder:"Thêm đầu việc mới...", style:{ flex:1, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5 } }),
+        React.createElement("button", { key:"b", type:"button", className:"btn", onClick:addItem }, "＋ Thêm"),
       ]),
-    ]);
-  });
+      React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } }, [
+        React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:onClose }, "Huỷ"),
+        React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", onClick:save }, "Lưu checklist"),
+      ]),
+    ])
+  );
+}
 
-  const table = filtered.length===0
-    ? React.createElement("div", { className:"emptyState" }, "Chưa có đơn hàng nào khớp bộ lọc.")
-    : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
-        React.createElement("thead",{key:"h"}, React.createElement("tr",null,headerCells)),
-        React.createElement("tbody",{key:"b"}, bodyRows),
-      ]));
-
-  const formModal = showForm && React.createElement("div", { className:"modalOverlay", onClick:()=>setShowForm(false) },
+function DailyReviewModal({ report, tasks, onSave, onClose }){
+  const [diem, setDiem] = useState(report.diemChu || 0);
+  const [nhanXet, setNhanXet] = useState(report.nhanXetChu || "");
+  const done = report.doneIds || {};
+  return React.createElement("div", { className:"modalOverlay", onClick:onClose },
     React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
-      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:14 } }, "Thêm đơn đặt hàng"),
-      React.createElement("form", { key:"f", onSubmit:submitForm }, [
-        React.createElement("div", { key:"r1", style:{ display:"flex", gap:10, marginBottom:10 } }, [
-          React.createElement("div", { key:"a", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Nhà cung cấp"), React.createElement("input",{key:"i",value:form.ncc,onChange:e=>setForm({...form,ncc:e.target.value}),required:true}) ]),
-          React.createElement("div", { key:"b", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Cửa hàng"), React.createElement("select",{key:"i",value:form.shop,onChange:e=>setForm({...form,shop:e.target.value})}, DEFAULT_SHOPS.map(s=>React.createElement("option",{key:s,value:s},s))) ]),
-        ]),
-        React.createElement("div", { key:"r2", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Tên sản phẩm / mặt hàng đặt"), React.createElement("input",{key:"i",value:form.tenSP,onChange:e=>setForm({...form,tenSP:e.target.value}),required:true}) ]),
-        React.createElement("div", { key:"r3", style:{ display:"flex", gap:10, marginBottom:10 } }, [
-          React.createElement("div", { key:"a", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Số lượng đặt"), React.createElement("input",{key:"i",type:"number",value:form.slDat,onChange:e=>setForm({...form,slDat:e.target.value})}) ]),
-          React.createElement("div", { key:"b", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Nhu cầu cần (tuỳ chọn)"), React.createElement("input",{key:"i",type:"number",value:form.nhuCau,onChange:e=>setForm({...form,nhuCau:e.target.value})}) ]),
-        ]),
-        React.createElement("div", { key:"r4", style:{ display:"flex", gap:10, marginBottom:10 } }, [
-          React.createElement("div", { key:"a", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Ngày đặt"), React.createElement("input",{key:"i",type:"date",value:form.ngayDat,onChange:e=>setForm({...form,ngayDat:e.target.value})}) ]),
-          React.createElement("div", { key:"b", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"NCC hẹn giao ngày"), React.createElement("input",{key:"i",type:"date",value:form.ngayHenGiao,onChange:e=>setForm({...form,ngayHenGiao:e.target.value})}) ]),
-        ]),
-        React.createElement("div", { key:"r5", className:"field", style:{ marginBottom:16 } }, [ React.createElement("label",{key:"l"},"Ghi chú"), React.createElement("textarea",{key:"i",rows:2,value:form.ghiChu,onChange:e=>setForm({...form,ghiChu:e.target.value})}) ]),
-        React.createElement("div", { key:"r6", className:"btnRow", style:{ justifyContent:"flex-end" } }, [
-          React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:()=>setShowForm(false) }, "Huỷ"),
-          React.createElement("button", { key:"s", type:"submit", className:"btn btnPrimary" }, "Lưu đơn hàng"),
-        ]),
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, `${report.staffName} — ${report.ngay}`),
+      React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } }, `${report.shop} · ${report.role}`),
+      React.createElement("div", { key:"list", style:{ marginBottom:14, maxHeight:220, overflowY:"auto" } }, tasks.map(t =>
+        React.createElement("div", { key:t.id, style:{ display:"flex", gap:8, fontSize:12.5, padding:"4px 0", color: done[t.id] ? "var(--ink)" : "var(--clay)" } }, [
+          React.createElement("span",{key:"i"}, done[t.id] ? "✓" : "✕"),
+          React.createElement("span",{key:"l"}, t.label),
+        ])
+      )),
+      report.ghiChu && React.createElement("div", { key:"note", style:{ background:"var(--paper)", borderRadius:8, padding:"8px 10px", fontSize:12.5, marginBottom:14 } }, [
+        React.createElement("div",{key:"l",style:{fontWeight:700,marginBottom:2}},"Ghi chú của nhân viên"),
+        report.ghiChu,
+      ]),
+      React.createElement("div", { key:"score", className:"field", style:{ marginBottom:10 } }, [
+        React.createElement("label",{key:"l"},"Chấm điểm hiệu suất"),
+        React.createElement(StarSelect, { key:"i", value:diem, onChange:setDiem }),
+      ]),
+      React.createElement("div", { key:"cmt", className:"field", style:{ marginBottom:16 } }, [
+        React.createElement("label",{key:"l"},"Nhận xét"),
+        React.createElement("textarea",{key:"i", rows:3, value:nhanXet, onChange:e=>setNhanXet(e.target.value)}),
+      ]),
+      React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } }, [
+        React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:onClose }, "Đóng"),
+        React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", onClick:()=>onSave(report.id, diem, nhanXet) }, "Lưu đánh giá"),
+      ]),
+    ])
+  );
+}
+
+function DailyChecklistView(){
+  const [staff, setStaff] = useState([]);
+  const [templates, setTemplates] = useState(DEFAULT_DAILY_CHECKLISTS);
+  const [reports, setReports] = useState({});
+  const [selfId, setSelfId] = useState("");
+  const [note, setNote] = useState("");
+  const [showTplEditor, setShowTplEditor] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(false);
+  const [adminShop, setAdminShop] = useState("Tất cả");
+  const [adminDate, setAdminDate] = useState(todayISO());
+  const [reviewReportId, setReviewReportId] = useState(null);
+
+  useEffect(()=>{
+    const u1 = subscribeCol("staff", setStaff);
+    const u2 = subscribeConfigDoc("dailyChecklist", d => setTemplates(d && d.byRole ? d.byRole : DEFAULT_DAILY_CHECKLISTS));
+    const u3 = subscribeCol("dailyReports", rows => { const map = {}; rows.forEach(r => map[r.id] = r); setReports(map); });
+    return ()=>{ u1(); u2(); u3(); };
+  }, []);
+
+  const today = todayISO();
+  const selfStaff = staff.find(s => s.id===selfId);
+  const selfTasks = selfStaff ? (templates[selfStaff.role] || []) : [];
+  const selfReportId = selfStaff ? dailyReportId(selfStaff.id, today) : null;
+  const selfReport = selfReportId ? reports[selfReportId] : null;
+  const doneMap = selfReport ? (selfReport.doneIds || {}) : {};
+  const doneCount = Object.keys(doneMap).filter(k => doneMap[k]).length;
+  const pct = selfTasks.length ? Math.round(doneCount/selfTasks.length*100) : 0;
+
+  useEffect(()=>{ setNote(selfReport ? (selfReport.ghiChu || "") : ""); }, [selfReportId, selfReport && selfReport.ghiChu]);
+
+  async function toggleTask(taskId, checked){
+    if(!selfStaff) return;
+    const doneIds = { ...doneMap };
+    if(checked) doneIds[taskId] = true; else delete doneIds[taskId];
+    await db.collection("dailyReports").doc(selfReportId).set({
+      staffId:selfStaff.id, staffName:selfStaff.name, shop:selfStaff.shop, role:selfStaff.role,
+      ngay:today, doneIds, ghiChu: selfReport ? (selfReport.ghiChu || "") : "",
+      trangThai: selfReport ? (selfReport.trangThai || "Nháp") : "Nháp",
+      updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
+    }, { merge:true });
+  }
+  async function saveNote(){
+    if(!selfStaff) return;
+    await db.collection("dailyReports").doc(selfReportId).set({
+      staffId:selfStaff.id, staffName:selfStaff.name, shop:selfStaff.shop, role:selfStaff.role,
+      ngay:today, ghiChu:note, doneIds:doneMap, trangThai: selfReport ? (selfReport.trangThai || "Nháp") : "Nháp",
+      updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
+    }, { merge:true });
+  }
+  async function submitDaily(){
+    if(!selfStaff) return;
+    await db.collection("dailyReports").doc(selfReportId).set({
+      staffId:selfStaff.id, staffName:selfStaff.name, shop:selfStaff.shop, role:selfStaff.role,
+      ngay:today, ghiChu:note, doneIds:doneMap, trangThai:"Đã nộp", ngayNop:today,
+      updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
+    }, { merge:true });
+  }
+  async function saveTemplate(role, items){
+    const next = { ...templates, [role]:items };
+    await saveConfigDoc("dailyChecklist", { byRole:next });
+    setShowTplEditor(false);
+  }
+  async function saveReview(reportId, diem, nhanXet){
+    await db.collection("dailyReports").doc(reportId).set({ diemChu:diem, nhanXetChu:nhanXet }, { merge:true });
+    setReviewReportId(null);
+  }
+
+  const whoBar = React.createElement("div", { className:"whoBar" },
+    React.createElement("div", { className:"field", style:{ minWidth:240 } }, [
+      React.createElement("label",{key:"l"},"Bạn là ai?"),
+      React.createElement("select", { key:"i", value:selfId, onChange:e=>setSelfId(e.target.value) }, [
+        React.createElement("option",{key:"",value:""},"— chọn tên bạn —"),
+        ...staff.map(s => React.createElement("option",{key:s.id,value:s.id}, `${s.name} · ${s.shop} · ${s.role}`)),
       ]),
     ])
   );
 
+  let selfCard = null;
+  if(selfStaff){
+    const items = selfTasks.length===0
+      ? React.createElement("div",{className:"emptyState"}, "Chưa có checklist cho vai trò này — bấm \"Chỉnh checklist theo vai trò\" để thêm.")
+      : selfTasks.map(t => {
+          const isDone = !!doneMap[t.id];
+          return React.createElement("label", { key:t.id, className:"checkItem"+(isDone?" done":"") }, [
+            React.createElement("input",{ key:"c", type:"checkbox", checked:isDone, onChange:e=>toggleTask(t.id, e.target.checked) }),
+            React.createElement("span",{ key:"s", className:"lbl" }, t.label),
+          ]);
+        });
+    selfCard = React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+      React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10, marginBottom:10 } }, [
+        React.createElement("div", { key:"l" }, [
+          React.createElement("div", { key:"n", style:{ fontWeight:700, fontSize:15 } }, `${selfStaff.name} — ${today}`),
+          React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)" } }, `${selfStaff.shop} · ${selfStaff.role}`),
+        ]),
+        (selfReport && selfReport.trangThai==="Đã nộp") ? StatusPill("Đã nộp báo cáo hôm nay", "good") : StatusPill("Chưa nộp — đang làm", "warn"),
+      ]),
+      React.createElement("div", { key:"prog", style:{ display:"flex", alignItems:"center", gap:10, marginBottom:14 } }, [
+        React.createElement("div",{key:"bar", className:"progressOuter"}, React.createElement("div",{className:"progressInner", style:{ width:pct+"%" }})),
+        React.createElement("div",{key:"pct", style:{ fontSize:12.5, fontWeight:700, color:"var(--pine)", whiteSpace:"nowrap" }}, `${doneCount}/${selfTasks.length} · ${pct}%`),
+      ]),
+      React.createElement("div", { key:"list" }, items),
+      React.createElement("div", { key:"note", className:"field", style:{ marginTop:14 } }, [
+        React.createElement("label",{key:"l"},"Ghi chú trong ngày (nếu có)"),
+        React.createElement("textarea",{key:"i", rows:2, value:note, onChange:e=>setNote(e.target.value), onBlur:saveNote, placeholder:"VD: hết hàng mặt hàng X, cần hỗ trợ..." }),
+      ]),
+      React.createElement("div", { key:"btns", className:"btnRow", style:{ marginTop:12 } },
+        React.createElement("button", { key:"submit", type:"button", className:"btn btnPrimary", onClick:submitDaily }, (selfReport && selfReport.trangThai==="Đã nộp") ? "Cập nhật & nộp lại" : "Nộp báo cáo hôm nay")
+      ),
+      (selfReport && selfReport.diemChu!=null) && React.createElement("div", { key:"review", style:{ marginTop:12, background:"var(--pineSoft)", borderRadius:8, padding:"9px 12px", fontSize:12.5 } }, [
+        React.createElement("div",{key:"t",style:{fontWeight:700,marginBottom:2}}, `Quản lý chấm: ${"⭐".repeat(selfReport.diemChu)}`),
+        selfReport.nhanXetChu && React.createElement("div",{key:"n",style:{color:"var(--inkSoft)"}}, selfReport.nhanXetChu),
+      ]),
+    ]);
+  }
+
+  const tplEditor = showTplEditor && React.createElement(ChecklistTemplateEditor, {
+    roles:STAFF_ROLES, templates, initialRole:(selfStaff ? selfStaff.role : STAFF_ROLES[0]),
+    onSave:saveTemplate, onClose:()=>setShowTplEditor(false),
+  });
+
+  const shopStaff = adminShop==="Tất cả" ? staff : staff.filter(s => s.shop===adminShop);
+  const adminRows = shopStaff.map(s => {
+    const rid = dailyReportId(s.id, adminDate);
+    const r = reports[rid];
+    const tasks = templates[s.role] || [];
+    const done = r ? Object.keys(r.doneIds || {}).filter(k => r.doneIds[k]).length : 0;
+    const p = tasks.length ? Math.round(done/tasks.length*100) : 0;
+    const status = !r ? { text:"Chưa làm gì", tone:"warn" } : (r.trangThai==="Đã nộp" ? { text:"Đã nộp", tone:"good" } : { text:"Đang làm dở", tone:"neutral" });
+    return { staff:s, r, p, done, total:tasks.length, status };
+  });
+  const submittedCount = adminRows.filter(x => x.r && x.r.trangThai==="Đã nộp").length;
+  const avgPctAdmin = adminRows.length ? Math.round(adminRows.reduce((s,x)=>s+x.p,0)/adminRows.length) : 0;
+
+  const adminMetrics = React.createElement("div", { className:"metrics" }, [
+    React.createElement("div", { key:"1", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"NV cần báo cáo"), React.createElement("div",{key:"v",className:"value"}, fmtNum(adminRows.length)) ]),
+    React.createElement("div", { key:"2", className:"metric good" }, [ React.createElement("div",{key:"l",className:"label"},"Đã nộp"), React.createElement("div",{key:"v",className:"value"}, fmtNum(submittedCount)) ]),
+    React.createElement("div", { key:"3", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Chưa nộp"), React.createElement("div",{key:"v",className:"value"}, fmtNum(adminRows.length-submittedCount)) ]),
+    React.createElement("div", { key:"4", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"% hoàn thành TB"), React.createElement("div",{key:"v",className:"value"}, avgPctAdmin+"%") ]),
+  ]);
+
+  const adminFilterRow = React.createElement("div", { className:"btnRow", style:{ marginBottom:14 } }, [
+    React.createElement("select", { key:"shop", value:adminShop, onChange:e=>setAdminShop(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } },
+      ["Tất cả", ...DEFAULT_SHOPS].map(s => React.createElement("option",{key:s,value:s},s))),
+    React.createElement("input", { key:"date", type:"date", value:adminDate, onChange:e=>setAdminDate(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } }),
+  ]);
+
+  const adminTable = adminRows.length===0
+    ? React.createElement("div",{className:"emptyState"}, "Chưa có nhân viên nào trong bộ lọc này.")
+    : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Nhân viên","Cửa hàng","Vai trò","Hoàn thành","Trạng thái","Điểm chủ chấm",""].map((h,i)=>React.createElement("th",{key:i},h)))),
+        React.createElement("tbody",{key:"b"}, adminRows.map(x => React.createElement("tr",{key:x.staff.id}, [
+          React.createElement("td",{key:"n"}, x.staff.name),
+          React.createElement("td",{key:"sh"}, x.staff.shop),
+          React.createElement("td",{key:"r"}, x.staff.role),
+          React.createElement("td",{key:"p"}, `${x.done}/${x.total} · ${x.p}%`),
+          React.createElement("td",{key:"st"}, StatusPill(x.status.text, x.status.tone)),
+          React.createElement("td",{key:"d"}, (x.r && x.r.diemChu!=null) ? "⭐".repeat(x.r.diemChu) : "—"),
+          React.createElement("td",{key:"a"}, x.r ? React.createElement("button",{className:"btn", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>setReviewReportId(x.r.id)}, "Xem & chấm") : "—"),
+        ]))),
+      ]));
+
+  const reviewingReport = reviewReportId ? reports[reviewReportId] : null;
+  const reviewModal = reviewingReport && React.createElement(DailyReviewModal, {
+    report:reviewingReport, tasks:templates[reviewingReport.role] || [], onSave:saveReview, onClose:()=>setReviewReportId(null),
+  });
+
+  const adminSection = React.createElement("div", { key:"admin", style:{ marginTop:26 } }, [
+    React.createElement("div", { key:"tgl", className:"btnRow", style:{ marginBottom:14, justifyContent:"space-between" } }, [
+      React.createElement("button", { key:"b", type:"button", className:"btn btnGhost", onClick:()=>setAdminOpen(!adminOpen) }, adminOpen ? "▲ Ẩn báo cáo tất cả cửa hàng" : "▾ Xem báo cáo tất cả cửa hàng (Quản lý)"),
+      React.createElement("button", { key:"tpl", type:"button", className:"btn", onClick:()=>setShowTplEditor(true) }, "⚙️ Chỉnh checklist theo vai trò"),
+    ]),
+    adminOpen && React.createElement(React.Fragment, null, [ adminMetrics, adminFilterRow, adminTable ]),
+  ]);
+
   return React.createElement(React.Fragment, null, [
-    React.createElement("h2", { key:"t", className:"pagetitle" }, "Đặt hàng & Nhận hàng"),
-    React.createElement("p", { key:"s", className:"pagesub" }, "Theo dõi độ trễ giao hàng và so sánh số lượng nhận với nhu cầu thực tế."),
-    metrics, filterRow, table, formModal,
+    React.createElement("h2", { key:"t", className:"pagetitle" }, "Checklist công việc hàng ngày"),
+    React.createElement("p", { key:"s", className:"pagesub" }, "Từng nhân viên tự chọn tên, tick việc theo checklist đúng vị trí và nộp báo cáo cuối ca."),
+    whoBar, selfCard, tplEditor, adminSection, reviewModal,
   ]);
 }
 
-// ================= MODULE 2: ĐÀO TẠO & BUDDY =================
+// ================= MODULE 2: BÁO CÁO CÔNG VIỆC TUẦN =================
+function mondayOf(iso){
+  const d = new Date(iso + "T00:00:00");
+  const day = d.getDay();
+  const diff = day===0 ? -6 : 1-day;
+  d.setDate(d.getDate()+diff);
+  return d.toISOString().slice(0,10);
+}
+
+function WeeklyReviewModal({ report, onSave, onClose }){
+  const [diem, setDiem] = useState(report.diemChu || 0);
+  const [nhanXet, setNhanXet] = useState(report.nhanXetChu || "");
+  return React.createElement("div", { className:"modalOverlay", onClick:onClose },
+    React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:2 } }, `${report.staffName} — Tuần ${report.tuanNgay}`),
+      React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } }, `${report.shop} · ${report.role}`),
+      React.createElement("div", { key:"n1", style:{ marginBottom:10, fontSize:13 } }, [ React.createElement("b",{key:"b"},"Công việc chính: "), report.noiDungChinh ]),
+      report.khoKhan && React.createElement("div", { key:"n2", style:{ marginBottom:14, fontSize:13, color:"var(--inkSoft)" } }, [ React.createElement("b",{key:"b"},"Khó khăn/đề xuất: "), report.khoKhan ]),
+      React.createElement("div", { key:"score", className:"field", style:{ marginBottom:10 } }, [
+        React.createElement("label",{key:"l"},"Chấm điểm hiệu suất"),
+        React.createElement(StarSelect, { key:"i", value:diem, onChange:setDiem }),
+      ]),
+      React.createElement("div", { key:"cmt", className:"field", style:{ marginBottom:16 } }, [
+        React.createElement("label",{key:"l"},"Nhận xét"),
+        React.createElement("textarea",{key:"i", rows:3, value:nhanXet, onChange:e=>setNhanXet(e.target.value)}),
+      ]),
+      React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } }, [
+        React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:onClose }, "Đóng"),
+        React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", onClick:()=>onSave(report.id, diem, nhanXet) }, "Lưu đánh giá"),
+      ]),
+    ])
+  );
+}
+
+function WeeklyReportView(){
+  const [staff, setStaff] = useState([]);
+  const [reports, setReports] = useState([]);
+  const [selfId, setSelfId] = useState("");
+  const [form, setForm] = useState({ noiDungChinh:"", khoKhan:"", tuDanhGia:3 });
+  const [adminOpen, setAdminOpen] = useState(false);
+  const [adminShop, setAdminShop] = useState("Tất cả");
+  const [reviewId, setReviewId] = useState(null);
+
+  useEffect(()=>{
+    const u1 = subscribeCol("staff", setStaff);
+    const u2 = subscribeCol("weeklyReports", setReports, "createdAtTs");
+    return ()=>{ u1(); u2(); };
+  }, []);
+
+  const currentMonday = mondayOf(todayISO());
+  const selfStaff = staff.find(s => s.id===selfId);
+  const myReports = selfStaff ? reports.filter(r => r.staffId===selfStaff.id) : [];
+  const submittedThisWeek = myReports.some(r => r.tuanNgay===currentMonday);
+
+  async function submitWeekly(e){
+    e.preventDefault();
+    if(!selfStaff || !form.noiDungChinh.trim()) return;
+    await addDoc("weeklyReports", {
+      staffId:selfStaff.id, staffName:selfStaff.name, shop:selfStaff.shop, role:selfStaff.role,
+      tuanNgay:currentMonday, noiDungChinh:form.noiDungChinh.trim(), khoKhan:form.khoKhan.trim(),
+      tuDanhGia:Number(form.tuDanhGia), diemChu:null, nhanXetChu:"", ngayGui:todayISO(),
+    });
+    setForm({ noiDungChinh:"", khoKhan:"", tuDanhGia:3 });
+  }
+  async function saveReview(id, diem, nhanXet){ await updateDoc("weeklyReports", id, { diemChu:diem, nhanXetChu:nhanXet }); setReviewId(null); }
+
+  const whoBar = React.createElement("div", { className:"whoBar" },
+    React.createElement("div", { className:"field", style:{ minWidth:240 } }, [
+      React.createElement("label",{key:"l"},"Bạn là ai?"),
+      React.createElement("select", { key:"i", value:selfId, onChange:e=>setSelfId(e.target.value) }, [
+        React.createElement("option",{key:"",value:""},"— chọn tên bạn —"),
+        ...staff.map(s => React.createElement("option",{key:s.id,value:s.id}, `${s.name} · ${s.shop} · ${s.role}`)),
+      ]),
+    ])
+  );
+
+  const selfCard = selfStaff && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15, marginBottom:2 } }, `${selfStaff.name} — Tuần bắt đầu ${currentMonday}`),
+    React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } }, `${selfStaff.shop} · ${selfStaff.role}`),
+    submittedThisWeek
+      ? StatusPill("Đã gửi báo cáo tuần này", "good")
+      : React.createElement("form", { key:"f", onSubmit:submitWeekly }, [
+          React.createElement("div", { key:"a", className:"field", style:{ marginBottom:10 } }, [
+            React.createElement("label",{key:"l"},"Công việc chính đã làm trong tuần"),
+            React.createElement("textarea",{key:"i", rows:3, value:form.noiDungChinh, onChange:e=>setForm({...form,noiDungChinh:e.target.value}), required:true }),
+          ]),
+          React.createElement("div", { key:"b", className:"field", style:{ marginBottom:10 } }, [
+            React.createElement("label",{key:"l"},"Khó khăn / đề xuất (nếu có)"),
+            React.createElement("textarea",{key:"i", rows:2, value:form.khoKhan, onChange:e=>setForm({...form,khoKhan:e.target.value}) }),
+          ]),
+          React.createElement("div", { key:"c", className:"field", style:{ marginBottom:14 } }, [
+            React.createElement("label",{key:"l"},"Bạn tự đánh giá hiệu suất tuần này"),
+            React.createElement(StarSelect, { key:"i", value:Number(form.tuDanhGia), onChange:v=>setForm({...form,tuDanhGia:v}) }),
+          ]),
+          React.createElement("button", { key:"s", type:"submit", className:"btn btnPrimary" }, "Gửi báo cáo tuần"),
+        ]),
+  ]);
+
+  const myHistory = myReports.length>0 && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"t", className:"cardTitle" }, "Lịch sử báo cáo tuần của bạn"),
+    React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8 } }, myReports.map(r =>
+      React.createElement("div", { key:r.id, style:{ background:"var(--paper)", borderRadius:8, padding:"9px 12px", fontSize:12.5 } }, [
+        React.createElement("div",{key:"h",style:{fontWeight:700,marginBottom:2}}, `Tuần ${r.tuanNgay} · Tự đánh giá ${"⭐".repeat(r.tuDanhGia)}`),
+        React.createElement("div",{key:"b",style:{marginBottom:2}}, r.noiDungChinh),
+        r.khoKhan && React.createElement("div",{key:"k",style:{color:"var(--inkSoft)",marginBottom:2}}, `Khó khăn/đề xuất: ${r.khoKhan}`),
+        r.diemChu!=null && React.createElement("div",{key:"d",style:{color:"var(--pine)",fontWeight:600}}, `Quản lý chấm: ${"⭐".repeat(r.diemChu)}${r.nhanXetChu ? " — "+r.nhanXetChu : ""}`),
+      ])
+    )),
+  ]);
+
+  const shopReports = adminShop==="Tất cả" ? reports : reports.filter(r => r.shop===adminShop);
+  const thisWeekReports = shopReports.filter(r => r.tuanNgay===currentMonday);
+  const shopStaffCount = (adminShop==="Tất cả" ? staff : staff.filter(s => s.shop===adminShop)).length;
+
+  const adminMetrics = React.createElement("div", { className:"metrics" }, [
+    React.createElement("div", { key:"1", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"NV trong bộ lọc"), React.createElement("div",{key:"v",className:"value"}, fmtNum(shopStaffCount)) ]),
+    React.createElement("div", { key:"2", className:"metric good" }, [ React.createElement("div",{key:"l",className:"label"},"Đã gửi tuần này"), React.createElement("div",{key:"v",className:"value"}, fmtNum(thisWeekReports.length)) ]),
+    React.createElement("div", { key:"3", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Thiếu báo cáo tuần này"), React.createElement("div",{key:"v",className:"value"}, fmtNum(Math.max(shopStaffCount-thisWeekReports.length,0))) ]),
+  ]);
+
+  const adminFilterRow = React.createElement("div", { className:"btnRow", style:{ marginBottom:14 } },
+    React.createElement("select", { value:adminShop, onChange:e=>setAdminShop(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } },
+      ["Tất cả", ...DEFAULT_SHOPS].map(s => React.createElement("option",{key:s,value:s},s)))
+  );
+
+  const adminTable = shopReports.length===0
+    ? React.createElement("div",{className:"emptyState"}, "Chưa có báo cáo tuần nào trong bộ lọc này.")
+    : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Nhân viên","Cửa hàng","Tuần","Tự đánh giá","Điểm chủ chấm",""].map((h,i)=>React.createElement("th",{key:i},h)))),
+        React.createElement("tbody",{key:"b"}, [...shopReports].reverse().map(r => React.createElement("tr",{key:r.id}, [
+          React.createElement("td",{key:"n"}, r.staffName),
+          React.createElement("td",{key:"sh"}, r.shop),
+          React.createElement("td",{key:"w"}, r.tuanNgay),
+          React.createElement("td",{key:"t"}, "⭐".repeat(r.tuDanhGia)),
+          React.createElement("td",{key:"d"}, r.diemChu!=null ? "⭐".repeat(r.diemChu) : "—"),
+          React.createElement("td",{key:"a"}, React.createElement("button",{className:"btn", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>setReviewId(r.id)}, "Xem & chấm")),
+        ]))),
+      ]));
+
+  const reviewingReport = reviewId ? reports.find(r => r.id===reviewId) : null;
+  const reviewModal = reviewingReport && React.createElement(WeeklyReviewModal, { report:reviewingReport, onSave:saveReview, onClose:()=>setReviewId(null) });
+
+  const adminSection = React.createElement("div", { key:"admin", style:{ marginTop:26 } }, [
+    React.createElement("button", { key:"tgl", type:"button", className:"btn btnGhost", style:{ marginBottom:14 }, onClick:()=>setAdminOpen(!adminOpen) }, adminOpen ? "▲ Ẩn báo cáo tất cả cửa hàng" : "▾ Xem báo cáo tất cả cửa hàng (Quản lý)"),
+    adminOpen && React.createElement(React.Fragment, null, [ adminMetrics, adminFilterRow, adminTable ]),
+  ]);
+
+  return React.createElement(React.Fragment, null, [
+    React.createElement("h2", { key:"t", className:"pagetitle" }, "Báo cáo công việc tuần"),
+    React.createElement("p", { key:"s", className:"pagesub" }, "Mỗi nhân viên tổng kết công việc & tự đánh giá cuối tuần; quản lý xem và chấm điểm."),
+    whoBar, selfCard, myHistory, adminSection, reviewModal,
+  ]);
+}
+
+// ================= MODULE 3: HIỆU SUẤT & TỔNG QUAN CỬA HÀNG =================
+function PerformanceView(){
+  const [staff, setStaff] = useState([]);
+  const [dailyReports, setDailyReports] = useState([]);
+  const [weeklyReports, setWeeklyReports] = useState([]);
+  useEffect(()=>{
+    const u1 = subscribeCol("staff", setStaff);
+    const u2 = subscribeCol("dailyReports", setDailyReports);
+    const u3 = subscribeCol("weeklyReports", setWeeklyReports);
+    return ()=>{ u1(); u2(); u3(); };
+  }, []);
+
+  const today = todayISO();
+  const currentMonday = mondayOf(today);
+
+  const shopStats = DEFAULT_SHOPS.map(shop => {
+    const shopStaff = staff.filter(s => s.shop===shop);
+    const todaySubmitted = shopStaff.filter(s => dailyReports.some(r => r.staffId===s.id && r.ngay===today && r.trangThai==="Đã nộp")).length;
+    const weekSubmitted = shopStaff.filter(s => weeklyReports.some(r => r.staffId===s.id && r.tuanNgay===currentMonday)).length;
+    const scores = dailyReports.filter(r => r.shop===shop && r.diemChu!=null).map(r => r.diemChu);
+    const avgScore = scores.length ? (scores.reduce((a,b)=>a+b,0)/scores.length) : null;
+    return { shop, staffCount:shopStaff.length, todaySubmitted, weekSubmitted, avgScore, hasManager: shopStaff.some(s => s.role==="Cửa hàng trưởng") };
+  });
+
+  const noManagerShops = shopStats.filter(s => !s.hasManager && s.staffCount>0);
+  const noReportTodayShops = shopStats.filter(s => s.staffCount>0 && s.todaySubmitted===0);
+  const totalStaff = staff.length;
+  const totalSubmittedToday = shopStats.reduce((s,x)=>s+x.todaySubmitted,0);
+  const combinedScores = [
+    ...dailyReports.filter(r=>r.diemChu!=null).map(r=>r.diemChu),
+    ...weeklyReports.filter(r=>r.diemChu!=null).map(r=>r.diemChu),
+  ];
+  const systemAvgScore = combinedScores.length ? (combinedScores.reduce((a,b)=>a+b,0)/combinedScores.length).toFixed(1) : "—";
+
+  const metrics = React.createElement("div", { className:"metrics" }, [
+    React.createElement("div", { key:"1", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Tổng nhân viên"), React.createElement("div",{key:"v",className:"value"}, fmtNum(totalStaff)) ]),
+    React.createElement("div", { key:"2", className:"metric good" }, [ React.createElement("div",{key:"l",className:"label"},"Đã nộp báo cáo hôm nay"), React.createElement("div",{key:"v",className:"value"}, `${fmtNum(totalSubmittedToday)}/${fmtNum(totalStaff)}`) ]),
+    React.createElement("div", { key:"3", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Cửa hàng chưa ai báo cáo hôm nay"), React.createElement("div",{key:"v",className:"value"}, fmtNum(noReportTodayShops.length)) ]),
+    React.createElement("div", { key:"4", className:"metric gold" }, [ React.createElement("div",{key:"l",className:"label"},"Điểm đánh giá TB toàn hệ thống"), React.createElement("div",{key:"v",className:"value"}, systemAvgScore==="—" ? "—" : systemAvgScore+"⭐") ]),
+  ]);
+
+  const alertCard = (noManagerShops.length>0 || noReportTodayShops.length>0) && React.createElement("div", { className:"card", style:{ marginBottom:20, borderColor:"var(--claySoft)" } }, [
+    React.createElement("div", { key:"t", className:"cardTitle", style:{ color:"var(--clay)" } }, "⚠️ Cần chú ý"),
+    React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:6, fontSize:12.5 } }, [
+      noReportTodayShops.length>0 && React.createElement("div", {key:"a"}, `Chưa có báo cáo hôm nay: ${noReportTodayShops.map(s=>s.shop).join(", ")}`),
+      noManagerShops.length>0 && React.createElement("div", {key:"b"}, `Không có cửa hàng trưởng: ${noManagerShops.map(s=>s.shop).join(", ")}`),
+    ]),
+  ]);
+
+  const table = React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+    React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Cửa hàng","Số NV","Cửa hàng trưởng","Đã nộp hôm nay","Đã nộp tuần này","Điểm TB"].map((h,i)=>React.createElement("th",{key:i},h)))),
+    React.createElement("tbody",{key:"b"}, shopStats.map(s => React.createElement("tr",{key:s.shop}, [
+      React.createElement("td",{key:"sh"}, s.shop),
+      React.createElement("td",{key:"c"}, fmtNum(s.staffCount)),
+      React.createElement("td",{key:"m"}, s.hasManager ? StatusPill("Có","good") : StatusPill("Không","warn")),
+      React.createElement("td",{key:"d"}, s.staffCount ? `${s.todaySubmitted}/${s.staffCount}` : "—"),
+      React.createElement("td",{key:"w"}, s.staffCount ? `${s.weekSubmitted}/${s.staffCount}` : "—"),
+      React.createElement("td",{key:"sc"}, s.avgScore!=null ? s.avgScore.toFixed(1)+"⭐" : "—"),
+    ]))),
+  ]));
+
+  return React.createElement(React.Fragment, null, [
+    React.createElement("h2", { key:"t", className:"pagetitle" }, "Hiệu suất & tổng quan cửa hàng"),
+    React.createElement("p", { key:"s", className:"pagesub" }, "Theo dõi tình hình báo cáo và hiệu suất của toàn bộ 9 nhà thuốc trong một màn hình."),
+    metrics, alertCard, table,
+  ]);
+}
+
+// ================= MODULE 4: ĐÀO TẠO & BUDDY =================
 const DEFAULT_CHECKLIST = [
   { id:"d1", offset:0, label:"Giới thiệu quy định cửa hàng, an toàn, GPP cơ bản" },
   { id:"d2", offset:0, label:"Giới thiệu buddy kèm cặp, tham quan cửa hàng, vị trí hàng hoá" },
@@ -495,7 +877,7 @@ function TrainingView(){
   ]);
 }
 
-// ================= MODULE 3: GHI NHẬN & TẶNG SAO =================
+// ================= MODULE 5: GHI NHẬN & TẶNG SAO =================
 const DEFAULT_REWARDS = [
   { id:"r1", name:"Phiếu quà 50.000đ", stars:10 },
   { id:"r2", name:"Phiếu quà 100.000đ", stars:20 },
@@ -640,13 +1022,13 @@ function KudosView(){
 function StaffView(){
   const [staff, setStaff] = useState([]);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ name:"", shop:DEFAULT_SHOPS[0], role:"Nhân viên" });
+  const [form, setForm] = useState({ name:"", shop:DEFAULT_SHOPS[0], role:STAFF_ROLES[1] });
   useEffect(()=>{ const u = subscribeCol("staff", setStaff); return u; }, []);
   async function submit(e){
     e.preventDefault();
     if(!form.name.trim()) return;
     await addDoc("staff", { name:form.name.trim(), shop:form.shop, role:form.role });
-    setForm({ name:"", shop:DEFAULT_SHOPS[0], role:"Nhân viên" }); setShowForm(false);
+    setForm({ name:"", shop:DEFAULT_SHOPS[0], role:STAFF_ROLES[1] }); setShowForm(false);
   }
   async function removeStaff(id){ if(window.confirm("Xoá nhân viên này khỏi danh sách?")) await deleteDoc("staff", id); }
 
@@ -669,7 +1051,7 @@ function StaffView(){
         React.createElement("div", { key:"a", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Họ tên"), React.createElement("input",{key:"i",value:form.name,onChange:e=>setForm({...form,name:e.target.value}),required:true}) ]),
         React.createElement("div", { key:"r", style:{ display:"flex", gap:10, marginBottom:16 } }, [
           React.createElement("div", { key:"a", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Cửa hàng"), React.createElement("select",{key:"i",value:form.shop,onChange:e=>setForm({...form,shop:e.target.value})}, DEFAULT_SHOPS.map(s=>React.createElement("option",{key:s,value:s},s))) ]),
-          React.createElement("div", { key:"b", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Vai trò"), React.createElement("select",{key:"i",value:form.role,onChange:e=>setForm({...form,role:e.target.value})}, ["Nhân viên","Quản lý cửa hàng","Buddy/Trưởng ca"].map(r=>React.createElement("option",{key:r,value:r},r))) ]),
+          React.createElement("div", { key:"b", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Vai trò"), React.createElement("select",{key:"i",value:form.role,onChange:e=>setForm({...form,role:e.target.value})}, STAFF_ROLES.map(r=>React.createElement("option",{key:r,value:r},r))) ]),
         ]),
         React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } }, [
           React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:()=>setShowForm(false) }, "Huỷ"),
@@ -681,7 +1063,7 @@ function StaffView(){
 
   return React.createElement(React.Fragment, null, [
     React.createElement("h2", { key:"t", className:"pagetitle" }, "Nhân viên"),
-    React.createElement("p", { key:"s", className:"pagesub" }, "Danh sách dùng chung cho việc gán Buddy và tặng sao ghi nhận."),
+    React.createElement("p", { key:"s", className:"pagesub" }, "Danh sách dùng chung cho Checklist ngày, Báo cáo tuần, Buddy và tặng sao ghi nhận."),
     React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:16 } }, [
       React.createElement("button", { key:"add", className:"btn btnPrimary", onClick:()=>setShowForm(true) }, "＋ Thêm nhân viên"),
     ]),
@@ -691,13 +1073,15 @@ function StaffView(){
 
 // ================= APP SHELL =================
 const OPS_TABS = [
-  { id:"orders", label:"📦 Đặt hàng" },
+  { id:"checklist", label:"✅ Checklist ngày" },
+  { id:"weekly", label:"🗓️ Báo cáo tuần" },
+  { id:"performance", label:"📊 Hiệu suất" },
   { id:"training", label:"🧑‍🏫 Đào tạo & Buddy" },
   { id:"kudos", label:"⭐ Ghi nhận & Quà" },
   { id:"staff", label:"👥 Nhân viên" },
 ];
 function Dashboard({ user }){
-  const [activeTab, setActiveTab] = useState("orders");
+  const [activeTab, setActiveTab] = useState("checklist");
   return React.createElement(React.Fragment, null, [
     React.createElement("div", { key:"nav", className:"topnav" }, React.createElement("div", { className:"topnavInner" }, [
       React.createElement("div", { key:"brand", className:"brandRow" }, [
@@ -715,7 +1099,9 @@ function Dashboard({ user }){
       )),
     ])),
     React.createElement("div", { key:"wrap", className:"wrap" }, [
-      activeTab==="orders" && React.createElement(OrdersView, { key:"v" }),
+      activeTab==="checklist" && React.createElement(DailyChecklistView, { key:"v" }),
+      activeTab==="weekly" && React.createElement(WeeklyReportView, { key:"v" }),
+      activeTab==="performance" && React.createElement(PerformanceView, { key:"v" }),
       activeTab==="training" && React.createElement(TrainingView, { key:"v" }),
       activeTab==="kudos" && React.createElement(KudosView, { key:"v" }),
       activeTab==="staff" && React.createElement(StaffView, { key:"v" }),
