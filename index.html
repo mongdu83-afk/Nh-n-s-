@@ -10,6 +10,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-storage-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <style>
@@ -32,7 +33,6 @@
   .brand .mark{ width:11px; height:11px; border-radius:50%; background:var(--pine); }
   .brand h1{ font-family:'Fraunces', serif; font-weight:700; font-size:19px; margin:0; }
   .brand small{ display:block; font-size:10.5px; color:var(--inkSoft); letter-spacing:.06em; text-transform:uppercase; margin-top:-2px; }
-  .logoutBtn{ font-size:12.5px; color:var(--inkSoft); background:none; border:1px solid var(--line); border-radius:7px; padding:6px 11px; cursor:pointer; }
 
   .tabs{ display:flex; gap:2px; overflow-x:auto; padding-bottom:2px; }
   .tabs button{
@@ -147,6 +147,26 @@ firebase.initializeApp(FIREBASE_CONFIG);
 const auth = firebase.auth();
 const db = firebase.firestore();
 const storage = firebase.storage();
+
+// ================= EMAILJS (thông báo tặng sao qua email) =================
+// Đăng ký miễn phí tại https://www.emailjs.com — điền 3 giá trị bên dưới sau khi tạo
+// Service (kết nối hộp mail gửi đi) và Template (mẫu nội dung email) trên trang EmailJS.
+const EMAILJS_PUBLIC_KEY = "YOUR_EMAILJS_PUBLIC_KEY";
+const EMAILJS_SERVICE_ID = "YOUR_EMAILJS_SERVICE_ID";
+const EMAILJS_TEMPLATE_ID = "YOUR_EMAILJS_TEMPLATE_ID";
+const EMAILJS_READY = EMAILJS_PUBLIC_KEY !== "YOUR_EMAILJS_PUBLIC_KEY" && window.emailjs;
+if(EMAILJS_READY) emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
+async function sendNotifyEmail(toEmails, params){
+  if(!EMAILJS_READY || !toEmails || toEmails.length===0) return;
+  // Gửi riêng từng email một (thay vì gộp chung 1 lần) để đảm bảo TẤT CẢ
+  // địa chỉ trong danh sách đều chắc chắn nhận được, không phụ thuộc việc
+  // dịch vụ email có hỗ trợ nhiều người nhận trong 1 lần gửi hay không.
+  const results = await Promise.allSettled(
+    toEmails.map(email => emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, { to_email:email, ...params }))
+  );
+  results.forEach((r, i) => { if(r.status==="rejected") console.error(`Gửi email tới ${toEmails[i]} lỗi:`, r.reason); });
+}
+
 async function uploadImageFile(file, path){
   const ref = storage.ref().child(path);
   await ref.put(file);
@@ -177,43 +197,6 @@ function subscribeConfigDoc(docId, cb){
 }
 async function saveConfigDoc(docId, data){
   return db.collection("opsConfig").doc(docId).set(data, { merge:false });
-}
-
-// ================= LOGIN =================
-function LoginScreen(){
-  const [email, setEmail] = useState("");
-  const [pw, setPw] = useState("");
-  const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(false);
-  async function handleSubmit(e){
-    e.preventDefault();
-    setError(null); setLoading(true);
-    try{ await auth.signInWithEmailAndPassword(email, pw); }
-    catch(err){ setError("Đăng nhập không đúng — kiểm tra lại email/mật khẩu."); }
-    setLoading(false);
-  }
-  return React.createElement("div", { style:{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", padding:16 } },
-    React.createElement("form", { onSubmit:handleSubmit, style:{ background:"#fff", border:"1px solid var(--line)", borderRadius:14, padding:"32px 28px", width:360, maxWidth:"100%" } }, [
-      React.createElement("div", { key:"b", style:{ display:"flex", alignItems:"center", gap:9, marginBottom:22 } }, [
-        React.createElement("span", { key:"m", style:{ width:11, height:11, borderRadius:"50%", background:"var(--pine)" } }),
-        React.createElement("div", { key:"t" }, [
-          React.createElement("h1", { key:"h", className:"brandFont", style:{ fontSize:19, fontWeight:700, margin:0 } }, "Upharma Ops"),
-          React.createElement("small", { key:"s", style:{ fontSize:10.5, color:"var(--inkSoft)", letterSpacing:".06em", textTransform:"uppercase" } }, "Vận hành & Nhân sự"),
-        ]),
-      ]),
-      React.createElement("div", { key:"f1", className:"field", style:{ marginBottom:12 } }, [
-        React.createElement("label", { key:"l" }, "Email"),
-        React.createElement("input", { key:"i", type:"email", value:email, onChange:e=>setEmail(e.target.value), required:true }),
-      ]),
-      React.createElement("div", { key:"f2", className:"field", style:{ marginBottom:16 } }, [
-        React.createElement("label", { key:"l" }, "Mật khẩu"),
-        React.createElement("input", { key:"i", type:"password", value:pw, onChange:e=>setPw(e.target.value), required:true }),
-      ]),
-      error && React.createElement("div", { key:"err", style:{ color:"var(--clay)", fontSize:12.5, marginBottom:12 } }, error),
-      React.createElement("button", { key:"submit", type:"submit", className:"btn btnPrimary", disabled:loading, style:{ width:"100%", justifyContent:"center", padding:"10px 0" } }, loading ? "Đang đăng nhập..." : "Đăng nhập"),
-      React.createElement("div", { key:"hint", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:14, textAlign:"center" } }, "Dùng chung tài khoản với Upharma Dashboard."),
-    ])
-  );
 }
 
 const TONE_COLOR = {
@@ -351,18 +334,6 @@ function DailyReviewModal({ report, tasks, onSave, onClose }){
         React.createElement("div",{key:"l",style:{fontWeight:700,marginBottom:2}},"Ghi chú của nhân viên"),
         report.ghiChu,
       ]),
-      (report.anhChecklist && report.anhChecklist.length>0) && React.createElement("div", { key:"pc", style:{ marginBottom:14 } }, [
-        React.createElement("div",{key:"l",style:{fontWeight:700,fontSize:12.5,marginBottom:4}},"Ảnh checklist hàng ngày"),
-        React.createElement("div", { key:"g", className:"photoGrid" }, report.anhChecklist.map((url,i)=>
-          React.createElement("a", { key:i, href:url, target:"_blank", rel:"noreferrer", className:"photoThumb" }, React.createElement("img",{src:url}))
-        )),
-      ]),
-      (report.anhCTKM && report.anhCTKM.length>0) && React.createElement("div", { key:"pk", style:{ marginBottom:14 } }, [
-        React.createElement("div",{key:"l",style:{fontWeight:700,fontSize:12.5,marginBottom:4}},"Ảnh trưng bày CTKM"),
-        React.createElement("div", { key:"g", className:"photoGrid" }, report.anhCTKM.map((url,i)=>
-          React.createElement("a", { key:i, href:url, target:"_blank", rel:"noreferrer", className:"photoThumb" }, React.createElement("img",{src:url}))
-        )),
-      ]),
       React.createElement("div", { key:"score", className:"field", style:{ marginBottom:10 } }, [
         React.createElement("label",{key:"l"},"Chấm điểm hiệu suất"),
         React.createElement(StarSelect, { key:"i", value:diem, onChange:setDiem }),
@@ -401,8 +372,6 @@ function DailyChecklistView(){
   const [reports, setReports] = useState({});
   const [selfId, setSelfId] = useState("");
   const [note, setNote] = useState("");
-  const [uploadingChecklist, setUploadingChecklist] = useState(false);
-  const [uploadingCTKM, setUploadingCTKM] = useState(false);
   const [showTplEditor, setShowTplEditor] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
   const [adminShop, setAdminShop] = useState("Tất cả");
@@ -453,31 +422,6 @@ function DailyChecklistView(){
       ngay:today, ghiChu:note, doneIds:doneMap, trangThai:"Đã nộp", ngayNop:today,
       updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
     }, { merge:true });
-  }
-  async function addPhotos(field, files){
-    if(!selfStaff) return;
-    const setUploading = field==="anhChecklist" ? setUploadingChecklist : setUploadingCTKM;
-    setUploading(true);
-    try{
-      const urls = [];
-      for(const file of files){
-        const path = `dailyReports/${selfStaff.id}/${today}/${field}/${Date.now()}_${file.name}`;
-        urls.push(await uploadImageFile(file, path));
-      }
-      const current = selfReport ? (selfReport[field] || []) : [];
-      await db.collection("dailyReports").doc(selfReportId).set({
-        staffId:selfStaff.id, staffName:selfStaff.name, shop:selfStaff.shop, role:selfStaff.role,
-        ngay:today, [field]: [...current, ...urls],
-        trangThai: selfReport ? (selfReport.trangThai || "Nháp") : "Nháp",
-        updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
-      }, { merge:true });
-    } finally { setUploading(false); }
-  }
-  async function removePhoto(field, idx){
-    if(!selfStaff || !selfReport) return;
-    const current = [...(selfReport[field] || [])];
-    current.splice(idx,1);
-    await db.collection("dailyReports").doc(selfReportId).set({ [field]:current }, { merge:true });
   }
   async function saveTemplate(role, items){
     const next = { ...templates, [role]:items };
@@ -534,21 +478,6 @@ function DailyChecklistView(){
       ]),
     ]);
   }
-
-  const photoCard = selfStaff && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
-    React.createElement("div", { key:"t", className:"cardTitle" }, "Báo cáo hình ảnh"),
-    React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:4 } }, `${selfStaff.name} — ${today}`),
-    React.createElement(PhotoUploadField, {
-      key:"photoCl", label:"Ảnh checklist hàng ngày (trưng bày, vệ sinh, hạn dùng...)",
-      photos: selfReport ? selfReport.anhChecklist : null, uploading:uploadingChecklist,
-      onUpload:files=>addPhotos("anhChecklist", files), onRemove:idx=>removePhoto("anhChecklist", idx),
-    }),
-    React.createElement(PhotoUploadField, {
-      key:"photoCtkm", label:"Ảnh trưng bày CTKM (chương trình khuyến mãi)",
-      photos: selfReport ? selfReport.anhCTKM : null, uploading:uploadingCTKM,
-      onUpload:files=>addPhotos("anhCTKM", files), onRemove:idx=>removePhoto("anhCTKM", idx),
-    }),
-  ]);
 
   const tplEditor = showTplEditor && React.createElement(ChecklistTemplateEditor, {
     roles:STAFF_ROLES, templates, initialRole:(selfStaff ? selfStaff.role : STAFF_ROLES[0]),
@@ -612,11 +541,170 @@ function DailyChecklistView(){
   return React.createElement(React.Fragment, null, [
     React.createElement("h2", { key:"t", className:"pagetitle" }, "Checklist công việc hàng ngày"),
     React.createElement("p", { key:"s", className:"pagesub" }, "Từng nhân viên tự chọn tên, tick việc theo checklist đúng vị trí và nộp báo cáo cuối ca."),
-    whoBar, selfCard, photoCard, tplEditor, adminSection, reviewModal,
+    whoBar, selfCard, tplEditor, adminSection, reviewModal,
   ]);
 }
 
-// ================= MODULE 2: BÁO CÁO CÔNG VIỆC TUẦN =================
+// ================= MODULE 2: BÁO CÁO HÌNH ẢNH =================
+function imageReportId(shop, ngay){ return shop + "_" + ngay; }
+
+function ImageReportView(){
+  const [staff, setStaff] = useState([]);
+  const [reportsMap, setReportsMap] = useState({});
+  const [selfShop, setSelfShop] = useState("");
+  const [nguoiUpload, setNguoiUpload] = useState("");
+  const [uploadingChecklist, setUploadingChecklist] = useState(false);
+  const [uploadingCTKM, setUploadingCTKM] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(false);
+  const [adminShop, setAdminShop] = useState("Tất cả");
+  const [adminDate, setAdminDate] = useState(todayISO());
+  const [viewReportId, setViewReportId] = useState(null);
+
+  useEffect(()=>{
+    const u1 = subscribeCol("staff", setStaff);
+    const u2 = subscribeCol("imageReports", rows => { const map = {}; rows.forEach(r => map[r.id] = r); setReportsMap(map); });
+    return ()=>{ u1(); u2(); };
+  }, []);
+
+  const today = todayISO();
+  const thisId = selfShop ? imageReportId(selfShop, today) : null;
+  const thisReport = thisId ? reportsMap[thisId] : null;
+  const shopStaffOptions = selfShop ? staff.filter(s => s.shop===selfShop) : [];
+  const nguoiOptions = shopStaffOptions.map(s => ({ value:s.name, label:s.name }));
+
+  async function addPhotos(field, files){
+    if(!selfShop) return;
+    const setUploading = field==="anhChecklist" ? setUploadingChecklist : setUploadingCTKM;
+    setUploading(true);
+    try{
+      const urls = [];
+      for(const file of files){
+        const path = `imageReports/${selfShop}/${today}/${field}/${Date.now()}_${file.name}`;
+        urls.push(await uploadImageFile(file, path));
+      }
+      const current = thisReport ? (thisReport[field] || []) : [];
+      await db.collection("imageReports").doc(thisId).set({
+        shop:selfShop, ngay:today,
+        nguoiUpload: nguoiUpload || (thisReport ? thisReport.nguoiUpload : "") || "",
+        [field]: [...current, ...urls],
+        updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
+      }, { merge:true });
+    } finally { setUploading(false); }
+  }
+  async function removePhoto(field, idx){
+    if(!selfShop || !thisReport) return;
+    const current = [...(thisReport[field] || [])];
+    current.splice(idx,1);
+    await db.collection("imageReports").doc(thisId).set({ [field]:current }, { merge:true });
+  }
+
+  const whoBar = React.createElement("div", { className:"whoBar" }, [
+    React.createElement("div", { key:"w", className:"field", style:{ minWidth:220, flex:"1 1 220px" } }, [
+      React.createElement("label",{key:"l"},"Nhà thuốc"),
+      React.createElement("select", { key:"i", value:selfShop, onChange:e=>{ setSelfShop(e.target.value); setNguoiUpload(""); } }, [
+        React.createElement("option",{key:"",value:""},"— chọn cửa hàng —"),
+        ...DEFAULT_SHOPS.map(s => React.createElement("option",{key:s,value:s},s)),
+      ]),
+    ]),
+    selfShop && React.createElement("div", { key:"p", className:"field", style:{ minWidth:220, flex:"1 1 220px" } }, [
+      React.createElement("label",{key:"l"},"Người chụp / nộp ảnh"),
+      React.createElement(NamePicker, { key:"i", options:nguoiOptions, value:nguoiUpload, onChange:setNguoiUpload, placeholder:"Gõ tên để tìm..." }),
+    ]),
+  ]);
+
+  const hasAnyPhoto = thisReport && ((thisReport.anhChecklist||[]).length>0 || (thisReport.anhCTKM||[]).length>0);
+  const selfCard = selfShop && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10, marginBottom:14 } }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15 } }, `${selfShop} — ${today}`),
+      hasAnyPhoto ? StatusPill("Đã có ảnh hôm nay", "good") : StatusPill("Chưa có ảnh hôm nay", "warn"),
+    ]),
+    React.createElement(PhotoUploadField, {
+      key:"photoCl", label:"Ảnh checklist hàng ngày (trưng bày, vệ sinh, hạn dùng...)",
+      photos: thisReport ? thisReport.anhChecklist : null, uploading:uploadingChecklist,
+      onUpload:files=>addPhotos("anhChecklist", files), onRemove:idx=>removePhoto("anhChecklist", idx),
+    }),
+    React.createElement(PhotoUploadField, {
+      key:"photoCtkm", label:"Ảnh trưng bày CTKM (chương trình khuyến mãi)",
+      photos: thisReport ? thisReport.anhCTKM : null, uploading:uploadingCTKM,
+      onUpload:files=>addPhotos("anhCTKM", files), onRemove:idx=>removePhoto("anhCTKM", idx),
+    }),
+  ]);
+
+  const shopsInFilter = adminShop==="Tất cả" ? DEFAULT_SHOPS : [adminShop];
+  const submittedShops = shopsInFilter.filter(shop => {
+    const r = reportsMap[imageReportId(shop, adminDate)];
+    return r && ((r.anhChecklist||[]).length>0 || (r.anhCTKM||[]).length>0);
+  });
+
+  const adminMetrics = React.createElement("div", { className:"metrics" }, [
+    React.createElement("div", { key:"1", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Cửa hàng trong bộ lọc"), React.createElement("div",{key:"v",className:"value"}, fmtNum(shopsInFilter.length)) ]),
+    React.createElement("div", { key:"2", className:"metric good" }, [ React.createElement("div",{key:"l",className:"label"},"Đã nộp ảnh"), React.createElement("div",{key:"v",className:"value"}, fmtNum(submittedShops.length)) ]),
+    React.createElement("div", { key:"3", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Chưa nộp ảnh"), React.createElement("div",{key:"v",className:"value"}, fmtNum(Math.max(shopsInFilter.length-submittedShops.length,0))) ]),
+  ]);
+
+  const adminFilterRow = React.createElement("div", { className:"btnRow", style:{ marginBottom:14 } }, [
+    React.createElement("select", { key:"shop", value:adminShop, onChange:e=>setAdminShop(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } },
+      ["Tất cả", ...DEFAULT_SHOPS].map(s => React.createElement("option",{key:s,value:s},s))),
+    React.createElement("input", { key:"date", type:"date", value:adminDate, onChange:e=>setAdminDate(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } }),
+  ]);
+
+  const adminTable = shopsInFilter.length===0
+    ? React.createElement("div",{className:"emptyState"}, "Không có cửa hàng trong bộ lọc này.")
+    : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Cửa hàng","Người nộp","Ảnh checklist","Ảnh CTKM","Trạng thái",""].map((h,i)=>React.createElement("th",{key:i},h)))),
+        React.createElement("tbody",{key:"b"}, shopsInFilter.map(shop => {
+          const rid = imageReportId(shop, adminDate);
+          const r = reportsMap[rid];
+          const clCount = r ? (r.anhChecklist||[]).length : 0;
+          const ckCount = r ? (r.anhCTKM||[]).length : 0;
+          const has = clCount>0 || ckCount>0;
+          return React.createElement("tr",{key:shop}, [
+            React.createElement("td",{key:"sh"}, shop),
+            React.createElement("td",{key:"n"}, (r && r.nguoiUpload) || "—"),
+            React.createElement("td",{key:"cl"}, fmtNum(clCount)),
+            React.createElement("td",{key:"ck"}, fmtNum(ckCount)),
+            React.createElement("td",{key:"st"}, has ? StatusPill("Đã nộp","good") : StatusPill("Chưa nộp","warn")),
+            React.createElement("td",{key:"a"}, has ? React.createElement("button",{className:"btn", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>setViewReportId(rid)}, "Xem ảnh") : "—"),
+          ]);
+        })),
+      ]));
+
+  const viewingReport = viewReportId ? reportsMap[viewReportId] : null;
+  const viewModal = viewingReport && React.createElement("div", { className:"modalOverlay", onClick:()=>setViewReportId(null) },
+    React.createElement("div", { className:"modal modalWide", onClick:e=>e.stopPropagation() }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:2 } }, `${viewingReport.shop} — ${viewingReport.ngay}`),
+      viewingReport.nguoiUpload && React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } }, `Người nộp: ${viewingReport.nguoiUpload}`),
+      (viewingReport.anhChecklist && viewingReport.anhChecklist.length>0) && React.createElement("div", { key:"cl", style:{ marginBottom:14 } }, [
+        React.createElement("div",{key:"l",style:{fontWeight:700,fontSize:12.5,marginBottom:4}},"Ảnh checklist hàng ngày"),
+        React.createElement("div", { key:"g", className:"photoGrid" }, viewingReport.anhChecklist.map((url,i) =>
+          React.createElement("a", { key:i, href:url, target:"_blank", rel:"noreferrer", className:"photoThumb" }, React.createElement("img",{src:url}))
+        )),
+      ]),
+      (viewingReport.anhCTKM && viewingReport.anhCTKM.length>0) && React.createElement("div", { key:"ck", style:{ marginBottom:14 } }, [
+        React.createElement("div",{key:"l",style:{fontWeight:700,fontSize:12.5,marginBottom:4}},"Ảnh trưng bày CTKM"),
+        React.createElement("div", { key:"g", className:"photoGrid" }, viewingReport.anhCTKM.map((url,i) =>
+          React.createElement("a", { key:i, href:url, target:"_blank", rel:"noreferrer", className:"photoThumb" }, React.createElement("img",{src:url}))
+        )),
+      ]),
+      React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } },
+        React.createElement("button", { type:"button", className:"btn btnGhost", onClick:()=>setViewReportId(null) }, "Đóng")
+      ),
+    ])
+  );
+
+  const adminSection = React.createElement("div", { key:"admin", style:{ marginTop:26 } }, [
+    React.createElement("button", { key:"tgl", type:"button", className:"btn btnGhost", style:{ marginBottom:14 }, onClick:()=>setAdminOpen(!adminOpen) }, adminOpen ? "Ẩn báo cáo tất cả cửa hàng" : "Xem báo cáo tất cả cửa hàng (Quản lý)"),
+    adminOpen && React.createElement(React.Fragment, null, [ adminMetrics, adminFilterRow, adminTable ]),
+  ]);
+
+  return React.createElement(React.Fragment, null, [
+    React.createElement("h2", { key:"t", className:"pagetitle" }, "Báo cáo hình ảnh"),
+    React.createElement("p", { key:"s", className:"pagesub" }, "Mỗi nhà thuốc chụp và nộp ảnh checklist trưng bày & CTKM trong ngày — báo cáo theo đơn vị cửa hàng."),
+    whoBar, selfCard, adminSection, viewModal,
+  ]);
+}
+
+// ================= MODULE 3: BÁO CÁO CÔNG VIỆC TUẦN =================
 function mondayOf(iso){
   const d = new Date(iso + "T00:00:00");
   const day = d.getDay();
@@ -810,7 +898,7 @@ function WeeklyReportView(){
   ]);
 }
 
-// ================= MODULE 3: HIỆU SUẤT & TỔNG QUAN CỬA HÀNG =================
+// ================= MODULE 4: HIỆU SUẤT & TỔNG QUAN CỬA HÀNG =================
 function PerformanceView(){
   const [staff, setStaff] = useState([]);
   const [dailyReports, setDailyReports] = useState([]);
@@ -882,7 +970,7 @@ function PerformanceView(){
   ]);
 }
 
-// ================= MODULE 4: ĐÀO TẠO & BUDDY =================
+// ================= MODULE 5: ĐÀO TẠO & BUDDY =================
 const DEFAULT_CHECKLIST = [
   { id:"d1", offset:0, label:"Giới thiệu quy định cửa hàng, an toàn, GPP cơ bản" },
   { id:"d2", offset:0, label:"Giới thiệu buddy kèm cặp, tham quan cửa hàng, vị trí hàng hoá" },
@@ -1055,7 +1143,7 @@ function TrainingView(){
   ]);
 }
 
-// ================= MODULE 5: GHI NHẬN & TẶNG SAO =================
+// ================= MODULE 6: GHI NHẬN & TẶNG SAO =================
 const DEFAULT_REWARDS = [
   { id:"r1", name:"Phiếu quà 50.000đ", stars:10 },
   { id:"r2", name:"Phiếu quà 100.000đ", stars:20 },
@@ -1071,8 +1159,9 @@ function KudosView(){
   const [kudos, setKudos] = useState([]);
   const [rewards, setRewards] = useState(DEFAULT_REWARDS);
   const [redemptions, setRedemptions] = useState([]);
+  const [notifyEmails, setNotifyEmails] = useState([]);
   const [showGiveForm, setShowGiveForm] = useState(false);
-  const [showRewardsEditor, setShowRewardsEditor] = useState(false);
+  const [showEmailEditor, setShowEmailEditor] = useState(false);
   const [giveForm, setGiveForm] = useState({ fromId:"", toId:"", stars:5, message:"" });
 
   useEffect(()=>{
@@ -1080,7 +1169,8 @@ function KudosView(){
     const u2 = subscribeCol("kudos", setKudos, "createdAtTs");
     const u3 = subscribeConfigDoc("rewards", (d)=> setRewards(d && d.items ? d.items : DEFAULT_REWARDS));
     const u4 = subscribeCol("redemptions", setRedemptions, "createdAtTs");
-    return ()=>{ u1(); u2(); u3(); u4(); };
+    const u5 = subscribeConfigDoc("kudosNotifyEmails", (d)=> setNotifyEmails(d && d.emails ? d.emails : []));
+    return ()=>{ u1(); u2(); u3(); u4(); u5(); };
   }, []);
 
   const thisMonth = todayISO().slice(0,7);
@@ -1104,10 +1194,16 @@ function KudosView(){
     const givenSoFar = (totalsByStaff[giveForm.fromId]||{givenThisMonth:0}).givenThisMonth;
     if(givenSoFar + stars > MONTHLY_GIVE_CAP){ window.alert(`Vượt giới hạn ${MONTHLY_GIVE_CAP} sao/tháng có thể tặng. Đã tặng ${givenSoFar} sao tháng này.`); return; }
     const fromS = staff.find(s=>s.id===giveForm.fromId), toS = staff.find(s=>s.id===giveForm.toId);
-    await addDoc("kudos", { fromId:giveForm.fromId, fromName:fromS?fromS.name:"", toId:giveForm.toId, toName:toS?toS.name:"", stars, message:giveForm.message.trim(), ngay:todayISO() });
+    const message = giveForm.message.trim();
+    await addDoc("kudos", { fromId:giveForm.fromId, fromName:fromS?fromS.name:"", toId:giveForm.toId, toName:toS?toS.name:"", stars, message, ngay:todayISO() });
+    sendNotifyEmail(notifyEmails, {
+      from_name: fromS ? fromS.name : "", to_name: toS ? toS.name : "",
+      shop: (toS && toS.shop) || (fromS && fromS.shop) || "", stars, message, ngay: todayISO(),
+    });
     setGiveForm({ fromId:giveForm.fromId, toId:"", stars:5, message:"" }); setShowGiveForm(false);
   }
-  async function saveRewards(items){ await saveConfigDoc("rewards", { items }); setShowRewardsEditor(false); }
+  async function saveRewards(items){ await saveConfigDoc("rewards", { items }); }
+  async function saveNotifyEmails(emails){ await saveConfigDoc("kudosNotifyEmails", { emails }); setShowEmailEditor(false); }
   async function redeem(staffId, reward){
     const bal = balanceOf(staffId);
     if(bal < reward.stars){ window.alert("Không đủ sao để đổi quà này."); return; }
@@ -1185,15 +1281,40 @@ function KudosView(){
     ])
   );
 
+  const emailEditor = showEmailEditor && React.createElement(EmailListEditor, {
+    emails: notifyEmails, onSave: saveNotifyEmails, onClose: ()=>setShowEmailEditor(false),
+  });
+
   return React.createElement(React.Fragment, null, [
     React.createElement("h2", { key:"t", className:"pagetitle" }, "Ghi nhận & Tặng sao"),
     React.createElement("p", { key:"s", className:"pagesub" }, "Nhân viên ghi nhận & tặng sao cho nhau, tích luỹ đổi quà — tăng gắn kết đội ngũ."),
     metrics,
-    React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:18 } }, [
+    React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:18, justifyContent:"space-between" } }, [
       React.createElement("button", { key:"give", className:"btn btnAmber", onClick:()=>setShowGiveForm(true) }, "Tặng sao"),
+      React.createElement("button", { key:"email", type:"button", className:"btn btnGhost", onClick:()=>setShowEmailEditor(true) },
+        `Email nhận thông báo (${notifyEmails.length})`),
     ]),
-    feed, leaderboardCard, redemptionsCard, giveModal,
+    feed, leaderboardCard, redemptionsCard, giveModal, emailEditor,
   ]);
+}
+
+function EmailListEditor({ emails, onSave, onClose }){
+  const [text, setText] = useState((emails||[]).join("\n"));
+  async function save(){
+    const list = text.split(/[\n,;]/).map(s=>s.trim()).filter(Boolean);
+    await onSave(list);
+  }
+  return React.createElement("div", { className:"modalOverlay", onClick:onClose },
+    React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, "Email nhận thông báo tặng sao"),
+      React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:12 } }, "Mỗi lần có người tặng sao, hệ thống sẽ gửi email tới danh sách này. Mỗi dòng một email."),
+      React.createElement("textarea", { key:"i", rows:6, value:text, onChange:e=>setText(e.target.value), placeholder:"vd: quanly@upharma.vn\nhr@upharma.vn" }),
+      React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end", marginTop:14 } }, [
+        React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:onClose }, "Huỷ"),
+        React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", onClick:save }, "Lưu danh sách"),
+      ]),
+    ])
+  );
 }
 
 // ================= TAB: NHÂN VIÊN (danh sách dùng chung) =================
@@ -1260,13 +1381,14 @@ function StaffView(){
 // ================= APP SHELL =================
 const OPS_TABS = [
   { id:"checklist", label:"Checklist ngày" },
+  { id:"photos", label:"Báo cáo hình ảnh" },
   { id:"weekly", label:"Báo cáo tuần" },
   { id:"performance", label:"Hiệu suất" },
   { id:"training", label:"Đào tạo & Buddy" },
   { id:"kudos", label:"Ghi nhận & Quà" },
   { id:"staff", label:"Nhân viên" },
 ];
-function Dashboard({ user }){
+function Dashboard(){
   const [activeTab, setActiveTab] = useState("checklist");
   return React.createElement(React.Fragment, null, [
     React.createElement("div", { key:"nav", className:"topnav" }, React.createElement("div", { className:"topnavInner" }, [
@@ -1278,7 +1400,6 @@ function Dashboard({ user }){
             React.createElement("small", { key:"s" }, "Vận hành & Nhân sự"),
           ]),
         ]),
-        React.createElement("button", { key:"logout", className:"logoutBtn", onClick:()=>auth.signOut() }, user.email + " · Đăng xuất"),
       ]),
       React.createElement("div", { key:"tabs", className:"tabs" }, OPS_TABS.map(t =>
         React.createElement("button", { key:t.id, className:activeTab===t.id?"active":"", onClick:()=>setActiveTab(t.id) }, t.label)
@@ -1286,6 +1407,7 @@ function Dashboard({ user }){
     ])),
     React.createElement("div", { key:"wrap", className:"wrap" }, [
       activeTab==="checklist" && React.createElement(DailyChecklistView, { key:"v" }),
+      activeTab==="photos" && React.createElement(ImageReportView, { key:"v" }),
       activeTab==="weekly" && React.createElement(WeeklyReportView, { key:"v" }),
       activeTab==="performance" && React.createElement(PerformanceView, { key:"v" }),
       activeTab==="training" && React.createElement(TrainingView, { key:"v" }),
@@ -1296,11 +1418,16 @@ function Dashboard({ user }){
 }
 
 function App(){
-  const [user, setUser] = useState(undefined);
-  useEffect(()=> auth.onAuthStateChanged(setUser), []);
-  if(user === undefined) return React.createElement("div", { style:{ padding:40, textAlign:"center", color:"var(--inkSoft)" } }, "Đang tải...");
-  if(user === null) return React.createElement(LoginScreen, null);
-  return React.createElement(Dashboard, { user });
+  const [ready, setReady] = useState(false);
+  useEffect(()=>{
+    const unsub = auth.onAuthStateChanged(user => {
+      if(user) setReady(true);
+      else auth.signInAnonymously().catch(err => console.error("Đăng nhập ẩn danh lỗi:", err));
+    });
+    return unsub;
+  }, []);
+  if(!ready) return React.createElement("div", { style:{ padding:40, textAlign:"center", color:"var(--inkSoft)" } }, "Đang tải...");
+  return React.createElement(Dashboard, null);
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App, null));
