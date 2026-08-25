@@ -167,9 +167,34 @@ async function sendNotifyEmail(toEmails, params){
   results.forEach((r, i) => { if(r.status==="rejected") console.error(`Gửi email tới ${toEmails[i]} lỗi:`, r.reason); });
 }
 
+async function compressImage(file, maxDim, quality){
+  // Thu nhỏ & nén ảnh trước khi tải lên — ảnh chụp từ điện thoại thường rất
+  // nặng (vài MB), nén lại giúp tải lên nhanh hơn nhiều lần mà vẫn đủ rõ để xem.
+  const dim = maxDim || 1600;
+  const q = quality || 0.72;
+  try{
+    const bitmap = await createImageBitmap(file);
+    let { width, height } = bitmap;
+    if(width > dim || height > dim){
+      const scale = dim / Math.max(width, height);
+      width = Math.round(width * scale);
+      height = Math.round(height * scale);
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = width; canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", q));
+    return blob || file;
+  } catch(err){
+    console.error("Nén ảnh lỗi, dùng ảnh gốc:", err);
+    return file;
+  }
+}
 async function uploadImageFile(file, path){
+  const toUpload = (file.type && file.type.startsWith("image/")) ? await compressImage(file) : file;
   const ref = storage.ref().child(path);
-  await ref.put(file);
+  await ref.put(toUpload, { contentType:"image/jpeg" });
   return await ref.getDownloadURL();
 }
 
