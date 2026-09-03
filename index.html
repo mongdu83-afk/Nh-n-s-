@@ -112,6 +112,7 @@
   .taskAttachRow{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .taskAttachBtn{ display:inline-flex; align-items:center; gap:5px; font-size:11.5px; font-weight:600; padding:6px 10px; border-radius:7px; border:1px dashed var(--line); background:#fff; color:var(--inkSoft); cursor:pointer; white-space:nowrap; }
   .taskAttachBtn input{ display:none; }
+  .autoGrow{ resize:none; overflow:hidden; min-height:38px; line-height:1.4; }
   .taskLinkInput{ padding:6px 8px; border:1px solid var(--line); border-radius:6px; font-size:12.5px; width:100%; }
   .taskFileList{ display:flex; flex-wrap:wrap; gap:7px; }
   .taskFileChip{ position:relative; display:flex; align-items:center; }
@@ -124,13 +125,26 @@
   .weeklyCatTitle{ font-weight:700; font-size:13.5px; margin-bottom:9px; color:var(--ink); display:flex; align-items:center; gap:8px; }
   .weeklyCatTitle .dot{ width:8px; height:8px; border-radius:50%; background:var(--pine); flex:none; }
   .weeklyRow{ border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin-bottom:8px; background:#fff; }
-  .weeklyRowGrid{ display:flex; gap:10px; flex-wrap:wrap; }
+  .weeklyRowGrid{ display:flex; gap:10px; flex-wrap:wrap; align-items:flex-start; }
   .weeklyRowGrid > div{ flex:1 1 220px; min-width:0; }
   .weeklyRowLbl{ font-size:11px; font-weight:600; color:var(--inkSoft); margin-bottom:4px; display:block; }
   .weeklyReadonly{ font-size:13px; color:var(--ink); background:var(--paper); border-radius:6px; padding:8px 9px; min-height:20px; white-space:pre-wrap; }
   .weeklyRowRemove{ border:none; background:none; color:var(--clay); cursor:pointer; font-size:11.5px; font-weight:600; padding:2px 4px; }
   .weeklySectionHead{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:4px; }
   .weeklySectionHint{ font-size:12px; color:var(--inkSoft); margin-bottom:14px; }
+
+  .progressGrid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px; margin-bottom:6px; }
+  .progressBlock{ border:1px solid var(--line); border-radius:12px; padding:14px 16px; background:var(--paper); }
+  .progressBlockTitle{ font-weight:700; font-size:13.5px; margin-bottom:10px; display:flex; align-items:center; gap:8px; }
+  .progressBlockTitle .dot{ width:8px; height:8px; border-radius:50%; background:var(--amber); flex:none; }
+  .progressInputRow{ display:flex; gap:10px; margin-bottom:12px; }
+  .progressInputRow .field{ flex:1 1 0; }
+  .progressStats{ background:#fff; border:1px solid var(--line); border-radius:10px; padding:10px 12px; }
+  .progressStatRow{ display:flex; justify-content:space-between; align-items:baseline; font-size:12.5px; padding:3px 0; }
+  .progressStatRow .k{ color:var(--inkSoft); }
+  .progressStatRow .v{ font-weight:700; }
+  .progressBarRow{ display:flex; align-items:center; gap:10px; margin-top:8px; }
+  .progressBarPct{ font-size:12px; font-weight:700; white-space:nowrap; min-width:38px; text-align:right; }
   .readonlyBox{ background:var(--paper); border:1px solid var(--line); border-radius:8px; padding:9px 11px; font-size:12.5px; color:var(--ink); white-space:pre-wrap; min-height:38px; }
   .pickerWrap{ position:relative; }
   .pickerList{ position:absolute; top:calc(100% + 4px); left:0; right:0; background:#fff; border:1px solid var(--line); border-radius:8px; max-height:220px; overflow-y:auto; z-index:30; box-shadow:0 6px 18px rgba(35,49,41,.12); }
@@ -178,6 +192,8 @@
     .weeklyRowGrid{ flex-direction:column; gap:8px; }
     .weeklyRowGrid textarea, .weeklyRowGrid input{ font-size:16px !important; padding:10px 10px; }
     .weeklyRow{ padding:10px; }
+    .progressInputRow{ flex-direction:column; gap:8px; }
+    .progressInputRow input{ font-size:16px !important; }
     .starBtns button{ font-size:24px; padding:4px; }
     .pickerItem{ padding:12px 12px; font-size:14px; }
     .modal{ width:100%; padding:20px 16px 16px; border-radius:16px 16px 0 0; max-height:92vh; }
@@ -189,7 +205,7 @@
 <div id="root"></div>
 <script>
 "use strict";
-const { useState, useEffect, useMemo } = React;
+const { useState, useEffect, useMemo, useRef } = React;
 
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyDUi5PEjF59RD1AZ4AhTQE_f0-00BZLQ08",
@@ -550,8 +566,11 @@ function DailyChecklistView({ isAdmin, myStaff }){
   const [selfId] = useState(myStaff ? myStaff.id : "");
   const [note, setNote] = useState("");
   const [showTplEditor, setShowTplEditor] = useState(false);
-  const [adminOpen, setAdminOpen] = useState(isAdmin);
-  const [adminShop, setAdminShop] = useState("Tất cả");
+  // Cửa hàng trưởng được xem checklist ngày của nhân viên CÙNG cửa hàng mình
+  // (không phải toàn hệ thống như quản lý khu vực/admin).
+  const isShopManager = !isAdmin && !!myStaff && myStaff.role==="Cửa hàng trưởng";
+  const [adminOpen, setAdminOpen] = useState(isAdmin || isShopManager);
+  const [adminShop, setAdminShop] = useState(isShopManager && myStaff ? myStaff.shop : "Tất cả");
   const [adminDate, setAdminDate] = useState(todayISO());
   const [reviewReportId, setReviewReportId] = useState(null);
   // Ghi đè lạc quan (optimistic) cho ô tick — giúp UI phản hồi tick/bỏ tick
@@ -821,7 +840,9 @@ function DailyChecklistView({ isAdmin, myStaff }){
     onSave:saveTemplate, onClose:()=>setShowTplEditor(false),
   });
 
-  const shopStaff = adminShop==="Tất cả" ? staff : staff.filter(s => s.shop===adminShop);
+  // Cửa hàng trưởng chỉ xem được đúng cửa hàng của mình, không được chọn "Tất cả" hay cửa hàng khác.
+  const effectiveAdminShop = isShopManager && myStaff ? myStaff.shop : adminShop;
+  const shopStaff = effectiveAdminShop==="Tất cả" ? staff : staff.filter(s => s.shop===effectiveAdminShop);
   const adminRows = shopStaff.map(s => {
     const rid = dailyReportId(s.id, adminDate);
     const r = reports[rid];
@@ -843,7 +864,7 @@ function DailyChecklistView({ isAdmin, myStaff }){
   ]);
 
   const adminFilterRow = React.createElement("div", { className:"btnRow", style:{ marginBottom:14 } }, [
-    React.createElement("select", { key:"shop", value:adminShop, onChange:e=>setAdminShop(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } },
+    isAdmin && React.createElement("select", { key:"shop", value:adminShop, onChange:e=>setAdminShop(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } },
       ["Tất cả", ...DEFAULT_SHOPS].map(s => React.createElement("option",{key:s,value:s},s))),
     React.createElement("input", { key:"date", type:"date", value:adminDate, onChange:e=>setAdminDate(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } }),
   ]);
@@ -868,17 +889,18 @@ function DailyChecklistView({ isAdmin, myStaff }){
     report:reviewingReport, tasks:templates[reviewingReport.role] || [], onSave:saveReview, onClose:()=>setReviewReportId(null),
   });
 
-  const adminSection = isAdmin && React.createElement("div", { key:"admin", style:{ marginTop:26 } }, [
+  const adminSection = (isAdmin || isShopManager) && React.createElement("div", { key:"admin", style:{ marginTop:26 } }, [
     React.createElement("div", { key:"tgl", className:"btnRow", style:{ marginBottom:14, justifyContent:"space-between" } }, [
-      React.createElement("button", { key:"b", type:"button", className:"btn btnGhost", onClick:()=>setAdminOpen(!adminOpen) }, adminOpen ? "▲ Ẩn báo cáo tất cả cửa hàng" : "▾ Xem báo cáo tất cả cửa hàng"),
-      React.createElement("button", { key:"tpl", type:"button", className:"btn", onClick:()=>setShowTplEditor(true) }, "Chỉnh checklist theo vai trò"),
+      React.createElement("button", { key:"b", type:"button", className:"btn btnGhost", onClick:()=>setAdminOpen(!adminOpen) },
+        adminOpen ? "▲ Ẩn checklist nhân viên" : (isAdmin ? "▾ Xem báo cáo tất cả cửa hàng" : `▾ Xem checklist nhân viên — ${myStaff.shop}`)),
+      isAdmin && React.createElement("button", { key:"tpl", type:"button", className:"btn", onClick:()=>setShowTplEditor(true) }, "Chỉnh checklist theo vai trò"),
     ]),
     adminOpen && React.createElement(React.Fragment, null, [ adminMetrics, adminFilterRow, adminTable ]),
   ]);
 
   return React.createElement(React.Fragment, null, [
     React.createElement("h2", { key:"t", className:"pagetitle" }, "Checklist công việc hàng ngày"),
-    React.createElement("p", { key:"s", className:"pagesub" }, isAdmin ? "Xem tình hình checklist hàng ngày của tất cả cửa hàng." : "Tick việc theo checklist đúng vị trí và nộp báo cáo cuối ca."),
+    React.createElement("p", { key:"s", className:"pagesub" }, isAdmin ? "Xem tình hình checklist hàng ngày của tất cả cửa hàng." : (isShopManager ? "Tick việc theo checklist của bạn, và xem checklist của nhân viên cùng cửa hàng." : "Tick việc theo checklist đúng vị trí và nộp báo cáo cuối ca.")),
     selfCard, tplEditor, adminSection, reviewModal,
   ]);
 }
@@ -1063,6 +1085,109 @@ function weeklySeedResultFromPlan(prevPlan){
   return o;
 }
 
+// ---- Tiến độ doanh thu & hàng hệ số (theo dõi hàng tuần, đối chiếu chỉ tiêu tháng) ----
+const WEEKLY_PROGRESS_ITEMS = [
+  { key:"revenueProgress", label:"Doanh thu", unit:"vnd", placeholder:"VD: 200.000.000" },
+  { key:"heSoProgress", label:"Hàng hệ số", unit:"num", placeholder:"VD: 500" },
+];
+function weeklyProgressEmpty(){ return { target:"", actualWeek:"" }; }
+function weeklyDefaultProgressData(){
+  const o = {};
+  WEEKLY_PROGRESS_ITEMS.forEach(it => { o[it.key] = weeklyProgressEmpty(); });
+  return o;
+}
+function monthOf(iso){ return iso.slice(0,7); }
+function dayNumOf(iso){ return Number(iso.slice(8,10)); }
+function daysInMonthOf(iso){ const y=Number(iso.slice(0,4)), m=Number(iso.slice(5,7)); return new Date(y,m,0).getDate(); }
+function lastDayOfMonthOf(iso){ return iso.slice(0,8) + String(daysInMonthOf(iso)).padStart(2,"0"); }
+// Ngày mốc để tính luỹ kế dự kiến: nếu là tuần hiện tại thì lấy hôm nay, nếu là tuần đã qua thì lấy Chủ nhật
+// cuối tuần đó — nếu ngày mốc lệch sang tháng khác thì chốt ở ngày cuối cùng của tháng báo cáo (tháng của thứ Hai).
+function weekProgressRefDate(tuanNgay, isCurrentWeek){
+  const cand = isCurrentWeek ? todayISO() : addDays(tuanNgay, 6);
+  return monthOf(cand)===monthOf(tuanNgay) ? cand : lastDayOfMonthOf(tuanNgay);
+}
+// Luỹ kế dự kiến = chỉ tiêu tháng * (số ngày đã qua trong tháng tính đến ngày mốc / tổng số ngày của tháng đó)
+function expectedCumulative(target, refIso){
+  const t = Number(target) || 0;
+  if(!t) return 0;
+  const total = daysInMonthOf(refIso);
+  const elapsed = Math.min(dayNumOf(refIso), total);
+  return t * elapsed / total;
+}
+// Cộng dồn "thực tế đạt được trong tuần" của tất cả các tuần thuộc cùng 1 tháng báo cáo (tính đến & bao gồm tuần đang xét)
+function monthActualCumulative(allReports, shop, monthStr, uptoMonday, key){
+  return allReports
+    .filter(r => r.shop===shop && r.tuanNgay<=uptoMonday && monthOf(r.tuanNgay)===monthStr)
+    .reduce((sum,r) => sum + (Number(r[key] && r[key].actualWeek) || 0), 0);
+}
+// Chỉ tiêu tháng chỉ cần nhập 1 lần đầu tháng — các tuần sau tự kế thừa chỉ tiêu gần nhất trong cùng tháng.
+function latestMonthTarget(allReports, shop, monthStr, beforeMonday, key){
+  const list = allReports
+    .filter(r => r.shop===shop && monthOf(r.tuanNgay)===monthStr && r.tuanNgay<beforeMonday && r[key] && Number(r[key].target))
+    .sort((a,b)=> a.tuanNgay<b.tuanNgay?1:-1);
+  return list.length>0 ? list[0][key].target : "";
+}
+function fmtProgressVal(n, unit){ return unit==="vnd" ? fmtVND(n) : fmtNum(n); }
+
+// Khối nhập + hiển thị tiến độ cho 1 chỉ tiêu (Doanh thu hoặc Hàng hệ số) trong 1 tuần cụ thể.
+function ProgressBlock({ item, value, onChange, expected, actualCum, targetMonth }){
+  const target = Number(value.target) || 0;
+  const pctExpected = expected>0 ? Math.min(Math.round(actualCum/expected*100), 999) : null;
+  const pctTarget = target>0 ? Math.min(Math.round(actualCum/target*100), 100) : 0;
+  const barTone = pctExpected==null ? "var(--inkSoft)" : (pctExpected>=100 ? "var(--pine)" : (pctExpected>=70 ? "var(--amber)" : "var(--clay)"));
+  return React.createElement("div", { className:"progressBlock" }, [
+    React.createElement("div", { key:"t", className:"progressBlockTitle" }, [ React.createElement("span",{key:"d",className:"dot"}), item.label ]),
+    React.createElement("div", { key:"in", className:"progressInputRow" }, [
+      React.createElement("div", { key:"tg", className:"field" }, [
+        React.createElement("label",{key:"l"},"Chỉ tiêu tháng"),
+        React.createElement("input",{ key:"i", type:"number", inputMode:"decimal", value:value.target, placeholder:item.placeholder,
+          onChange:e=>onChange("target", e.target.value) }),
+      ]),
+      React.createElement("div", { key:"ac", className:"field" }, [
+        React.createElement("label",{key:"l"},"Thực tế đạt được (tuần này)"),
+        React.createElement("input",{ key:"i", type:"number", inputMode:"decimal", value:value.actualWeek, placeholder:"0",
+          onChange:e=>onChange("actualWeek", e.target.value) }),
+      ]),
+    ]),
+    React.createElement("div", { key:"st", className:"progressStats" }, [
+      React.createElement("div", { key:"r1", className:"progressStatRow" }, [
+        React.createElement("span",{key:"k",className:"k"},"Luỹ kế thực tế trong tháng"),
+        React.createElement("span",{key:"v",className:"v"}, fmtProgressVal(actualCum, item.unit)),
+      ]),
+      React.createElement("div", { key:"r2", className:"progressStatRow" }, [
+        React.createElement("span",{key:"k",className:"k"},"Luỹ kế dự kiến đến nay"),
+        React.createElement("span",{key:"v",className:"v"}, target>0 ? fmtProgressVal(expected, item.unit) : "—"),
+      ]),
+      React.createElement("div", { key:"r3", className:"progressStatRow" }, [
+        React.createElement("span",{key:"k",className:"k"},"So với chỉ tiêu tháng"),
+        React.createElement("span",{key:"v",className:"v"}, target>0 ? `${pctTarget}%` : "—"),
+      ]),
+      target>0 && React.createElement("div", { key:"bar", className:"progressBarRow" }, [
+        React.createElement("div", { key:"o", className:"progressOuter" }, React.createElement("div",{ className:"progressInner", style:{ width:Math.min(pctExpected==null?0:pctExpected,100)+"%", background:barTone } })),
+        React.createElement("span", { key:"p", className:"progressBarPct", style:{ color:barTone } }, pctExpected==null ? "—" : `${pctExpected}%`),
+      ]),
+      target>0 && React.createElement("div", { key:"hint", style:{ fontSize:10.5, color:"var(--inkSoft)", marginTop:6 } }, "% thanh trên = luỹ kế thực tế so với luỹ kế dự kiến theo tiến độ ngày trong tháng."),
+    ]),
+  ]);
+}
+
+// Ô textarea tự co giãn chiều cao theo nội dung gõ vào — dùng cho các ô nội dung/target
+// trong báo cáo tuần để không bị cắt chữ hay để trống thừa khi nội dung ngắn/dài khác nhau.
+function AutoGrowTextarea({ className, value, onChange, ...rest }){
+  const ref = useRef(null);
+  useEffect(()=>{
+    const el = ref.current;
+    if(!el) return;
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + "px";
+  }, [value]);
+  return React.createElement("textarea", {
+    ...rest, ref, rows:1, value, onChange,
+    className: (className || "") + " autoGrow",
+    onInput: e => { e.target.style.height = "auto"; e.target.style.height = e.target.scrollHeight + "px"; },
+  });
+}
+
 // Bảng các dòng của 1 danh mục lớn (Khách hàng / Hàng hoá / Nhân sự / Cơ sở vật chất).
 // mode "plan": nhân viên tự nhập nội dung kế hoạch + target cam kết cho tuần này, thêm/xoá dòng tự do.
 // mode "result": dòng kế thừa từ kế hoạch tuần trước hiển thị nội dung + target (chỉ đọc), chỉ điền "Kết quả
@@ -1079,12 +1204,12 @@ function WeeklyCategorySection({ label, rows, mode, onChange, onAdd, onRemove })
         ? [
             React.createElement("div", { key:"nd" }, [
               React.createElement("span",{key:"l",className:"weeklyRowLbl"},"Nội dung kế hoạch"),
-              React.createElement("textarea",{key:"i", rows:2, className:"taskResultInput", value:r.noiDung,
+              React.createElement(AutoGrowTextarea,{key:"i", className:"taskResultInput", value:r.noiDung,
                 onChange:e=>onChange(r.id,"noiDung",e.target.value), placeholder:"Việc cần làm / chỉ tiêu tuần này..." }),
             ]),
             React.createElement("div", { key:"tg", style:{flex:"0 1 170px"} }, [
               React.createElement("span",{key:"l",className:"weeklyRowLbl"},"Target cam kết"),
-              React.createElement("input",{key:"i", className:"taskResultInput", value:r.target,
+              React.createElement(AutoGrowTextarea,{key:"i", className:"taskResultInput", value:r.target,
                 onChange:e=>onChange(r.id,"target",e.target.value), placeholder:"VD: 50 triệu doanh số..." }),
             ]),
           ]
@@ -1093,19 +1218,19 @@ function WeeklyCategorySection({ label, rows, mode, onChange, onAdd, onRemove })
               React.createElement("span",{key:"l",className:"weeklyRowLbl"}, r.fromPlan ? "Nội dung kế hoạch (đã cam kết tuần trước)" : "Nội dung phát sinh"),
               r.fromPlan
                 ? React.createElement("div",{key:"i",className:"weeklyReadonly"}, r.noiDung || "—")
-                : React.createElement("textarea",{key:"i", rows:2, className:"taskResultInput", value:r.noiDung,
+                : React.createElement(AutoGrowTextarea,{key:"i", className:"taskResultInput", value:r.noiDung,
                     onChange:e=>onChange(r.id,"noiDung",e.target.value), placeholder:"Việc phát sinh ngoài kế hoạch..." }),
             ]),
             React.createElement("div", { key:"tg", style:{flex:"0 1 150px"} }, [
               React.createElement("span",{key:"l",className:"weeklyRowLbl"},"Target cam kết"),
               r.fromPlan
                 ? React.createElement("div",{key:"i",className:"weeklyReadonly"}, r.target || "—")
-                : React.createElement("input",{key:"i", className:"taskResultInput", value:r.target,
+                : React.createElement(AutoGrowTextarea,{key:"i", className:"taskResultInput", value:r.target,
                     onChange:e=>onChange(r.id,"target",e.target.value) }),
             ]),
             React.createElement("div", { key:"kq" }, [
               React.createElement("span",{key:"l",className:"weeklyRowLbl"},"Kết quả thực hiện"),
-              React.createElement("textarea",{key:"i", rows:2, className:"taskResultInput", value:r.ketQua,
+              React.createElement(AutoGrowTextarea,{key:"i", className:"taskResultInput", value:r.ketQua,
                 onChange:e=>onChange(r.id,"ketQua",e.target.value), placeholder:"Đã làm được gì, số liệu thực tế..." }),
             ]),
           ];
@@ -1141,6 +1266,16 @@ function WeeklyReviewModal({ report, prevReport, onSave, onClose }){
             ])),
           ]);
         }),
+        React.createElement("div", { key:"h3", style:{ fontWeight:700, fontSize:13, margin:"14px 0 8px" } }, "Tiến độ doanh thu & hàng hệ số"),
+        WEEKLY_PROGRESS_ITEMS.map(it => {
+          const val = report[it.key];
+          if(!val || (!val.target && !val.actualWeek)) return null;
+          return React.createElement("div", { key:"g"+it.key, style:{ fontSize:12, padding:"5px 0", borderBottom:"1px solid #F0EEE2" } }, [
+            React.createElement("b",{key:"b"}, it.label+": "),
+            `Tuần này ${fmtProgressVal(Number(val.actualWeek)||0, it.unit)}`,
+            val.target ? ` / Chỉ tiêu tháng ${fmtProgressVal(Number(val.target)||0, it.unit)}` : "",
+          ]);
+        }),
         React.createElement("div", { key:"h2", style:{ fontWeight:700, fontSize:13, margin:"14px 0 8px" } }, "Kế hoạch & target cam kết tuần này"),
         WEEKLY_CATEGORIES.map(c => {
           const rows = keHoach[c.key] || [];
@@ -1174,10 +1309,12 @@ function WeeklyReportView({ isAdmin, myStaff }){
   const [nguoiBaoCao, setNguoiBaoCao] = useState(myStaff ? myStaff.name : "");
   const [ketQuaData, setKetQuaData] = useState(weeklyDefaultCategoryData());
   const [keHoachData, setKeHoachData] = useState(weeklyDefaultCategoryData());
+  const [progressData, setProgressData] = useState(weeklyDefaultProgressData());
   const [ghiChu, setGhiChu] = useState("");
   const [adminOpen, setAdminOpen] = useState(isAdmin);
   const [adminShop, setAdminShop] = useState("Tất cả");
   const [reviewId, setReviewId] = useState(null);
+  const [historyWeek, setHistoryWeek] = useState("Tất cả");
 
   useEffect(()=>{
     const u2 = subscribeCol("weeklyReports", rows => { const map = {}; rows.forEach(r => map[r.id] = r); setReportsMap(map); });
@@ -1191,6 +1328,7 @@ function WeeklyReportView({ isAdmin, myStaff }){
   const thisReport = thisId ? reportsMap[thisId] : null;
   const prevReport = prevId ? reportsMap[prevId] : null;
 
+  const allReportsForSeed = Object.values(reportsMap);
   useEffect(()=>{
     // Nếu tuần này đã có báo cáo lưu rồi thì dùng đúng dữ liệu đã lưu (kể cả các dòng
     // phát sinh nhân viên tự thêm). Nếu chưa, dựng sẵn phần "kết quả" từ kế hoạch tuần trước.
@@ -1198,7 +1336,24 @@ function WeeklyReportView({ isAdmin, myStaff }){
     setKeHoachData(thisReport && thisReport.keHoach ? thisReport.keHoach : weeklyDefaultCategoryData());
     setGhiChu(thisReport ? (thisReport.ghiChu || "") : "");
     setNguoiBaoCao(thisReport ? (thisReport.nguoiBaoCao || (myStaff ? myStaff.name : "")) : (myStaff ? myStaff.name : ""));
-  }, [thisId, thisReport && thisReport.updatedAtTs]);
+    // Chỉ tiêu tháng (doanh thu/hàng hệ số) chỉ cần nhập 1 lần đầu tháng — nếu tuần này chưa có
+    // báo cáo hoặc chưa nhập chỉ tiêu, tự kế thừa chỉ tiêu gần nhất đã nhập trong cùng tháng.
+    if(selfShop){
+      const monthStr = monthOf(currentMonday);
+      const nextProgress = {};
+      WEEKLY_PROGRESS_ITEMS.forEach(it => {
+        const saved = thisReport && thisReport[it.key];
+        const inheritedTarget = latestMonthTarget(allReportsForSeed, selfShop, monthStr, currentMonday, it.key);
+        nextProgress[it.key] = {
+          target: saved && Number(saved.target) ? saved.target : inheritedTarget,
+          actualWeek: saved ? (saved.actualWeek || "") : "",
+        };
+      });
+      setProgressData(nextProgress);
+    } else {
+      setProgressData(weeklyDefaultProgressData());
+    }
+  }, [thisId, thisReport && thisReport.updatedAtTs, selfShop, allReportsForSeed.length]);
 
   function changeRow(section, catKey, rowId, field, value){
     const setter = section==="ketQua" ? setKetQuaData : setKeHoachData;
@@ -1212,6 +1367,9 @@ function WeeklyReportView({ isAdmin, myStaff }){
     const setter = section==="ketQua" ? setKetQuaData : setKeHoachData;
     setter(prev => ({ ...prev, [catKey]: (prev[catKey]||[]).filter(r => r.id!==rowId) }));
   }
+  function changeProgress(key, field, value){
+    setProgressData(prev => ({ ...prev, [key]: { ...prev[key], [field]:value } }));
+  }
 
   async function submitWeekly(e){
     e.preventDefault();
@@ -1219,6 +1377,7 @@ function WeeklyReportView({ isAdmin, myStaff }){
     await db.collection("weeklyReports").doc(thisId).set({
       shop:selfShop, tuanNgay:currentMonday, nguoiBaoCao:nguoiBaoCao.trim(),
       ketQua:ketQuaData, keHoach:keHoachData, ghiChu:ghiChu.trim(),
+      ...progressData,
       ngayGui:todayISO(), updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
     }, { merge:true });
   }
@@ -1251,7 +1410,19 @@ function WeeklyReportView({ isAdmin, myStaff }){
         onChange:(rowId,field,value)=>changeRow("keHoach",c.key,rowId,field,value),
         onAdd:()=>addRow("keHoach",c.key), onRemove:rowId=>removeRow("keHoach",c.key,rowId),
       })),
-      React.createElement("div", { key:"note", className:"field", style:{ marginTop:6, marginBottom:16 } }, [
+      React.createElement("div", { key:"secG", className:"weeklySectionHead", style:{ marginTop:6 } }, React.createElement("h3",{style:{margin:0,fontSize:14.5}},"3. Tiến độ doanh thu & hàng hệ số")),
+      React.createElement("div", { key:"hintG", className:"weeklySectionHint" }, "Chỉ tiêu tháng chỉ cần nhập 1 lần đầu tháng, các tuần sau tự kế thừa. Mỗi tuần chỉ cần điền phần \"Thực tế đạt được trong tuần\" — hệ thống tự cộng dồn và so sánh với tiến độ dự kiến theo số ngày đã qua trong tháng."),
+      React.createElement("div", { key:"pg", className:"progressGrid" }, WEEKLY_PROGRESS_ITEMS.map(it => {
+        const val = progressData[it.key] || weeklyProgressEmpty();
+        const refIso = weekProgressRefDate(currentMonday, true);
+        const expected = expectedCumulative(val.target, refIso);
+        const actualCum = monthActualCumulative(allReportsForSeed, selfShop, monthOf(currentMonday), currentMonday, it.key);
+        return React.createElement(ProgressBlock, {
+          key:it.key, item:it, value:val, expected, actualCum,
+          onChange:(field,value)=>changeProgress(it.key, field, value),
+        });
+      })),
+      React.createElement("div", { key:"note", className:"field", style:{ marginTop:14, marginBottom:16 } }, [
         React.createElement("label",{key:"l"},"Ghi chú thêm (nếu có)"),
         React.createElement("textarea",{key:"i", rows:2, value:ghiChu, onChange:e=>setGhiChu(e.target.value), placeholder:"Nội dung khác không thuộc 4 nhóm trên..." }),
       ]),
@@ -1267,9 +1438,17 @@ function WeeklyReportView({ isAdmin, myStaff }){
   const shopHistory = selfShop
     ? allReports.filter(r => r.shop===selfShop && r.tuanNgay!==currentMonday).sort((a,b)=> a.tuanNgay<b.tuanNgay?1:-1)
     : [];
+  const historyWeekOptions = shopHistory.map(r => r.tuanNgay);
+  const shownHistory = historyWeek==="Tất cả" ? shopHistory : shopHistory.filter(r => r.tuanNgay===historyWeek);
   const shopHistoryCard = (selfShop && shopHistory.length>0) && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
-    React.createElement("div", { key:"t", className:"cardTitle" }, `Lịch sử báo cáo tuần — ${selfShop}`),
-    React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8 } }, shopHistory.map(r => {
+    React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10, marginBottom:10 } }, [
+      React.createElement("div", { key:"t", className:"cardTitle", style:{ marginBottom:0 } }, `Lịch sử báo cáo tuần — ${selfShop}`),
+      React.createElement("select", { key:"sel", value:historyWeek, onChange:e=>setHistoryWeek(e.target.value), style:{ padding:"7px 9px", borderRadius:8, border:"1px solid var(--line)", fontSize:12.5 } }, [
+        React.createElement("option", { key:"all", value:"Tất cả" }, "Tất cả các tuần"),
+        ...historyWeekOptions.map(w => React.createElement("option", { key:w, value:w }, `Tuần ${w}`)),
+      ]),
+    ]),
+    React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8 } }, shownHistory.map(r => {
       const ketQua = r.ketQua || {};
       const catLines = WEEKLY_CATEGORIES.map(c => {
         const rows = (ketQua[c.key]||[]).filter(x => x.noiDung || x.ketQua);
@@ -1279,9 +1458,15 @@ function WeeklyReportView({ isAdmin, myStaff }){
           rows.map(x=>x.ketQua||x.noiDung).filter(Boolean).join("; "),
         ]);
       });
+      const progressLine = WEEKLY_PROGRESS_ITEMS.map(it => {
+        const val = r[it.key];
+        if(!val || (!val.target && !val.actualWeek)) return null;
+        return `${it.label}: tuần ${fmtProgressVal(Number(val.actualWeek)||0, it.unit)}${val.target ? ` (chỉ tiêu tháng ${fmtProgressVal(Number(val.target)||0, it.unit)})` : ""}`;
+      }).filter(Boolean).join(" · ");
       return React.createElement("div", { key:r.id, style:{ background:"var(--paper)", borderRadius:8, padding:"9px 12px", fontSize:12.5 } }, [
         React.createElement("div",{key:"h",style:{fontWeight:700,marginBottom:2}}, `Tuần ${r.tuanNgay}${r.nguoiBaoCao ? " · "+r.nguoiBaoCao : ""}`),
         catLines,
+        progressLine && React.createElement("div",{key:"pg",style:{color:"var(--amber)",fontWeight:600,marginTop:4}}, progressLine),
         r.diemChu!=null && React.createElement("div",{key:"d",style:{color:"var(--pine)",fontWeight:600,marginTop:4}}, `Quản lý chấm: ${"★".repeat(r.diemChu)}${r.nhanXetChu ? " — "+r.nhanXetChu : ""}`),
       ]);
     })),
@@ -1291,10 +1476,14 @@ function WeeklyReportView({ isAdmin, myStaff }){
   const thisWeekReports = shopReports.filter(r => r.tuanNgay===currentMonday);
   const shopsInFilter = adminShop==="Tất cả" ? DEFAULT_SHOPS : [adminShop];
 
+  const weekRevenueTotal = thisWeekReports.reduce((s,r)=> s + (Number(r.revenueProgress && r.revenueProgress.actualWeek) || 0), 0);
+  const weekHeSoTotal = thisWeekReports.reduce((s,r)=> s + (Number(r.heSoProgress && r.heSoProgress.actualWeek) || 0), 0);
   const adminMetrics = React.createElement("div", { className:"metrics" }, [
     React.createElement("div", { key:"1", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Cửa hàng trong bộ lọc"), React.createElement("div",{key:"v",className:"value"}, fmtNum(shopsInFilter.length)) ]),
     React.createElement("div", { key:"2", className:"metric good" }, [ React.createElement("div",{key:"l",className:"label"},"Đã gửi tuần này"), React.createElement("div",{key:"v",className:"value"}, fmtNum(thisWeekReports.length)) ]),
     React.createElement("div", { key:"3", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Chưa gửi tuần này"), React.createElement("div",{key:"v",className:"value"}, fmtNum(Math.max(shopsInFilter.length-thisWeekReports.length,0))) ]),
+    React.createElement("div", { key:"4", className:"metric gold" }, [ React.createElement("div",{key:"l",className:"label"},"Doanh thu tuần này"), React.createElement("div",{key:"v",className:"value"}, fmtVND(weekRevenueTotal)) ]),
+    React.createElement("div", { key:"5", className:"metric gold" }, [ React.createElement("div",{key:"l",className:"label"},"Hàng hệ số tuần này"), React.createElement("div",{key:"v",className:"value"}, fmtNum(weekHeSoTotal)) ]),
   ]);
 
   const adminFilterRow = React.createElement("div", { className:"btnRow", style:{ marginBottom:14 } },
