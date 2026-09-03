@@ -225,6 +225,9 @@ const storage = firebase.storage();
 // khoản vừa tạo nếu dùng app chính — dùng app phụ này để tránh việc đó).
 const secondaryApp = firebase.initializeApp(FIREBASE_CONFIG, "Secondary");
 const secondaryAuth = secondaryApp.auth();
+// Không lưu phiên đăng nhập cho app phụ này (chỉ dùng tạm lúc tạo tài khoản nhân viên) —
+// tránh việc mỗi lần tải trang nó tự thử khôi phục phiên cũ, gây lỗi 400 vô hại làm nhiễu Console.
+secondaryAuth.setPersistence(firebase.auth.Auth.Persistence.NONE).catch(()=>{});
 async function createStaffAccount(email, password, staffId){
   const cred = await secondaryAuth.createUserWithEmailAndPassword(email, password);
   const newUid = cred.user.uid;
@@ -522,10 +525,20 @@ function DailyReviewModal({ report, tasks, onSave, onClose }){
   const details = report.taskDetails || {};
   const customTasks = report.customTasks || {};
   const allTasks = [...tasks, ...Object.keys(customTasks).map(id => ({ id, label:customTasks[id], custom:true }))];
+
+  // Thời gian làm việc tổng quát trong ca: lấy giờ sớm nhất và muộn nhất được ghi nhận
+  // trên tất cả các đầu việc (cả giờ bắt đầu lẫn giờ hoàn thành) để biết nhân viên
+  // làm việc trong khoảng nào, không chỉ xem từng mốc lẻ tẻ theo từng việc.
+  const allTimes = [];
+  Object.values(details).forEach(d => { if(d && d.start) allTimes.push(d.start); if(d && d.time) allTimes.push(d.time); });
+  allTimes.sort();
+  const workSpan = allTimes.length>0 ? `${allTimes[0]} – ${allTimes[allTimes.length-1]}` : null;
+
   return React.createElement("div", { className:"modalOverlay", onClick:onClose },
     React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, `${report.staffName} — ${report.ngay}`),
-      React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } }, `${report.shop} · ${report.role}`),
+      React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom: workSpan?4:14 } }, `${report.shop} · ${report.role}`),
+      workSpan && React.createElement("div", { key:"ws", style:{ fontSize:12.5, color:"var(--pine)", fontWeight:600, marginBottom:14 } }, `Thời gian làm việc trong ca: ${workSpan}`),
       React.createElement("div", { key:"list", style:{ marginBottom:14, maxHeight:260, overflowY:"auto" } }, allTasks.map(t => {
         const d = details[t.id] || {};
         const timeRange = [d.start, d.time].filter(Boolean).join(" – ");
@@ -533,9 +546,10 @@ function DailyReviewModal({ report, tasks, onSave, onClose }){
           React.createElement("div", { key:"main", style:{ display:"flex", gap:8, fontSize:12.5, color: done[t.id] ? "var(--ink)" : "var(--clay)" } }, [
             React.createElement("span",{key:"i"}, done[t.id] ? "✓" : "✕"),
             React.createElement("span",{key:"l"}, t.label + (t.custom ? " (tự thêm)" : "")),
-            timeRange && React.createElement("span",{key:"tm",style:{color:"var(--inkSoft)",marginLeft:"auto",whiteSpace:"nowrap"}}, timeRange),
+            timeRange && React.createElement("span",{key:"tm",style:{marginLeft:"auto",whiteSpace:"nowrap"}}, StatusPill(timeRange, "neutral")),
           ]),
-          d.ketQua && React.createElement("div", { key:"kq", style:{ fontSize:12, color:"var(--inkSoft)", marginLeft:20, marginTop:2 } }, `Kết quả: ${d.ketQua}`),
+          d.ketQua && React.createElement("div", { key:"kq", style:{ fontSize:12, color:"var(--inkSoft)", marginLeft:20, marginTop:2 } }, [ React.createElement("b",{key:"b"},"Kết quả: "), d.ketQua ]),
+          ((d.link) || (d.files && d.files.length>0)) && React.createElement("div", { key:"attHead", style:{ fontSize:11, fontWeight:700, color:"var(--inkSoft)", marginLeft:20, marginTop:4 } }, "Kết quả đính kèm:"),
           d.link && React.createElement("div", { key:"lk", style:{ fontSize:12, marginLeft:20, marginTop:2 } }, React.createElement("a",{href:d.link, target:"_blank", rel:"noopener noreferrer"}, d.link)),
           (d.files && d.files.length>0) && React.createElement("div", { key:"fl", style:{ display:"flex", flexWrap:"wrap", gap:6, marginLeft:20, marginTop:4 } }, d.files.map((f,i) =>
             f.type==="image"
@@ -992,7 +1006,7 @@ function ImageReportView({ isAdmin, myStaff }){
       hasAnyPhoto ? StatusPill("Đã có ảnh hôm nay", "good") : StatusPill("Chưa có ảnh hôm nay", "warn"),
     ]),
     React.createElement(PhotoUploadField, {
-      key:"photoCl", label:"Ảnh checklist hàng ngày (trưng bày, vệ sinh, hạn dùng...)",
+      key:"photoCl", label:"Ảnh checklist hàng ngày (các vị trí quầy kệ, ụ khuyến mại, quầy thu ngân, cửa kính, biển bảng, nhà vệ sinh, khu vực kho...)",
       photos: thisReport ? thisReport.anhChecklist : null, uploading:uploadingChecklist,
       onUpload:files=>addPhotos("anhChecklist", files), onRemove:idx=>removePhoto("anhChecklist", idx),
     }),
@@ -1077,7 +1091,296 @@ function ImageReportView({ isAdmin, myStaff }){
   ]);
 }
 
-// ================= MODULE 3: BÁO CÁO CÔNG VIỆC TUẦN =================
+// ================= MODULE 3: KHÁCH ĐẶT HÀNG (HẾT HÀNG TẠI QUẦY) =================
+function CustomerOrderView({ isAdmin, myStaff }){
+  const [orders, setOrders] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [pendingId, setPendingId] = useState(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [form, setForm] = useState({ customerName:"", customerPhone:"", productName:"", ngayHen:addDays(todayISO(),3), ghiChu:"", canMuaNgoai:false, deXuatMoTu:false, anhSanPham:[] });
+  const [adminShop, setAdminShop] = useState("Tất cả");
+  const [adminStatus, setAdminStatus] = useState("Đang chờ");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(()=>{ const u = subscribeCol("customerOrders", setOrders); return u; }, []);
+
+  const today = todayISO();
+  function isOverdue(o){ return o.trangThai==="Đang chờ" && o.ngayHen < today; }
+  function isDueToday(o){ return o.trangThai==="Đang chờ" && o.ngayHen===today; }
+
+  function openAdd(){
+    setEditingId(null);
+    setPendingId(db.collection("customerOrders").doc().id);
+    setForm({ customerName:"", customerPhone:"", productName:"", ngayHen:addDays(today,3), ghiChu:"", canMuaNgoai:false, deXuatMoTu:false, anhSanPham:[] });
+    setError(null); setShowForm(true);
+  }
+  function openEdit(o){
+    setEditingId(o.id);
+    setPendingId(o.id);
+    setForm({ customerName:o.customerName||"", customerPhone:o.customerPhone||"", productName:o.productName||"", ngayHen:o.ngayHen||today, ghiChu:o.ghiChu||"", canMuaNgoai:!!o.canMuaNgoai, deXuatMoTu:!!o.deXuatMoTu, anhSanPham:o.anhSanPham||[] });
+    setError(null); setShowForm(true);
+  }
+  async function addOrderPhoto(files){
+    if(!pendingId) return;
+    setUploadingPhoto(0);
+    try{
+      const urls = [];
+      let i = 0;
+      for(const file of files){
+        const path = `customerOrders/${pendingId}/${Date.now()}_${file.name}`;
+        const base = Math.round((i/files.length)*100);
+        urls.push(await uploadImageFile(file, path, pct => setUploadingPhoto(Math.min(99, base + Math.round(pct/files.length)))));
+        i++;
+      }
+      setForm(f => ({ ...f, anhSanPham:[...f.anhSanPham, ...urls] }));
+    } finally { setUploadingPhoto(false); }
+  }
+  function removeOrderPhoto(idx){
+    setForm(f => { const next = [...f.anhSanPham]; next.splice(idx,1); return { ...f, anhSanPham:next }; });
+  }
+  async function submit(e){
+    e.preventDefault();
+    if(!myStaff || !form.customerName.trim() || !form.productName.trim()) return;
+    setSaving(true); setError(null);
+    try{
+      if(editingId){
+        await updateDoc("customerOrders", editingId, {
+          customerName:form.customerName.trim(), customerPhone:form.customerPhone.trim(),
+          productName:form.productName.trim(), ngayHen:form.ngayHen, ghiChu:form.ghiChu.trim(),
+          canMuaNgoai:form.canMuaNgoai, deXuatMoTu:form.deXuatMoTu, anhSanPham:form.anhSanPham,
+        });
+      } else {
+        await db.collection("customerOrders").doc(pendingId).set({
+          shop:myStaff.shop, customerName:form.customerName.trim(), customerPhone:form.customerPhone.trim(),
+          productName:form.productName.trim(), ngayHen:form.ngayHen, ghiChu:form.ghiChu.trim(),
+          canMuaNgoai:form.canMuaNgoai, deXuatMoTu:form.deXuatMoTu, anhSanPham:form.anhSanPham,
+          trangThai:"Đang chờ", nguoiTao:myStaff.name, ngayTao:today,
+          createdAtTs: firebase.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+      setShowForm(false);
+    } catch(err){ console.error("Lưu khách đặt hàng lỗi:", err); setError("Lưu thất bại: " + (err && err.message ? err.message : "vui lòng thử lại.")); }
+    finally{ setSaving(false); }
+  }
+  async function markStatus(id, trangThai){ await updateDoc("customerOrders", id, { trangThai }); }
+  async function removeOrder(id){ if(window.confirm("Xoá thông tin khách đặt hàng này?")) await deleteDoc("customerOrders", id); }
+
+  const myOrders = myStaff ? orders.filter(o => o.shop===myStaff.shop) : [];
+  const myPending = [...myOrders.filter(o=>o.trangThai==="Đang chờ")].sort((a,b)=> a.ngayHen<b.ngayHen?-1:1);
+  const myDone = [...myOrders.filter(o=>o.trangThai!=="Đang chờ")].sort((a,b)=> (b.ngayTao||"")<(a.ngayTao||"")?-1:1);
+
+  function orderCard(o){
+    const overdue = isOverdue(o);
+    const dueToday = isDueToday(o);
+    const tone = overdue ? "warn" : (dueToday ? "warn" : "neutral");
+    return React.createElement("div", { key:o.id, className:"card", style: overdue ? { borderColor:"var(--claySoft)" } : null }, [
+      React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:8, marginBottom:6 } }, [
+        React.createElement("div", { key:"l" }, [
+          React.createElement("div", { key:"n", style:{ fontWeight:700, fontSize:14.5 } }, `${o.customerName}${o.customerPhone ? " · "+o.customerPhone : ""}`),
+          React.createElement("div", { key:"p", style:{ fontSize:13, color:"var(--ink)", marginTop:2 } }, `Hàng cần: ${o.productName}`),
+          isAdmin && React.createElement("div", { key:"s", style:{ fontSize:11, color:"var(--inkSoft)", marginTop:2 } }, `${o.shop} · người ghi: ${o.nguoiTao||"—"}`),
+          (o.canMuaNgoai || o.deXuatMoTu) && React.createElement("div", { key:"flags", className:"btnRow", style:{ marginTop:6 } }, [
+            o.canMuaNgoai && StatusPill("Cần mua ngoài hệ thống", "warn"),
+            o.deXuatMoTu && StatusPill("Đề xuất mở tủ", "gold"),
+          ]),
+        ]),
+        o.trangThai==="Đang chờ"
+          ? StatusPill(overdue ? `Quá hạn — hẹn ${o.ngayHen}` : (dueToday ? `Hẹn hôm nay` : `Hẹn ${o.ngayHen}`), tone)
+          : StatusPill(o.trangThai, o.trangThai==="Đã có hàng - đã báo khách" ? "good" : "neutral"),
+      ]),
+      o.ghiChu && React.createElement("div", { key:"g", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:10 } }, o.ghiChu),
+      (o.anhSanPham && o.anhSanPham.length>0) && React.createElement("div", { key:"photos", className:"photoGrid", style:{ marginBottom:10 } }, o.anhSanPham.map((url,i) =>
+        React.createElement("a", { key:i, href:url, target:"_blank", rel:"noreferrer", className:"photoThumb" }, React.createElement("img",{src:url}))
+      )),
+      React.createElement("div", { key:"btns", className:"btnRow" }, [
+        o.trangThai==="Đang chờ" && React.createElement("button", { key:"ok", type:"button", className:"btn btnPrimary", style:{padding:"6px 12px",fontSize:12}, onClick:()=>markStatus(o.id,"Đã có hàng - đã báo khách") }, "Đã có hàng — đã báo khách"),
+        o.trangThai==="Đang chờ" && React.createElement("button", { key:"cancel", type:"button", className:"btn btnGhost", style:{padding:"6px 12px",fontSize:12}, onClick:()=>markStatus(o.id,"Khách không lấy nữa") }, "Khách không lấy nữa"),
+        o.trangThai!=="Đang chờ" && React.createElement("button", { key:"reopen", type:"button", className:"btn btnGhost", style:{padding:"6px 12px",fontSize:12}, onClick:()=>markStatus(o.id,"Đang chờ") }, "Mở lại"),
+        React.createElement("button", { key:"edit", type:"button", className:"btn", style:{padding:"6px 12px",fontSize:12}, onClick:()=>openEdit(o) }, "Sửa"),
+        React.createElement("button", { key:"del", type:"button", className:"btn btnDanger", style:{padding:"6px 12px",fontSize:12}, onClick:()=>removeOrder(o.id) }, "Xoá"),
+      ]),
+    ]);
+  }
+
+  const staffSection = !isAdmin && React.createElement(React.Fragment, null, [
+    React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:16 } },
+      React.createElement("button", { key:"add", className:"btn btnPrimary", onClick:openAdd }, "＋ Ghi khách đặt hàng")
+    ),
+    React.createElement("div", { key:"pending", style:{ display:"flex", flexDirection:"column", gap:12, marginBottom:20 } },
+      myPending.length===0 ? React.createElement("div",{className:"emptyState"},"Chưa có khách nào đang chờ hàng.") : myPending.map(orderCard)
+    ),
+    myDone.length>0 && React.createElement("div", { key:"donetitle", style:{ fontWeight:700, fontSize:13.5, marginBottom:10 } }, "Đã xử lý gần đây"),
+    myDone.length>0 && React.createElement("div", { key:"done", style:{ display:"flex", flexDirection:"column", gap:12 } }, myDone.slice(0,20).map(orderCard)),
+  ]);
+
+  const shopsInFilter = adminShop==="Tất cả" ? DEFAULT_SHOPS : [adminShop];
+  let filteredOrders = orders.filter(o => shopsInFilter.includes(o.shop));
+  if(adminStatus==="Đang chờ") filteredOrders = filteredOrders.filter(o=>o.trangThai==="Đang chờ");
+  else if(adminStatus==="Quá hạn") filteredOrders = filteredOrders.filter(isOverdue);
+  else if(adminStatus!=="Tất cả") filteredOrders = filteredOrders.filter(o=>o.trangThai===adminStatus);
+  filteredOrders = [...filteredOrders].sort((a,b)=> a.ngayHen<b.ngayHen?-1:1);
+
+  const pendingCount = orders.filter(o=>o.trangThai==="Đang chờ").length;
+  const overdueCount = orders.filter(isOverdue).length;
+  const doneCount = orders.filter(o=>o.trangThai==="Đã có hàng - đã báo khách").length;
+  const muaNgoaiCount = orders.filter(o=>o.canMuaNgoai && o.trangThai==="Đang chờ").length;
+  const moTuCount = orders.filter(o=>o.deXuatMoTu).length;
+
+  const adminMetrics = isAdmin && React.createElement("div", { className:"metrics" }, [
+    React.createElement("div", { key:"1", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Tổng khách đang chờ"), React.createElement("div",{key:"v",className:"value"}, fmtNum(pendingCount)) ]),
+    React.createElement("div", { key:"2", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Quá hạn hẹn"), React.createElement("div",{key:"v",className:"value"}, fmtNum(overdueCount)) ]),
+    React.createElement("div", { key:"3", className:"metric good" }, [ React.createElement("div",{key:"l",className:"label"},"Đã báo khách có hàng"), React.createElement("div",{key:"v",className:"value"}, fmtNum(doneCount)) ]),
+    React.createElement("div", { key:"4", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Đang cần mua ngoài"), React.createElement("div",{key:"v",className:"value"}, fmtNum(muaNgoaiCount)) ]),
+    React.createElement("div", { key:"5", className:"metric gold" }, [ React.createElement("div",{key:"l",className:"label"},"Đề xuất mở tủ"), React.createElement("div",{key:"v",className:"value"}, fmtNum(moTuCount)) ]),
+  ]);
+
+  // Tổng hợp các hàng được đề xuất mở tủ theo tên — gộp trùng để thấy hàng nào nhiều
+  // khách/nhiều cửa hàng cùng hỏi (đáng cân nhắc nhập bán thường xuyên hơn cả).
+  const moTuGroups = (() => {
+    const map = {};
+    orders.filter(o=>o.deXuatMoTu).forEach(o => {
+      const key = o.productName.trim().toLowerCase();
+      if(!map[key]) map[key] = { productName:o.productName, count:0, shops:new Set() };
+      map[key].count++; map[key].shops.add(o.shop);
+    });
+    return Object.values(map).sort((a,b)=> b.count-a.count);
+  })();
+  const moTuCard = isAdmin && moTuGroups.length>0 && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"t", className:"cardTitle" }, "Tổng hợp đề xuất mở tủ (theo tên hàng)"),
+    React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8 } }, moTuGroups.map((g,i) =>
+      React.createElement("div", { key:i, style:{ background:"var(--goldSoft)", borderRadius:8, padding:"9px 12px", fontSize:12.5, display:"flex", justifyContent:"space-between", flexWrap:"wrap", gap:6 } }, [
+        React.createElement("div", { key:"n", style:{ fontWeight:700 } }, g.productName),
+        React.createElement("div", { key:"c", style:{ color:"var(--inkSoft)" } }, `${g.count} lượt hỏi · ${g.shops.size} cửa hàng (${[...g.shops].join(", ")})`),
+      ])
+    )),
+  ]);
+
+  // Thống kê TOÀN BỘ mặt hàng khách hỏi mà không đáp ứng được (không phân biệt có
+  // đề xuất mở tủ hay không) — gộp theo tên để biết mặt hàng nào bị hỏi hụt nhiều nhất.
+  const allProductGroups = (() => {
+    const map = {};
+    orders.forEach(o => {
+      const key = o.productName.trim().toLowerCase();
+      if(!map[key]) map[key] = { productName:o.productName, count:0, shops:new Set(), muaNgoai:0 };
+      map[key].count++; map[key].shops.add(o.shop);
+      if(o.canMuaNgoai) map[key].muaNgoai++;
+    });
+    return Object.values(map).sort((a,b)=> b.count-a.count);
+  })();
+  const statsCard = isAdmin && allProductGroups.length>0 && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"t", className:"cardTitle" }, "Thống kê hàng khách hỏi không đáp ứng được (tất cả)"),
+    React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } }, "Gộp theo tên hàng, xếp theo số lượt hỏi nhiều nhất — dùng để rà soát mặt hàng hay hết/hay bị hỏi mà không đáp ứng được."),
+    React.createElement("div", { className:"tableWrap", style:{ marginBottom:0 } }, React.createElement("table",{className:"data"}, [
+      React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Tên hàng","Số lượt hỏi","Số cửa hàng","Số lần phải mua ngoài"].map((h,i)=>React.createElement("th",{key:i},h)))),
+      React.createElement("tbody",{key:"b"}, allProductGroups.slice(0,50).map((g,i) => React.createElement("tr",{key:i}, [
+        React.createElement("td",{key:"n"}, g.productName),
+        React.createElement("td",{key:"c"}, fmtNum(g.count)),
+        React.createElement("td",{key:"s"}, `${g.shops.size} (${[...g.shops].join(", ")})`),
+        React.createElement("td",{key:"m"}, fmtNum(g.muaNgoai)),
+      ]))),
+    ])),
+  ]);
+
+  const adminFilterRow = isAdmin && React.createElement("div", { className:"btnRow", style:{ marginBottom:14 } }, [
+    React.createElement("select", { key:"shop", value:adminShop, onChange:e=>setAdminShop(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } },
+      ["Tất cả", ...DEFAULT_SHOPS].map(s => React.createElement("option",{key:s,value:s},s))),
+    React.createElement("select", { key:"status", value:adminStatus, onChange:e=>setAdminStatus(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } },
+      ["Đang chờ","Quá hạn","Đã có hàng - đã báo khách","Khách không lấy nữa","Tất cả"].map(s => React.createElement("option",{key:s,value:s},s))),
+  ]);
+
+  const adminTable = isAdmin && (filteredOrders.length===0
+    ? React.createElement("div",{className:"emptyState"}, "Không có khách nào trong bộ lọc này.")
+    : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Khách hàng","SĐT","Hàng cần","Cửa hàng","Ngày hẹn","Trạng thái","Ghi chú thêm",""].map((h,i)=>React.createElement("th",{key:i},h)))),
+        React.createElement("tbody",{key:"b"}, filteredOrders.map(o => {
+          const overdue = isOverdue(o);
+          return React.createElement("tr",{key:o.id}, [
+            React.createElement("td",{key:"n"}, o.customerName),
+            React.createElement("td",{key:"p"}, o.customerPhone||"—"),
+            React.createElement("td",{key:"pr"}, o.productName),
+            React.createElement("td",{key:"sh"}, o.shop),
+            React.createElement("td",{key:"d"}, o.ngayHen),
+            React.createElement("td",{key:"st"}, o.trangThai==="Đang chờ" ? StatusPill(overdue?"Quá hạn":"Đang chờ", overdue?"warn":"neutral") : StatusPill(o.trangThai, o.trangThai==="Đã có hàng - đã báo khách"?"good":"neutral")),
+            React.createElement("td",{key:"flags"}, [ o.canMuaNgoai && StatusPill("Mua ngoài","warn"), o.deXuatMoTu && StatusPill("Mở tủ","gold") ]),
+            React.createElement("td",{key:"a", style:{whiteSpace:"nowrap"}}, [
+              React.createElement("button",{key:"del", className:"btn btnDanger", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>removeOrder(o.id)}, "Xoá"),
+            ]),
+          ]);
+        })),
+      ])));
+
+  const formModal = showForm && React.createElement("div", { className:"modalOverlay", onClick:()=>setShowForm(false) },
+    React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:14 } }, editingId ? "Sửa thông tin khách đặt hàng" : "Ghi thông tin khách đặt hàng"),
+      React.createElement("form", { key:"f", onSubmit:submit }, [
+        React.createElement("div", { key:"a", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Tên khách hàng"), React.createElement("input",{key:"i",value:form.customerName,onChange:e=>setForm({...form,customerName:e.target.value}),required:true}) ]),
+        React.createElement("div", { key:"b", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Số điện thoại (nếu có)"), React.createElement("input",{key:"i",value:form.customerPhone,onChange:e=>setForm({...form,customerPhone:e.target.value})}) ]),
+        React.createElement("div", { key:"c", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Hàng khách hỏi không có"), React.createElement("input",{key:"i",value:form.productName,onChange:e=>setForm({...form,productName:e.target.value}),required:true,placeholder:"Tên thuốc/sản phẩm..."}) ]),
+        React.createElement("div", { key:"d", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Ngày hẹn khách quay lại"), React.createElement("input",{key:"i",type:"date",value:form.ngayHen,onChange:e=>setForm({...form,ngayHen:e.target.value}),required:true}) ]),
+        React.createElement("div", { key:"flags", style:{ display:"flex", flexDirection:"column", gap:8, marginBottom:10, background:"var(--paper)", borderRadius:8, padding:"10px 12px" } }, [
+          React.createElement("label", { key:"a", style:{ display:"flex", alignItems:"center", gap:8, fontSize:13, cursor:"pointer" } }, [
+            React.createElement("input", { key:"i", type:"checkbox", checked:form.canMuaNgoai, onChange:e=>setForm({...form,canMuaNgoai:e.target.checked}) }),
+            "Hàng hệ thống không có — cần nhân viên mua ngoài về cho khách",
+          ]),
+          React.createElement("label", { key:"b", style:{ display:"flex", alignItems:"center", gap:8, fontSize:13, cursor:"pointer" } }, [
+            React.createElement("input", { key:"i", type:"checkbox", checked:form.deXuatMoTu, onChange:e=>setForm({...form,deXuatMoTu:e.target.checked}) }),
+            "Đề xuất mở tủ — nên nhập bán thường xuyên (nhiều khách hỏi)",
+          ]),
+        ]),
+        React.createElement(PhotoUploadField, {
+          key:"photo", label:"Ảnh sản phẩm khách mang ra (nếu có) — giúp thống kê lại đúng mặt hàng",
+          photos:form.anhSanPham, uploading:uploadingPhoto,
+          onUpload:addOrderPhoto, onRemove:removeOrderPhoto,
+        }),
+        React.createElement("div", { key:"e", className:"field", style:{ marginBottom:16, marginTop:14 } }, [ React.createElement("label",{key:"l"},"Ghi chú thêm (nếu có)"), React.createElement("textarea",{key:"i",rows:2,value:form.ghiChu,onChange:e=>setForm({...form,ghiChu:e.target.value})}) ]),
+        error && React.createElement("div", { key:"err", style:{ color:"var(--clay)", fontSize:12.5, marginBottom:12 } }, error),
+        React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } }, [
+          React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:()=>setShowForm(false), disabled:saving }, "Huỷ"),
+          React.createElement("button", { key:"s", type:"submit", className:"btn btnPrimary", disabled:saving }, saving ? "Đang lưu..." : "Lưu"),
+        ]),
+      ]),
+    ])
+  );
+
+  return React.createElement(React.Fragment, null, [
+    React.createElement("h2", { key:"t", className:"pagetitle" }, "Khách đặt hàng"),
+    React.createElement("p", { key:"s", className:"pagesub" }, isAdmin ? "Theo dõi khách đặt hàng còn thiếu của tất cả cửa hàng." : "Ghi lại khi khách hỏi hàng không có — cả cửa hàng đều thấy và cập nhật được, không riêng người ghi."),
+    isAdmin && adminMetrics, statsCard, moTuCard, isAdmin && adminFilterRow, isAdmin && adminTable,
+    staffSection, formModal,
+  ]);
+}
+
+// ================= MODULE: CẢNH BÁO KHÁCH ĐẶT HÀNG ĐẾN HẸN =================
+function CustomerOrderReminderBanner({ myStaff, onOpen }){
+  const [orders, setOrders] = useState([]);
+  useEffect(()=>{
+    if(!myStaff) return undefined;
+    const u = subscribeCol("customerOrders", setOrders);
+    return u;
+  }, [myStaff && myStaff.id]);
+  if(!myStaff) return null;
+
+  const today = todayISO();
+  const myPending = orders.filter(o => o.shop===myStaff.shop && o.trangThai==="Đang chờ");
+  const alertOrders = [...myPending.filter(o => o.ngayHen<=today)].sort((a,b)=> a.ngayHen<b.ngayHen?-1:1);
+  if(alertOrders.length===0) return null;
+
+  return React.createElement("div", { className:"card", style:{ maxWidth:1100, margin:"16px auto 0", borderColor:"var(--claySoft)", background:"var(--claySoft)" } }, [
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13.5, marginBottom:8, color:"var(--clay)" } },
+      `Có ${alertOrders.length} khách đến hẹn lấy hàng hôm nay hoặc đã quá hẹn`),
+    React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:6, marginBottom:10 } }, alertOrders.slice(0,5).map(o =>
+      React.createElement("div", { key:o.id, style:{ fontSize:12.5 } }, [
+        React.createElement("span", { key:"n", style:{ fontWeight:600 } }, `${o.customerName} — ${o.productName}`),
+        React.createElement("span", { key:"d", style:{ color: o.ngayHen<today ? "var(--clay)" : "var(--inkSoft)" } }, ` — hẹn ${o.ngayHen}${o.ngayHen<today ? " (quá hạn)" : " (hôm nay)"}`),
+      ])
+    )),
+    React.createElement("button", { key:"b", type:"button", className:"btn btnAmber", style:{padding:"7px 13px",fontSize:12.5}, onClick:onOpen }, "Xem danh sách"),
+  ]);
+}
+
+// ================= MODULE 4: BÁO CÁO CÔNG VIỆC TUẦN =================
 function mondayOf(iso){
   const d = new Date(iso + "T00:00:00");
   const day = d.getDay();
@@ -1228,7 +1531,7 @@ function AutoGrowTextarea({ className, value, onChange, ...rest }){
 // Bảng các dòng của 1 danh mục lớn (Khách hàng / Hàng hoá / Nhân sự / Cơ sở vật chất).
 // mode "plan": nhân viên tự nhập nội dung kế hoạch + target cam kết cho tuần này, thêm/xoá dòng tự do.
 // mode "result": dòng kế thừa từ kế hoạch tuần trước hiển thị nội dung + target (chỉ đọc), chỉ điền "Kết quả
-// thực hiện"; nhân viên vẫn có thể bấm "+ Thêm dòng" để báo cáo thêm việc phát sinh ngoài kế hoạch.
+// thực hiện"; nhân viên vẫn có thể bấm "+ Thêm dòng" để báo cáo thêm việc phát sinh.
 function WeeklyCategorySection({ label, rows, mode, onChange, onAdd, onRemove }){
   return React.createElement("div", { className:"weeklyCatBlock" }, [
     React.createElement("div", { key:"t", className:"weeklyCatTitle" }, [
@@ -1561,7 +1864,7 @@ function WeeklyReportView({ isAdmin, myStaff }){
   ]);
 }
 
-// ================= MODULE 4: GIAO VIỆC (QUẢN LÝ KHU VỰC) =================
+// ================= MODULE 5: GIAO VIỆC (QUẢN LÝ KHU VỰC) =================
 function TaskAssignView({ isAdmin, myStaff }){
   const [tasks, setTasks] = useState([]);
   const [staffList, setStaffList] = useState([]);
@@ -1821,7 +2124,7 @@ function TaskAssignView({ isAdmin, myStaff }){
   ]);
 }
 
-// ================= MODULE 5: HIỆU SUẤT & TỔNG QUAN CỬA HÀNG =================
+// ================= MODULE 6: HIỆU SUẤT & TỔNG QUAN CỬA HÀNG =================
 function PerformanceView(){
   const [staff, setStaff] = useState([]);
   const [dailyReports, setDailyReports] = useState([]);
@@ -1893,7 +2196,7 @@ function PerformanceView(){
   ]);
 }
 
-// ================= MODULE 6: ĐÀO TẠO & BUDDY =================
+// ================= MODULE 7: ĐÀO TẠO & BUDDY =================
 const DEFAULT_CHECKLIST = [
   { id:"d1", offset:0, label:"Giới thiệu quy định cửa hàng, an toàn, GPP cơ bản" },
   { id:"d2", offset:0, label:"Giới thiệu buddy kèm cặp, tham quan cửa hàng, vị trí hàng hoá" },
@@ -2124,7 +2427,7 @@ function TrainingView({ isAdmin, myStaff }){
   ]);
 }
 
-// ================= MODULE 7: GHI NHẬN & TẶNG SAO =================
+// ================= MODULE 8: GHI NHẬN & TẶNG SAO =================
 const DEFAULT_REWARDS = [
   { id:"r1", name:"Phiếu quà 50.000đ", stars:10, mota:"" },
   { id:"r2", name:"Phiếu quà 100.000đ", stars:20, mota:"" },
@@ -2513,10 +2816,11 @@ function StaffView(){
 }
 
 // ================= APP SHELL =================
-const STAFF_TABS = ["checklist","photos","weekly","tasks","training","kudos"];
+const STAFF_TABS = ["checklist","photos","customerOrders","weekly","tasks","training","kudos"];
 const OPS_TABS = [
   { id:"checklist", label:"Checklist ngày" },
   { id:"photos", label:"Báo cáo hình ảnh" },
+  { id:"customerOrders", label:"Khách đặt hàng" },
   { id:"weekly", label:"Báo cáo tuần" },
   { id:"tasks", label:"Giao việc" },
   { id:"performance", label:"Hiệu suất" },
@@ -2632,9 +2936,11 @@ function Dashboard({ user, isAdmin, myStaff }){
       )),
     ])),
     !isAdmin && React.createElement(TaskReminderBanner, { key:"reminder", myStaff, onOpenTasks:()=>setActiveTab("tasks") }),
+    !isAdmin && React.createElement(CustomerOrderReminderBanner, { key:"custreminder", myStaff, onOpen:()=>setActiveTab("customerOrders") }),
     React.createElement("div", { key:"wrap", className:"wrap" }, [
       activeTab==="checklist" && React.createElement(DailyChecklistView, { key:"v", isAdmin, myStaff }),
       activeTab==="photos" && React.createElement(ImageReportView, { key:"v", isAdmin, myStaff }),
+      activeTab==="customerOrders" && React.createElement(CustomerOrderView, { key:"v", isAdmin, myStaff }),
       activeTab==="weekly" && React.createElement(WeeklyReportView, { key:"v", isAdmin, myStaff }),
       activeTab==="tasks" && React.createElement(TaskAssignView, { key:"v", isAdmin, myStaff }),
       activeTab==="performance" && isAdmin && React.createElement(PerformanceView, { key:"v" }),
