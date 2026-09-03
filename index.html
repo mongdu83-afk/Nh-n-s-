@@ -342,6 +342,16 @@ function subscribeCol(name, cb, orderField){
 async function addDoc(name, data){ return db.collection(name).add({ ...data, createdAtTs: firebase.firestore.FieldValue.serverTimestamp() }); }
 async function updateDoc(name, id, data){ return db.collection(name).doc(id).update(data); }
 async function deleteDoc(name, id){ return db.collection(name).doc(id).delete(); }
+// Ghi/xoá field lồng nhau (dạng "a.b.c") một cách CHẮC CHẮN: update() đảm bảo field-path
+// kèm FieldValue.delete() hoạt động đúng (set()+merge với key dạng dot-path không đáng tin
+// cậy cho việc xoá — đây là nguyên nhân khiến bỏ tick trước đây không có tác dụng thật sự).
+// Nếu tài liệu chưa tồn tại (lần ghi đầu tiên trong ngày/tuần), update() sẽ báo lỗi not-found,
+// lúc đó tạo mới bằng set() bình thường (không cần xoá gì vì tài liệu mới toanh).
+async function mergeDotFields(collectionName, docId, dotFields, createExtras){
+  const ref = db.collection(collectionName).doc(docId);
+  try{ await ref.update(dotFields); }
+  catch(err){ await ref.set({ ...(createExtras||{}), ...dotFields }, { merge:true }); }
+}
 function subscribeConfigDoc(docId, cb){
   return db.collection("opsConfig").doc(docId).onSnapshot(doc => cb(doc.exists ? doc.data() : {}));
 }
@@ -638,7 +648,7 @@ function DailyChecklistView({ isAdmin, myStaff }){
     payload[`doneIds.${taskId}`] = checked ? true : firebase.firestore.FieldValue.delete();
     if(checked && !(taskTimes[taskId])) payload[`taskDetails.${taskId}.time`] = nowHM();
     try{
-      await db.collection("dailyReports").doc(selfReportId).set(payload, { merge:true });
+      await mergeDotFields("dailyReports", selfReportId, payload);
     } catch(err){
       console.error("toggleTask lỗi:", err);
       // Ghi lỗi — khôi phục lại trạng thái tick trước đó và báo cho người dùng.
@@ -648,19 +658,19 @@ function DailyChecklistView({ isAdmin, myStaff }){
   }
   async function saveTaskTime(taskId, time){
     if(!selfStaff) return;
-    await db.collection("dailyReports").doc(selfReportId).set({
+    await mergeDotFields("dailyReports", selfReportId, {
       staffId:selfStaff.id, staffName:selfStaff.name, shop:selfStaff.shop, role:selfStaff.role, ngay:today,
       [`taskDetails.${taskId}.time`]: time,
       updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
-    }, { merge:true });
+    });
   }
   async function saveTaskStart(taskId, time){
     if(!selfStaff) return;
-    await db.collection("dailyReports").doc(selfReportId).set({
+    await mergeDotFields("dailyReports", selfReportId, {
       staffId:selfStaff.id, staffName:selfStaff.name, shop:selfStaff.shop, role:selfStaff.role, ngay:today,
       [`taskDetails.${taskId}.start`]: time,
       updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
-    }, { merge:true });
+    });
   }
   async function addCustomTask(){
     const label = newTaskLabel.trim();
@@ -668,12 +678,12 @@ function DailyChecklistView({ isAdmin, myStaff }){
     const id = "custom_" + uid();
     setAddingTask(true);
     try{
-      await db.collection("dailyReports").doc(selfReportId).set({
+      await mergeDotFields("dailyReports", selfReportId, {
         staffId:selfStaff.id, staffName:selfStaff.name, shop:selfStaff.shop, role:selfStaff.role,
         ngay:today, trangThai: selfReport ? (selfReport.trangThai || "Nháp") : "Nháp",
         [`customTasks.${id}`]: label,
         updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
-      }, { merge:true });
+      });
       setNewTaskLabel("");
     } catch(err){
       console.error("addCustomTask lỗi:", err);
@@ -685,20 +695,20 @@ function DailyChecklistView({ isAdmin, myStaff }){
   async function removeCustomTask(taskId){
     if(!selfStaff) return;
     if(!window.confirm("Xoá đầu việc tự thêm này khỏi báo cáo hôm nay?")) return;
-    await db.collection("dailyReports").doc(selfReportId).set({
+    await mergeDotFields("dailyReports", selfReportId, {
       [`customTasks.${taskId}`]: firebase.firestore.FieldValue.delete(),
       [`doneIds.${taskId}`]: firebase.firestore.FieldValue.delete(),
       [`taskDetails.${taskId}`]: firebase.firestore.FieldValue.delete(),
-    }, { merge:true });
+    });
     setPendingDone(prev => { if(!(taskId in prev)) return prev; const n = { ...prev }; delete n[taskId]; return n; });
   }
   async function saveTaskResult(taskId, text){
     if(!selfStaff) return;
-    await db.collection("dailyReports").doc(selfReportId).set({
+    await mergeDotFields("dailyReports", selfReportId, {
       staffId:selfStaff.id, staffName:selfStaff.name, shop:selfStaff.shop, role:selfStaff.role, ngay:today,
       [`taskDetails.${taskId}.ketQua`]: text,
       updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
-    }, { merge:true });
+    });
   }
   async function saveNote(){
     if(!selfStaff) return;
@@ -1087,8 +1097,9 @@ function weeklySeedResultFromPlan(prevPlan){
 
 // ---- Tiến độ doanh thu & hàng hệ số (theo dõi hàng tuần, đối chiếu chỉ tiêu tháng) ----
 const WEEKLY_PROGRESS_ITEMS = [
-  { key:"revenueProgress", label:"Doanh thu", unit:"vnd", placeholder:"VD: 200.000.000" },
-  { key:"heSoProgress", label:"Hàng hệ số", unit:"num", placeholder:"VD: 500" },
+  { key:"revenueProgress", label:"Doanh thu", unit:"vnd", placeholder:"VD: 200.000.000", agg:"sum" },
+  { key:"heSoProgress", label:"Hàng hệ số", unit:"num", placeholder:"VD: 500", agg:"sum" },
+  { key:"avgBillProgress", label:"Trung bình bill", unit:"vnd", placeholder:"VD: 150.000", agg:"avg" },
 ];
 function weeklyProgressEmpty(){ return { target:"", actualWeek:"" }; }
 function weeklyDefaultProgressData(){
@@ -1106,19 +1117,27 @@ function weekProgressRefDate(tuanNgay, isCurrentWeek){
   const cand = isCurrentWeek ? todayISO() : addDays(tuanNgay, 6);
   return monthOf(cand)===monthOf(tuanNgay) ? cand : lastDayOfMonthOf(tuanNgay);
 }
-// Luỹ kế dự kiến = chỉ tiêu tháng * (số ngày đã qua trong tháng tính đến ngày mốc / tổng số ngày của tháng đó)
-function expectedCumulative(target, refIso){
+// Luỹ kế dự kiến = chỉ tiêu tháng * (số ngày đã qua trong tháng tính đến ngày mốc / tổng số ngày của tháng đó).
+// Với chỉ tiêu dạng "trung bình" (VD: trung bình bill) thì không cộng dồn theo ngày — chỉ tiêu chính là mốc so sánh.
+function expectedCumulative(target, refIso, agg){
   const t = Number(target) || 0;
   if(!t) return 0;
+  if(agg==="avg") return t;
   const total = daysInMonthOf(refIso);
   const elapsed = Math.min(dayNumOf(refIso), total);
   return t * elapsed / total;
 }
-// Cộng dồn "thực tế đạt được trong tuần" của tất cả các tuần thuộc cùng 1 tháng báo cáo (tính đến & bao gồm tuần đang xét)
-function monthActualCumulative(allReports, shop, monthStr, uptoMonday, key){
-  return allReports
-    .filter(r => r.shop===shop && r.tuanNgay<=uptoMonday && monthOf(r.tuanNgay)===monthStr)
-    .reduce((sum,r) => sum + (Number(r[key] && r[key].actualWeek) || 0), 0);
+// Cộng dồn "thực tế đạt được trong tuần" của tất cả các tuần thuộc cùng 1 tháng báo cáo (tính đến & bao gồm tuần
+// đang xét). Với chỉ tiêu dạng "trung bình" thì lấy TRUNG BÌNH các tuần đã nhập thay vì cộng dồn (vì cộng dồn
+// nhiều giá trị trung bình bill của từng tuần lại không có ý nghĩa).
+function monthActualCumulative(allReports, shop, monthStr, uptoMonday, key, agg){
+  const rows = allReports.filter(r => r.shop===shop && r.tuanNgay<=uptoMonday && monthOf(r.tuanNgay)===monthStr);
+  if(agg==="avg"){
+    const withVal = rows.filter(r => r[key] && Number(r[key].actualWeek));
+    if(withVal.length===0) return 0;
+    return withVal.reduce((sum,r) => sum + Number(r[key].actualWeek), 0) / withVal.length;
+  }
+  return rows.reduce((sum,r) => sum + (Number(r[key] && r[key].actualWeek) || 0), 0);
 }
 // Chỉ tiêu tháng chỉ cần nhập 1 lần đầu tháng — các tuần sau tự kế thừa chỉ tiêu gần nhất trong cùng tháng.
 function latestMonthTarget(allReports, shop, monthStr, beforeMonday, key){
@@ -1396,31 +1415,31 @@ function WeeklyReportView({ isAdmin, myStaff }){
         React.createElement("label",{key:"l"},"Người báo cáo"),
         React.createElement("input",{key:"i", value:nguoiBaoCao, onChange:e=>setNguoiBaoCao(e.target.value) }),
       ]),
-      React.createElement("div", { key:"secR", className:"weeklySectionHead" }, React.createElement("h3",{style:{margin:0,fontSize:14.5}},"1. Kết quả thực hiện tuần trước")),
+      React.createElement("div", { key:"secG", className:"weeklySectionHead" }, React.createElement("h3",{style:{margin:0,fontSize:14.5}},"1. Tiến độ doanh thu, hàng hệ số & trung bình bill")),
+      React.createElement("div", { key:"hintG", className:"weeklySectionHint" }, "Chỉ tiêu tháng chỉ cần nhập 1 lần đầu tháng, các tuần sau tự kế thừa. Mỗi tuần chỉ cần điền phần \"Thực tế đạt được trong tuần\" — hệ thống tự cộng dồn (riêng Trung bình bill sẽ tự tính trung bình các tuần) và so sánh với tiến độ dự kiến."),
+      React.createElement("div", { key:"pg", className:"progressGrid" }, WEEKLY_PROGRESS_ITEMS.map(it => {
+        const val = progressData[it.key] || weeklyProgressEmpty();
+        const refIso = weekProgressRefDate(currentMonday, true);
+        const expected = expectedCumulative(val.target, refIso, it.agg);
+        const actualCum = monthActualCumulative(allReportsForSeed, selfShop, monthOf(currentMonday), currentMonday, it.key, it.agg);
+        return React.createElement(ProgressBlock, {
+          key:it.key, item:it, value:val, expected, actualCum,
+          onChange:(field,value)=>changeProgress(it.key, field, value),
+        });
+      })),
+      React.createElement("div", { key:"secR", className:"weeklySectionHead", style:{ marginTop:6 } }, React.createElement("h3",{style:{margin:0,fontSize:14.5}},"2. Kết quả thực hiện tuần trước")),
       React.createElement("div", { key:"hintR", className:"weeklySectionHint" }, "Đối chiếu với kế hoạch & target đã cam kết tuần trước, điền kết quả thực tế. Có thể bấm \"Thêm dòng\" để báo cáo thêm việc phát sinh ngoài kế hoạch."),
       WEEKLY_CATEGORIES.map(c => React.createElement(WeeklyCategorySection, {
         key:"r"+c.key, label:c.label, rows:ketQuaData[c.key]||[], mode:"result",
         onChange:(rowId,field,value)=>changeRow("ketQua",c.key,rowId,field,value),
         onAdd:()=>addRow("ketQua",c.key), onRemove:rowId=>removeRow("ketQua",c.key,rowId),
       })),
-      React.createElement("div", { key:"secP", className:"weeklySectionHead", style:{ marginTop:6 } }, React.createElement("h3",{style:{margin:0,fontSize:14.5}},"2. Kế hoạch & target cam kết tuần này")),
+      React.createElement("div", { key:"secP", className:"weeklySectionHead", style:{ marginTop:6 } }, React.createElement("h3",{style:{margin:0,fontSize:14.5}},"3. Kế hoạch & target cam kết tuần này")),
       React.createElement("div", { key:"hintP", className:"weeklySectionHint" }, "Liệt kê từng đầu việc/chỉ tiêu dự kiến cho tuần này kèm target cam kết — đây sẽ là căn cứ để báo cáo kết quả vào tuần sau."),
       WEEKLY_CATEGORIES.map(c => React.createElement(WeeklyCategorySection, {
         key:"p"+c.key, label:c.label, rows:keHoachData[c.key]||[], mode:"plan",
         onChange:(rowId,field,value)=>changeRow("keHoach",c.key,rowId,field,value),
         onAdd:()=>addRow("keHoach",c.key), onRemove:rowId=>removeRow("keHoach",c.key,rowId),
-      })),
-      React.createElement("div", { key:"secG", className:"weeklySectionHead", style:{ marginTop:6 } }, React.createElement("h3",{style:{margin:0,fontSize:14.5}},"3. Tiến độ doanh thu & hàng hệ số")),
-      React.createElement("div", { key:"hintG", className:"weeklySectionHint" }, "Chỉ tiêu tháng chỉ cần nhập 1 lần đầu tháng, các tuần sau tự kế thừa. Mỗi tuần chỉ cần điền phần \"Thực tế đạt được trong tuần\" — hệ thống tự cộng dồn và so sánh với tiến độ dự kiến theo số ngày đã qua trong tháng."),
-      React.createElement("div", { key:"pg", className:"progressGrid" }, WEEKLY_PROGRESS_ITEMS.map(it => {
-        const val = progressData[it.key] || weeklyProgressEmpty();
-        const refIso = weekProgressRefDate(currentMonday, true);
-        const expected = expectedCumulative(val.target, refIso);
-        const actualCum = monthActualCumulative(allReportsForSeed, selfShop, monthOf(currentMonday), currentMonday, it.key);
-        return React.createElement(ProgressBlock, {
-          key:it.key, item:it, value:val, expected, actualCum,
-          onChange:(field,value)=>changeProgress(it.key, field, value),
-        });
       })),
       React.createElement("div", { key:"note", className:"field", style:{ marginTop:14, marginBottom:16 } }, [
         React.createElement("label",{key:"l"},"Ghi chú thêm (nếu có)"),
@@ -1478,12 +1497,15 @@ function WeeklyReportView({ isAdmin, myStaff }){
 
   const weekRevenueTotal = thisWeekReports.reduce((s,r)=> s + (Number(r.revenueProgress && r.revenueProgress.actualWeek) || 0), 0);
   const weekHeSoTotal = thisWeekReports.reduce((s,r)=> s + (Number(r.heSoProgress && r.heSoProgress.actualWeek) || 0), 0);
+  const avgBillValues = thisWeekReports.map(r => Number(r.avgBillProgress && r.avgBillProgress.actualWeek) || 0).filter(v=>v>0);
+  const weekAvgBillAvg = avgBillValues.length ? avgBillValues.reduce((a,b)=>a+b,0)/avgBillValues.length : 0;
   const adminMetrics = React.createElement("div", { className:"metrics" }, [
     React.createElement("div", { key:"1", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Cửa hàng trong bộ lọc"), React.createElement("div",{key:"v",className:"value"}, fmtNum(shopsInFilter.length)) ]),
     React.createElement("div", { key:"2", className:"metric good" }, [ React.createElement("div",{key:"l",className:"label"},"Đã gửi tuần này"), React.createElement("div",{key:"v",className:"value"}, fmtNum(thisWeekReports.length)) ]),
     React.createElement("div", { key:"3", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Chưa gửi tuần này"), React.createElement("div",{key:"v",className:"value"}, fmtNum(Math.max(shopsInFilter.length-thisWeekReports.length,0))) ]),
     React.createElement("div", { key:"4", className:"metric gold" }, [ React.createElement("div",{key:"l",className:"label"},"Doanh thu tuần này"), React.createElement("div",{key:"v",className:"value"}, fmtVND(weekRevenueTotal)) ]),
     React.createElement("div", { key:"5", className:"metric gold" }, [ React.createElement("div",{key:"l",className:"label"},"Hàng hệ số tuần này"), React.createElement("div",{key:"v",className:"value"}, fmtNum(weekHeSoTotal)) ]),
+    React.createElement("div", { key:"6", className:"metric gold" }, [ React.createElement("div",{key:"l",className:"label"},"TB bill tuần này (BQ các cửa hàng)"), React.createElement("div",{key:"v",className:"value"}, fmtVND(weekAvgBillAvg)) ]),
   ]);
 
   const adminFilterRow = React.createElement("div", { className:"btnRow", style:{ marginBottom:14 } },
@@ -1899,10 +1921,9 @@ function TrainingView({ isAdmin, myStaff }){
     setForm({ name:"", shop:DEFAULT_SHOPS[0], joinDate:todayISO(), buddyId:"", staffId:"" }); setShowForm(false);
   }
   async function toggleTask(hireId, taskId, checked){
-    const ref = db.collection("trainingProgress").doc(hireId);
     const payload = { hireId };
     payload[`done.${taskId}`] = checked ? todayISO() : firebase.firestore.FieldValue.delete();
-    await ref.set(payload, { merge:true });
+    await mergeDotFields("trainingProgress", hireId, payload);
   }
   async function saveTemplate(items){ await saveConfigDoc("trainingChecklist", { items }); setShowTplEditor(false); }
   async function submitReport(e){
