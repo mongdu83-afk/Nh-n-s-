@@ -328,6 +328,12 @@ const STAFF_ROLES = ["Nhân viên học việc","Nhân viên bán hàng","Cửa 
 function uid(){ return "id" + Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
 function todayISO(){ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
 function nowHM(){ const d=new Date(); return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`; }
+// Phát hiện điện thoại/máy tính bảng — dùng để chỉ cho phép chụp ảnh trực tiếp trên điện thoại,
+// chặn việc gắn ảnh có sẵn từ máy tính (vì thuộc tính "capture" của input file bị trình duyệt
+// desktop bỏ qua, mở hộp chọn file bình thường thay vì bắt buộc mở camera).
+function isMobileDevice(){
+  return /Android|iPhone|iPad|iPod|Mobile|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent || "");
+}
 function addDays(iso, n){ const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
 function daysBetween(a, b){ return Math.round((new Date(b+"T00:00:00") - new Date(a+"T00:00:00")) / 86400000); }
 function fmtNum(n){ if(n==null||isNaN(n)) return "0"; return Math.round(n).toLocaleString("vi-VN"); }
@@ -559,15 +565,19 @@ function DailyReviewModal({ report, tasks, onSave, onClose }){
 }
 
 function PhotoUploadField({ label, photos, uploading, onUpload, onRemove }){
+  const onMobile = isMobileDevice();
   const uploadLabel = uploading===false || uploading==null
     ? "Chụp ảnh"
     : `Đang nén & tải ảnh lên... ${typeof uploading==="number" ? uploading+"%" : ""}`;
   return React.createElement("div", { style:{ marginTop:14 } }, [
     React.createElement("label", { key:"l", style:{ display:"block", fontSize:12, fontWeight:600, marginBottom:6, color:"#4A4A40" } }, label),
-    React.createElement("label", { key:"u", className:"uploadBtn" }, [
-      React.createElement("input", { key:"i", type:"file", accept:"image/*", capture:"environment", disabled:!!uploading, onChange:e=>{ const files=[...e.target.files]; if(files.length) onUpload(files); e.target.value=""; } }),
-      uploadLabel,
-    ]),
+    onMobile
+      ? React.createElement("label", { key:"u", className:"uploadBtn" }, [
+          React.createElement("input", { key:"i", type:"file", accept:"image/*", capture:"environment", disabled:!!uploading, onChange:e=>{ const files=[...e.target.files]; if(files.length) onUpload(files); e.target.value=""; } }),
+          uploadLabel,
+        ])
+      : React.createElement("div", { key:"u", style:{ fontSize:12, color:"var(--clay)", background:"var(--claySoft)", borderRadius:8, padding:"9px 12px" } },
+          "Chỉ chụp ảnh trực tiếp trên điện thoại mới nộp được ảnh (không dùng ảnh có sẵn từ máy tính) — vui lòng mở link này trên điện thoại để chụp và nộp ảnh."),
     (photos && photos.length>0) && React.createElement("div", { key:"g", className:"photoGrid" }, photos.map((url,i) =>
       React.createElement("div", { key:i, className:"photoThumb" }, [
         React.createElement("img",{key:"img",src:url}),
@@ -1246,7 +1256,7 @@ function WeeklyCategorySection({ label, rows, mode, onChange, onAdd, onRemove })
               r.fromPlan
                 ? React.createElement("div",{key:"i",className:"weeklyReadonly"}, r.noiDung || "—")
                 : React.createElement(AutoGrowTextarea,{key:"i", className:"taskResultInput", value:r.noiDung,
-                    onChange:e=>onChange(r.id,"noiDung",e.target.value), placeholder:"Việc phát sinh ngoài kế hoạch..." }),
+                    onChange:e=>onChange(r.id,"noiDung",e.target.value), placeholder:"" }),
             ]),
             React.createElement("div", { key:"tg", style:{flex:"0 1 150px"} }, [
               React.createElement("span",{key:"l",className:"weeklyRowLbl"},"Target cam kết"),
@@ -1436,7 +1446,7 @@ function WeeklyReportView({ isAdmin, myStaff }){
         });
       })),
       React.createElement("div", { key:"secR", className:"weeklySectionHead", style:{ marginTop:6 } }, React.createElement("h3",{style:{margin:0,fontSize:14.5}},"2. Kết quả thực hiện tuần trước")),
-      React.createElement("div", { key:"hintR", className:"weeklySectionHint" }, "Đối chiếu với kế hoạch & target đã cam kết tuần trước, điền kết quả thực tế. Có thể bấm \"Thêm dòng\" để báo cáo thêm việc phát sinh ngoài kế hoạch."),
+      React.createElement("div", { key:"hintR", className:"weeklySectionHint" }, "Đối chiếu với kế hoạch & target đã cam kết tuần trước, điền kết quả thực tế."),
       WEEKLY_CATEGORIES.map(c => React.createElement(WeeklyCategorySection, {
         key:"r"+c.key, label:c.label, rows:ketQuaData[c.key]||[], mode:"result",
         onChange:(rowId,field,value)=>changeRow("ketQua",c.key,rowId,field,value),
