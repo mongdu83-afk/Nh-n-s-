@@ -1,0 +1,1672 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>Upharma Ops — Vận hành &amp; Nhân sự</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=Fraunces:wght@600;700&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-storage-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<style>
+  :root{
+    --ink:#233129; --inkSoft:#6B7A70; --paper:#F7F5EE; --card:#FFFFFF; --line:#E1DFD2;
+    --pine:#1F6E52; --pineSoft:#DCEFE5; --amber:#D98A1F; --amberSoft:#FBE9CC;
+    --clay:#B0483A; --claySoft:#F3DAD5; --gold:#C9A227; --goldSoft:#F6EDCB;
+  }
+  *{box-sizing:border-box;}
+  body{ margin:0; font-family:'Be Vietnam Pro', system-ui, sans-serif; background:var(--paper); color:var(--ink); }
+  #root{ min-height:100vh; }
+  .brandFont{ font-family:'Fraunces', serif; }
+  input, select, textarea, button{ font-family:inherit; }
+  ::-webkit-scrollbar{ height:6px; width:6px; }
+
+  .topnav{ background:#fff; border-bottom:1px solid var(--line); position:sticky; top:0; z-index:20; }
+  .topnavInner{ max-width:1100px; margin:0 auto; padding:0 16px; }
+  .brandRow{ display:flex; align-items:center; gap:10px; padding:12px 0; justify-content:space-between; }
+  .brand{ display:flex; align-items:center; gap:9px; }
+  .brand .mark{ width:11px; height:11px; border-radius:50%; background:var(--pine); }
+  .brand h1{ font-family:'Fraunces', serif; font-weight:700; font-size:19px; margin:0; }
+  .brand small{ display:block; font-size:10.5px; color:var(--inkSoft); letter-spacing:.06em; text-transform:uppercase; margin-top:-2px; }
+  .logoutBtn{ font-size:12.5px; color:var(--inkSoft); background:none; border:1px solid var(--line); border-radius:7px; padding:6px 11px; cursor:pointer; }
+
+  .tabs{ display:flex; gap:2px; overflow-x:auto; padding-bottom:2px; }
+  .tabs button{
+    font-family:inherit; font-size:13px; font-weight:700; color:var(--inkSoft);
+    background:none; border:none; border-bottom:3px solid transparent; white-space:nowrap;
+    padding:10px 13px; cursor:pointer; flex:none;
+  }
+  .tabs button.active{ color:var(--pine); border-bottom-color:var(--pine); }
+
+  .wrap{ max-width:1100px; margin:0 auto; padding:20px 16px 90px; }
+  .pagetitle{ font-family:'Fraunces', serif; font-size:24px; font-weight:700; margin:0 0 4px; }
+  .pagesub{ color:var(--inkSoft); font-size:13px; margin:0 0 18px; }
+
+  .card{ background:#fff; border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
+  .cardTitle{ font-size:13.5px; font-weight:700; margin-bottom:10px; }
+
+  .btn{ display:inline-flex; align-items:center; gap:6px; font-size:13px; font-weight:600; padding:9px 15px; border-radius:8px; border:1px solid var(--line); background:#fff; color:var(--ink); cursor:pointer; }
+  .btn:hover{ border-color:var(--pine); }
+  .btnPrimary{ background:var(--pine); border-color:var(--pine); color:#fff; }
+  .btnPrimary:hover{ background:#175a42; }
+  .btnAmber{ background:var(--amber); border-color:var(--amber); color:#fff; }
+  .btnGhost{ background:transparent; }
+  .btnDanger{ background:#fff; border-color:var(--claySoft); color:var(--clay); }
+  .btnRow{ display:flex; gap:8px; flex-wrap:wrap; }
+
+  .field label{ display:block; font-size:12px; font-weight:600; margin-bottom:5px; color:#4A4A40; }
+  .field input, .field select, .field textarea{ width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:8px; font-size:13.5px; }
+
+  .metrics{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-bottom:18px; }
+  .metric{ background:#fff; border:1px solid var(--line); border-radius:12px; padding:13px 15px; }
+  .metric .label{ font-size:10.5px; font-weight:700; color:var(--inkSoft); text-transform:uppercase; letter-spacing:.03em; margin-bottom:5px; }
+  .metric .value{ font-family:'Fraunces',serif; font-size:21px; font-weight:700; }
+  .metric.warn .value{ color:var(--clay); }
+  .metric.good .value{ color:var(--pine); }
+  .metric.gold .value{ color:var(--gold); }
+
+  .tableWrap{ background:#fff; border:1px solid var(--line); border-radius:12px; overflow-x:auto; -webkit-overflow-scrolling:touch; margin-bottom:20px; }
+  table.data{ width:100%; border-collapse:collapse; font-size:12.5px; min-width:640px; }
+  table.data th{ text-align:left; background:#F5F2E7; padding:9px 10px; font-weight:700; color:#5A5748; border-bottom:1px solid var(--line); white-space:nowrap; font-size:11px; text-transform:uppercase; }
+  table.data td{ padding:8px 10px; border-bottom:1px solid #F0EEE2; vertical-align:middle; }
+  table.data tr:last-child td{ border-bottom:none; }
+  table.data input, table.data select{ width:100%; border:1px solid transparent; background:transparent; padding:5px 6px; border-radius:5px; font-size:12.5px; }
+  table.data input:hover, table.data select:hover{ border-color:var(--line); }
+  .pill{ display:inline-block; font-size:10.5px; font-weight:700; padding:3px 9px; border-radius:20px; }
+  .emptyState{ text-align:center; padding:34px 16px; color:var(--inkSoft); font-size:13px; }
+
+  .modalOverlay{ position:fixed; inset:0; background:rgba(35,49,41,.45); display:flex; align-items:center; justify-content:center; z-index:50; padding:16px; }
+  .modal{ background:#fff; border-radius:14px; width:520px; max-width:100%; max-height:88vh; overflow-y:auto; padding:22px 22px 18px; }
+  .modalWide{ width:640px; }
+
+  .progressOuter{ background:#EFEDE0; border-radius:20px; height:8px; overflow:hidden; flex:1; }
+  .progressInner{ height:100%; border-radius:20px; background:var(--pine); transition:width .25s; }
+  .whoBar{ display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin-bottom:16px; }
+  .whoBar select{ padding:9px 10px; border:1px solid var(--line); border-radius:8px; font-size:13.5px; }
+  .checkItem{ display:flex; align-items:flex-start; gap:9px; padding:9px 4px; border-bottom:1px solid #F0EEE2; font-size:13px; cursor:pointer; }
+  .checkItem:last-child{ border-bottom:none; }
+  .checkItem input{ margin-top:2px; }
+  .checkItem.done span.lbl{ color:var(--inkSoft); text-decoration:line-through; }
+  .starBtns{ display:flex; gap:4px; }
+  .starBtns button{ border:none; background:none; cursor:pointer; font-size:18px; padding:2px; opacity:.35; }
+  .starBtns button.on{ opacity:1; }
+  .shopBadge{ font-size:10.5px; font-weight:700; color:var(--inkSoft); background:#F0EEE2; padding:2px 8px; border-radius:20px; }
+  .photoGrid{ display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+  .photoThumb{ position:relative; width:78px; height:78px; border-radius:8px; overflow:hidden; border:1px solid var(--line); }
+  .photoThumb img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .photoThumb .rm{ position:absolute; top:2px; right:2px; background:rgba(35,49,41,.7); color:#fff; border:none; border-radius:50%; width:18px; height:18px; font-size:11px; line-height:18px; text-align:center; cursor:pointer; padding:0; }
+  .uploadBtn{ display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600; padding:8px 13px; border-radius:8px; border:1px dashed var(--line); background:#fff; color:var(--inkSoft); cursor:pointer; }
+  .uploadBtn input{ display:none; }
+  .readonlyBox{ background:var(--paper); border:1px solid var(--line); border-radius:8px; padding:9px 11px; font-size:12.5px; color:var(--ink); white-space:pre-wrap; min-height:38px; }
+  .pickerWrap{ position:relative; }
+  .pickerList{ position:absolute; top:calc(100% + 4px); left:0; right:0; background:#fff; border:1px solid var(--line); border-radius:8px; max-height:220px; overflow-y:auto; z-index:30; box-shadow:0 6px 18px rgba(35,49,41,.12); }
+  .pickerItem{ padding:9px 11px; font-size:13px; cursor:pointer; }
+  .pickerItem:hover{ background:var(--pineSoft); }
+  .pickerEmpty{ padding:9px 11px; font-size:12.5px; color:var(--inkSoft); }
+  .pickerSelected{ display:flex; align-items:center; justify-content:space-between; gap:8px; border:1px solid var(--line); border-radius:8px; padding:9px 10px; font-size:13.5px; background:#fff; }
+  .pickerChange{ font-size:11.5px; font-weight:600; color:var(--pine); background:none; border:none; cursor:pointer; padding:2px 4px; white-space:nowrap; }
+  .fieldRow{ display:flex; }
+
+  @media (max-width:720px){
+    .wrap{ padding:14px 12px 90px; }
+    .topnavInner{ padding:0 12px; }
+    .brandRow{ padding:10px 0; gap:8px; }
+    .brand{ min-width:0; }
+    .brand h1{ font-size:16px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .brand small{ font-size:9px; white-space:nowrap; }
+    .logoutBtn{ font-size:11px; padding:6px 9px; flex:none; max-width:44vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .pagetitle{ font-size:19px; }
+    .pagesub{ font-size:12.5px; }
+    .card{ padding:14px; }
+    .metrics{ grid-template-columns:repeat(2,1fr); }
+    table.data{ font-size:12px; }
+    table.data .btn{ font-size:13px !important; padding:8px 11px !important; }
+    input, select, textarea, .btn, .uploadBtn{ font-size:16px !important; }
+    .field input, .field select, .field textarea{ padding:11px 12px; }
+    .btn{ padding:11px 16px; }
+    .tabs button{ padding:12px 14px; }
+    .whoBar{ flex-direction:column; align-items:stretch; }
+    .whoBar .field{ min-width:0 !important; width:100%; }
+    .fieldRow{ flex-direction:column; gap:12px !important; }
+    .uploadBtn{ width:100%; justify-content:center; padding:12px 16px; }
+    .photoThumb{ width:92px; height:92px; }
+    .checkItem{ padding:12px 4px; }
+    .checkItem input{ width:19px; height:19px; }
+    .starBtns button{ font-size:24px; padding:4px; }
+    .pickerItem{ padding:12px 12px; font-size:14px; }
+    .modal{ width:100%; padding:20px 16px 16px; border-radius:16px 16px 0 0; max-height:92vh; }
+    .modalOverlay{ padding:0; align-items:flex-end; }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+"use strict";
+const { useState, useEffect, useMemo } = React;
+
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyDUi5PEjF59RD1AZ4AhTQE_f0-00BZLQ08",
+  authDomain: "upharma-176d5.firebaseapp.com",
+  projectId: "upharma-176d5",
+  storageBucket: "upharma-176d5.firebasestorage.app",
+  messagingSenderId: "913487072756",
+  appId: "1:913487072756:web:40d0c94547e1246be27da1",
+};
+firebase.initializeApp(FIREBASE_CONFIG);
+const auth = firebase.auth();
+const db = firebase.firestore();
+const storage = firebase.storage();
+
+// App Firebase phụ, dùng riêng để TẠO tài khoản nhân viên mà không làm mất
+// phiên đăng nhập hiện tại của quản lý (Firebase sẽ tự đăng nhập vào tài
+// khoản vừa tạo nếu dùng app chính — dùng app phụ này để tránh việc đó).
+const secondaryApp = firebase.initializeApp(FIREBASE_CONFIG, "Secondary");
+const secondaryAuth = secondaryApp.auth();
+async function createStaffAccount(email, password, staffId){
+  const cred = await secondaryAuth.createUserWithEmailAndPassword(email, password);
+  const newUid = cred.user.uid;
+  await secondaryAuth.signOut();
+  await updateDoc("staff", staffId, { uid:newUid, email });
+  return newUid;
+}
+
+// Email được coi là tài khoản QUẢN LÝ — thấy được dữ liệu tất cả cửa hàng.
+// Thêm email vào mảng này nếu có nhiều người cần quyền quản lý.
+const ADMIN_EMAILS = ["mongdu83@gmail.com"];
+
+// ================= EMAILJS (thông báo tặng sao qua email) =================
+// Đăng ký miễn phí tại https://www.emailjs.com — điền 3 giá trị bên dưới sau khi tạo
+// Service (kết nối hộp mail gửi đi) và Template (mẫu nội dung email) trên trang EmailJS.
+const EMAILJS_PUBLIC_KEY = "4WPi-IxXoCf500SQm";
+const EMAILJS_SERVICE_ID = "service_jgbizfp";
+const EMAILJS_TEMPLATE_ID = "template_jmmydtk";
+const EMAILJS_READY = EMAILJS_PUBLIC_KEY !== "YOUR_EMAILJS_PUBLIC_KEY" && window.emailjs;
+if(EMAILJS_READY) emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
+async function sendNotifyEmail(toEmails, params){
+  if(!EMAILJS_READY || !toEmails || toEmails.length===0) return;
+  // Gửi riêng từng email một (thay vì gộp chung 1 lần) để đảm bảo TẤT CẢ
+  // địa chỉ trong danh sách đều chắc chắn nhận được, không phụ thuộc việc
+  // dịch vụ email có hỗ trợ nhiều người nhận trong 1 lần gửi hay không.
+  const results = await Promise.allSettled(
+    toEmails.map(email => emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, { to_email:email, ...params }))
+  );
+  results.forEach((r, i) => { if(r.status==="rejected") console.error(`Gửi email tới ${toEmails[i]} lỗi:`, r.reason); });
+}
+
+async function compressImage(file, maxDim, quality){
+  // Thu nhỏ & nén ảnh trước khi tải lên. Lấy kích thước gốc qua thẻ <img> trước
+  // (rẻ hơn giải mã toàn bộ ảnh), rồi yêu cầu trình duyệt tự giải mã kèm thu nhỏ
+  // luôn (createImageBitmap resize) — nhanh hơn nhiều so với giải mã full-size
+  // rồi mới vẽ thu nhỏ, đặc biệt trên điện thoại đời thấp.
+  const dim = maxDim || 1280;
+  const q = quality || 0.65;
+  try{
+    const { w, h } = await new Promise((resolve, reject) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => { const r = { w:img.naturalWidth, h:img.naturalHeight }; URL.revokeObjectURL(url); resolve(r); };
+      img.onerror = (e) => { URL.revokeObjectURL(url); reject(e); };
+      img.src = url;
+    });
+    let targetW = w, targetH = h;
+    if(w > dim || h > dim){
+      const scale = dim / Math.max(w, h);
+      targetW = Math.max(1, Math.round(w * scale));
+      targetH = Math.max(1, Math.round(h * scale));
+    }
+    let bitmap;
+    try{ bitmap = await createImageBitmap(file, { resizeWidth:targetW, resizeHeight:targetH, resizeQuality:"medium" }); }
+    catch(e){ bitmap = await createImageBitmap(file); }
+    const canvas = document.createElement("canvas");
+    canvas.width = targetW; canvas.height = targetH;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(bitmap, 0, 0, targetW, targetH);
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", q));
+    return blob || file;
+  } catch(err){
+    console.error("Nén ảnh lỗi, dùng ảnh gốc:", err);
+    return file;
+  }
+}
+async function uploadImageFile(file, path, onProgress){
+  const toUpload = (file.type && file.type.startsWith("image/")) ? await compressImage(file) : file;
+  const ref = storage.ref().child(path);
+  const task = ref.put(toUpload, { contentType:"image/jpeg" });
+  await new Promise((resolve, reject) => {
+    task.on("state_changed",
+      snap => { if(onProgress && snap.totalBytes) onProgress(Math.round(snap.bytesTransferred/snap.totalBytes*100)); },
+      reject,
+      resolve
+    );
+  });
+  return await ref.getDownloadURL();
+}
+
+const DEFAULT_SHOPS = ["SHOP0058","SHOP0059","SHOP0072","SHOP0074","SHOP0089","SHOP0095","SHOP0121","SHOP0122","SHOP0163"];
+const STAFF_ROLES = ["Nhân viên học việc","Nhân viên bán hàng","Cửa hàng trưởng"];
+
+function uid(){ return "id" + Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
+function todayISO(){ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
+function addDays(iso, n){ const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
+function daysBetween(a, b){ return Math.round((new Date(b+"T00:00:00") - new Date(a+"T00:00:00")) / 86400000); }
+function fmtNum(n){ if(n==null||isNaN(n)) return "0"; return Math.round(n).toLocaleString("vi-VN"); }
+function fmtVND(n){ return fmtNum(n) + "đ"; }
+
+// ================= FIRESTORE HELPERS =================
+function subscribeCol(name, cb, orderField){
+  let q = db.collection(name);
+  if(orderField) q = q.orderBy(orderField, "desc");
+  return q.onSnapshot(snap => cb(snap.docs.map(d => ({ id:d.id, ...d.data() }))), err => console.error(name, err));
+}
+async function addDoc(name, data){ return db.collection(name).add({ ...data, createdAtTs: firebase.firestore.FieldValue.serverTimestamp() }); }
+async function updateDoc(name, id, data){ return db.collection(name).doc(id).update(data); }
+async function deleteDoc(name, id){ return db.collection(name).doc(id).delete(); }
+function subscribeConfigDoc(docId, cb){
+  return db.collection("opsConfig").doc(docId).onSnapshot(doc => cb(doc.exists ? doc.data() : {}));
+}
+async function saveConfigDoc(docId, data){
+  return db.collection("opsConfig").doc(docId).set(data, { merge:false });
+}
+
+const TONE_COLOR = {
+  warn:{ fg:"var(--clay)", bg:"var(--claySoft)" }, good:{ fg:"var(--pine)", bg:"var(--pineSoft)" }, neutral:{ fg:"var(--inkSoft)", bg:"#F0EEE2" },
+};
+function StatusPill(text, tone){
+  const c = TONE_COLOR[tone] || TONE_COLOR.neutral;
+  return React.createElement("span", { className:"pill", style:{ color:c.fg, background:c.bg } }, text);
+}
+
+// ================= HELPER: STAR PICKER =================
+function StarSelect({ value, onChange, max }){
+  const m = max || 5;
+  return React.createElement("div", { className:"starBtns" }, Array.from({ length:m }).map((_,i) =>
+    React.createElement("button", { key:i, type:"button", className:(i<value?"on":""), onClick:()=>onChange(i+1) }, "★")
+  ));
+}
+
+// ================= HELPER: TÌM & CHỌN TÊN (GÕ ĐỂ TÌM) =================
+function NamePicker({ options, value, onChange, placeholder }){
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const selected = options.find(o => o.value===value);
+  const q = query.trim().toLowerCase();
+  const filtered = q ? options.filter(o => o.label.toLowerCase().includes(q)) : options;
+
+  if(selected && !open){
+    return React.createElement("div", { className:"pickerSelected" }, [
+      React.createElement("span",{key:"t"}, selected.label),
+      React.createElement("button", { key:"c", type:"button", className:"pickerChange", onClick:()=>{ setQuery(""); setOpen(true); } }, "Đổi"),
+    ]);
+  }
+  return React.createElement("div", { className:"pickerWrap" }, [
+    React.createElement("input", {
+      key:"i", type:"text", value:query, autoComplete:"off",
+      placeholder: placeholder || "Gõ để tìm tên...",
+      onChange:e=>{ setQuery(e.target.value); setOpen(true); },
+      onFocus:()=>setOpen(true),
+      onBlur:()=>{ setTimeout(()=>setOpen(false), 150); },
+    }),
+    open && React.createElement("div", { key:"list", className:"pickerList" },
+      filtered.length===0
+        ? React.createElement("div", { className:"pickerEmpty" }, "Không tìm thấy")
+        : filtered.map(o => React.createElement("div", {
+            key:o.value, className:"pickerItem",
+            onMouseDown:(e)=>{ e.preventDefault(); onChange(o.value); setQuery(""); setOpen(false); },
+          }, o.label))
+    ),
+  ]);
+}
+
+// ================= MODULE 1: CHECKLIST CÔNG VIỆC HÀNG NGÀY =================
+function dailyReportId(staffId, ngay){ return staffId + "_" + ngay; }
+
+const DEFAULT_DAILY_CHECKLISTS = {
+  "Nhân viên học việc": [
+    { id:"hv1", label:"Có mặt đúng giờ, mặc đồng phục, đeo bảng tên" },
+    { id:"hv2", label:"Dọn dẹp, sắp xếp quầy kệ đầu ca" },
+    { id:"hv3", label:"Kiểm tra hạn sử dụng khu vực được phân công" },
+    { id:"hv4", label:"Quan sát & phụ tư vấn khách hàng cùng nhân viên chính" },
+    { id:"hv5", label:"Ghi chú lại câu hỏi/khó khăn trong ngày để hỏi buddy" },
+    { id:"hv6", label:"Vệ sinh khu vực làm việc cuối ca" },
+  ],
+  "Nhân viên bán hàng": [
+    { id:"bh1", label:"Kiểm tra quầy thuốc đầu ca — đủ hàng, sạch sẽ, đúng vị trí" },
+    { id:"bh2", label:"Kiểm tra hạn sử dụng, tách riêng hàng cận date" },
+    { id:"bh3", label:"Tư vấn & bán hàng đúng quy trình GPP" },
+    { id:"bh4", label:"Nhập/khớp hoá đơn bán hàng trong ca" },
+    { id:"bh5", label:"Xử lý đổi trả, khiếu nại (nếu có) đúng quy trình" },
+    { id:"bh6", label:"Kiểm kê quỹ tiền mặt cuối ca" },
+    { id:"bh7", label:"Bàn giao ca cho nhân viên ca sau (hàng hoá, tiền, sự vụ)" },
+    { id:"bh8", label:"Vệ sinh, tắt thiết bị, khoá cửa hàng (nếu là ca cuối)" },
+  ],
+  "Cửa hàng trưởng": [
+    { id:"ct1", label:"Kiểm tra tổng thể cửa hàng đầu ngày (nhân sự, hàng hoá, vệ sinh)" },
+    { id:"ct2", label:"Phân ca, phân công công việc cho nhân viên trong ngày" },
+    { id:"ct3", label:"Kiểm tra checklist & hỗ trợ nhân viên học việc, bán hàng" },
+    { id:"ct4", label:"Theo dõi doanh số, đối chiếu quỹ tiền mặt trong ngày" },
+    { id:"ct5", label:"Kiểm tra hạn sử dụng, đề xuất đặt hàng bổ sung" },
+    { id:"ct6", label:"Xử lý sự cố, khiếu nại khách hàng vượt thẩm quyền nhân viên" },
+    { id:"ct7", label:"Báo cáo nhanh tình hình cửa hàng cuối ngày" },
+    { id:"ct8", label:"Khoá quỹ, khoá cửa hàng cuối ngày" },
+  ],
+};
+
+function ChecklistTemplateEditor({ roles, templates, initialRole, onSave, onClose }){
+  const [role, setRole] = useState(initialRole);
+  const [items, setItems] = useState(templates[initialRole] || []);
+  const [newLabel, setNewLabel] = useState("");
+  useEffect(()=>{ setItems(templates[role] || []); setNewLabel(""); }, [role]);
+  function updateLabel(id, label){ setItems(items.map(it => it.id===id ? { ...it, label } : it)); }
+  function removeItem(id){ setItems(items.filter(it => it.id!==id)); }
+  function addItem(){ if(!newLabel.trim()) return; setItems([...items, { id:uid(), label:newLabel.trim() }]); setNewLabel(""); }
+  async function save(){ await onSave(role, items); }
+  return React.createElement("div", { className:"modalOverlay", onClick:onClose },
+    React.createElement("div", { className:"modal modalWide", onClick:e=>e.stopPropagation() }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, "Chỉnh checklist theo vai trò"),
+      React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } }, "Đây là mẫu — bạn có thể sửa lại đúng nội dung công việc thực tế cho từng vị trí."),
+      React.createElement("div", { key:"tabs", className:"btnRow", style:{ marginBottom:14 } }, roles.map(r =>
+        React.createElement("button", { key:r, type:"button", className:"btn"+(r===role?" btnPrimary":""), style:{ padding:"6px 12px", fontSize:12.5 }, onClick:()=>setRole(r) }, r)
+      )),
+      React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8, marginBottom:12, maxHeight:320, overflowY:"auto" } }, items.map(it =>
+        React.createElement("div", { key:it.id, style:{ display:"flex", gap:8, alignItems:"center" } }, [
+          React.createElement("input", { key:"i", value:it.label, onChange:e=>updateLabel(it.id, e.target.value), style:{ flex:1, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5 } }),
+          React.createElement("button", { key:"d", type:"button", className:"btn btnDanger", style:{ padding:"6px 9px", fontSize:11.5 }, onClick:()=>removeItem(it.id) }, "Xoá"),
+        ])
+      )),
+      React.createElement("div", { key:"add", style:{ display:"flex", gap:8, marginBottom:16 } }, [
+        React.createElement("input", { key:"i", value:newLabel, onChange:e=>setNewLabel(e.target.value), placeholder:"Thêm đầu việc mới...", style:{ flex:1, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5 } }),
+        React.createElement("button", { key:"b", type:"button", className:"btn", onClick:addItem }, "＋ Thêm"),
+      ]),
+      React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } }, [
+        React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:onClose }, "Huỷ"),
+        React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", onClick:save }, "Lưu checklist"),
+      ]),
+    ])
+  );
+}
+
+function DailyReviewModal({ report, tasks, onSave, onClose }){
+  const [diem, setDiem] = useState(report.diemChu || 0);
+  const [nhanXet, setNhanXet] = useState(report.nhanXetChu || "");
+  const done = report.doneIds || {};
+  return React.createElement("div", { className:"modalOverlay", onClick:onClose },
+    React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, `${report.staffName} — ${report.ngay}`),
+      React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } }, `${report.shop} · ${report.role}`),
+      React.createElement("div", { key:"list", style:{ marginBottom:14, maxHeight:220, overflowY:"auto" } }, tasks.map(t =>
+        React.createElement("div", { key:t.id, style:{ display:"flex", gap:8, fontSize:12.5, padding:"4px 0", color: done[t.id] ? "var(--ink)" : "var(--clay)" } }, [
+          React.createElement("span",{key:"i"}, done[t.id] ? "✓" : "✕"),
+          React.createElement("span",{key:"l"}, t.label),
+        ])
+      )),
+      report.ghiChu && React.createElement("div", { key:"note", style:{ background:"var(--paper)", borderRadius:8, padding:"8px 10px", fontSize:12.5, marginBottom:14 } }, [
+        React.createElement("div",{key:"l",style:{fontWeight:700,marginBottom:2}},"Ghi chú của nhân viên"),
+        report.ghiChu,
+      ]),
+      React.createElement("div", { key:"score", className:"field", style:{ marginBottom:10 } }, [
+        React.createElement("label",{key:"l"},"Chấm điểm hiệu suất"),
+        React.createElement(StarSelect, { key:"i", value:diem, onChange:setDiem }),
+      ]),
+      React.createElement("div", { key:"cmt", className:"field", style:{ marginBottom:16 } }, [
+        React.createElement("label",{key:"l"},"Nhận xét"),
+        React.createElement("textarea",{key:"i", rows:3, value:nhanXet, onChange:e=>setNhanXet(e.target.value)}),
+      ]),
+      React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } }, [
+        React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:onClose }, "Đóng"),
+        React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", onClick:()=>onSave(report.id, diem, nhanXet) }, "Lưu đánh giá"),
+      ]),
+    ])
+  );
+}
+
+function PhotoUploadField({ label, photos, uploading, onUpload, onRemove }){
+  const uploadLabel = uploading===false || uploading==null
+    ? "Chụp ảnh"
+    : `Đang nén & tải ảnh lên... ${typeof uploading==="number" ? uploading+"%" : ""}`;
+  return React.createElement("div", { style:{ marginTop:14 } }, [
+    React.createElement("label", { key:"l", style:{ display:"block", fontSize:12, fontWeight:600, marginBottom:6, color:"#4A4A40" } }, label),
+    React.createElement("label", { key:"u", className:"uploadBtn" }, [
+      React.createElement("input", { key:"i", type:"file", accept:"image/*", capture:"environment", disabled:!!uploading, onChange:e=>{ const files=[...e.target.files]; if(files.length) onUpload(files); e.target.value=""; } }),
+      uploadLabel,
+    ]),
+    (photos && photos.length>0) && React.createElement("div", { key:"g", className:"photoGrid" }, photos.map((url,i) =>
+      React.createElement("div", { key:i, className:"photoThumb" }, [
+        React.createElement("img",{key:"img",src:url}),
+        React.createElement("button",{key:"rm", type:"button", className:"rm", onClick:()=>onRemove(i)}, "✕"),
+      ])
+    )),
+  ]);
+}
+
+function DailyChecklistView({ isAdmin, myStaff }){
+  const [staff, setStaff] = useState([]);
+  const [templates, setTemplates] = useState(DEFAULT_DAILY_CHECKLISTS);
+  const [reports, setReports] = useState({});
+  const [selfId] = useState(myStaff ? myStaff.id : "");
+  const [note, setNote] = useState("");
+  const [showTplEditor, setShowTplEditor] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(isAdmin);
+  const [adminShop, setAdminShop] = useState("Tất cả");
+  const [adminDate, setAdminDate] = useState(todayISO());
+  const [reviewReportId, setReviewReportId] = useState(null);
+
+  useEffect(()=>{
+    const u1 = subscribeCol("staff", setStaff);
+    const u2 = subscribeConfigDoc("dailyChecklist", d => setTemplates(d && d.byRole ? d.byRole : DEFAULT_DAILY_CHECKLISTS));
+    const u3 = subscribeCol("dailyReports", rows => { const map = {}; rows.forEach(r => map[r.id] = r); setReports(map); });
+    return ()=>{ u1(); u2(); u3(); };
+  }, []);
+
+  const today = todayISO();
+  const selfStaff = staff.find(s => s.id===selfId);
+  const selfTasks = selfStaff ? (templates[selfStaff.role] || []) : [];
+  const selfReportId = selfStaff ? dailyReportId(selfStaff.id, today) : null;
+  const selfReport = selfReportId ? reports[selfReportId] : null;
+  const doneMap = selfReport ? (selfReport.doneIds || {}) : {};
+  const doneCount = Object.keys(doneMap).filter(k => doneMap[k]).length;
+  const pct = selfTasks.length ? Math.round(doneCount/selfTasks.length*100) : 0;
+
+  useEffect(()=>{ setNote(selfReport ? (selfReport.ghiChu || "") : ""); }, [selfReportId, selfReport && selfReport.ghiChu]);
+
+  async function toggleTask(taskId, checked){
+    if(!selfStaff) return;
+    const doneIds = { ...doneMap };
+    if(checked) doneIds[taskId] = true; else delete doneIds[taskId];
+    await db.collection("dailyReports").doc(selfReportId).set({
+      staffId:selfStaff.id, staffName:selfStaff.name, shop:selfStaff.shop, role:selfStaff.role,
+      ngay:today, doneIds, ghiChu: selfReport ? (selfReport.ghiChu || "") : "",
+      trangThai: selfReport ? (selfReport.trangThai || "Nháp") : "Nháp",
+      updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
+    }, { merge:true });
+  }
+  async function saveNote(){
+    if(!selfStaff) return;
+    await db.collection("dailyReports").doc(selfReportId).set({
+      staffId:selfStaff.id, staffName:selfStaff.name, shop:selfStaff.shop, role:selfStaff.role,
+      ngay:today, ghiChu:note, doneIds:doneMap, trangThai: selfReport ? (selfReport.trangThai || "Nháp") : "Nháp",
+      updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
+    }, { merge:true });
+  }
+  async function submitDaily(){
+    if(!selfStaff) return;
+    await db.collection("dailyReports").doc(selfReportId).set({
+      staffId:selfStaff.id, staffName:selfStaff.name, shop:selfStaff.shop, role:selfStaff.role,
+      ngay:today, ghiChu:note, doneIds:doneMap, trangThai:"Đã nộp", ngayNop:today,
+      updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
+    }, { merge:true });
+  }
+  async function saveTemplate(role, items){
+    const next = { ...templates, [role]:items };
+    await saveConfigDoc("dailyChecklist", { byRole:next });
+    setShowTplEditor(false);
+  }
+  async function saveReview(reportId, diem, nhanXet){
+    await db.collection("dailyReports").doc(reportId).set({ diemChu:diem, nhanXetChu:nhanXet }, { merge:true });
+    setReviewReportId(null);
+  }
+
+  let selfCard = null;
+  if(selfStaff){
+    const items = selfTasks.length===0
+      ? React.createElement("div",{className:"emptyState"}, "Chưa có checklist cho vai trò này — bấm \"Chỉnh checklist theo vai trò\" để thêm.")
+      : selfTasks.map(t => {
+          const isDone = !!doneMap[t.id];
+          return React.createElement("label", { key:t.id, className:"checkItem"+(isDone?" done":"") }, [
+            React.createElement("input",{ key:"c", type:"checkbox", checked:isDone, onChange:e=>toggleTask(t.id, e.target.checked) }),
+            React.createElement("span",{ key:"s", className:"lbl" }, t.label),
+          ]);
+        });
+    selfCard = React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+      React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10, marginBottom:10 } }, [
+        React.createElement("div", { key:"l" }, [
+          React.createElement("div", { key:"n", style:{ fontWeight:700, fontSize:15 } }, `${selfStaff.name} — ${today}`),
+          React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)" } }, `${selfStaff.shop} · ${selfStaff.role}`),
+        ]),
+        (selfReport && selfReport.trangThai==="Đã nộp") ? StatusPill("Đã nộp báo cáo hôm nay", "good") : StatusPill("Chưa nộp — đang làm", "warn"),
+      ]),
+      React.createElement("div", { key:"prog", style:{ display:"flex", alignItems:"center", gap:10, marginBottom:14 } }, [
+        React.createElement("div",{key:"bar", className:"progressOuter"}, React.createElement("div",{className:"progressInner", style:{ width:pct+"%" }})),
+        React.createElement("div",{key:"pct", style:{ fontSize:12.5, fontWeight:700, color:"var(--pine)", whiteSpace:"nowrap" }}, `${doneCount}/${selfTasks.length} · ${pct}%`),
+      ]),
+      React.createElement("div", { key:"list" }, items),
+      React.createElement("div", { key:"note", className:"field", style:{ marginTop:14 } }, [
+        React.createElement("label",{key:"l"},"Ghi chú trong ngày (nếu có)"),
+        React.createElement("textarea",{key:"i", rows:2, value:note, onChange:e=>setNote(e.target.value), onBlur:saveNote, placeholder:"VD: hết hàng mặt hàng X, cần hỗ trợ..." }),
+      ]),
+      React.createElement("div", { key:"btns", className:"btnRow", style:{ marginTop:12 } },
+        React.createElement("button", { key:"submit", type:"button", className:"btn btnPrimary", onClick:submitDaily }, (selfReport && selfReport.trangThai==="Đã nộp") ? "Cập nhật & nộp lại" : "Nộp báo cáo hôm nay")
+      ),
+      (selfReport && selfReport.diemChu!=null) && React.createElement("div", { key:"review", style:{ marginTop:12, background:"var(--pineSoft)", borderRadius:8, padding:"9px 12px", fontSize:12.5 } }, [
+        React.createElement("div",{key:"t",style:{fontWeight:700,marginBottom:2}}, `Quản lý chấm: ${"★".repeat(selfReport.diemChu)}`),
+        selfReport.nhanXetChu && React.createElement("div",{key:"n",style:{color:"var(--inkSoft)"}}, selfReport.nhanXetChu),
+      ]),
+    ]);
+  }
+
+  const tplEditor = showTplEditor && React.createElement(ChecklistTemplateEditor, {
+    roles:STAFF_ROLES, templates, initialRole:(selfStaff ? selfStaff.role : STAFF_ROLES[0]),
+    onSave:saveTemplate, onClose:()=>setShowTplEditor(false),
+  });
+
+  const shopStaff = adminShop==="Tất cả" ? staff : staff.filter(s => s.shop===adminShop);
+  const adminRows = shopStaff.map(s => {
+    const rid = dailyReportId(s.id, adminDate);
+    const r = reports[rid];
+    const tasks = templates[s.role] || [];
+    const done = r ? Object.keys(r.doneIds || {}).filter(k => r.doneIds[k]).length : 0;
+    const p = tasks.length ? Math.round(done/tasks.length*100) : 0;
+    const status = !r ? { text:"Chưa làm gì", tone:"warn" } : (r.trangThai==="Đã nộp" ? { text:"Đã nộp", tone:"good" } : { text:"Đang làm dở", tone:"neutral" });
+    return { staff:s, r, p, done, total:tasks.length, status };
+  });
+  const submittedCount = adminRows.filter(x => x.r && x.r.trangThai==="Đã nộp").length;
+  const avgPctAdmin = adminRows.length ? Math.round(adminRows.reduce((s,x)=>s+x.p,0)/adminRows.length) : 0;
+
+  const adminMetrics = React.createElement("div", { className:"metrics" }, [
+    React.createElement("div", { key:"1", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"NV cần báo cáo"), React.createElement("div",{key:"v",className:"value"}, fmtNum(adminRows.length)) ]),
+    React.createElement("div", { key:"2", className:"metric good" }, [ React.createElement("div",{key:"l",className:"label"},"Đã nộp"), React.createElement("div",{key:"v",className:"value"}, fmtNum(submittedCount)) ]),
+    React.createElement("div", { key:"3", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Chưa nộp"), React.createElement("div",{key:"v",className:"value"}, fmtNum(adminRows.length-submittedCount)) ]),
+    React.createElement("div", { key:"4", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"% hoàn thành TB"), React.createElement("div",{key:"v",className:"value"}, avgPctAdmin+"%") ]),
+  ]);
+
+  const adminFilterRow = React.createElement("div", { className:"btnRow", style:{ marginBottom:14 } }, [
+    React.createElement("select", { key:"shop", value:adminShop, onChange:e=>setAdminShop(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } },
+      ["Tất cả", ...DEFAULT_SHOPS].map(s => React.createElement("option",{key:s,value:s},s))),
+    React.createElement("input", { key:"date", type:"date", value:adminDate, onChange:e=>setAdminDate(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } }),
+  ]);
+
+  const adminTable = adminRows.length===0
+    ? React.createElement("div",{className:"emptyState"}, "Chưa có nhân viên nào trong bộ lọc này.")
+    : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Nhân viên","Cửa hàng","Vai trò","Hoàn thành","Trạng thái","Điểm chủ chấm",""].map((h,i)=>React.createElement("th",{key:i},h)))),
+        React.createElement("tbody",{key:"b"}, adminRows.map(x => React.createElement("tr",{key:x.staff.id}, [
+          React.createElement("td",{key:"n"}, x.staff.name),
+          React.createElement("td",{key:"sh"}, x.staff.shop),
+          React.createElement("td",{key:"r"}, x.staff.role),
+          React.createElement("td",{key:"p"}, `${x.done}/${x.total} · ${x.p}%`),
+          React.createElement("td",{key:"st"}, StatusPill(x.status.text, x.status.tone)),
+          React.createElement("td",{key:"d"}, (x.r && x.r.diemChu!=null) ? "★".repeat(x.r.diemChu) : "—"),
+          React.createElement("td",{key:"a"}, x.r ? React.createElement("button",{className:"btn", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>setReviewReportId(x.r.id)}, "Xem & chấm") : "—"),
+        ]))),
+      ]));
+
+  const reviewingReport = reviewReportId ? reports[reviewReportId] : null;
+  const reviewModal = reviewingReport && React.createElement(DailyReviewModal, {
+    report:reviewingReport, tasks:templates[reviewingReport.role] || [], onSave:saveReview, onClose:()=>setReviewReportId(null),
+  });
+
+  const adminSection = isAdmin && React.createElement("div", { key:"admin", style:{ marginTop:26 } }, [
+    React.createElement("div", { key:"tgl", className:"btnRow", style:{ marginBottom:14, justifyContent:"space-between" } }, [
+      React.createElement("button", { key:"b", type:"button", className:"btn btnGhost", onClick:()=>setAdminOpen(!adminOpen) }, adminOpen ? "▲ Ẩn báo cáo tất cả cửa hàng" : "▾ Xem báo cáo tất cả cửa hàng"),
+      React.createElement("button", { key:"tpl", type:"button", className:"btn", onClick:()=>setShowTplEditor(true) }, "Chỉnh checklist theo vai trò"),
+    ]),
+    adminOpen && React.createElement(React.Fragment, null, [ adminMetrics, adminFilterRow, adminTable ]),
+  ]);
+
+  return React.createElement(React.Fragment, null, [
+    React.createElement("h2", { key:"t", className:"pagetitle" }, "Checklist công việc hàng ngày"),
+    React.createElement("p", { key:"s", className:"pagesub" }, isAdmin ? "Xem tình hình checklist hàng ngày của tất cả cửa hàng." : "Tick việc theo checklist đúng vị trí và nộp báo cáo cuối ca."),
+    selfCard, tplEditor, adminSection, reviewModal,
+  ]);
+}
+
+// ================= MODULE 2: BÁO CÁO HÌNH ẢNH =================
+function imageReportId(shop, ngay){ return shop + "_" + ngay; }
+
+function ImageReportView({ isAdmin, myStaff }){
+  const [reportsMap, setReportsMap] = useState({});
+  const [selfShop] = useState(myStaff ? myStaff.shop : "");
+  const [nguoiUpload] = useState(myStaff ? myStaff.name : "");
+  const [uploadingChecklist, setUploadingChecklist] = useState(false);
+  const [uploadingCTKM, setUploadingCTKM] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(isAdmin);
+  const [adminShop, setAdminShop] = useState("Tất cả");
+  const [adminDate, setAdminDate] = useState(todayISO());
+  const [viewReportId, setViewReportId] = useState(null);
+
+  useEffect(()=>{
+    const u2 = subscribeCol("imageReports", rows => { const map = {}; rows.forEach(r => map[r.id] = r); setReportsMap(map); });
+    return ()=>{ u2(); };
+  }, []);
+
+  const today = todayISO();
+  const thisId = selfShop ? imageReportId(selfShop, today) : null;
+  const thisReport = thisId ? reportsMap[thisId] : null;
+
+  async function addPhotos(field, files){
+    if(!selfShop) return;
+    const setUploading = field==="anhChecklist" ? setUploadingChecklist : setUploadingCTKM;
+    setUploading(0);
+    try{
+      const urls = [];
+      let i = 0;
+      for(const file of files){
+        const path = `imageReports/${selfShop}/${today}/${field}/${Date.now()}_${file.name}`;
+        const base = Math.round((i/files.length)*100);
+        urls.push(await uploadImageFile(file, path, pct => setUploading(Math.min(99, base + Math.round(pct/files.length)))));
+        i++;
+      }
+      const current = thisReport ? (thisReport[field] || []) : [];
+      await db.collection("imageReports").doc(thisId).set({
+        shop:selfShop, ngay:today,
+        nguoiUpload: nguoiUpload || (thisReport ? thisReport.nguoiUpload : "") || "",
+        [field]: [...current, ...urls],
+        updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
+      }, { merge:true });
+    } finally { setUploading(false); }
+  }
+  async function removePhoto(field, idx){
+    if(!selfShop || !thisReport) return;
+    const current = [...(thisReport[field] || [])];
+    current.splice(idx,1);
+    await db.collection("imageReports").doc(thisId).set({ [field]:current }, { merge:true });
+  }
+
+  const hasAnyPhoto = thisReport && ((thisReport.anhChecklist||[]).length>0 || (thisReport.anhCTKM||[]).length>0);
+  const selfCard = selfShop && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10, marginBottom:14 } }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15 } }, `${selfShop} — ${today}`),
+      hasAnyPhoto ? StatusPill("Đã có ảnh hôm nay", "good") : StatusPill("Chưa có ảnh hôm nay", "warn"),
+    ]),
+    React.createElement(PhotoUploadField, {
+      key:"photoCl", label:"Ảnh checklist hàng ngày (trưng bày, vệ sinh, hạn dùng...)",
+      photos: thisReport ? thisReport.anhChecklist : null, uploading:uploadingChecklist,
+      onUpload:files=>addPhotos("anhChecklist", files), onRemove:idx=>removePhoto("anhChecklist", idx),
+    }),
+    React.createElement(PhotoUploadField, {
+      key:"photoCtkm", label:"Ảnh trưng bày CTKM (chương trình khuyến mãi)",
+      photos: thisReport ? thisReport.anhCTKM : null, uploading:uploadingCTKM,
+      onUpload:files=>addPhotos("anhCTKM", files), onRemove:idx=>removePhoto("anhCTKM", idx),
+    }),
+  ]);
+
+  const shopsInFilter = adminShop==="Tất cả" ? DEFAULT_SHOPS : [adminShop];
+  const submittedShops = shopsInFilter.filter(shop => {
+    const r = reportsMap[imageReportId(shop, adminDate)];
+    return r && ((r.anhChecklist||[]).length>0 || (r.anhCTKM||[]).length>0);
+  });
+
+  const adminMetrics = React.createElement("div", { className:"metrics" }, [
+    React.createElement("div", { key:"1", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Cửa hàng trong bộ lọc"), React.createElement("div",{key:"v",className:"value"}, fmtNum(shopsInFilter.length)) ]),
+    React.createElement("div", { key:"2", className:"metric good" }, [ React.createElement("div",{key:"l",className:"label"},"Đã nộp ảnh"), React.createElement("div",{key:"v",className:"value"}, fmtNum(submittedShops.length)) ]),
+    React.createElement("div", { key:"3", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Chưa nộp ảnh"), React.createElement("div",{key:"v",className:"value"}, fmtNum(Math.max(shopsInFilter.length-submittedShops.length,0))) ]),
+  ]);
+
+  const adminFilterRow = React.createElement("div", { className:"btnRow", style:{ marginBottom:14 } }, [
+    React.createElement("select", { key:"shop", value:adminShop, onChange:e=>setAdminShop(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } },
+      ["Tất cả", ...DEFAULT_SHOPS].map(s => React.createElement("option",{key:s,value:s},s))),
+    React.createElement("input", { key:"date", type:"date", value:adminDate, onChange:e=>setAdminDate(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } }),
+  ]);
+
+  const adminTable = shopsInFilter.length===0
+    ? React.createElement("div",{className:"emptyState"}, "Không có cửa hàng trong bộ lọc này.")
+    : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Cửa hàng","Người nộp","Ảnh checklist","Ảnh CTKM","Trạng thái",""].map((h,i)=>React.createElement("th",{key:i},h)))),
+        React.createElement("tbody",{key:"b"}, shopsInFilter.map(shop => {
+          const rid = imageReportId(shop, adminDate);
+          const r = reportsMap[rid];
+          const clCount = r ? (r.anhChecklist||[]).length : 0;
+          const ckCount = r ? (r.anhCTKM||[]).length : 0;
+          const has = clCount>0 || ckCount>0;
+          return React.createElement("tr",{key:shop}, [
+            React.createElement("td",{key:"sh"}, shop),
+            React.createElement("td",{key:"n"}, (r && r.nguoiUpload) || "—"),
+            React.createElement("td",{key:"cl"}, fmtNum(clCount)),
+            React.createElement("td",{key:"ck"}, fmtNum(ckCount)),
+            React.createElement("td",{key:"st"}, has ? StatusPill("Đã nộp","good") : StatusPill("Chưa nộp","warn")),
+            React.createElement("td",{key:"a"}, has ? React.createElement("button",{className:"btn", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>setViewReportId(rid)}, "Xem ảnh") : "—"),
+          ]);
+        })),
+      ]));
+
+  const viewingReport = viewReportId ? reportsMap[viewReportId] : null;
+  const viewModal = viewingReport && React.createElement("div", { className:"modalOverlay", onClick:()=>setViewReportId(null) },
+    React.createElement("div", { className:"modal modalWide", onClick:e=>e.stopPropagation() }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:2 } }, `${viewingReport.shop} — ${viewingReport.ngay}`),
+      viewingReport.nguoiUpload && React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } }, `Người nộp: ${viewingReport.nguoiUpload}`),
+      (viewingReport.anhChecklist && viewingReport.anhChecklist.length>0) && React.createElement("div", { key:"cl", style:{ marginBottom:14 } }, [
+        React.createElement("div",{key:"l",style:{fontWeight:700,fontSize:12.5,marginBottom:4}},"Ảnh checklist hàng ngày"),
+        React.createElement("div", { key:"g", className:"photoGrid" }, viewingReport.anhChecklist.map((url,i) =>
+          React.createElement("a", { key:i, href:url, target:"_blank", rel:"noreferrer", className:"photoThumb" }, React.createElement("img",{src:url}))
+        )),
+      ]),
+      (viewingReport.anhCTKM && viewingReport.anhCTKM.length>0) && React.createElement("div", { key:"ck", style:{ marginBottom:14 } }, [
+        React.createElement("div",{key:"l",style:{fontWeight:700,fontSize:12.5,marginBottom:4}},"Ảnh trưng bày CTKM"),
+        React.createElement("div", { key:"g", className:"photoGrid" }, viewingReport.anhCTKM.map((url,i) =>
+          React.createElement("a", { key:i, href:url, target:"_blank", rel:"noreferrer", className:"photoThumb" }, React.createElement("img",{src:url}))
+        )),
+      ]),
+      React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } },
+        React.createElement("button", { type:"button", className:"btn btnGhost", onClick:()=>setViewReportId(null) }, "Đóng")
+      ),
+    ])
+  );
+
+  const adminSection = isAdmin && React.createElement("div", { key:"admin", style:{ marginTop:26 } }, [
+    React.createElement("button", { key:"tgl", type:"button", className:"btn btnGhost", style:{ marginBottom:14 }, onClick:()=>setAdminOpen(!adminOpen) }, adminOpen ? "Ẩn báo cáo tất cả cửa hàng" : "Xem báo cáo tất cả cửa hàng"),
+    adminOpen && React.createElement(React.Fragment, null, [ adminMetrics, adminFilterRow, adminTable ]),
+  ]);
+
+  return React.createElement(React.Fragment, null, [
+    React.createElement("h2", { key:"t", className:"pagetitle" }, "Báo cáo hình ảnh"),
+    React.createElement("p", { key:"s", className:"pagesub" }, isAdmin ? "Xem ảnh checklist & CTKM đã nộp của tất cả cửa hàng." : "Chụp và nộp ảnh checklist trưng bày & CTKM trong ngày cho cửa hàng của bạn."),
+    selfCard, adminSection, viewModal,
+  ]);
+}
+
+// ================= MODULE 3: BÁO CÁO CÔNG VIỆC TUẦN =================
+function mondayOf(iso){
+  const d = new Date(iso + "T00:00:00");
+  const day = d.getDay();
+  const diff = day===0 ? -6 : 1-day;
+  d.setDate(d.getDate()+diff);
+  return d.toISOString().slice(0,10);
+}
+
+function weeklyReportId(shop, monday){ return shop + "_" + monday; }
+
+function WeeklyReviewModal({ report, prevReport, onSave, onClose }){
+  const [diem, setDiem] = useState(report.diemChu || 0);
+  const [nhanXet, setNhanXet] = useState(report.nhanXetChu || "");
+  return React.createElement("div", { className:"modalOverlay", onClick:onClose },
+    React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:2 } }, `${report.shop} — Tuần ${report.tuanNgay}`),
+      React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } }, report.nguoiBaoCao ? `Người báo cáo: ${report.nguoiBaoCao}` : "Chưa ghi người báo cáo"),
+      React.createElement("div", { key:"n0", style:{ marginBottom:10, fontSize:13 } }, [ React.createElement("b",{key:"b"},"Chỉ tiêu cam kết (đặt ra tuần trước): "), (prevReport && prevReport.chiTieuTuanNay) || "—" ]),
+      React.createElement("div", { key:"n1", style:{ marginBottom:10, fontSize:13 } }, [ React.createElement("b",{key:"b"},"Kết quả tuần này: "), report.ketQuaTuanNay || "—" ]),
+      React.createElement("div", { key:"n2", style:{ marginBottom:10, fontSize:13 } }, [ React.createElement("b",{key:"b"},"Báo cáo tuần này: "), report.baoCaoTuanNay || "—" ]),
+      React.createElement("div", { key:"n3", style:{ marginBottom:14, fontSize:13 } }, [ React.createElement("b",{key:"b"},"Chỉ tiêu cam kết tuần tới: "), report.chiTieuTuanNay || "—" ]),
+      React.createElement("div", { key:"score", className:"field", style:{ marginBottom:10 } }, [
+        React.createElement("label",{key:"l"},"Chấm điểm hiệu suất"),
+        React.createElement(StarSelect, { key:"i", value:diem, onChange:setDiem }),
+      ]),
+      React.createElement("div", { key:"cmt", className:"field", style:{ marginBottom:16 } }, [
+        React.createElement("label",{key:"l"},"Nhận xét"),
+        React.createElement("textarea",{key:"i", rows:3, value:nhanXet, onChange:e=>setNhanXet(e.target.value)}),
+      ]),
+      React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } }, [
+        React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:onClose }, "Đóng"),
+        React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", onClick:()=>onSave(report.id, diem, nhanXet) }, "Lưu đánh giá"),
+      ]),
+    ])
+  );
+}
+
+function WeeklyReportView({ isAdmin, myStaff }){
+  const [reportsMap, setReportsMap] = useState({});
+  const [selfShop] = useState(myStaff ? myStaff.shop : "");
+  const [nguoiBaoCao, setNguoiBaoCao] = useState(myStaff ? myStaff.name : "");
+  const [form, setForm] = useState({ ketQuaTuanNay:"", baoCaoTuanNay:"", chiTieuTuanNay:"" });
+  const [adminOpen, setAdminOpen] = useState(isAdmin);
+  const [adminShop, setAdminShop] = useState("Tất cả");
+  const [reviewId, setReviewId] = useState(null);
+
+  useEffect(()=>{
+    const u2 = subscribeCol("weeklyReports", rows => { const map = {}; rows.forEach(r => map[r.id] = r); setReportsMap(map); });
+    return ()=>{ u2(); };
+  }, []);
+
+  const currentMonday = mondayOf(todayISO());
+  const prevMonday = addDays(currentMonday, -7);
+  const thisId = selfShop ? weeklyReportId(selfShop, currentMonday) : null;
+  const prevId = selfShop ? weeklyReportId(selfShop, prevMonday) : null;
+  const thisReport = thisId ? reportsMap[thisId] : null;
+  const prevReport = prevId ? reportsMap[prevId] : null;
+
+  useEffect(()=>{
+    setForm({
+      ketQuaTuanNay: thisReport ? (thisReport.ketQuaTuanNay || "") : "",
+      baoCaoTuanNay: thisReport ? (thisReport.baoCaoTuanNay || "") : "",
+      chiTieuTuanNay: thisReport ? (thisReport.chiTieuTuanNay || "") : "",
+    });
+    setNguoiBaoCao(thisReport ? (thisReport.nguoiBaoCao || "") : "");
+  }, [thisId, thisReport && thisReport.updatedAtTs]);
+
+  async function submitWeekly(e){
+    e.preventDefault();
+    if(!selfShop || !form.baoCaoTuanNay.trim()) return;
+    await db.collection("weeklyReports").doc(thisId).set({
+      shop:selfShop, tuanNgay:currentMonday, nguoiBaoCao:nguoiBaoCao.trim(),
+      ketQuaTuanNay:form.ketQuaTuanNay.trim(), baoCaoTuanNay:form.baoCaoTuanNay.trim(), chiTieuTuanNay:form.chiTieuTuanNay.trim(),
+      ngayGui:todayISO(), updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
+    }, { merge:true });
+  }
+  async function saveReview(id, diem, nhanXet){
+    await db.collection("weeklyReports").doc(id).set({ diemChu:diem, nhanXetChu:nhanXet }, { merge:true });
+    setReviewId(null);
+  }
+
+  const selfCard = selfShop && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10, marginBottom:14 } }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15 } }, `${selfShop} — Tuần bắt đầu ${currentMonday}`),
+      thisReport ? StatusPill("Đã gửi — có thể cập nhật lại", "good") : StatusPill("Chưa gửi báo cáo tuần này", "warn"),
+    ]),
+    React.createElement("div", { key:"prev0", className:"field", style:{ marginBottom:10 } }, [
+      React.createElement("label",{key:"l"},"Nội dung báo cáo tuần trước"),
+      React.createElement("div", { key:"i", className:"readonlyBox" }, (prevReport && prevReport.baoCaoTuanNay) || "Chưa có dữ liệu tuần trước."),
+    ]),
+    React.createElement("div", { key:"prev1", className:"field", style:{ marginBottom:16 } }, [
+      React.createElement("label",{key:"l"},"Chỉ tiêu cam kết (đã đặt ra từ tuần trước)"),
+      React.createElement("div", { key:"i", className:"readonlyBox" }, (prevReport && prevReport.chiTieuTuanNay) || "Chưa có dữ liệu tuần trước."),
+    ]),
+    React.createElement("form", { key:"f", onSubmit:submitWeekly }, [
+      React.createElement("div", { key:"a", className:"field", style:{ marginBottom:10 } }, [
+        React.createElement("label",{key:"l"},"Kết quả tuần này (so với chỉ tiêu cam kết ở trên)"),
+        React.createElement("textarea",{key:"i", rows:3, value:form.ketQuaTuanNay, onChange:e=>setForm({...form,ketQuaTuanNay:e.target.value}) }),
+      ]),
+      React.createElement("div", { key:"b", className:"field", style:{ marginBottom:10 } }, [
+        React.createElement("label",{key:"l"},"Báo cáo tuần này"),
+        React.createElement("textarea",{key:"i", rows:3, value:form.baoCaoTuanNay, onChange:e=>setForm({...form,baoCaoTuanNay:e.target.value}), required:true }),
+      ]),
+      React.createElement("div", { key:"c", className:"field", style:{ marginBottom:16 } }, [
+        React.createElement("label",{key:"l"},"Chỉ tiêu cam kết tuần này (cho tuần tới)"),
+        React.createElement("textarea",{key:"i", rows:2, value:form.chiTieuTuanNay, onChange:e=>setForm({...form,chiTieuTuanNay:e.target.value}) }),
+      ]),
+      React.createElement("button", { key:"s", type:"submit", className:"btn btnPrimary" }, thisReport ? "Cập nhật báo cáo tuần" : "Gửi báo cáo tuần"),
+    ]),
+    (thisReport && thisReport.diemChu!=null) && React.createElement("div", { key:"review", style:{ marginTop:14, background:"var(--pineSoft)", borderRadius:8, padding:"9px 12px", fontSize:12.5 } }, [
+      React.createElement("div",{key:"t",style:{fontWeight:700,marginBottom:2}}, `Quản lý chấm: ${"★".repeat(thisReport.diemChu)}`),
+      thisReport.nhanXetChu && React.createElement("div",{key:"n",style:{color:"var(--inkSoft)"}}, thisReport.nhanXetChu),
+    ]),
+  ]);
+
+  const allReports = Object.values(reportsMap);
+  const shopHistory = selfShop
+    ? allReports.filter(r => r.shop===selfShop && r.tuanNgay!==currentMonday).sort((a,b)=> a.tuanNgay<b.tuanNgay?1:-1)
+    : [];
+  const shopHistoryCard = (selfShop && shopHistory.length>0) && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"t", className:"cardTitle" }, `Lịch sử báo cáo tuần — ${selfShop}`),
+    React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8 } }, shopHistory.map(r =>
+      React.createElement("div", { key:r.id, style:{ background:"var(--paper)", borderRadius:8, padding:"9px 12px", fontSize:12.5 } }, [
+        React.createElement("div",{key:"h",style:{fontWeight:700,marginBottom:2}}, `Tuần ${r.tuanNgay}${r.nguoiBaoCao ? " · "+r.nguoiBaoCao : ""}`),
+        React.createElement("div",{key:"b",style:{marginBottom:2}}, r.baoCaoTuanNay),
+        r.diemChu!=null && React.createElement("div",{key:"d",style:{color:"var(--pine)",fontWeight:600}}, `Quản lý chấm: ${"★".repeat(r.diemChu)}${r.nhanXetChu ? " — "+r.nhanXetChu : ""}`),
+      ])
+    )),
+  ]);
+
+  const shopReports = adminShop==="Tất cả" ? allReports : allReports.filter(r => r.shop===adminShop);
+  const thisWeekReports = shopReports.filter(r => r.tuanNgay===currentMonday);
+  const shopsInFilter = adminShop==="Tất cả" ? DEFAULT_SHOPS : [adminShop];
+
+  const adminMetrics = React.createElement("div", { className:"metrics" }, [
+    React.createElement("div", { key:"1", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Cửa hàng trong bộ lọc"), React.createElement("div",{key:"v",className:"value"}, fmtNum(shopsInFilter.length)) ]),
+    React.createElement("div", { key:"2", className:"metric good" }, [ React.createElement("div",{key:"l",className:"label"},"Đã gửi tuần này"), React.createElement("div",{key:"v",className:"value"}, fmtNum(thisWeekReports.length)) ]),
+    React.createElement("div", { key:"3", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Chưa gửi tuần này"), React.createElement("div",{key:"v",className:"value"}, fmtNum(Math.max(shopsInFilter.length-thisWeekReports.length,0))) ]),
+  ]);
+
+  const adminFilterRow = React.createElement("div", { className:"btnRow", style:{ marginBottom:14 } },
+    React.createElement("select", { value:adminShop, onChange:e=>setAdminShop(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } },
+      ["Tất cả", ...DEFAULT_SHOPS].map(s => React.createElement("option",{key:s,value:s},s)))
+  );
+
+  const sortedReports = [...shopReports].sort((a,b)=> a.tuanNgay<b.tuanNgay?1:-1);
+  const adminTable = sortedReports.length===0
+    ? React.createElement("div",{className:"emptyState"}, "Chưa có báo cáo tuần nào trong bộ lọc này.")
+    : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Cửa hàng","Tuần","Người báo cáo","Điểm chủ chấm",""].map((h,i)=>React.createElement("th",{key:i},h)))),
+        React.createElement("tbody",{key:"b"}, sortedReports.map(r => React.createElement("tr",{key:r.id}, [
+          React.createElement("td",{key:"sh"}, r.shop),
+          React.createElement("td",{key:"w"}, r.tuanNgay),
+          React.createElement("td",{key:"n"}, r.nguoiBaoCao || "—"),
+          React.createElement("td",{key:"d"}, r.diemChu!=null ? "★".repeat(r.diemChu) : "—"),
+          React.createElement("td",{key:"a"}, React.createElement("button",{className:"btn", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>setReviewId(r.id)}, "Xem & chấm")),
+        ]))),
+      ]));
+
+  const reviewingReport = reviewId ? reportsMap[reviewId] : null;
+  const reviewingPrev = reviewingReport ? reportsMap[weeklyReportId(reviewingReport.shop, addDays(reviewingReport.tuanNgay,-7))] : null;
+  const reviewModal = reviewingReport && React.createElement(WeeklyReviewModal, { report:reviewingReport, prevReport:reviewingPrev, onSave:saveReview, onClose:()=>setReviewId(null) });
+
+  const adminSection = isAdmin && React.createElement("div", { key:"admin", style:{ marginTop:26 } }, [
+    React.createElement("button", { key:"tgl", type:"button", className:"btn btnGhost", style:{ marginBottom:14 }, onClick:()=>setAdminOpen(!adminOpen) }, adminOpen ? "▲ Ẩn báo cáo tất cả cửa hàng" : "▾ Xem báo cáo tất cả cửa hàng"),
+    adminOpen && React.createElement(React.Fragment, null, [ adminMetrics, adminFilterRow, adminTable ]),
+  ]);
+
+  return React.createElement(React.Fragment, null, [
+    React.createElement("h2", { key:"t", className:"pagetitle" }, "Báo cáo công việc tuần"),
+    React.createElement("p", { key:"s", className:"pagesub" }, isAdmin ? "Theo dõi báo cáo tuần của tất cả cửa hàng." : "Đối chiếu chỉ tiêu tuần trước, báo cáo kết quả và đặt chỉ tiêu cho tuần tới."),
+    selfCard, shopHistoryCard, adminSection, reviewModal,
+  ]);
+}
+
+// ================= MODULE 4: HIỆU SUẤT & TỔNG QUAN CỬA HÀNG =================
+function PerformanceView(){
+  const [staff, setStaff] = useState([]);
+  const [dailyReports, setDailyReports] = useState([]);
+  const [weeklyReports, setWeeklyReports] = useState([]);
+  useEffect(()=>{
+    const u1 = subscribeCol("staff", setStaff);
+    const u2 = subscribeCol("dailyReports", setDailyReports);
+    const u3 = subscribeCol("weeklyReports", setWeeklyReports);
+    return ()=>{ u1(); u2(); u3(); };
+  }, []);
+
+  const today = todayISO();
+  const currentMonday = mondayOf(today);
+
+  const shopStats = DEFAULT_SHOPS.map(shop => {
+    const shopStaff = staff.filter(s => s.shop===shop);
+    const todaySubmitted = shopStaff.filter(s => dailyReports.some(r => r.staffId===s.id && r.ngay===today && r.trangThai==="Đã nộp")).length;
+    const weekSubmitted = weeklyReports.some(r => r.shop===shop && r.tuanNgay===currentMonday);
+    const scores = dailyReports.filter(r => r.shop===shop && r.diemChu!=null).map(r => r.diemChu);
+    const avgScore = scores.length ? (scores.reduce((a,b)=>a+b,0)/scores.length) : null;
+    return { shop, staffCount:shopStaff.length, todaySubmitted, weekSubmitted, avgScore, hasManager: shopStaff.some(s => s.role==="Cửa hàng trưởng") };
+  });
+
+  const noManagerShops = shopStats.filter(s => !s.hasManager && s.staffCount>0);
+  const noReportTodayShops = shopStats.filter(s => s.staffCount>0 && s.todaySubmitted===0);
+  const noWeeklyShops = shopStats.filter(s => !s.weekSubmitted);
+  const totalStaff = staff.length;
+  const totalSubmittedToday = shopStats.reduce((s,x)=>s+x.todaySubmitted,0);
+  const shopsSubmittedWeekly = shopStats.filter(s => s.weekSubmitted).length;
+  const combinedScores = [
+    ...dailyReports.filter(r=>r.diemChu!=null).map(r=>r.diemChu),
+    ...weeklyReports.filter(r=>r.diemChu!=null).map(r=>r.diemChu),
+  ];
+  const systemAvgScore = combinedScores.length ? (combinedScores.reduce((a,b)=>a+b,0)/combinedScores.length).toFixed(1) : "—";
+
+  const metrics = React.createElement("div", { className:"metrics" }, [
+    React.createElement("div", { key:"1", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Tổng nhân viên"), React.createElement("div",{key:"v",className:"value"}, fmtNum(totalStaff)) ]),
+    React.createElement("div", { key:"2", className:"metric good" }, [ React.createElement("div",{key:"l",className:"label"},"Đã nộp báo cáo hôm nay"), React.createElement("div",{key:"v",className:"value"}, `${fmtNum(totalSubmittedToday)}/${fmtNum(totalStaff)}`) ]),
+    React.createElement("div", { key:"3", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Cửa hàng chưa ai báo cáo hôm nay"), React.createElement("div",{key:"v",className:"value"}, fmtNum(noReportTodayShops.length)) ]),
+    React.createElement("div", { key:"4", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Cửa hàng đã gửi báo cáo tuần"), React.createElement("div",{key:"v",className:"value"}, `${fmtNum(shopsSubmittedWeekly)}/${fmtNum(DEFAULT_SHOPS.length)}`) ]),
+    React.createElement("div", { key:"5", className:"metric gold" }, [ React.createElement("div",{key:"l",className:"label"},"Điểm đánh giá TB toàn hệ thống"), React.createElement("div",{key:"v",className:"value"}, systemAvgScore==="—" ? "—" : systemAvgScore+"★") ]),
+  ]);
+
+  const alertCard = (noManagerShops.length>0 || noReportTodayShops.length>0 || noWeeklyShops.length>0) && React.createElement("div", { className:"card", style:{ marginBottom:20, borderColor:"var(--claySoft)" } }, [
+    React.createElement("div", { key:"t", className:"cardTitle", style:{ color:"var(--clay)" } }, "Cần chú ý"),
+    React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:6, fontSize:12.5 } }, [
+      noReportTodayShops.length>0 && React.createElement("div", {key:"a"}, `Chưa có báo cáo hôm nay: ${noReportTodayShops.map(s=>s.shop).join(", ")}`),
+      noWeeklyShops.length>0 && React.createElement("div", {key:"c"}, `Chưa gửi báo cáo tuần này: ${noWeeklyShops.map(s=>s.shop).join(", ")}`),
+      noManagerShops.length>0 && React.createElement("div", {key:"b"}, `Không có cửa hàng trưởng: ${noManagerShops.map(s=>s.shop).join(", ")}`),
+    ]),
+  ]);
+
+  const table = React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+    React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Cửa hàng","Số NV","Cửa hàng trưởng","Đã nộp hôm nay","Báo cáo tuần này","Điểm TB"].map((h,i)=>React.createElement("th",{key:i},h)))),
+    React.createElement("tbody",{key:"b"}, shopStats.map(s => React.createElement("tr",{key:s.shop}, [
+      React.createElement("td",{key:"sh"}, s.shop),
+      React.createElement("td",{key:"c"}, fmtNum(s.staffCount)),
+      React.createElement("td",{key:"m"}, s.hasManager ? StatusPill("Có","good") : StatusPill("Không","warn")),
+      React.createElement("td",{key:"d"}, s.staffCount ? `${s.todaySubmitted}/${s.staffCount}` : "—"),
+      React.createElement("td",{key:"w"}, s.weekSubmitted ? StatusPill("Đã gửi","good") : StatusPill("Chưa gửi","warn")),
+      React.createElement("td",{key:"sc"}, s.avgScore!=null ? s.avgScore.toFixed(1)+"★" : "—"),
+    ]))),
+  ]));
+
+  return React.createElement(React.Fragment, null, [
+    React.createElement("h2", { key:"t", className:"pagetitle" }, "Hiệu suất & tổng quan cửa hàng"),
+    React.createElement("p", { key:"s", className:"pagesub" }, "Theo dõi tình hình báo cáo và hiệu suất của toàn bộ 9 nhà thuốc trong một màn hình."),
+    metrics, alertCard, table,
+  ]);
+}
+
+// ================= MODULE 5: ĐÀO TẠO & BUDDY =================
+const DEFAULT_CHECKLIST = [
+  { id:"d1", offset:0, label:"Giới thiệu quy định cửa hàng, an toàn, GPP cơ bản" },
+  { id:"d2", offset:0, label:"Giới thiệu buddy kèm cặp, tham quan cửa hàng, vị trí hàng hoá" },
+  { id:"d3", offset:2, label:"Hướng dẫn sử dụng phần mềm bán hàng (POS)" },
+  { id:"d4", offset:2, label:"Quy trình chào đón & tư vấn khách hàng cơ bản" },
+  { id:"d5", offset:6, label:"Kiến thức nhóm sản phẩm chính (giảm đau hạ sốt, tiêu hoá, vitamin...)" },
+  { id:"d6", offset:6, label:"Quy trình xử lý đơn hàng, đổi trả, hoá đơn" },
+  { id:"d7", offset:13, label:"Kiến thức nhóm sản phẩm mạn tính (tim mạch, tiểu đường, huyết áp)" },
+  { id:"d8", offset:13, label:"Xử lý tình huống khách hàng khó, khiếu nại" },
+  { id:"d9", offset:29, label:"Đánh giá cuối thử việc — kiểm tra kiến thức tổng hợp" },
+  { id:"d10", offset:29, label:"Phỏng vấn phản hồi 2 chiều (nhân viên mới và quản lý)" },
+];
+function taskDueDate(joinDate, offset){ return addDays(joinDate, offset); }
+
+function TrainingView(){
+  const [hires, setHires] = useState([]);
+  const [staff, setStaff] = useState([]);
+  const [checklistTpl, setChecklistTpl] = useState(DEFAULT_CHECKLIST);
+  const [progressDocs, setProgressDocs] = useState({});
+  const [reports, setReports] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const [showTplEditor, setShowTplEditor] = useState(false);
+  const [selectedHireId, setSelectedHireId] = useState(null);
+  const [form, setForm] = useState({ name:"", shop:DEFAULT_SHOPS[0], joinDate:todayISO(), buddyId:"" });
+  const [reportForm, setReportForm] = useState({ tuan:1, noiDung:"", danhGia:3 });
+
+  useEffect(()=>{
+    const u1 = subscribeCol("newHires", setHires, "joinDate");
+    const u2 = subscribeCol("staff", setStaff);
+    const u3 = subscribeConfigDoc("trainingChecklist", (d)=> setChecklistTpl(d && d.items ? d.items : DEFAULT_CHECKLIST));
+    const u4 = subscribeCol("trainingProgress", (rows)=>{
+      const map = {}; rows.forEach(r=> map[r.hireId] = r); setProgressDocs(map);
+    });
+    const u5 = subscribeCol("buddyReports", setReports, "createdAtTs");
+    return ()=>{ u1(); u2(); u3(); u4(); u5(); };
+  }, []);
+
+  async function addHire(e){
+    e.preventDefault();
+    if(!form.name.trim()) return;
+    const ref = await addDoc("newHires", { name:form.name.trim(), shop:form.shop, joinDate:form.joinDate, buddyId:form.buddyId || null, buddyName: staff.find(s=>s.id===form.buddyId)?.name || "" });
+    await db.collection("trainingProgress").doc(ref.id).set({ hireId: ref.id, done:{} });
+    setForm({ name:"", shop:DEFAULT_SHOPS[0], joinDate:todayISO(), buddyId:"" }); setShowForm(false);
+  }
+  async function toggleTask(hireId, taskId, checked){
+    const ref = db.collection("trainingProgress").doc(hireId);
+    const doc = progressDocs[hireId];
+    const done = { ...(doc ? doc.done : {}) };
+    if(checked) done[taskId] = todayISO(); else delete done[taskId];
+    await ref.set({ hireId, done }, { merge:true });
+  }
+  async function saveTemplate(items){ await saveConfigDoc("trainingChecklist", { items }); setShowTplEditor(false); }
+  async function submitReport(e){
+    e.preventDefault();
+    if(!selectedHireId || !reportForm.noiDung.trim()) return;
+    const hire = hires.find(h=>h.id===selectedHireId);
+    await addDoc("buddyReports", { hireId:selectedHireId, hireName:hire?hire.name:"", tuan:Number(reportForm.tuan), noiDung:reportForm.noiDung.trim(), danhGia:Number(reportForm.danhGia), ngay:todayISO() });
+    setReportForm({ tuan:reportForm.tuan+1, noiDung:"", danhGia:3 });
+  }
+  async function removeHire(id){ if(window.confirm("Xoá nhân viên mới này khỏi danh sách theo dõi?")){ await deleteDoc("newHires", id); await deleteDoc("trainingProgress", id); } }
+
+  function hireStats(hire){
+    const doc = progressDocs[hire.id];
+    const done = doc ? doc.done : {};
+    const total = checklistTpl.length;
+    const doneCount = Object.keys(done).length;
+    const overdue = checklistTpl.filter(t => !done[t.id] && taskDueDate(hire.joinDate, t.offset) < todayISO()).length;
+    const hireReports = reports.filter(r=>r.hireId===hire.id);
+    const weeksSinceJoin = Math.floor(daysBetween(hire.joinDate, todayISO())/7);
+    const missingReport = weeksSinceJoin >= hireReports.length && weeksSinceJoin < 4;
+    return { total, doneCount, overdue, pct: total?Math.round(doneCount/total*100):0, reportCount:hireReports.length, missingReport };
+  }
+
+  const overdueTotal = hires.reduce((s,h)=> s + hireStats(h).overdue, 0);
+  const missingReportTotal = hires.filter(h=> hireStats(h).missingReport).length;
+  const avgPct = hires.length ? Math.round(hires.reduce((s,h)=>s+hireStats(h).pct,0)/hires.length) : null;
+
+  const metrics = React.createElement("div", { className:"metrics" }, [
+    React.createElement("div", { key:"1", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"NV mới đang theo dõi"), React.createElement("div",{key:"v",className:"value"}, fmtNum(hires.length)) ]),
+    React.createElement("div", { key:"2", className:"metric good" }, [ React.createElement("div",{key:"l",className:"label"},"Hoàn thành đào tạo TB"), React.createElement("div",{key:"v",className:"value"}, avgPct==null?"—":avgPct+"%") ]),
+    React.createElement("div", { key:"3", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Đầu việc quá hạn"), React.createElement("div",{key:"v",className:"value"}, fmtNum(overdueTotal)) ]),
+    React.createElement("div", { key:"4", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Thiếu báo cáo buddy tuần này"), React.createElement("div",{key:"v",className:"value"}, fmtNum(missingReportTotal)) ]),
+  ]);
+
+  const hireCards = hires.length===0
+    ? React.createElement("div", { className:"emptyState" }, "Chưa có nhân viên mới nào — bấm \"+ Thêm nhân viên mới\" để bắt đầu theo dõi.")
+    : React.createElement("div", { style:{ display:"flex", flexDirection:"column", gap:12 } }, hires.map(h => {
+        const stats = hireStats(h);
+        const doc = progressDocs[h.id]; const done = doc ? doc.done : {};
+        const isOpen = selectedHireId === h.id;
+        const taskItems = checklistTpl.map(t => {
+          const dueDate = taskDueDate(h.joinDate, t.offset);
+          const isDone = !!done[t.id];
+          const isOverdue = !isDone && dueDate < todayISO();
+          return React.createElement("label", { key:t.id, style:{ display:"flex", alignItems:"flex-start", gap:8, padding:"6px 0", fontSize:12.5, cursor:"pointer" } }, [
+            React.createElement("input", { key:"c", type:"checkbox", checked:isDone, onChange:e=>toggleTask(h.id, t.id, e.target.checked), style:{ marginTop:2 } }),
+            React.createElement("span", { key:"t", style:{ color: isOverdue ? "var(--clay)" : "var(--ink)" } }, [ t.label, React.createElement("span",{key:"d",style:{color:"var(--inkSoft)",fontSize:11}}, ` — hạn ${dueDate}${isOverdue?" (quá hạn)":""}`) ]),
+          ]);
+        });
+        const hireReports = reports.filter(r=>r.hireId===h.id);
+        return React.createElement("div", { key:h.id, className:"card" }, [
+          React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:8 } }, [
+            React.createElement("div", { key:"l" }, [
+              React.createElement("div", { key:"n", style:{ fontWeight:700, fontSize:14.5 } }, h.name),
+              React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)" } }, `${h.shop} · Vào làm ${h.joinDate} · Buddy: ${h.buddyName || "chưa gán"}`),
+            ]),
+            React.createElement("div", { key:"r", style:{ display:"flex", alignItems:"center", gap:8 } }, [
+              StatusPill(`${stats.pct}% đào tạo`, stats.pct>=80?"good":(stats.pct<40?"warn":"neutral")),
+              stats.overdue>0 && StatusPill(`${stats.overdue} việc quá hạn`, "warn"),
+              stats.missingReport && StatusPill("Thiếu báo cáo tuần", "warn"),
+            ]),
+          ]),
+          React.createElement("div", { key:"btns", className:"btnRow", style:{ marginTop:10 } }, [
+            React.createElement("button", { key:"toggle", className:"btn btnGhost", style:{ padding:"6px 12px", fontSize:12 }, onClick:()=>setSelectedHireId(isOpen?null:h.id) }, isOpen ? "Ẩn checklist ▲" : "Xem checklist ▾"),
+            React.createElement("button", { key:"del", className:"btn btnDanger", style:{ padding:"6px 12px", fontSize:12 }, onClick:()=>removeHire(h.id) }, "Xoá"),
+          ]),
+          isOpen && React.createElement("div", { key:"detail", style:{ marginTop:12, borderTop:"1px solid var(--line)", paddingTop:12, display:"flex", flexWrap:"wrap", gap:20 } }, [
+            React.createElement("div", { key:"cl", style:{ flex:"1 1 260px" } }, [
+              React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:12.5, marginBottom:6 } }, "Checklist đào tạo"),
+              ...taskItems,
+            ]),
+            React.createElement("div", { key:"rep", style:{ flex:"1 1 260px" } }, [
+              React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:12.5, marginBottom:6 } }, "Báo cáo của buddy theo tuần"),
+              hireReports.length===0 ? React.createElement("div",{key:"e",style:{fontSize:12,color:"var(--inkSoft)"}}, "Chưa có báo cáo nào.") :
+                React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8, marginBottom:10 } }, hireReports.map(r=>
+                  React.createElement("div", { key:r.id, style:{ background:"var(--paper)", borderRadius:8, padding:"8px 10px", fontSize:12 } }, [
+                    React.createElement("div", { key:"h", style:{ fontWeight:600, marginBottom:2 } }, `Tuần ${r.tuan} — ${"★".repeat(r.danhGia)} (${r.ngay})`),
+                    React.createElement("div", { key:"b", style:{ color:"var(--inkSoft)" } }, r.noiDung),
+                  ])
+                )),
+              React.createElement("form", { key:"f", onSubmit:submitReport, style:{ display:"flex", flexDirection:"column", gap:6 } }, [
+                React.createElement("div", { key:"r", style:{ display:"flex", gap:6 } }, [
+                  React.createElement("input", { key:"w", type:"number", min:1, value:selectedHireId===h.id?reportForm.tuan:1, onChange:e=>setReportForm({...reportForm,tuan:e.target.value}), style:{ width:60, padding:"6px 8px", borderRadius:6, border:"1px solid var(--line)", fontSize:12 }, placeholder:"Tuần" }),
+                  React.createElement("select", { key:"s", value:reportForm.danhGia, onChange:e=>setReportForm({...reportForm,danhGia:e.target.value}), style:{ padding:"6px 8px", borderRadius:6, border:"1px solid var(--line)", fontSize:12 } }, [1,2,3,4,5].map(n=>React.createElement("option",{key:n,value:n},"★".repeat(n)))),
+                ]),
+                React.createElement("textarea", { key:"n", rows:2, placeholder:"Nhận xét tuần này...", value:reportForm.noiDung, onChange:e=>{ setSelectedHireId(h.id); setReportForm({...reportForm,noiDung:e.target.value}); }, style:{ padding:"7px 9px", borderRadius:6, border:"1px solid var(--line)", fontSize:12.5 } }),
+                React.createElement("button", { key:"btn", type:"submit", className:"btn btnAmber", style:{ padding:"6px 12px", fontSize:12, alignSelf:"flex-start" }, onClick:()=>setSelectedHireId(h.id) }, "Gửi báo cáo"),
+              ]),
+            ]),
+          ]),
+        ]);
+      }));
+
+  const formModal = showForm && React.createElement("div", { className:"modalOverlay", onClick:()=>setShowForm(false) },
+    React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:14 } }, "Thêm nhân viên mới"),
+      React.createElement("form", { key:"f", onSubmit:addHire }, [
+        React.createElement("div", { key:"a", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Họ tên"), React.createElement("input",{key:"i",value:form.name,onChange:e=>setForm({...form,name:e.target.value}),required:true}) ]),
+        React.createElement("div", { key:"r", className:"fieldRow", style:{ display:"flex", gap:10, marginBottom:10 } }, [
+          React.createElement("div", { key:"a", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Cửa hàng"), React.createElement("select",{key:"i",value:form.shop,onChange:e=>setForm({...form,shop:e.target.value})}, DEFAULT_SHOPS.map(s=>React.createElement("option",{key:s,value:s},s))) ]),
+          React.createElement("div", { key:"b", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Ngày vào làm"), React.createElement("input",{key:"i",type:"date",value:form.joinDate,onChange:e=>setForm({...form,joinDate:e.target.value})}) ]),
+        ]),
+        React.createElement("div", { key:"b2", className:"field", style:{ marginBottom:16 } }, [ React.createElement("label",{key:"l"},"Buddy kèm cặp"), React.createElement("select",{key:"i",value:form.buddyId,onChange:e=>setForm({...form,buddyId:e.target.value})}, [React.createElement("option",{key:"",value:""},"— chọn buddy —"), ...staff.map(s=>React.createElement("option",{key:s.id,value:s.id},s.name))]) ]),
+        React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } }, [
+          React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:()=>setShowForm(false) }, "Huỷ"),
+          React.createElement("button", { key:"s", type:"submit", className:"btn btnPrimary" }, "Lưu"),
+        ]),
+      ]),
+    ])
+  );
+
+  return React.createElement(React.Fragment, null, [
+    React.createElement("h2", { key:"t", className:"pagetitle" }, "Đào tạo & Buddy nhân sự mới"),
+    React.createElement("p", { key:"s", className:"pagesub" }, "Checklist đào tạo cơ bản theo mốc ngày + báo cáo buddy hàng tuần cho từng nhân viên mới."),
+    metrics,
+    React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:16 } }, [
+      React.createElement("button", { key:"add", className:"btn btnPrimary", onClick:()=>setShowForm(true) }, "＋ Thêm nhân viên mới"),
+    ]),
+    hireCards, formModal,
+  ]);
+}
+
+// ================= MODULE 6: GHI NHẬN & TẶNG SAO =================
+const DEFAULT_REWARDS = [
+  { id:"r1", name:"Phiếu quà 50.000đ", stars:10 },
+  { id:"r2", name:"Phiếu quà 100.000đ", stars:20 },
+  { id:"r3", name:"Nửa ngày nghỉ phép có lương", stars:30 },
+  { id:"r4", name:"Phiếu quà 300.000đ", stars:50 },
+  { id:"r5", name:"1 ngày nghỉ phép có lương", stars:70 },
+  { id:"r6", name:"Phiếu quà 500.000đ + Giấy khen \"Ngôi sao của tháng\"", stars:100 },
+];
+const MONTHLY_GIVE_CAP = 30; // số sao tối đa 1 người có thể TẶNG trong 1 tháng, chống lạm dụng
+
+function KudosView({ isAdmin, myStaff }){
+  const [staff, setStaff] = useState([]);
+  const [kudos, setKudos] = useState([]);
+  const [rewards, setRewards] = useState(DEFAULT_REWARDS);
+  const [redemptions, setRedemptions] = useState([]);
+  const [notifyEmails, setNotifyEmails] = useState([]);
+  const [showGiveForm, setShowGiveForm] = useState(false);
+  const [showEmailEditor, setShowEmailEditor] = useState(false);
+  const [showRewardsEditor, setShowRewardsEditor] = useState(false);
+  const [showAllLeaderboard, setShowAllLeaderboard] = useState(false);
+  const [giveForm, setGiveForm] = useState({ fromId: myStaff ? myStaff.id : "", toId:"", stars:5, message:"" });
+
+  useEffect(()=>{
+    const u1 = subscribeCol("staff", setStaff);
+    const u2 = subscribeCol("kudos", setKudos, "createdAtTs");
+    const u3 = subscribeConfigDoc("rewards", (d)=> setRewards(d && d.items ? d.items : DEFAULT_REWARDS));
+    const u4 = subscribeCol("redemptions", setRedemptions, "createdAtTs");
+    const u5 = subscribeConfigDoc("kudosNotifyEmails", (d)=> setNotifyEmails(d && d.emails ? d.emails : []));
+    return ()=>{ u1(); u2(); u3(); u4(); u5(); };
+  }, []);
+
+  const thisMonth = todayISO().slice(0,7);
+  const totalsByStaff = useMemo(()=>{
+    const map = {};
+    staff.forEach(s => map[s.id] = { received:0, given:0, givenThisMonth:0, redeemed:0 });
+    kudos.forEach(k => {
+      if(map[k.toId]) map[k.toId].received += k.stars;
+      if(map[k.fromId]) map[k.fromId].given += k.stars;
+      if(map[k.fromId] && (k.ngay||"").slice(0,7)===thisMonth) map[k.fromId].givenThisMonth += k.stars;
+    });
+    redemptions.forEach(r => { if(map[r.staffId]) map[r.staffId].redeemed += r.stars; });
+    return map;
+  }, [staff, kudos, redemptions, thisMonth]);
+  function balanceOf(staffId){ const t = totalsByStaff[staffId]; return t ? (t.received - t.redeemed) : 0; }
+
+  async function submitGive(e){
+    e.preventDefault();
+    if(!giveForm.fromId || !giveForm.toId || giveForm.fromId===giveForm.toId || !giveForm.message.trim()) return;
+    const stars = Number(giveForm.stars)||0;
+    const givenSoFar = (totalsByStaff[giveForm.fromId]||{givenThisMonth:0}).givenThisMonth;
+    if(givenSoFar + stars > MONTHLY_GIVE_CAP){ window.alert(`Vượt giới hạn ${MONTHLY_GIVE_CAP} sao/tháng có thể tặng. Đã tặng ${givenSoFar} sao tháng này.`); return; }
+    const fromS = staff.find(s=>s.id===giveForm.fromId), toS = staff.find(s=>s.id===giveForm.toId);
+    const message = giveForm.message.trim();
+    await addDoc("kudos", { fromId:giveForm.fromId, fromName:fromS?fromS.name:"", toId:giveForm.toId, toName:toS?toS.name:"", stars, message, ngay:todayISO() });
+    sendNotifyEmail(notifyEmails, {
+      from_name: fromS ? fromS.name : "", to_name: toS ? toS.name : "",
+      shop: (toS && toS.shop) || (fromS && fromS.shop) || "", stars, message, ngay: todayISO(),
+    });
+    setGiveForm({ fromId:giveForm.fromId, toId:"", stars:5, message:"" }); setShowGiveForm(false);
+  }
+  async function saveRewards(items){ await saveConfigDoc("rewards", { items }); setShowRewardsEditor(false); }
+  async function saveNotifyEmails(emails){ await saveConfigDoc("kudosNotifyEmails", { emails }); setShowEmailEditor(false); }
+  async function redeem(staffId, reward){
+    const bal = balanceOf(staffId);
+    if(bal < reward.stars){ window.alert("Không đủ sao để đổi quà này."); return; }
+    const s = staff.find(x=>x.id===staffId);
+    await addDoc("redemptions", { staffId, staffName:s?s.name:"", rewardName:reward.name, stars:reward.stars, trangThai:"Chờ trao", ngay:todayISO() });
+  }
+  async function markGiven(id){ await updateDoc("redemptions", id, { trangThai:"Đã trao" }); }
+  async function removeRedemption(id){
+    if(window.confirm("Xác nhận xoá? Số sao đã trừ sẽ được hoàn lại cho nhân viên.")) await deleteDoc("redemptions", id);
+  }
+
+  const leaderboard = [...staff].map(s => ({ ...s, balance: balanceOf(s.id), received:(totalsByStaff[s.id]||{received:0}).received }))
+    .sort((a,b)=> b.received - a.received);
+
+  const metrics = React.createElement("div", { className:"metrics" }, [
+    React.createElement("div", { key:"1", className:"metric gold" }, [ React.createElement("div",{key:"l",className:"label"},"Tổng lượt ghi nhận"), React.createElement("div",{key:"v",className:"value"}, fmtNum(kudos.length)) ]),
+    React.createElement("div", { key:"2", className:"metric gold" }, [ React.createElement("div",{key:"l",className:"label"},"Tổng sao đã tặng"), React.createElement("div",{key:"v",className:"value"}, fmtNum(kudos.reduce((s,k)=>s+k.stars,0))) ]),
+    React.createElement("div", { key:"3", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Yêu cầu đổi quà chờ trao"), React.createElement("div",{key:"v",className:"value"}, fmtNum(redemptions.filter(r=>r.trangThai==="Chờ trao").length)) ]),
+  ]);
+
+  async function removeKudos(id){
+    if(window.confirm("Xác nhận xoá? Số sao sẽ bị trừ khỏi bảng xếp hạng.")) await deleteDoc("kudos", id);
+  }
+
+  const feed = React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"t", className:"cardTitle" }, "Tường ghi nhận gần đây"),
+    kudos.length===0 ? React.createElement("div",{key:"e",className:"emptyState"},"Chưa có lượt ghi nhận nào — hãy là người đầu tiên!") :
+      React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8, maxHeight:340, overflowY:"auto" } }, kudos.slice(0,40).map(k =>
+        React.createElement("div", { key:k.id, style:{ background:"var(--goldSoft)", borderRadius:9, padding:"9px 12px", fontSize:13, position:"relative" } }, [
+          React.createElement("div", { key:"h", style:{ fontWeight:700, marginBottom:2, paddingRight:50 } }, `${k.fromName} ➜ ${k.toName}  ·  ${"★".repeat(Math.min(k.stars,5))}${k.stars>5?" +"+(k.stars-5):""} (${k.stars} sao)`),
+          React.createElement("div", { key:"m", style:{ color:"var(--ink)" } }, k.message),
+          React.createElement("div", { key:"d", style:{ color:"var(--inkSoft)", fontSize:11, marginTop:2 } }, k.ngay),
+          isAdmin && React.createElement("button", { key:"del", type:"button", className:"btn btnDanger", style:{ position:"absolute", top:8, right:8, padding:"3px 9px", fontSize:11 }, onClick:()=>removeKudos(k.id) }, "Xoá"),
+        ])
+      )),
+  ]);
+
+  const leaderboardVisible = showAllLeaderboard ? leaderboard : leaderboard.slice(0,8);
+  const leaderboardCard = React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"t", className:"cardTitle" }, "Bảng xếp hạng tích luỹ"),
+    leaderboard.length===0 ? React.createElement("div",{key:"e",className:"emptyState"},"Chưa có nhân viên nào — thêm ở tab Nhân viên.") :
+      React.createElement("div", { key:"tw", className:"tableWrap", style:{ border:"none" } }, React.createElement("table",{className:"data"}, [
+        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["#","Nhân viên","Đã nhận","Số dư khả dụng","Đổi quà"].map((h,i)=>React.createElement("th",{key:i},h)))),
+        React.createElement("tbody",{key:"b"}, leaderboardVisible.map((s,i)=> React.createElement("tr",{key:s.id}, [
+          React.createElement("td",{key:"i"}, i+1),
+          React.createElement("td",{key:"n"}, s.name),
+          React.createElement("td",{key:"r"}, fmtNum(s.received)+" ★"),
+          React.createElement("td",{key:"b", style:{fontWeight:700,color:"var(--gold)"}}, fmtNum(s.balance)+" ★"),
+          React.createElement("td",{key:"redeem"}, React.createElement("select", { defaultValue:"", onChange:e=>{ const r = rewards.find(x=>x.id===e.target.value); if(r) redeem(s.id, r); e.target.value=""; }, style:{ padding:"5px 7px", borderRadius:6, border:"1px solid var(--line)", fontSize:12 } }, [
+            React.createElement("option",{key:"",value:""},"Chọn quà đổi..."),
+            ...rewards.map(r=>React.createElement("option",{key:r.id,value:r.id,disabled:s.balance<r.stars}, `${r.name} (${r.stars}★)`)),
+          ])),
+        ]))),
+      ])),
+    leaderboard.length>8 && React.createElement("button", { key:"toggle", type:"button", className:"btn btnGhost", style:{ marginTop:10 }, onClick:()=>setShowAllLeaderboard(!showAllLeaderboard) },
+      showAllLeaderboard ? "Thu gọn" : `Xem tất cả (${leaderboard.length})`),
+  ]);
+
+  const redemptionsCard = redemptions.length>0 && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"t", className:"cardTitle" }, "Yêu cầu đổi quà"),
+    React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:6 } }, [...redemptions].reverse().map(r =>
+      React.createElement("div", { key:r.id, style:{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"7px 0", borderBottom:"1px solid var(--line)", fontSize:12.5, flexWrap:"wrap", gap:6 } }, [
+        React.createElement("div", { key:"l" }, `${r.staffName} — ${r.rewardName} (${r.stars}★) · ${r.ngay}`),
+        React.createElement("div", { key:"r", style:{ display:"flex", gap:6, alignItems:"center" } }, [
+          r.trangThai==="Chờ trao"
+            ? (isAdmin && React.createElement("button",{key:"b", className:"btn btnAmber", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>markGiven(r.id)}, "Đánh dấu đã trao"))
+            : StatusPill("Đã trao", "good"),
+          isAdmin && React.createElement("button",{key:"d", type:"button", className:"btn btnDanger", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>removeRedemption(r.id)}, "Xoá"),
+        ]),
+      ])
+    )),
+  ]);
+
+  const giveModal = showGiveForm && React.createElement("div", { className:"modalOverlay", onClick:()=>setShowGiveForm(false) },
+    React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:14 } }, "Tặng sao ghi nhận đồng nghiệp"),
+      React.createElement("form", { key:"f", onSubmit:submitGive }, [
+        React.createElement("div", { key:"r", className:"fieldRow", style:{ display:"flex", gap:10, marginBottom:10 } }, [
+          React.createElement("div", { key:"a", className:"field", style:{ flex:1 } }, [
+            React.createElement("label",{key:"l"},"Từ (bạn)"),
+            myStaff
+              ? React.createElement("div", { key:"i", className:"readonlyBox" }, myStaff.name)
+              : React.createElement("select",{key:"i",value:giveForm.fromId,onChange:e=>setGiveForm({...giveForm,fromId:e.target.value}),required:true}, [React.createElement("option",{key:"",value:""},"— chọn —"),...staff.map(s=>React.createElement("option",{key:s.id,value:s.id},s.name))]),
+          ]),
+          React.createElement("div", { key:"b", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Tặng cho"), React.createElement("select",{key:"i",value:giveForm.toId,onChange:e=>setGiveForm({...giveForm,toId:e.target.value}),required:true}, [React.createElement("option",{key:"",value:""},"— chọn —"),...staff.filter(s=>s.id!==giveForm.fromId).map(s=>React.createElement("option",{key:s.id,value:s.id},s.name))]) ]),
+        ]),
+        React.createElement("div", { key:"stars", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},`Số sao (tối đa ${MONTHLY_GIVE_CAP} sao/tháng)`), React.createElement("input",{key:"i",type:"number",min:1,max:MONTHLY_GIVE_CAP,value:giveForm.stars,onChange:e=>setGiveForm({...giveForm,stars:e.target.value})}) ]),
+        React.createElement("div", { key:"msg", className:"field", style:{ marginBottom:16 } }, [ React.createElement("label",{key:"l"},"Lời nhắn — ghi nhận việc gì cụ thể"), React.createElement("textarea",{key:"i",rows:3,value:giveForm.message,onChange:e=>setGiveForm({...giveForm,message:e.target.value}),required:true,placeholder:"VD: Chủ động hỗ trợ đồng nghiệp xử lý khách hàng khó tính chiều nay."}) ]),
+        React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } }, [
+          React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:()=>setShowGiveForm(false) }, "Huỷ"),
+          React.createElement("button", { key:"s", type:"submit", className:"btn btnAmber" }, "Tặng sao"),
+        ]),
+      ]),
+    ])
+  );
+
+  const emailEditor = showEmailEditor && React.createElement(EmailListEditor, {
+    emails: notifyEmails, onSave: saveNotifyEmails, onClose: ()=>setShowEmailEditor(false),
+  });
+  const rewardsEditor = showRewardsEditor && React.createElement(RewardsEditor, {
+    rewards, onSave: saveRewards, onClose: ()=>setShowRewardsEditor(false),
+  });
+
+  return React.createElement(React.Fragment, null, [
+    React.createElement("h2", { key:"t", className:"pagetitle" }, "Ghi nhận & Tặng sao"),
+    React.createElement("p", { key:"s", className:"pagesub" }, "Nhân viên ghi nhận & tặng sao cho nhau, tích luỹ đổi quà — tăng gắn kết đội ngũ."),
+    metrics,
+    React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:18, justifyContent:"space-between" } }, [
+      !isAdmin && React.createElement("button", { key:"give", className:"btn btnAmber", onClick:()=>setShowGiveForm(true) }, "Tặng sao"),
+      isAdmin && React.createElement("div", { key:"admin", className:"btnRow" }, [
+        React.createElement("button", { key:"rewards", type:"button", className:"btn btnGhost", onClick:()=>setShowRewardsEditor(true) }, "Quản lý quà tặng"),
+        React.createElement("button", { key:"email", type:"button", className:"btn btnGhost", onClick:()=>setShowEmailEditor(true) },
+          `Email nhận thông báo (${notifyEmails.length})`),
+      ]),
+    ]),
+    feed, leaderboardCard, redemptionsCard, giveModal, emailEditor, rewardsEditor,
+  ]);
+}
+
+function RewardsEditor({ rewards, onSave, onClose }){
+  const [items, setItems] = useState(rewards || []);
+  const [newName, setNewName] = useState("");
+  const [newStars, setNewStars] = useState(10);
+  function updateItem(id, field, value){ setItems(items.map(it => it.id===id ? { ...it, [field]:value } : it)); }
+  function removeItem(id){ setItems(items.filter(it => it.id!==id)); }
+  function addItem(){
+    if(!newName.trim()) return;
+    setItems([...items, { id:uid(), name:newName.trim(), stars:Number(newStars)||1 }]);
+    setNewName(""); setNewStars(10);
+  }
+  async function save(){
+    const cleaned = items.filter(it => it.name.trim()).map(it => ({ ...it, stars:Number(it.stars)||1 }));
+    await onSave(cleaned);
+  }
+  return React.createElement("div", { className:"modalOverlay", onClick:onClose },
+    React.createElement("div", { className:"modal modalWide", onClick:e=>e.stopPropagation() }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, "Danh sách quà tặng đổi sao"),
+      React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } }, "Chỉnh tên quà và số sao cần để đổi. Nhân viên sẽ thấy danh sách này khi đổi sao ở bảng xếp hạng."),
+      React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8, marginBottom:12, maxHeight:320, overflowY:"auto" } }, items.map(it =>
+        React.createElement("div", { key:it.id, style:{ display:"flex", gap:8, alignItems:"center" } }, [
+          React.createElement("input", { key:"n", value:it.name, onChange:e=>updateItem(it.id,"name",e.target.value), style:{ flex:1, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5 } }),
+          React.createElement("input", { key:"s", type:"number", min:1, value:it.stars, onChange:e=>updateItem(it.id,"stars",e.target.value), style:{ width:80, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5 } }),
+          React.createElement("span", { key:"u", style:{ fontSize:12, color:"var(--inkSoft)" } }, "★"),
+          React.createElement("button", { key:"d", type:"button", className:"btn btnDanger", style:{ padding:"6px 9px", fontSize:11.5 }, onClick:()=>removeItem(it.id) }, "Xoá"),
+        ])
+      )),
+      React.createElement("div", { key:"add", style:{ display:"flex", gap:8, marginBottom:16 } }, [
+        React.createElement("input", { key:"n", value:newName, onChange:e=>setNewName(e.target.value), placeholder:"Tên quà mới...", style:{ flex:1, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5 } }),
+        React.createElement("input", { key:"s", type:"number", min:1, value:newStars, onChange:e=>setNewStars(e.target.value), style:{ width:80, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5 } }),
+        React.createElement("button", { key:"b", type:"button", className:"btn", onClick:addItem }, "＋ Thêm"),
+      ]),
+      React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } }, [
+        React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:onClose }, "Huỷ"),
+        React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", onClick:save }, "Lưu danh sách quà"),
+      ]),
+    ])
+  );
+}
+
+function EmailListEditor({ emails, onSave, onClose }){
+  const [text, setText] = useState((emails||[]).join("\n"));
+  async function save(){
+    const list = text.split(/[\n,;]/).map(s=>s.trim()).filter(Boolean);
+    await onSave(list);
+  }
+  return React.createElement("div", { className:"modalOverlay", onClick:onClose },
+    React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, "Email nhận thông báo tặng sao"),
+      React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:12 } }, "Mỗi lần có người tặng sao, hệ thống sẽ gửi email tới danh sách này. Mỗi dòng một email."),
+      React.createElement("textarea", { key:"i", rows:6, value:text, onChange:e=>setText(e.target.value), placeholder:"vd: quanly@upharma.vn\nhr@upharma.vn" }),
+      React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end", marginTop:14 } }, [
+        React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:onClose }, "Huỷ"),
+        React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", onClick:save }, "Lưu danh sách"),
+      ]),
+    ])
+  );
+}
+
+// ================= TAB: NHÂN VIÊN (danh sách dùng chung) =================
+function stripAccents(str){
+  return str.normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/đ/g,"d").replace(/Đ/g,"D");
+}
+function suggestEmail(name){
+  const slug = stripAccents(name).toLowerCase().trim().replace(/[^a-z0-9\s]/g,"").split(/\s+/).join(".");
+  return slug + "@upharma.local";
+}
+function randomPassword(){
+  return Math.random().toString(36).slice(-4) + Math.random().toString(36).slice(-4);
+}
+
+function CreateAccountModal({ staffMember, onClose }){
+  const [email, setEmail] = useState(suggestEmail(staffMember.name));
+  const [password, setPassword] = useState(randomPassword());
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [done, setDone] = useState(false);
+  async function submit(e){
+    e.preventDefault();
+    setError(null); setLoading(true);
+    try{ await createStaffAccount(email.trim(), password, staffMember.id); setDone(true); }
+    catch(err){ setError(err.code==="auth/email-already-in-use" ? "Email này đã được dùng cho tài khoản khác." : "Tạo tài khoản lỗi: " + err.message); }
+    setLoading(false);
+  }
+  if(done){
+    return React.createElement("div", { className:"modalOverlay", onClick:onClose },
+      React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
+        React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:10 } }, "Đã tạo tài khoản"),
+        React.createElement("div", { key:"s", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:14 } }, `Gửi 2 thông tin dưới đây cho ${staffMember.name} để đăng nhập. Mật khẩu chỉ hiện 1 lần ở đây, hãy sao chép lại ngay.`),
+        React.createElement("div", { key:"e", className:"readonlyBox", style:{ marginBottom:8 } }, `Email: ${email}`),
+        React.createElement("div", { key:"p", className:"readonlyBox", style:{ marginBottom:16 } }, `Mật khẩu: ${password}`),
+        React.createElement("button", { key:"c", type:"button", className:"btn btnPrimary", onClick:onClose }, "Xong"),
+      ])
+    );
+  }
+  return React.createElement("div", { className:"modalOverlay", onClick:onClose },
+    React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, `Tạo tài khoản cho ${staffMember.name}`),
+      React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } }, "Nếu nhân viên không có email thật, cứ để email giả dạng như gợi ý — chỉ dùng để đăng nhập app, không cần nhận được thư."),
+      React.createElement("form", { key:"f", onSubmit:submit }, [
+        React.createElement("div", { key:"a", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Email đăng nhập"), React.createElement("input",{key:"i",type:"email",value:email,onChange:e=>setEmail(e.target.value),required:true}) ]),
+        React.createElement("div", { key:"b", className:"field", style:{ marginBottom:16 } }, [
+          React.createElement("label",{key:"l"},"Mật khẩu (tối thiểu 6 ký tự)"),
+          React.createElement("div", { key:"row", style:{ display:"flex", gap:8 } }, [
+            React.createElement("input",{key:"i",value:password,onChange:e=>setPassword(e.target.value),minLength:6,required:true, style:{flex:1}}),
+            React.createElement("button",{key:"r", type:"button", className:"btn", onClick:()=>setPassword(randomPassword())}, "Tạo lại"),
+          ]),
+        ]),
+        error && React.createElement("div", { key:"err", style:{ color:"var(--clay)", fontSize:12.5, marginBottom:12 } }, error),
+        React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } }, [
+          React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:onClose }, "Huỷ"),
+          React.createElement("button", { key:"s", type:"submit", className:"btn btnPrimary", disabled:loading }, loading ? "Đang tạo..." : "Tạo tài khoản"),
+        ]),
+      ]),
+    ])
+  );
+}
+
+function StaffView(){
+  const [staff, setStaff] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState({ name:"", shop:DEFAULT_SHOPS[0], role:STAFF_ROLES[1] });
+  const [creatingFor, setCreatingFor] = useState(null);
+  useEffect(()=>{ const u = subscribeCol("staff", setStaff); return u; }, []);
+
+  function openAdd(){ setEditingId(null); setForm({ name:"", shop:DEFAULT_SHOPS[0], role:STAFF_ROLES[1] }); setShowForm(true); }
+  function openEdit(s){ setEditingId(s.id); setForm({ name:s.name, shop:s.shop, role:s.role }); setShowForm(true); }
+  async function submit(e){
+    e.preventDefault();
+    if(!form.name.trim()) return;
+    if(editingId) await updateDoc("staff", editingId, { name:form.name.trim(), shop:form.shop, role:form.role });
+    else await addDoc("staff", { name:form.name.trim(), shop:form.shop, role:form.role });
+    setShowForm(false); setEditingId(null);
+  }
+  async function removeStaff(id){ if(window.confirm("Xoá nhân viên này khỏi danh sách?")) await deleteDoc("staff", id); }
+
+  const table = staff.length===0
+    ? React.createElement("div", { className:"emptyState" }, "Chưa có nhân viên nào — thêm để dùng cho Buddy và Tặng sao.")
+    : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Tên","Cửa hàng","Vai trò","Tài khoản",""].map((h,i)=>React.createElement("th",{key:i},h)))),
+        React.createElement("tbody",{key:"b"}, staff.map(s => React.createElement("tr",{key:s.id}, [
+          React.createElement("td",{key:"n"}, s.name),
+          React.createElement("td",{key:"sh"}, s.shop),
+          React.createElement("td",{key:"r"}, s.role),
+          React.createElement("td",{key:"acc"}, s.uid ? StatusPill(s.email || "Đã có", "good") : StatusPill("Chưa có", "warn")),
+          React.createElement("td",{key:"a", style:{whiteSpace:"nowrap"}}, [
+            !s.uid && React.createElement("button",{key:"acc", className:"btn btnAmber", style:{padding:"5px 10px",fontSize:11.5,marginRight:6}, onClick:()=>setCreatingFor(s)},"Tạo tài khoản"),
+            React.createElement("button",{key:"e", className:"btn", style:{padding:"5px 10px",fontSize:11.5,marginRight:6}, onClick:()=>openEdit(s)},"Sửa"),
+            React.createElement("button",{key:"d", className:"btn btnDanger", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>removeStaff(s.id)},"Xoá"),
+          ]),
+        ]))),
+      ]));
+
+  const formModal = showForm && React.createElement("div", { className:"modalOverlay", onClick:()=>setShowForm(false) },
+    React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:14 } }, editingId ? "Sửa thông tin nhân viên" : "Thêm nhân viên"),
+      React.createElement("form", { key:"f", onSubmit:submit }, [
+        React.createElement("div", { key:"a", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Họ tên"), React.createElement("input",{key:"i",value:form.name,onChange:e=>setForm({...form,name:e.target.value}),required:true}) ]),
+        React.createElement("div", { key:"r", className:"fieldRow", style:{ display:"flex", gap:10, marginBottom:16 } }, [
+          React.createElement("div", { key:"a", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Cửa hàng"), React.createElement("select",{key:"i",value:form.shop,onChange:e=>setForm({...form,shop:e.target.value})}, DEFAULT_SHOPS.map(s=>React.createElement("option",{key:s,value:s},s))) ]),
+          React.createElement("div", { key:"b", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Vai trò"), React.createElement("select",{key:"i",value:form.role,onChange:e=>setForm({...form,role:e.target.value})}, STAFF_ROLES.map(r=>React.createElement("option",{key:r,value:r},r))) ]),
+        ]),
+        React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } }, [
+          React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:()=>setShowForm(false) }, "Huỷ"),
+          React.createElement("button", { key:"s", type:"submit", className:"btn btnPrimary" }, editingId ? "Lưu thay đổi" : "Lưu"),
+        ]),
+      ]),
+    ])
+  );
+
+  const createModal = creatingFor && React.createElement(CreateAccountModal, { staffMember:creatingFor, onClose:()=>setCreatingFor(null) });
+
+  return React.createElement(React.Fragment, null, [
+    React.createElement("h2", { key:"t", className:"pagetitle" }, "Nhân viên"),
+    React.createElement("p", { key:"s", className:"pagesub" }, "Danh sách dùng chung cho Checklist ngày, Báo cáo tuần, Buddy và tặng sao ghi nhận. Tạo tài khoản để nhân viên đăng nhập thẳng vào giao diện riêng của mình."),
+    React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:16 } }, [
+      React.createElement("button", { key:"add", className:"btn btnPrimary", onClick:openAdd }, "＋ Thêm nhân viên"),
+    ]),
+    table, formModal, createModal,
+  ]);
+}
+
+// ================= APP SHELL =================
+const STAFF_TABS = ["checklist","photos","weekly","kudos"];
+const OPS_TABS = [
+  { id:"checklist", label:"Checklist ngày" },
+  { id:"photos", label:"Báo cáo hình ảnh" },
+  { id:"weekly", label:"Báo cáo tuần" },
+  { id:"performance", label:"Hiệu suất" },
+  { id:"training", label:"Đào tạo & Buddy" },
+  { id:"kudos", label:"Ghi nhận & Quà" },
+  { id:"staff", label:"Nhân viên" },
+];
+
+function LoginScreen(){
+  const [email, setEmail] = useState("");
+  const [pw, setPw] = useState("");
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
+  async function submit(e){
+    e.preventDefault();
+    setError(null); setLoading(true);
+    try{ await auth.signInWithEmailAndPassword(email.trim(), pw); }
+    catch(err){ setError("Sai email hoặc mật khẩu. Kiểm tra lại, hoặc liên hệ quản lý nếu chưa có tài khoản."); }
+    setLoading(false);
+  }
+  return React.createElement("div", { style:{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", padding:16 } },
+    React.createElement("form", { onSubmit:submit, style:{ background:"#fff", border:"1px solid var(--line)", borderRadius:14, padding:"32px 28px", width:360, maxWidth:"100%" } }, [
+      React.createElement("div", { key:"b", style:{ display:"flex", alignItems:"center", gap:9, marginBottom:22 } }, [
+        React.createElement("span", { key:"m", style:{ width:11, height:11, borderRadius:"50%", background:"var(--pine)" } }),
+        React.createElement("div", { key:"t" }, [
+          React.createElement("h1", { key:"h", className:"brandFont", style:{ fontSize:19, fontWeight:700, margin:0 } }, "Upharma Ops"),
+          React.createElement("small", { key:"s", style:{ fontSize:10.5, color:"var(--inkSoft)", letterSpacing:".06em", textTransform:"uppercase" } }, "Vận hành & Nhân sự"),
+        ]),
+      ]),
+      React.createElement("div", { key:"f1", className:"field", style:{ marginBottom:12 } }, [
+        React.createElement("label", { key:"l" }, "Email"),
+        React.createElement("input", { key:"i", type:"email", value:email, onChange:e=>setEmail(e.target.value), required:true, autoFocus:true }),
+      ]),
+      React.createElement("div", { key:"f2", className:"field", style:{ marginBottom:16 } }, [
+        React.createElement("label", { key:"l" }, "Mật khẩu"),
+        React.createElement("input", { key:"i", type:"password", value:pw, onChange:e=>setPw(e.target.value), required:true }),
+      ]),
+      error && React.createElement("div", { key:"err", style:{ color:"var(--clay)", fontSize:12.5, marginBottom:12 } }, error),
+      React.createElement("button", { key:"submit", type:"submit", className:"btn btnPrimary", disabled:loading, style:{ width:"100%", justifyContent:"center", padding:"10px 0" } }, loading ? "Đang đăng nhập..." : "Đăng nhập"),
+      React.createElement("div", { key:"hint", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:14, textAlign:"center" } }, "Chưa có tài khoản? Liên hệ quản lý cửa hàng để được cấp."),
+    ])
+  );
+}
+
+function NoStaffLinkedScreen({ user }){
+  return React.createElement("div", { style:{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", padding:16, textAlign:"center" } },
+    React.createElement("div", { style:{ maxWidth:380 } }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:8 } }, "Tài khoản chưa được gán vào nhân viên nào"),
+      React.createElement("div", { key:"s", style:{ fontSize:13, color:"var(--inkSoft)", marginBottom:18 } }, `Email ${user.email} đã đăng nhập được nhưng chưa liên kết với hồ sơ nhân viên nào. Liên hệ quản lý để được gán lại tài khoản.`),
+      React.createElement("button", { key:"b", className:"btn btnGhost", onClick:()=>auth.signOut() }, "Đăng xuất"),
+    ])
+  );
+}
+
+function Dashboard({ user, isAdmin, myStaff }){
+  const visibleTabs = isAdmin ? OPS_TABS : OPS_TABS.filter(t => STAFF_TABS.includes(t.id));
+  const [activeTab, setActiveTab] = useState(visibleTabs[0].id);
+  const whoLabel = isAdmin ? "Quản lý" : (myStaff ? `${myStaff.name} · ${myStaff.shop}` : "");
+  return React.createElement(React.Fragment, null, [
+    React.createElement("div", { key:"nav", className:"topnav" }, React.createElement("div", { className:"topnavInner" }, [
+      React.createElement("div", { key:"brand", className:"brandRow" }, [
+        React.createElement("div", { key:"b", className:"brand" }, [
+          React.createElement("span", { key:"m", className:"mark" }),
+          React.createElement("div", { key:"t" }, [
+            React.createElement("h1", { key:"h" }, "Upharma Ops"),
+            React.createElement("small", { key:"s" }, "Vận hành & Nhân sự"),
+          ]),
+        ]),
+        React.createElement("button", { key:"logout", className:"logoutBtn", onClick:()=>auth.signOut() }, `${whoLabel} · Đăng xuất`),
+      ]),
+      React.createElement("div", { key:"tabs", className:"tabs" }, visibleTabs.map(t =>
+        React.createElement("button", { key:t.id, className:activeTab===t.id?"active":"", onClick:()=>setActiveTab(t.id) }, t.label)
+      )),
+    ])),
+    React.createElement("div", { key:"wrap", className:"wrap" }, [
+      activeTab==="checklist" && React.createElement(DailyChecklistView, { key:"v", isAdmin, myStaff }),
+      activeTab==="photos" && React.createElement(ImageReportView, { key:"v", isAdmin, myStaff }),
+      activeTab==="weekly" && React.createElement(WeeklyReportView, { key:"v", isAdmin, myStaff }),
+      activeTab==="performance" && isAdmin && React.createElement(PerformanceView, { key:"v" }),
+      activeTab==="training" && isAdmin && React.createElement(TrainingView, { key:"v" }),
+      activeTab==="kudos" && React.createElement(KudosView, { key:"v", isAdmin, myStaff }),
+      activeTab==="staff" && isAdmin && React.createElement(StaffView, { key:"v" }),
+    ]),
+  ]);
+}
+
+function App(){
+  const [authState, setAuthState] = useState({ status:"loading" }); // loading | out | in
+  const [staff, setStaff] = useState([]);
+  const [staffLoaded, setStaffLoaded] = useState(false);
+
+  useEffect(()=>{
+    const unsub = auth.onAuthStateChanged(user => {
+      setAuthState(user ? { status:"in", user } : { status:"out" });
+    });
+    return unsub;
+  }, []);
+
+  useEffect(()=>{
+    if(authState.status!=="in") return;
+    const isAdmin = ADMIN_EMAILS.includes(authState.user.email);
+    if(isAdmin){ setStaffLoaded(true); return; } // admin không cần danh sách staff để vào app
+    const unsub = subscribeCol("staff", rows => { setStaff(rows); setStaffLoaded(true); });
+    return unsub;
+  }, [authState.status, authState.user && authState.user.uid]);
+
+  if(authState.status==="loading") return React.createElement("div", { style:{ padding:40, textAlign:"center", color:"var(--inkSoft)" } }, "Đang tải...");
+  if(authState.status==="out") return React.createElement(LoginScreen, null);
+
+  const user = authState.user;
+  const isAdmin = ADMIN_EMAILS.includes(user.email);
+  if(!isAdmin && !staffLoaded) return React.createElement("div", { style:{ padding:40, textAlign:"center", color:"var(--inkSoft)" } }, "Đang tải...");
+  const myStaff = isAdmin ? null : staff.find(s => s.uid===user.uid);
+  if(!isAdmin && !myStaff) return React.createElement(NoStaffLinkedScreen, { user });
+  return React.createElement(Dashboard, { user, isAdmin, myStaff });
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App, null));
+</script>
+</body>
+</html>
