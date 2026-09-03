@@ -70,7 +70,7 @@
   .metric.good .value{ color:var(--pine); }
   .metric.gold .value{ color:var(--gold); }
 
-  .tableWrap{ background:#fff; border:1px solid var(--line); border-radius:12px; overflow-x:auto; margin-bottom:20px; }
+  .tableWrap{ background:#fff; border:1px solid var(--line); border-radius:12px; overflow-x:auto; -webkit-overflow-scrolling:touch; margin-bottom:20px; }
   table.data{ width:100%; border-collapse:collapse; font-size:12.5px; min-width:640px; }
   table.data th{ text-align:left; background:#F5F2E7; padding:9px 10px; font-weight:700; color:#5A5748; border-bottom:1px solid var(--line); white-space:nowrap; font-size:11px; text-transform:uppercase; }
   table.data td{ padding:8px 10px; border-bottom:1px solid #F0EEE2; vertical-align:middle; }
@@ -110,23 +110,37 @@
   .pickerEmpty{ padding:9px 11px; font-size:12.5px; color:var(--inkSoft); }
   .pickerSelected{ display:flex; align-items:center; justify-content:space-between; gap:8px; border:1px solid var(--line); border-radius:8px; padding:9px 10px; font-size:13.5px; background:#fff; }
   .pickerChange{ font-size:11.5px; font-weight:600; color:var(--pine); background:none; border:none; cursor:pointer; padding:2px 4px; white-space:nowrap; }
+  .fieldRow{ display:flex; }
 
   @media (max-width:720px){
     .wrap{ padding:14px 12px 90px; }
+    .topnavInner{ padding:0 12px; }
+    .brandRow{ padding:10px 0; gap:8px; }
+    .brand{ min-width:0; }
+    .brand h1{ font-size:16px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .brand small{ font-size:9px; white-space:nowrap; }
+    .logoutBtn{ font-size:11px; padding:6px 9px; flex:none; max-width:44vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .pagetitle{ font-size:19px; }
+    .pagesub{ font-size:12.5px; }
+    .card{ padding:14px; }
     .metrics{ grid-template-columns:repeat(2,1fr); }
     table.data{ font-size:12px; }
+    table.data .btn{ font-size:13px !important; padding:8px 11px !important; }
     input, select, textarea, .btn, .uploadBtn{ font-size:16px !important; }
     .field input, .field select, .field textarea{ padding:11px 12px; }
     .btn{ padding:11px 16px; }
     .tabs button{ padding:12px 14px; }
     .whoBar{ flex-direction:column; align-items:stretch; }
     .whoBar .field{ min-width:0 !important; width:100%; }
+    .fieldRow{ flex-direction:column; gap:12px !important; }
     .uploadBtn{ width:100%; justify-content:center; padding:12px 16px; }
     .photoThumb{ width:92px; height:92px; }
     .checkItem{ padding:12px 4px; }
     .checkItem input{ width:19px; height:19px; }
     .starBtns button{ font-size:24px; padding:4px; }
     .pickerItem{ padding:12px 12px; font-size:14px; }
+    .modal{ width:100%; padding:20px 16px 16px; border-radius:16px 16px 0 0; max-height:92vh; }
+    .modalOverlay{ padding:0; align-items:flex-end; }
   }
 </style>
 </head>
@@ -239,6 +253,7 @@ const STAFF_ROLES = ["Nhân viên học việc","Nhân viên bán hàng","Cửa 
 
 function uid(){ return "id" + Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
 function todayISO(){ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
+function nowHM(){ const d=new Date(); return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`; }
 function addDays(iso, n){ const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
 function daysBetween(a, b){ return Math.round((new Date(b+"T00:00:00") - new Date(a+"T00:00:00")) / 86400000); }
 function fmtNum(n){ if(n==null||isNaN(n)) return "0"; return Math.round(n).toLocaleString("vi-VN"); }
@@ -381,16 +396,22 @@ function DailyReviewModal({ report, tasks, onSave, onClose }){
   const [diem, setDiem] = useState(report.diemChu || 0);
   const [nhanXet, setNhanXet] = useState(report.nhanXetChu || "");
   const done = report.doneIds || {};
+  const details = report.taskDetails || {};
   return React.createElement("div", { className:"modalOverlay", onClick:onClose },
     React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, `${report.staffName} — ${report.ngay}`),
       React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } }, `${report.shop} · ${report.role}`),
-      React.createElement("div", { key:"list", style:{ marginBottom:14, maxHeight:220, overflowY:"auto" } }, tasks.map(t =>
-        React.createElement("div", { key:t.id, style:{ display:"flex", gap:8, fontSize:12.5, padding:"4px 0", color: done[t.id] ? "var(--ink)" : "var(--clay)" } }, [
-          React.createElement("span",{key:"i"}, done[t.id] ? "✓" : "✕"),
-          React.createElement("span",{key:"l"}, t.label),
-        ])
-      )),
+      React.createElement("div", { key:"list", style:{ marginBottom:14, maxHeight:260, overflowY:"auto" } }, tasks.map(t => {
+        const d = details[t.id] || {};
+        return React.createElement("div", { key:t.id, style:{ padding:"5px 0", borderBottom:"1px solid #F0EEE2" } }, [
+          React.createElement("div", { key:"main", style:{ display:"flex", gap:8, fontSize:12.5, color: done[t.id] ? "var(--ink)" : "var(--clay)" } }, [
+            React.createElement("span",{key:"i"}, done[t.id] ? "✓" : "✕"),
+            React.createElement("span",{key:"l"}, t.label),
+            d.time && React.createElement("span",{key:"tm",style:{color:"var(--inkSoft)",marginLeft:"auto",whiteSpace:"nowrap"}}, d.time),
+          ]),
+          d.ketQua && React.createElement("div", { key:"kq", style:{ fontSize:12, color:"var(--inkSoft)", marginLeft:20, marginTop:2 } }, `Kết quả: ${d.ketQua}`),
+        ]);
+      })),
       report.ghiChu && React.createElement("div", { key:"note", style:{ background:"var(--paper)", borderRadius:8, padding:"8px 10px", fontSize:12.5, marginBottom:14 } }, [
         React.createElement("div",{key:"l",style:{fontWeight:700,marginBottom:2}},"Ghi chú của nhân viên"),
         report.ghiChu,
@@ -457,17 +478,38 @@ function DailyChecklistView({ isAdmin, myStaff }){
   const doneMap = selfReport ? (selfReport.doneIds || {}) : {};
   const doneCount = Object.keys(doneMap).filter(k => doneMap[k]).length;
   const pct = selfTasks.length ? Math.round(doneCount/selfTasks.length*100) : 0;
+  const taskDetailsMap = selfReport ? (selfReport.taskDetails || {}) : {};
+  const taskTimes = {}; Object.keys(taskDetailsMap).forEach(k => { taskTimes[k] = taskDetailsMap[k] && taskDetailsMap[k].time; });
 
   useEffect(()=>{ setNote(selfReport ? (selfReport.ghiChu || "") : ""); }, [selfReportId, selfReport && selfReport.ghiChu]);
 
   async function toggleTask(taskId, checked){
     if(!selfStaff) return;
-    const doneIds = { ...doneMap };
-    if(checked) doneIds[taskId] = true; else delete doneIds[taskId];
-    await db.collection("dailyReports").doc(selfReportId).set({
+    const payload = {
       staffId:selfStaff.id, staffName:selfStaff.name, shop:selfStaff.shop, role:selfStaff.role,
-      ngay:today, doneIds, ghiChu: selfReport ? (selfReport.ghiChu || "") : "",
-      trangThai: selfReport ? (selfReport.trangThai || "Nháp") : "Nháp",
+      ngay:today, trangThai: selfReport ? (selfReport.trangThai || "Nháp") : "Nháp",
+      updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
+    };
+    // Dùng field path dạng "doneIds.taskId" để chỉ thêm/xoá đúng 1 mục —
+    // gửi cả object doneIds rồi merge sẽ KHÔNG xoá được key vắng mặt,
+    // đây là lý do bỏ tick trước đây không có tác dụng.
+    payload[`doneIds.${taskId}`] = checked ? true : firebase.firestore.FieldValue.delete();
+    if(checked && !(taskTimes[taskId])) payload[`taskDetails.${taskId}.time`] = nowHM();
+    await db.collection("dailyReports").doc(selfReportId).set(payload, { merge:true });
+  }
+  async function saveTaskTime(taskId, time){
+    if(!selfStaff) return;
+    await db.collection("dailyReports").doc(selfReportId).set({
+      staffId:selfStaff.id, staffName:selfStaff.name, shop:selfStaff.shop, role:selfStaff.role, ngay:today,
+      [`taskDetails.${taskId}.time`]: time,
+      updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
+    }, { merge:true });
+  }
+  async function saveTaskResult(taskId, text){
+    if(!selfStaff) return;
+    await db.collection("dailyReports").doc(selfReportId).set({
+      staffId:selfStaff.id, staffName:selfStaff.name, shop:selfStaff.shop, role:selfStaff.role, ngay:today,
+      [`taskDetails.${taskId}.ketQua`]: text,
       updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
     }, { merge:true });
   }
@@ -503,9 +545,19 @@ function DailyChecklistView({ isAdmin, myStaff }){
       ? React.createElement("div",{className:"emptyState"}, "Chưa có checklist cho vai trò này — bấm \"Chỉnh checklist theo vai trò\" để thêm.")
       : selfTasks.map(t => {
           const isDone = !!doneMap[t.id];
-          return React.createElement("label", { key:t.id, className:"checkItem"+(isDone?" done":"") }, [
-            React.createElement("input",{ key:"c", type:"checkbox", checked:isDone, onChange:e=>toggleTask(t.id, e.target.checked) }),
-            React.createElement("span",{ key:"s", className:"lbl" }, t.label),
+          const detail = taskDetailsMap[t.id] || {};
+          return React.createElement("div", { key:t.id, className:"checkItem"+(isDone?" done":""), style:{ flexDirection:"column", alignItems:"stretch" } }, [
+            React.createElement("label", { key:"row", style:{ display:"flex", alignItems:"flex-start", gap:9, cursor:"pointer" } }, [
+              React.createElement("input",{ key:"c", type:"checkbox", checked:isDone, onChange:e=>toggleTask(t.id, e.target.checked) }),
+              React.createElement("span",{ key:"s", className:"lbl" }, t.label),
+            ]),
+            isDone && React.createElement("div", { key:"extra", style:{ marginLeft:28, marginTop:6, marginBottom:4, display:"flex", flexDirection:"column", gap:6, maxWidth:420 } }, [
+              React.createElement("div", { key:"time", style:{ display:"flex", alignItems:"center", gap:8 } }, [
+                React.createElement("span", { key:"l", style:{ fontSize:11.5, color:"var(--inkSoft)", whiteSpace:"nowrap" } }, "Giờ hoàn thành"),
+                React.createElement("input", { key:"i", type:"time", defaultValue:detail.time || "", onChange:e=>saveTaskTime(t.id, e.target.value), style:{ padding:"5px 7px", border:"1px solid var(--line)", borderRadius:6, fontSize:12.5 } }),
+              ]),
+              React.createElement("input", { key:"kq", defaultValue:detail.ketQua || "", onBlur:e=>saveTaskResult(t.id, e.target.value), placeholder:"Báo cáo kết quả (nếu có)...", style:{ padding:"6px 8px", border:"1px solid var(--line)", borderRadius:6, fontSize:12.5 } }),
+            ]),
           ]);
         });
     selfCard = React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
@@ -921,7 +973,204 @@ function WeeklyReportView({ isAdmin, myStaff }){
   ]);
 }
 
-// ================= MODULE 4: HIỆU SUẤT & TỔNG QUAN CỬA HÀNG =================
+// ================= MODULE 4: GIAO VIỆC (QUẢN LÝ KHU VỰC) =================
+function TaskAssignView({ isAdmin, myStaff }){
+  const [tasks, setTasks] = useState([]);
+  const [staffList, setStaffList] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ scope:"one", shop:DEFAULT_SHOPS[0], staffId:"", title:"", mota:"", deadline:addDays(todayISO(),3) });
+  const [adminShop, setAdminShop] = useState("Tất cả");
+  const [adminStatus, setAdminStatus] = useState("Tất cả");
+  const [reportingId, setReportingId] = useState(null);
+  const [resultText, setResultText] = useState("");
+  const [viewTask, setViewTask] = useState(null);
+
+  useEffect(()=>{
+    const u1 = subscribeCol("tasks", setTasks);
+    const u2 = subscribeCol("staff", setStaffList);
+    return ()=>{ u1(); u2(); };
+  }, []);
+
+  const today = todayISO();
+  function isOverdue(t){ return t.trangThai==="Đang giao" && t.deadline < today; }
+  const staffOptions = staffList.map(s => ({ value:s.id, label:`${s.name} · ${s.shop} · ${s.role}` }));
+
+  async function submitAssign(e){
+    e.preventDefault();
+    if(!form.title.trim()) return;
+    const base = { title:form.title.trim(), mota:form.mota.trim(), deadline:form.deadline, trangThai:"Đang giao", ketQua:"", nguoiBaoCao:"", ngayGiao:today };
+    if(form.scope==="staffOne"){
+      if(!form.staffId) return;
+      const s = staffList.find(x=>x.id===form.staffId);
+      await addDoc("tasks", { ...base, assignType:"staff", staffId:form.staffId, staffName:s?s.name:"", shop:s?s.shop:"" });
+    } else {
+      const shops = form.scope==="all" ? DEFAULT_SHOPS : [form.shop];
+      await Promise.all(shops.map(shop => addDoc("tasks", { ...base, assignType:"shop", shop, staffId:null, staffName:"" })));
+    }
+    setForm({ ...form, title:"", mota:"", staffId:"" }); setShowForm(false);
+  }
+  async function submitResult(taskId){
+    if(!resultText.trim()) return;
+    await updateDoc("tasks", taskId, {
+      trangThai:"Đã hoàn thành", ketQua:resultText.trim(), ngayHoanThanh:today,
+      nguoiBaoCao: myStaff ? myStaff.name : "",
+    });
+    setReportingId(null); setResultText("");
+  }
+  async function removeTask(id){ if(window.confirm("Xoá công việc này?")) await deleteDoc("tasks", id); }
+  async function reopenTask(id){ await updateDoc("tasks", id, { trangThai:"Đang giao", ketQua:"" }); }
+
+  // ---- Giao diện nhân viên: việc giao riêng cho mình + việc giao chung cho cửa hàng ----
+  const myTasks = myStaff ? tasks.filter(t =>
+    (t.assignType==="staff" ? t.staffId===myStaff.id : t.shop===myStaff.shop)
+  ) : [];
+  const myPending = [...myTasks.filter(t=>t.trangThai==="Đang giao")].sort((a,b)=> a.deadline<b.deadline?-1:1);
+  const myDone = [...myTasks.filter(t=>t.trangThai==="Đã hoàn thành")].sort((a,b)=> (b.ngayHoanThanh||"")<(a.ngayHoanThanh||"")?-1:1);
+
+  const staffPendingCards = myPending.length===0
+    ? React.createElement("div",{className:"emptyState"}, "Hiện chưa có việc nào được giao cho bạn hoặc cửa hàng bạn.")
+    : React.createElement("div", { style:{ display:"flex", flexDirection:"column", gap:12 } }, myPending.map(t => {
+        const overdue = isOverdue(t);
+        const isReporting = reportingId===t.id;
+        return React.createElement("div", { key:t.id, className:"card" }, [
+          React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:8, marginBottom:6 } }, [
+            React.createElement("div", { key:"nn" }, [
+              React.createElement("div", { key:"n", style:{ fontWeight:700, fontSize:14.5 } }, t.title),
+              t.assignType==="staff" && React.createElement("div", { key:"p", style:{ fontSize:11, color:"var(--inkSoft)", marginTop:2 } }, "Giao riêng cho bạn"),
+            ]),
+            overdue ? StatusPill("Quá hạn", "warn") : StatusPill(`Hạn ${t.deadline}`, "neutral"),
+          ]),
+          t.mota && React.createElement("div", { key:"m", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:10 } }, t.mota),
+          !isReporting
+            ? React.createElement("button", { key:"b", type:"button", className:"btn btnAmber", style:{padding:"7px 13px",fontSize:12.5}, onClick:()=>{ setReportingId(t.id); setResultText(""); } }, "Báo cáo kết quả")
+            : React.createElement("div", { key:"f" }, [
+                React.createElement("textarea", { key:"i", rows:3, value:resultText, onChange:e=>setResultText(e.target.value), placeholder:"Nhập kết quả đã thực hiện...", style:{ marginBottom:8 } }),
+                React.createElement("div", { key:"btns", className:"btnRow" }, [
+                  React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:()=>setReportingId(null) }, "Huỷ"),
+                  React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", onClick:()=>submitResult(t.id) }, "Gửi kết quả"),
+                ]),
+              ]),
+        ]);
+      }));
+
+  const staffDoneCard = myDone.length>0 && React.createElement("div", { className:"card", style:{ marginTop:20 } }, [
+    React.createElement("div", { key:"t", className:"cardTitle" }, "Việc đã hoàn thành gần đây"),
+    React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8 } }, myDone.slice(0,15).map(t =>
+      React.createElement("div", { key:t.id, style:{ background:"var(--paper)", borderRadius:8, padding:"9px 12px", fontSize:12.5 } }, [
+        React.createElement("div",{key:"h",style:{fontWeight:700,marginBottom:2}}, `${t.title} · hoàn thành ${t.ngayHoanThanh}`),
+        React.createElement("div",{key:"k",style:{color:"var(--inkSoft)"}}, `Kết quả: ${t.ketQua}`),
+      ])
+    )),
+  ]);
+
+  // ---- Giao diện quản lý ----
+  const shopsInFilter = adminShop==="Tất cả" ? DEFAULT_SHOPS : [adminShop];
+  let filteredTasks = tasks.filter(t => shopsInFilter.includes(t.shop));
+  if(adminStatus==="Đang giao") filteredTasks = filteredTasks.filter(t=>t.trangThai==="Đang giao" && !isOverdue(t));
+  else if(adminStatus==="Quá hạn") filteredTasks = filteredTasks.filter(isOverdue);
+  else if(adminStatus==="Đã hoàn thành") filteredTasks = filteredTasks.filter(t=>t.trangThai==="Đã hoàn thành");
+  filteredTasks = [...filteredTasks].sort((a,b)=> a.deadline<b.deadline?-1:1);
+
+  const pendingCount = tasks.filter(t=>t.trangThai==="Đang giao" && !isOverdue(t)).length;
+  const overdueCount = tasks.filter(isOverdue).length;
+  const doneCount = tasks.filter(t=>t.trangThai==="Đã hoàn thành").length;
+
+  const adminMetrics = isAdmin && React.createElement("div", { className:"metrics" }, [
+    React.createElement("div", { key:"1", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Tổng việc đã giao"), React.createElement("div",{key:"v",className:"value"}, fmtNum(tasks.length)) ]),
+    React.createElement("div", { key:"2", className:"metric neutral" }, [ React.createElement("div",{key:"l",className:"label"},"Đang chờ"), React.createElement("div",{key:"v",className:"value"}, fmtNum(pendingCount)) ]),
+    React.createElement("div", { key:"3", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Quá hạn"), React.createElement("div",{key:"v",className:"value"}, fmtNum(overdueCount)) ]),
+    React.createElement("div", { key:"4", className:"metric good" }, [ React.createElement("div",{key:"l",className:"label"},"Đã hoàn thành"), React.createElement("div",{key:"v",className:"value"}, fmtNum(doneCount)) ]),
+  ]);
+
+  const adminFilterRow = isAdmin && React.createElement("div", { className:"btnRow", style:{ marginBottom:14 } }, [
+    React.createElement("select", { key:"shop", value:adminShop, onChange:e=>setAdminShop(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } },
+      ["Tất cả", ...DEFAULT_SHOPS].map(s => React.createElement("option",{key:s,value:s},s))),
+    React.createElement("select", { key:"status", value:adminStatus, onChange:e=>setAdminStatus(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } },
+      ["Tất cả","Đang giao","Quá hạn","Đã hoàn thành"].map(s => React.createElement("option",{key:s,value:s},s))),
+  ]);
+
+  const adminTable = isAdmin && (filteredTasks.length===0
+    ? React.createElement("div",{className:"emptyState"}, "Không có công việc nào trong bộ lọc này.")
+    : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Công việc","Giao cho","Hạn chót","Trạng thái",""].map((h,i)=>React.createElement("th",{key:i},h)))),
+        React.createElement("tbody",{key:"b"}, filteredTasks.map(t => {
+          const overdue = isOverdue(t);
+          const status = t.trangThai==="Đã hoàn thành" ? { text:"Đã hoàn thành", tone:"good" } : (overdue ? { text:"Quá hạn", tone:"warn" } : { text:"Đang giao", tone:"neutral" });
+          const target = t.assignType==="staff" ? `${t.staffName} (${t.shop})` : t.shop;
+          return React.createElement("tr",{key:t.id}, [
+            React.createElement("td",{key:"n"}, t.title),
+            React.createElement("td",{key:"sh"}, target),
+            React.createElement("td",{key:"d"}, t.deadline),
+            React.createElement("td",{key:"st"}, StatusPill(status.text, status.tone)),
+            React.createElement("td",{key:"a", style:{whiteSpace:"nowrap"}}, [
+              React.createElement("button",{key:"v", className:"btn", style:{padding:"5px 10px",fontSize:11.5,marginRight:6}, onClick:()=>setViewTask(t)}, "Xem"),
+              t.trangThai==="Đã hoàn thành" && React.createElement("button",{key:"r", className:"btn btnGhost", style:{padding:"5px 10px",fontSize:11.5,marginRight:6}, onClick:()=>reopenTask(t.id)}, "Giao lại"),
+              React.createElement("button",{key:"del", className:"btn btnDanger", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>removeTask(t.id)}, "Xoá"),
+            ]),
+          ]);
+        })),
+      ])));
+
+  const viewModal = viewTask && React.createElement("div", { className:"modalOverlay", onClick:()=>setViewTask(null) },
+    React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:2 } }, viewTask.title),
+      React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } },
+        `${viewTask.assignType==="staff" ? `Giao riêng: ${viewTask.staffName} (${viewTask.shop})` : viewTask.shop} · Giao ngày ${viewTask.ngayGiao} · Hạn ${viewTask.deadline}`),
+      viewTask.mota && React.createElement("div", { key:"m", style:{ marginBottom:14, fontSize:13 } }, [ React.createElement("b",{key:"b"},"Mô tả: "), viewTask.mota ]),
+      viewTask.trangThai==="Đã hoàn thành"
+        ? React.createElement("div", { key:"kq", className:"readonlyBox", style:{ marginBottom:14 } }, `Kết quả (${viewTask.nguoiBaoCao || "?"} · ${viewTask.ngayHoanThanh}): ${viewTask.ketQua}`)
+        : React.createElement("div", { key:"kq", style:{ marginBottom:14, fontSize:12.5, color:"var(--inkSoft)" } }, "Chưa có kết quả trả về."),
+      React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } },
+        React.createElement("button", { type:"button", className:"btn btnGhost", onClick:()=>setViewTask(null) }, "Đóng")
+      ),
+    ])
+  );
+
+  const formModal = showForm && React.createElement("div", { className:"modalOverlay", onClick:()=>setShowForm(false) },
+    React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:14 } }, "Giao việc mới"),
+      React.createElement("form", { key:"f", onSubmit:submitAssign }, [
+        React.createElement("div", { key:"scope", className:"field", style:{ marginBottom:10 } }, [
+          React.createElement("label",{key:"l"},"Giao cho"),
+          React.createElement("select", { key:"i", value:form.scope, onChange:e=>setForm({...form,scope:e.target.value}) }, [
+            React.createElement("option",{key:"one",value:"one"},"1 cửa hàng cụ thể (cả nhóm)"),
+            React.createElement("option",{key:"all",value:"all"},"Tất cả 9 cửa hàng"),
+            React.createElement("option",{key:"staffOne",value:"staffOne"},"1 nhân viên cụ thể"),
+          ]),
+        ]),
+        form.scope==="one" && React.createElement("div", { key:"shop", className:"field", style:{ marginBottom:10 } }, [
+          React.createElement("label",{key:"l"},"Cửa hàng"),
+          React.createElement("select",{key:"i",value:form.shop,onChange:e=>setForm({...form,shop:e.target.value})}, DEFAULT_SHOPS.map(s=>React.createElement("option",{key:s,value:s},s))),
+        ]),
+        form.scope==="staffOne" && React.createElement("div", { key:"staff", className:"field", style:{ marginBottom:10 } }, [
+          React.createElement("label",{key:"l"},"Nhân viên"),
+          React.createElement(NamePicker, { key:"i", options:staffOptions, value:form.staffId, onChange:v=>setForm({...form,staffId:v}), placeholder:"Gõ tên để tìm..." }),
+        ]),
+        React.createElement("div", { key:"title", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Nội dung công việc"), React.createElement("input",{key:"i",value:form.title,onChange:e=>setForm({...form,title:e.target.value}),required:true,placeholder:"VD: Kiểm kê lại lô hàng khuyến mãi tháng này"}) ]),
+        React.createElement("div", { key:"mota", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Mô tả thêm (nếu có)"), React.createElement("textarea",{key:"i",rows:3,value:form.mota,onChange:e=>setForm({...form,mota:e.target.value})}) ]),
+        React.createElement("div", { key:"dl", className:"field", style:{ marginBottom:16 } }, [ React.createElement("label",{key:"l"},"Hạn chót"), React.createElement("input",{key:"i",type:"date",value:form.deadline,onChange:e=>setForm({...form,deadline:e.target.value}),required:true}) ]),
+        React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } }, [
+          React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:()=>setShowForm(false) }, "Huỷ"),
+          React.createElement("button", { key:"s", type:"submit", className:"btn btnPrimary" }, "Giao việc"),
+        ]),
+      ]),
+    ])
+  );
+
+  return React.createElement(React.Fragment, null, [
+    React.createElement("h2", { key:"t", className:"pagetitle" }, "Giao việc"),
+    React.createElement("p", { key:"s", className:"pagesub" }, isAdmin ? "Giao việc phát sinh cho cửa hàng, đặt hạn chót và theo dõi kết quả." : "Việc phát sinh quản lý khu vực giao — báo cáo kết quả trước hạn chót."),
+    isAdmin && React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:16 } }, [
+      React.createElement("button", { key:"add", className:"btn btnPrimary", onClick:()=>setShowForm(true) }, "＋ Giao việc mới"),
+    ]),
+    !isAdmin && staffPendingCards,
+    !isAdmin && staffDoneCard,
+    isAdmin && adminMetrics, isAdmin && adminFilterRow, isAdmin && adminTable,
+    formModal, viewModal,
+  ]);
+}
+
+// ================= MODULE 5: HIỆU SUẤT & TỔNG QUAN CỬA HÀNG =================
 function PerformanceView(){
   const [staff, setStaff] = useState([]);
   const [dailyReports, setDailyReports] = useState([]);
@@ -993,7 +1242,7 @@ function PerformanceView(){
   ]);
 }
 
-// ================= MODULE 5: ĐÀO TẠO & BUDDY =================
+// ================= MODULE 6: ĐÀO TẠO & BUDDY =================
 const DEFAULT_CHECKLIST = [
   { id:"d1", offset:0, label:"Giới thiệu quy định cửa hàng, an toàn, GPP cơ bản" },
   { id:"d2", offset:0, label:"Giới thiệu buddy kèm cặp, tham quan cửa hàng, vị trí hàng hoá" },
@@ -1008,7 +1257,7 @@ const DEFAULT_CHECKLIST = [
 ];
 function taskDueDate(joinDate, offset){ return addDays(joinDate, offset); }
 
-function TrainingView(){
+function TrainingView({ isAdmin, myStaff }){
   const [hires, setHires] = useState([]);
   const [staff, setStaff] = useState([]);
   const [checklistTpl, setChecklistTpl] = useState(DEFAULT_CHECKLIST);
@@ -1017,7 +1266,7 @@ function TrainingView(){
   const [showForm, setShowForm] = useState(false);
   const [showTplEditor, setShowTplEditor] = useState(false);
   const [selectedHireId, setSelectedHireId] = useState(null);
-  const [form, setForm] = useState({ name:"", shop:DEFAULT_SHOPS[0], joinDate:todayISO(), buddyId:"" });
+  const [form, setForm] = useState({ name:"", shop:DEFAULT_SHOPS[0], joinDate:todayISO(), buddyId:"", staffId:"" });
   const [reportForm, setReportForm] = useState({ tuan:1, noiDung:"", danhGia:3 });
 
   useEffect(()=>{
@@ -1034,16 +1283,15 @@ function TrainingView(){
   async function addHire(e){
     e.preventDefault();
     if(!form.name.trim()) return;
-    const ref = await addDoc("newHires", { name:form.name.trim(), shop:form.shop, joinDate:form.joinDate, buddyId:form.buddyId || null, buddyName: staff.find(s=>s.id===form.buddyId)?.name || "" });
+    const ref = await addDoc("newHires", { name:form.name.trim(), shop:form.shop, joinDate:form.joinDate, buddyId:form.buddyId || null, buddyName: staff.find(s=>s.id===form.buddyId)?.name || "", staffId: form.staffId || null });
     await db.collection("trainingProgress").doc(ref.id).set({ hireId: ref.id, done:{} });
-    setForm({ name:"", shop:DEFAULT_SHOPS[0], joinDate:todayISO(), buddyId:"" }); setShowForm(false);
+    setForm({ name:"", shop:DEFAULT_SHOPS[0], joinDate:todayISO(), buddyId:"", staffId:"" }); setShowForm(false);
   }
   async function toggleTask(hireId, taskId, checked){
     const ref = db.collection("trainingProgress").doc(hireId);
-    const doc = progressDocs[hireId];
-    const done = { ...(doc ? doc.done : {}) };
-    if(checked) done[taskId] = todayISO(); else delete done[taskId];
-    await ref.set({ hireId, done }, { merge:true });
+    const payload = { hireId };
+    payload[`done.${taskId}`] = checked ? todayISO() : firebase.firestore.FieldValue.delete();
+    await ref.set(payload, { merge:true });
   }
   async function saveTemplate(items){ await saveConfigDoc("trainingChecklist", { items }); setShowTplEditor(false); }
   async function submitReport(e){
@@ -1067,29 +1315,35 @@ function TrainingView(){
     return { total, doneCount, overdue, pct: total?Math.round(doneCount/total*100):0, reportCount:hireReports.length, missingReport };
   }
 
-  const overdueTotal = hires.reduce((s,h)=> s + hireStats(h).overdue, 0);
-  const missingReportTotal = hires.filter(h=> hireStats(h).missingReport).length;
-  const avgPct = hires.length ? Math.round(hires.reduce((s,h)=>s+hireStats(h).pct,0)/hires.length) : null;
+  const visibleHires = isAdmin ? hires : hires.filter(h => (myStaff && h.buddyId===myStaff.id) || (myStaff && h.staffId===myStaff.id));
 
-  const metrics = React.createElement("div", { className:"metrics" }, [
-    React.createElement("div", { key:"1", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"NV mới đang theo dõi"), React.createElement("div",{key:"v",className:"value"}, fmtNum(hires.length)) ]),
+  const overdueTotal = visibleHires.reduce((s,h)=> s + hireStats(h).overdue, 0);
+  const missingReportTotal = visibleHires.filter(h=> hireStats(h).missingReport).length;
+  const avgPct = visibleHires.length ? Math.round(visibleHires.reduce((s,h)=>s+hireStats(h).pct,0)/visibleHires.length) : null;
+
+  const metrics = isAdmin && React.createElement("div", { className:"metrics" }, [
+    React.createElement("div", { key:"1", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"NV mới đang theo dõi"), React.createElement("div",{key:"v",className:"value"}, fmtNum(visibleHires.length)) ]),
     React.createElement("div", { key:"2", className:"metric good" }, [ React.createElement("div",{key:"l",className:"label"},"Hoàn thành đào tạo TB"), React.createElement("div",{key:"v",className:"value"}, avgPct==null?"—":avgPct+"%") ]),
     React.createElement("div", { key:"3", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Đầu việc quá hạn"), React.createElement("div",{key:"v",className:"value"}, fmtNum(overdueTotal)) ]),
     React.createElement("div", { key:"4", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Thiếu báo cáo buddy tuần này"), React.createElement("div",{key:"v",className:"value"}, fmtNum(missingReportTotal)) ]),
   ]);
 
-  const hireCards = hires.length===0
-    ? React.createElement("div", { className:"emptyState" }, "Chưa có nhân viên mới nào — bấm \"+ Thêm nhân viên mới\" để bắt đầu theo dõi.")
-    : React.createElement("div", { style:{ display:"flex", flexDirection:"column", gap:12 } }, hires.map(h => {
+  const hireCards = visibleHires.length===0
+    ? React.createElement("div", { className:"emptyState" }, isAdmin ? "Chưa có nhân viên mới nào — bấm \"+ Thêm nhân viên mới\" để bắt đầu theo dõi." : "Bạn chưa được gán làm buddy hoặc liên kết với hồ sơ đào tạo nào.")
+    : React.createElement("div", { style:{ display:"flex", flexDirection:"column", gap:12 } }, visibleHires.map(h => {
         const stats = hireStats(h);
         const doc = progressDocs[h.id]; const done = doc ? doc.done : {};
-        const isOpen = selectedHireId === h.id;
+        const amIHire = !isAdmin && myStaff && h.staffId===myStaff.id;
+        const amIBuddy = !isAdmin && myStaff && h.buddyId===myStaff.id;
+        const canEditChecklist = isAdmin || amIHire;
+        const canReport = isAdmin || amIBuddy;
+        const isOpen = isAdmin ? (selectedHireId === h.id) : true;
         const taskItems = checklistTpl.map(t => {
           const dueDate = taskDueDate(h.joinDate, t.offset);
           const isDone = !!done[t.id];
           const isOverdue = !isDone && dueDate < todayISO();
-          return React.createElement("label", { key:t.id, style:{ display:"flex", alignItems:"flex-start", gap:8, padding:"6px 0", fontSize:12.5, cursor:"pointer" } }, [
-            React.createElement("input", { key:"c", type:"checkbox", checked:isDone, onChange:e=>toggleTask(h.id, t.id, e.target.checked), style:{ marginTop:2 } }),
+          return React.createElement("label", { key:t.id, style:{ display:"flex", alignItems:"flex-start", gap:8, padding:"6px 0", fontSize:12.5, cursor: canEditChecklist ? "pointer" : "default" } }, [
+            React.createElement("input", { key:"c", type:"checkbox", checked:isDone, disabled:!canEditChecklist, onChange:e=>toggleTask(h.id, t.id, e.target.checked), style:{ marginTop:2 } }),
             React.createElement("span", { key:"t", style:{ color: isOverdue ? "var(--clay)" : "var(--ink)" } }, [ t.label, React.createElement("span",{key:"d",style:{color:"var(--inkSoft)",fontSize:11}}, ` — hạn ${dueDate}${isOverdue?" (quá hạn)":""}`) ]),
           ]);
         });
@@ -1100,22 +1354,23 @@ function TrainingView(){
               React.createElement("div", { key:"n", style:{ fontWeight:700, fontSize:14.5 } }, h.name),
               React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)" } }, `${h.shop} · Vào làm ${h.joinDate} · Buddy: ${h.buddyName || "chưa gán"}`),
             ]),
-            React.createElement("div", { key:"r", style:{ display:"flex", alignItems:"center", gap:8 } }, [
+            React.createElement("div", { key:"r", style:{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" } }, [
               StatusPill(`${stats.pct}% đào tạo`, stats.pct>=80?"good":(stats.pct<40?"warn":"neutral")),
               stats.overdue>0 && StatusPill(`${stats.overdue} việc quá hạn`, "warn"),
               stats.missingReport && StatusPill("Thiếu báo cáo tuần", "warn"),
             ]),
           ]),
-          React.createElement("div", { key:"btns", className:"btnRow", style:{ marginTop:10 } }, [
+          isAdmin && React.createElement("div", { key:"btns", className:"btnRow", style:{ marginTop:10 } }, [
             React.createElement("button", { key:"toggle", className:"btn btnGhost", style:{ padding:"6px 12px", fontSize:12 }, onClick:()=>setSelectedHireId(isOpen?null:h.id) }, isOpen ? "Ẩn checklist ▲" : "Xem checklist ▾"),
             React.createElement("button", { key:"del", className:"btn btnDanger", style:{ padding:"6px 12px", fontSize:12 }, onClick:()=>removeHire(h.id) }, "Xoá"),
           ]),
           isOpen && React.createElement("div", { key:"detail", style:{ marginTop:12, borderTop:"1px solid var(--line)", paddingTop:12, display:"flex", flexWrap:"wrap", gap:20 } }, [
             React.createElement("div", { key:"cl", style:{ flex:"1 1 260px" } }, [
               React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:12.5, marginBottom:6 } }, "Checklist đào tạo"),
+              !canEditChecklist && !isAdmin && React.createElement("div",{key:"hint",style:{fontSize:11,color:"var(--inkSoft)",marginBottom:6}},"Chỉ xem — checklist do chính nhân viên mới tự tick."),
               ...taskItems,
             ]),
-            React.createElement("div", { key:"rep", style:{ flex:"1 1 260px" } }, [
+            canReport && React.createElement("div", { key:"rep", style:{ flex:"1 1 260px" } }, [
               React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:12.5, marginBottom:6 } }, "Báo cáo của buddy theo tuần"),
               hireReports.length===0 ? React.createElement("div",{key:"e",style:{fontSize:12,color:"var(--inkSoft)"}}, "Chưa có báo cáo nào.") :
                 React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8, marginBottom:10 } }, hireReports.map(r=>
@@ -1137,16 +1392,20 @@ function TrainingView(){
         ]);
       }));
 
-  const formModal = showForm && React.createElement("div", { className:"modalOverlay", onClick:()=>setShowForm(false) },
+  const formModal = isAdmin && showForm && React.createElement("div", { className:"modalOverlay", onClick:()=>setShowForm(false) },
     React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:14 } }, "Thêm nhân viên mới"),
       React.createElement("form", { key:"f", onSubmit:addHire }, [
         React.createElement("div", { key:"a", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Họ tên"), React.createElement("input",{key:"i",value:form.name,onChange:e=>setForm({...form,name:e.target.value}),required:true}) ]),
-        React.createElement("div", { key:"r", style:{ display:"flex", gap:10, marginBottom:10 } }, [
+        React.createElement("div", { key:"r", className:"fieldRow", style:{ display:"flex", gap:10, marginBottom:10 } }, [
           React.createElement("div", { key:"a", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Cửa hàng"), React.createElement("select",{key:"i",value:form.shop,onChange:e=>setForm({...form,shop:e.target.value})}, DEFAULT_SHOPS.map(s=>React.createElement("option",{key:s,value:s},s))) ]),
           React.createElement("div", { key:"b", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Ngày vào làm"), React.createElement("input",{key:"i",type:"date",value:form.joinDate,onChange:e=>setForm({...form,joinDate:e.target.value})}) ]),
         ]),
-        React.createElement("div", { key:"b2", className:"field", style:{ marginBottom:16 } }, [ React.createElement("label",{key:"l"},"Buddy kèm cặp"), React.createElement("select",{key:"i",value:form.buddyId,onChange:e=>setForm({...form,buddyId:e.target.value})}, [React.createElement("option",{key:"",value:""},"— chọn buddy —"), ...staff.map(s=>React.createElement("option",{key:s.id,value:s.id},s.name))]) ]),
+        React.createElement("div", { key:"b2", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Buddy kèm cặp"), React.createElement("select",{key:"i",value:form.buddyId,onChange:e=>setForm({...form,buddyId:e.target.value})}, [React.createElement("option",{key:"",value:""},"— chọn buddy —"), ...staff.map(s=>React.createElement("option",{key:s.id,value:s.id},s.name))]) ]),
+        React.createElement("div", { key:"b3", className:"field", style:{ marginBottom:16 } }, [
+          React.createElement("label",{key:"l"},"Liên kết với tài khoản nhân viên (để người này tự tick checklist)"),
+          React.createElement("select",{key:"i",value:form.staffId,onChange:e=>setForm({...form,staffId:e.target.value})}, [React.createElement("option",{key:"",value:""},"— chưa liên kết —"), ...staff.map(s=>React.createElement("option",{key:s.id,value:s.id},s.name))]),
+        ]),
         React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } }, [
           React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:()=>setShowForm(false) }, "Huỷ"),
           React.createElement("button", { key:"s", type:"submit", className:"btn btnPrimary" }, "Lưu"),
@@ -1157,23 +1416,23 @@ function TrainingView(){
 
   return React.createElement(React.Fragment, null, [
     React.createElement("h2", { key:"t", className:"pagetitle" }, "Đào tạo & Buddy nhân sự mới"),
-    React.createElement("p", { key:"s", className:"pagesub" }, "Checklist đào tạo cơ bản theo mốc ngày + báo cáo buddy hàng tuần cho từng nhân viên mới."),
+    React.createElement("p", { key:"s", className:"pagesub" }, isAdmin ? "Checklist đào tạo cơ bản theo mốc ngày + báo cáo buddy hàng tuần cho từng nhân viên mới." : "Checklist đào tạo của bạn, hoặc báo cáo buddy hàng tuần nếu bạn đang kèm cặp nhân viên mới."),
     metrics,
-    React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:16 } }, [
+    isAdmin && React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:16 } }, [
       React.createElement("button", { key:"add", className:"btn btnPrimary", onClick:()=>setShowForm(true) }, "＋ Thêm nhân viên mới"),
     ]),
     hireCards, formModal,
   ]);
 }
 
-// ================= MODULE 6: GHI NHẬN & TẶNG SAO =================
+// ================= MODULE 7: GHI NHẬN & TẶNG SAO =================
 const DEFAULT_REWARDS = [
-  { id:"r1", name:"Phiếu quà 50.000đ", stars:10 },
-  { id:"r2", name:"Phiếu quà 100.000đ", stars:20 },
-  { id:"r3", name:"Nửa ngày nghỉ phép có lương", stars:30 },
-  { id:"r4", name:"Phiếu quà 300.000đ", stars:50 },
-  { id:"r5", name:"1 ngày nghỉ phép có lương", stars:70 },
-  { id:"r6", name:"Phiếu quà 500.000đ + Giấy khen \"Ngôi sao của tháng\"", stars:100 },
+  { id:"r1", name:"Phiếu quà 50.000đ", stars:10, mota:"" },
+  { id:"r2", name:"Phiếu quà 100.000đ", stars:20, mota:"" },
+  { id:"r3", name:"Nửa ngày nghỉ phép có lương", stars:30, mota:"" },
+  { id:"r4", name:"Phiếu quà 300.000đ", stars:50, mota:"" },
+  { id:"r5", name:"1 ngày nghỉ phép có lương", stars:70, mota:"" },
+  { id:"r6", name:"Phiếu quà 500.000đ + Giấy khen \"Ngôi sao của tháng\"", stars:100, mota:"" },
 ];
 const MONTHLY_GIVE_CAP = 30; // số sao tối đa 1 người có thể TẶNG trong 1 tháng, chống lạm dụng
 
@@ -1267,6 +1526,16 @@ function KudosView({ isAdmin, myStaff }){
   ]);
 
   const leaderboardVisible = showAllLeaderboard ? leaderboard : leaderboard.slice(0,8);
+  const rewardsInfoCard = rewards.length>0 && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"t", className:"cardTitle" }, "Danh sách quà tặng đổi sao"),
+    React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8 } }, rewards.map(r =>
+      React.createElement("div", { key:r.id, style:{ background:"var(--goldSoft)", borderRadius:8, padding:"9px 12px", fontSize:12.5 } }, [
+        React.createElement("div",{key:"h",style:{fontWeight:700}}, `${r.name} — ${r.stars}★`),
+        r.mota && React.createElement("div",{key:"m",style:{color:"var(--inkSoft)",marginTop:2}}, r.mota),
+      ])
+    )),
+  ]);
+
   const leaderboardCard = React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
     React.createElement("div", { key:"t", className:"cardTitle" }, "Bảng xếp hạng tích luỹ"),
     leaderboard.length===0 ? React.createElement("div",{key:"e",className:"emptyState"},"Chưa có nhân viên nào — thêm ở tab Nhân viên.") :
@@ -1279,7 +1548,7 @@ function KudosView({ isAdmin, myStaff }){
           React.createElement("td",{key:"b", style:{fontWeight:700,color:"var(--gold)"}}, fmtNum(s.balance)+" ★"),
           React.createElement("td",{key:"redeem"}, React.createElement("select", { defaultValue:"", onChange:e=>{ const r = rewards.find(x=>x.id===e.target.value); if(r) redeem(s.id, r); e.target.value=""; }, style:{ padding:"5px 7px", borderRadius:6, border:"1px solid var(--line)", fontSize:12 } }, [
             React.createElement("option",{key:"",value:""},"Chọn quà đổi..."),
-            ...rewards.map(r=>React.createElement("option",{key:r.id,value:r.id,disabled:s.balance<r.stars}, `${r.name} (${r.stars}★)`)),
+            ...rewards.map(r=>React.createElement("option",{key:r.id,value:r.id,disabled:s.balance<r.stars,title:r.mota||undefined}, `${r.name} (${r.stars}★)`)),
           ])),
         ]))),
       ])),
@@ -1306,7 +1575,7 @@ function KudosView({ isAdmin, myStaff }){
     React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:14 } }, "Tặng sao ghi nhận đồng nghiệp"),
       React.createElement("form", { key:"f", onSubmit:submitGive }, [
-        React.createElement("div", { key:"r", style:{ display:"flex", gap:10, marginBottom:10 } }, [
+        React.createElement("div", { key:"r", className:"fieldRow", style:{ display:"flex", gap:10, marginBottom:10 } }, [
           React.createElement("div", { key:"a", className:"field", style:{ flex:1 } }, [
             React.createElement("label",{key:"l"},"Từ (bạn)"),
             myStaff
@@ -1337,14 +1606,14 @@ function KudosView({ isAdmin, myStaff }){
     React.createElement("p", { key:"s", className:"pagesub" }, "Nhân viên ghi nhận & tặng sao cho nhau, tích luỹ đổi quà — tăng gắn kết đội ngũ."),
     metrics,
     React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:18, justifyContent:"space-between" } }, [
-      !isAdmin && React.createElement("button", { key:"give", className:"btn btnAmber", onClick:()=>setShowGiveForm(true) }, "Tặng sao"),
+      React.createElement("button", { key:"give", className:"btn btnAmber", onClick:()=>setShowGiveForm(true) }, "Tặng sao"),
       isAdmin && React.createElement("div", { key:"admin", className:"btnRow" }, [
         React.createElement("button", { key:"rewards", type:"button", className:"btn btnGhost", onClick:()=>setShowRewardsEditor(true) }, "Quản lý quà tặng"),
         React.createElement("button", { key:"email", type:"button", className:"btn btnGhost", onClick:()=>setShowEmailEditor(true) },
           `Email nhận thông báo (${notifyEmails.length})`),
       ]),
     ]),
-    feed, leaderboardCard, redemptionsCard, giveModal, emailEditor, rewardsEditor,
+    feed, leaderboardCard, rewardsInfoCard, redemptionsCard, giveModal, emailEditor, rewardsEditor,
   ]);
 }
 
@@ -1356,23 +1625,26 @@ function RewardsEditor({ rewards, onSave, onClose }){
   function removeItem(id){ setItems(items.filter(it => it.id!==id)); }
   function addItem(){
     if(!newName.trim()) return;
-    setItems([...items, { id:uid(), name:newName.trim(), stars:Number(newStars)||1 }]);
+    setItems([...items, { id:uid(), name:newName.trim(), stars:Number(newStars)||1, mota:"" }]);
     setNewName(""); setNewStars(10);
   }
   async function save(){
-    const cleaned = items.filter(it => it.name.trim()).map(it => ({ ...it, stars:Number(it.stars)||1 }));
+    const cleaned = items.filter(it => it.name.trim()).map(it => ({ ...it, stars:Number(it.stars)||1, mota:it.mota||"" }));
     await onSave(cleaned);
   }
   return React.createElement("div", { className:"modalOverlay", onClick:onClose },
     React.createElement("div", { className:"modal modalWide", onClick:e=>e.stopPropagation() }, [
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, "Danh sách quà tặng đổi sao"),
-      React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } }, "Chỉnh tên quà và số sao cần để đổi. Nhân viên sẽ thấy danh sách này khi đổi sao ở bảng xếp hạng."),
-      React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8, marginBottom:12, maxHeight:320, overflowY:"auto" } }, items.map(it =>
-        React.createElement("div", { key:it.id, style:{ display:"flex", gap:8, alignItems:"center" } }, [
-          React.createElement("input", { key:"n", value:it.name, onChange:e=>updateItem(it.id,"name",e.target.value), style:{ flex:1, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5 } }),
-          React.createElement("input", { key:"s", type:"number", min:1, value:it.stars, onChange:e=>updateItem(it.id,"stars",e.target.value), style:{ width:80, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5 } }),
-          React.createElement("span", { key:"u", style:{ fontSize:12, color:"var(--inkSoft)" } }, "★"),
-          React.createElement("button", { key:"d", type:"button", className:"btn btnDanger", style:{ padding:"6px 9px", fontSize:11.5 }, onClick:()=>removeItem(it.id) }, "Xoá"),
+      React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } }, "Chỉnh tên quà, số sao cần để đổi, và mô tả/điều kiện chi tiết. Nhân viên sẽ thấy danh sách này khi đổi sao ở bảng xếp hạng."),
+      React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:12, marginBottom:12, maxHeight:380, overflowY:"auto" } }, items.map(it =>
+        React.createElement("div", { key:it.id, style:{ border:"1px solid var(--line)", borderRadius:8, padding:10 } }, [
+          React.createElement("div", { key:"row", style:{ display:"flex", gap:8, alignItems:"center", marginBottom:6 } }, [
+            React.createElement("input", { key:"n", value:it.name, onChange:e=>updateItem(it.id,"name",e.target.value), style:{ flex:1, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5 } }),
+            React.createElement("input", { key:"s", type:"number", min:1, value:it.stars, onChange:e=>updateItem(it.id,"stars",e.target.value), style:{ width:80, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5 } }),
+            React.createElement("span", { key:"u", style:{ fontSize:12, color:"var(--inkSoft)" } }, "★"),
+            React.createElement("button", { key:"d", type:"button", className:"btn btnDanger", style:{ padding:"6px 9px", fontSize:11.5 }, onClick:()=>removeItem(it.id) }, "Xoá"),
+          ]),
+          React.createElement("input", { key:"m", value:it.mota||"", onChange:e=>updateItem(it.id,"mota",e.target.value), placeholder:"Mô tả / điều kiện đổi quà (không bắt buộc)...", style:{ width:"100%", padding:"6px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12 } }),
         ])
       )),
       React.createElement("div", { key:"add", style:{ display:"flex", gap:8, marginBottom:16 } }, [
@@ -1507,7 +1779,7 @@ function StaffView(){
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:14 } }, editingId ? "Sửa thông tin nhân viên" : "Thêm nhân viên"),
       React.createElement("form", { key:"f", onSubmit:submit }, [
         React.createElement("div", { key:"a", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Họ tên"), React.createElement("input",{key:"i",value:form.name,onChange:e=>setForm({...form,name:e.target.value}),required:true}) ]),
-        React.createElement("div", { key:"r", style:{ display:"flex", gap:10, marginBottom:16 } }, [
+        React.createElement("div", { key:"r", className:"fieldRow", style:{ display:"flex", gap:10, marginBottom:16 } }, [
           React.createElement("div", { key:"a", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Cửa hàng"), React.createElement("select",{key:"i",value:form.shop,onChange:e=>setForm({...form,shop:e.target.value})}, DEFAULT_SHOPS.map(s=>React.createElement("option",{key:s,value:s},s))) ]),
           React.createElement("div", { key:"b", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Vai trò"), React.createElement("select",{key:"i",value:form.role,onChange:e=>setForm({...form,role:e.target.value})}, STAFF_ROLES.map(r=>React.createElement("option",{key:r,value:r},r))) ]),
         ]),
@@ -1532,11 +1804,12 @@ function StaffView(){
 }
 
 // ================= APP SHELL =================
-const STAFF_TABS = ["checklist","photos","weekly","kudos"];
+const STAFF_TABS = ["checklist","photos","weekly","tasks","training","kudos"];
 const OPS_TABS = [
   { id:"checklist", label:"Checklist ngày" },
   { id:"photos", label:"Báo cáo hình ảnh" },
   { id:"weekly", label:"Báo cáo tuần" },
+  { id:"tasks", label:"Giao việc" },
   { id:"performance", label:"Hiệu suất" },
   { id:"training", label:"Đào tạo & Buddy" },
   { id:"kudos", label:"Ghi nhận & Quà" },
@@ -1613,8 +1886,9 @@ function Dashboard({ user, isAdmin, myStaff }){
       activeTab==="checklist" && React.createElement(DailyChecklistView, { key:"v", isAdmin, myStaff }),
       activeTab==="photos" && React.createElement(ImageReportView, { key:"v", isAdmin, myStaff }),
       activeTab==="weekly" && React.createElement(WeeklyReportView, { key:"v", isAdmin, myStaff }),
+      activeTab==="tasks" && React.createElement(TaskAssignView, { key:"v", isAdmin, myStaff }),
       activeTab==="performance" && isAdmin && React.createElement(PerformanceView, { key:"v" }),
-      activeTab==="training" && isAdmin && React.createElement(TrainingView, { key:"v" }),
+      activeTab==="training" && React.createElement(TrainingView, { key:"v", isAdmin, myStaff }),
       activeTab==="kudos" && React.createElement(KudosView, { key:"v", isAdmin, myStaff }),
       activeTab==="staff" && isAdmin && React.createElement(StaffView, { key:"v" }),
     ]),
