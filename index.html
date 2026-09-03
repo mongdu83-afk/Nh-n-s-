@@ -1526,11 +1526,12 @@ function TaskAssignView({ isAdmin, myStaff }){
   const [tasks, setTasks] = useState([]);
   const [staffList, setStaffList] = useState([]);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ scope:"one", shop:DEFAULT_SHOPS[0], staffId:"", title:"", mota:"", deadline:addDays(todayISO(),3) });
+  const [form, setForm] = useState({ scope:"one", shop:DEFAULT_SHOPS[0], staffId:"", title:"", mota:"", deadline:addDays(todayISO(),3), hanGio:"17:00" });
   const [adminShop, setAdminShop] = useState("Tất cả");
   const [adminStatus, setAdminStatus] = useState("Tất cả");
   const [reportingId, setReportingId] = useState(null);
   const [resultText, setResultText] = useState("");
+  const [uploadingResult, setUploadingResult] = useState({});
   const [viewTask, setViewTask] = useState(null);
 
   useEffect(()=>{
@@ -1540,13 +1541,15 @@ function TaskAssignView({ isAdmin, myStaff }){
   }, []);
 
   const today = todayISO();
-  function isOverdue(t){ return t.trangThai==="Đang giao" && t.deadline < today; }
+  function deadlineTs(t){ return `${t.deadline}T${t.hanGio || "23:59"}`; }
+  function isOverdue(t){ return t.trangThai==="Đang giao" && deadlineTs(t) < `${today}T${nowHM()}`; }
+  function deadlineLabel(t){ return t.hanGio ? `${t.deadline} ${t.hanGio}` : t.deadline; }
   const staffOptions = staffList.map(s => ({ value:s.id, label:`${s.name} · ${s.shop} · ${s.role}` }));
 
   async function submitAssign(e){
     e.preventDefault();
     if(!form.title.trim()) return;
-    const base = { title:form.title.trim(), mota:form.mota.trim(), deadline:form.deadline, trangThai:"Đang giao", ketQua:"", nguoiBaoCao:"", ngayGiao:today };
+    const base = { title:form.title.trim(), mota:form.mota.trim(), deadline:form.deadline, hanGio:form.hanGio||"", trangThai:"Đang giao", ketQua:"", nguoiBaoCao:"", ngayGiao:today };
     if(form.scope==="staffOne"){
       if(!form.staffId) return;
       const s = staffList.find(x=>x.id===form.staffId);
@@ -1565,12 +1568,36 @@ function TaskAssignView({ isAdmin, myStaff }){
     });
     setReportingId(null); setResultText("");
   }
+  async function uploadResultFiles(taskId, files){
+    setUploadingResult(prev => ({ ...prev, [taskId]:true }));
+    try{
+      for(const file of files){
+        const path = `tasks/${taskId}/${Date.now()}_${file.name}`;
+        const meta = await uploadTaskAttachmentFile(file, path, pct=>setUploadingResult(prev => ({ ...prev, [taskId]:pct })));
+        await updateDoc("tasks", taskId, { ketQuaFiles: firebase.firestore.FieldValue.arrayUnion(meta) });
+      }
+    } catch(err){
+      console.error("uploadResultFiles lỗi:", err);
+      window.alert("Tải tệp lên thất bại — vui lòng thử lại.");
+    } finally {
+      setUploadingResult(prev => { const n = { ...prev }; delete n[taskId]; return n; });
+    }
+  }
+  async function removeResultFile(taskId, fileMeta){
+    await updateDoc("tasks", taskId, { ketQuaFiles: firebase.firestore.FieldValue.arrayRemove(fileMeta) });
+  }
+  async function saveResultLink(taskId, text){
+    await updateDoc("tasks", taskId, { ketQuaLink: text });
+  }
   async function removeTask(id){ if(window.confirm("Xoá công việc này?")) await deleteDoc("tasks", id); }
   async function reopenTask(id){ await updateDoc("tasks", id, { trangThai:"Đang giao", ketQua:"" }); }
 
   // ---- Giao diện nhân viên: việc giao riêng cho mình + việc giao chung cho cửa hàng ----
+  // Cửa hàng trưởng thấy TẤT CẢ việc của cửa hàng mình, kể cả việc giao riêng cho từng
+  // nhân viên khác (để theo dõi/nhắc), nhưng chỉ người được giao riêng mới báo cáo được.
+  const isShopManagerView = !isAdmin && !!myStaff && myStaff.role==="Cửa hàng trưởng";
   const myTasks = myStaff ? tasks.filter(t =>
-    (t.assignType==="staff" ? t.staffId===myStaff.id : t.shop===myStaff.shop)
+    isShopManagerView ? t.shop===myStaff.shop : (t.assignType==="staff" ? t.staffId===myStaff.id : t.shop===myStaff.shop)
   ) : [];
   const myPending = [...myTasks.filter(t=>t.trangThai==="Đang giao")].sort((a,b)=> a.deadline<b.deadline?-1:1);
   const myDone = [...myTasks.filter(t=>t.trangThai==="Đã hoàn thành")].sort((a,b)=> (b.ngayHoanThanh||"")<(a.ngayHoanThanh||"")?-1:1);
@@ -1580,33 +1607,63 @@ function TaskAssignView({ isAdmin, myStaff }){
     : React.createElement("div", { style:{ display:"flex", flexDirection:"column", gap:12 } }, myPending.map(t => {
         const overdue = isOverdue(t);
         const isReporting = reportingId===t.id;
+        const isOwnTask = t.assignType==="staff" ? t.staffId===myStaff.id : true;
         return React.createElement("div", { key:t.id, className:"card" }, [
           React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:8, marginBottom:6 } }, [
             React.createElement("div", { key:"nn" }, [
               React.createElement("div", { key:"n", style:{ fontWeight:700, fontSize:14.5 } }, t.title),
-              t.assignType==="staff" && React.createElement("div", { key:"p", style:{ fontSize:11, color:"var(--inkSoft)", marginTop:2 } }, "Giao riêng cho bạn"),
+              t.assignType==="staff" && React.createElement("div", { key:"p", style:{ fontSize:11, color:"var(--inkSoft)", marginTop:2 } },
+                isOwnTask ? "Giao riêng cho bạn" : `Giao riêng cho: ${t.staffName}`),
             ]),
-            overdue ? StatusPill("Quá hạn", "warn") : StatusPill(`Hạn ${t.deadline}`, "neutral"),
+            overdue ? StatusPill("Quá hạn", "warn") : StatusPill(`Hạn ${deadlineLabel(t)}`, "neutral"),
           ]),
           t.mota && React.createElement("div", { key:"m", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:10 } }, t.mota),
-          !isReporting
-            ? React.createElement("button", { key:"b", type:"button", className:"btn btnAmber", style:{padding:"7px 13px",fontSize:12.5}, onClick:()=>{ setReportingId(t.id); setResultText(""); } }, "Báo cáo kết quả")
-            : React.createElement("div", { key:"f" }, [
-                React.createElement("textarea", { key:"i", rows:3, value:resultText, onChange:e=>setResultText(e.target.value), placeholder:"Nhập kết quả đã thực hiện...", style:{ marginBottom:8 } }),
-                React.createElement("div", { key:"btns", className:"btnRow" }, [
-                  React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:()=>setReportingId(null) }, "Huỷ"),
-                  React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", onClick:()=>submitResult(t.id) }, "Gửi kết quả"),
-                ]),
-              ]),
+          !isOwnTask
+            ? React.createElement("div", { key:"waiting", style:{ fontSize:12, color:"var(--inkSoft)" } }, "Đang chờ nhân viên này báo cáo kết quả.")
+            : (!isReporting
+              ? React.createElement("button", { key:"b", type:"button", className:"btn btnAmber", style:{padding:"7px 13px",fontSize:12.5}, onClick:()=>{ setReportingId(t.id); setResultText(""); } }, "Báo cáo kết quả")
+              : React.createElement("div", { key:"f" }, [
+                  React.createElement("textarea", { key:"i", rows:3, value:resultText, onChange:e=>setResultText(e.target.value), placeholder:"Nhập kết quả đã thực hiện...", style:{ marginBottom:8 } }),
+                  React.createElement(TaskAttachments, {
+                    key:"att", files:t.ketQuaFiles || [], link:t.ketQuaLink || "", uploading:uploadingResult[t.id],
+                    onUploadFiles:files=>uploadResultFiles(t.id, files),
+                    onRemoveFile:fileMeta=>removeResultFile(t.id, fileMeta),
+                    onLinkBlur:text=>saveResultLink(t.id, text),
+                  }),
+                  React.createElement("div", { key:"btns", className:"btnRow", style:{ marginTop:8 } }, [
+                    React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:()=>setReportingId(null) }, "Huỷ"),
+                    React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", onClick:()=>submitResult(t.id) }, "Gửi kết quả"),
+                  ]),
+                ])),
         ]);
       }));
+
+  function resultAttachmentsView(t){
+    const files = t.ketQuaFiles || [];
+    const link = t.ketQuaLink || "";
+    if(files.length===0 && !link) return null;
+    return React.createElement("div", { key:"att", style:{ marginTop:6, display:"flex", flexDirection:"column", gap:6 } }, [
+      files.length>0 && React.createElement("div", { key:"f", className:"taskFileList" }, files.map((f,i) =>
+        React.createElement("div", { key:i, className:"taskFileChip" },
+          f.type==="image"
+            ? React.createElement("a", { key:"a", href:f.url, target:"_blank", rel:"noopener noreferrer" }, React.createElement("img",{src:f.url}))
+            : React.createElement("a", { key:"a", href:f.url, target:"_blank", rel:"noopener noreferrer", className:"docChip" }, [
+                React.createElement("span",{key:"ic"}, "📄"),
+                React.createElement("span",{key:"n"}, f.name || "Tệp đính kèm"),
+              ])
+        )
+      )),
+      link && React.createElement("a", { key:"l", href:link, target:"_blank", rel:"noopener noreferrer", style:{ fontSize:12, color:"var(--pine)" } }, link),
+    ]);
+  }
 
   const staffDoneCard = myDone.length>0 && React.createElement("div", { className:"card", style:{ marginTop:20 } }, [
     React.createElement("div", { key:"t", className:"cardTitle" }, "Việc đã hoàn thành gần đây"),
     React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8 } }, myDone.slice(0,15).map(t =>
       React.createElement("div", { key:t.id, style:{ background:"var(--paper)", borderRadius:8, padding:"9px 12px", fontSize:12.5 } }, [
-        React.createElement("div",{key:"h",style:{fontWeight:700,marginBottom:2}}, `${t.title} · hoàn thành ${t.ngayHoanThanh}`),
+        React.createElement("div",{key:"h",style:{fontWeight:700,marginBottom:2}}, `${t.title} · hoàn thành ${t.ngayHoanThanh}${t.nguoiBaoCao ? " · "+t.nguoiBaoCao : ""}`),
         React.createElement("div",{key:"k",style:{color:"var(--inkSoft)"}}, `Kết quả: ${t.ketQua}`),
+        resultAttachmentsView(t),
       ])
     )),
   ]);
@@ -1648,7 +1705,7 @@ function TaskAssignView({ isAdmin, myStaff }){
           return React.createElement("tr",{key:t.id}, [
             React.createElement("td",{key:"n"}, t.title),
             React.createElement("td",{key:"sh"}, target),
-            React.createElement("td",{key:"d"}, t.deadline),
+            React.createElement("td",{key:"d"}, deadlineLabel(t)),
             React.createElement("td",{key:"st"}, StatusPill(status.text, status.tone)),
             React.createElement("td",{key:"a", style:{whiteSpace:"nowrap"}}, [
               React.createElement("button",{key:"v", className:"btn", style:{padding:"5px 10px",fontSize:11.5,marginRight:6}, onClick:()=>setViewTask(t)}, "Xem"),
@@ -1663,10 +1720,13 @@ function TaskAssignView({ isAdmin, myStaff }){
     React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:2 } }, viewTask.title),
       React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } },
-        `${viewTask.assignType==="staff" ? `Giao riêng: ${viewTask.staffName} (${viewTask.shop})` : viewTask.shop} · Giao ngày ${viewTask.ngayGiao} · Hạn ${viewTask.deadline}`),
+        `${viewTask.assignType==="staff" ? `Giao riêng: ${viewTask.staffName} (${viewTask.shop})` : viewTask.shop} · Giao ngày ${viewTask.ngayGiao} · Hạn ${deadlineLabel(viewTask)}`),
       viewTask.mota && React.createElement("div", { key:"m", style:{ marginBottom:14, fontSize:13 } }, [ React.createElement("b",{key:"b"},"Mô tả: "), viewTask.mota ]),
       viewTask.trangThai==="Đã hoàn thành"
-        ? React.createElement("div", { key:"kq", className:"readonlyBox", style:{ marginBottom:14 } }, `Kết quả (${viewTask.nguoiBaoCao || "?"} · ${viewTask.ngayHoanThanh}): ${viewTask.ketQua}`)
+        ? React.createElement("div", { key:"kq", style:{ marginBottom:14 } }, [
+            React.createElement("div", { key:"box", className:"readonlyBox" }, `Kết quả (${viewTask.nguoiBaoCao || "?"} · ${viewTask.ngayHoanThanh}): ${viewTask.ketQua}`),
+            resultAttachmentsView(viewTask),
+          ])
         : React.createElement("div", { key:"kq", style:{ marginBottom:14, fontSize:12.5, color:"var(--inkSoft)" } }, "Chưa có kết quả trả về."),
       React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } },
         React.createElement("button", { type:"button", className:"btn btnGhost", onClick:()=>setViewTask(null) }, "Đóng")
@@ -1696,7 +1756,10 @@ function TaskAssignView({ isAdmin, myStaff }){
         ]),
         React.createElement("div", { key:"title", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Nội dung công việc"), React.createElement("input",{key:"i",value:form.title,onChange:e=>setForm({...form,title:e.target.value}),required:true,placeholder:"VD: Kiểm kê lại lô hàng khuyến mãi tháng này"}) ]),
         React.createElement("div", { key:"mota", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Mô tả thêm (nếu có)"), React.createElement("textarea",{key:"i",rows:3,value:form.mota,onChange:e=>setForm({...form,mota:e.target.value})}) ]),
-        React.createElement("div", { key:"dl", className:"field", style:{ marginBottom:16 } }, [ React.createElement("label",{key:"l"},"Hạn chót"), React.createElement("input",{key:"i",type:"date",value:form.deadline,onChange:e=>setForm({...form,deadline:e.target.value}),required:true}) ]),
+        React.createElement("div", { key:"dl", className:"fieldRow", style:{ display:"flex", gap:10, marginBottom:16 } }, [
+          React.createElement("div", { key:"a", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Ngày hạn chót"), React.createElement("input",{key:"i",type:"date",value:form.deadline,onChange:e=>setForm({...form,deadline:e.target.value}),required:true}) ]),
+          React.createElement("div", { key:"b", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Giờ hạn chót"), React.createElement("input",{key:"i",type:"time",value:form.hanGio,onChange:e=>setForm({...form,hanGio:e.target.value})}) ]),
+        ]),
         React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } }, [
           React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:()=>setShowForm(false) }, "Huỷ"),
           React.createElement("button", { key:"s", type:"submit", className:"btn btnPrimary" }, "Giao việc"),
@@ -2410,6 +2473,46 @@ function NoStaffLinkedScreen({ user }){
   );
 }
 
+function TaskReminderBanner({ myStaff, onOpenTasks }){
+  const [tasks, setTasks] = useState([]);
+  useEffect(()=>{
+    if(!myStaff) return undefined;
+    const u = subscribeCol("tasks", setTasks);
+    return u;
+  }, [myStaff && myStaff.id]);
+  if(!myStaff) return null;
+
+  const today = todayISO();
+  const nowStamp = `${today}T${nowHM()}`;
+  function ts(t){ return `${t.deadline}T${t.hanGio || "23:59"}`; }
+  function label(t){ return t.hanGio ? `${t.deadline} ${t.hanGio}` : t.deadline; }
+
+  const isShopManager = myStaff.role==="Cửa hàng trưởng";
+  const myPending = tasks.filter(t =>
+    (isShopManager ? t.shop===myStaff.shop : (t.assignType==="staff" ? t.staffId===myStaff.id : t.shop===myStaff.shop))
+    && t.trangThai==="Đang giao"
+  );
+  // Nhắc việc đã quá hạn, hoặc sắp đến hạn trong vòng 24 giờ tới —
+  // hiện ngay khi mở app, không cần bấm vào tab "Giao việc" mới thấy.
+  const overdue = myPending.filter(t => ts(t) < nowStamp).sort((a,b)=> ts(a)<ts(b)?-1:1);
+  const dueSoon = myPending.filter(t => ts(t) >= nowStamp && ts(t) <= `${addDays(today,1)}T${nowHM()}`).sort((a,b)=> ts(a)<ts(b)?-1:1);
+  const alertTasks = [...overdue, ...dueSoon];
+  if(alertTasks.length===0) return null;
+
+  return React.createElement("div", { className:"card", style:{ maxWidth:1100, margin:"16px auto 0", borderColor:"var(--claySoft)", background:"var(--claySoft)" } }, [
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13.5, marginBottom:8, color:"var(--clay)" } },
+      `🔔 Bạn có ${alertTasks.length} việc được giao ${overdue.length>0 ? "quá hạn hoặc " : ""}sắp đến hạn`),
+    React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:6, marginBottom:10 } }, alertTasks.slice(0,5).map(t =>
+      React.createElement("div", { key:t.id, style:{ fontSize:12.5 } }, [
+        React.createElement("span", { key:"n", style:{ fontWeight:600 } }, t.title),
+        (isShopManager && t.assignType==="staff" && t.staffId!==myStaff.id) && React.createElement("span", { key:"who", style:{ color:"var(--inkSoft)" } }, ` (${t.staffName})`),
+        React.createElement("span", { key:"d", style:{ color: ts(t)<nowStamp ? "var(--clay)" : "var(--inkSoft)" } }, ` — hạn ${label(t)}${ts(t)<nowStamp ? " (quá hạn)" : ""}`),
+      ])
+    )),
+    React.createElement("button", { key:"b", type:"button", className:"btn btnAmber", style:{padding:"7px 13px",fontSize:12.5}, onClick:onOpenTasks }, "Xem & báo cáo kết quả"),
+  ]);
+}
+
 function Dashboard({ user, isAdmin, myStaff }){
   const visibleTabs = isAdmin ? OPS_TABS : OPS_TABS.filter(t => STAFF_TABS.includes(t.id));
   const [activeTab, setActiveTab] = useState(visibleTabs[0].id);
@@ -2430,6 +2533,7 @@ function Dashboard({ user, isAdmin, myStaff }){
         React.createElement("button", { key:t.id, className:activeTab===t.id?"active":"", onClick:()=>setActiveTab(t.id) }, t.label)
       )),
     ])),
+    !isAdmin && React.createElement(TaskReminderBanner, { key:"reminder", myStaff, onOpenTasks:()=>setActiveTab("tasks") }),
     React.createElement("div", { key:"wrap", className:"wrap" }, [
       activeTab==="checklist" && React.createElement(DailyChecklistView, { key:"v", isAdmin, myStaff }),
       activeTab==="photos" && React.createElement(ImageReportView, { key:"v", isAdmin, myStaff }),
