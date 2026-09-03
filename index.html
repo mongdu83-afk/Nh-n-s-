@@ -168,22 +168,33 @@ async function sendNotifyEmail(toEmails, params){
 }
 
 async function compressImage(file, maxDim, quality){
-  // Thu nhỏ & nén ảnh trước khi tải lên — ảnh chụp từ điện thoại thường rất
-  // nặng (vài MB), nén lại giúp tải lên nhanh hơn nhiều lần mà vẫn đủ rõ để xem.
-  const dim = maxDim || 1600;
-  const q = quality || 0.72;
+  // Thu nhỏ & nén ảnh trước khi tải lên. Lấy kích thước gốc qua thẻ <img> trước
+  // (rẻ hơn giải mã toàn bộ ảnh), rồi yêu cầu trình duyệt tự giải mã kèm thu nhỏ
+  // luôn (createImageBitmap resize) — nhanh hơn nhiều so với giải mã full-size
+  // rồi mới vẽ thu nhỏ, đặc biệt trên điện thoại đời thấp.
+  const dim = maxDim || 1280;
+  const q = quality || 0.65;
   try{
-    const bitmap = await createImageBitmap(file);
-    let { width, height } = bitmap;
-    if(width > dim || height > dim){
-      const scale = dim / Math.max(width, height);
-      width = Math.round(width * scale);
-      height = Math.round(height * scale);
+    const { w, h } = await new Promise((resolve, reject) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => { const r = { w:img.naturalWidth, h:img.naturalHeight }; URL.revokeObjectURL(url); resolve(r); };
+      img.onerror = (e) => { URL.revokeObjectURL(url); reject(e); };
+      img.src = url;
+    });
+    let targetW = w, targetH = h;
+    if(w > dim || h > dim){
+      const scale = dim / Math.max(w, h);
+      targetW = Math.max(1, Math.round(w * scale));
+      targetH = Math.max(1, Math.round(h * scale));
     }
+    let bitmap;
+    try{ bitmap = await createImageBitmap(file, { resizeWidth:targetW, resizeHeight:targetH, resizeQuality:"medium" }); }
+    catch(e){ bitmap = await createImageBitmap(file); }
     const canvas = document.createElement("canvas");
-    canvas.width = width; canvas.height = height;
+    canvas.width = targetW; canvas.height = targetH;
     const ctx = canvas.getContext("2d");
-    ctx.drawImage(bitmap, 0, 0, width, height);
+    ctx.drawImage(bitmap, 0, 0, targetW, targetH);
     const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", q));
     return blob || file;
   } catch(err){
@@ -191,10 +202,17 @@ async function compressImage(file, maxDim, quality){
     return file;
   }
 }
-async function uploadImageFile(file, path){
+async function uploadImageFile(file, path, onProgress){
   const toUpload = (file.type && file.type.startsWith("image/")) ? await compressImage(file) : file;
   const ref = storage.ref().child(path);
-  await ref.put(toUpload, { contentType:"image/jpeg" });
+  const task = ref.put(toUpload, { contentType:"image/jpeg" });
+  await new Promise((resolve, reject) => {
+    task.on("state_changed",
+      snap => { if(onProgress && snap.totalBytes) onProgress(Math.round(snap.bytesTransferred/snap.totalBytes*100)); },
+      reject,
+      resolve
+    );
+  });
   return await ref.getDownloadURL();
 }
 
@@ -376,11 +394,14 @@ function DailyReviewModal({ report, tasks, onSave, onClose }){
 }
 
 function PhotoUploadField({ label, photos, uploading, onUpload, onRemove }){
+  const uploadLabel = uploading===false || uploading==null
+    ? "Chụp ảnh"
+    : `Đang nén & tải ảnh lên... ${typeof uploading==="number" ? uploading+"%" : ""}`;
   return React.createElement("div", { style:{ marginTop:14 } }, [
     React.createElement("label", { key:"l", style:{ display:"block", fontSize:12, fontWeight:600, marginBottom:6, color:"#4A4A40" } }, label),
     React.createElement("label", { key:"u", className:"uploadBtn" }, [
-      React.createElement("input", { key:"i", type:"file", accept:"image/*", capture:"environment", onChange:e=>{ const files=[...e.target.files]; if(files.length) onUpload(files); e.target.value=""; } }),
-      uploading ? "Đang tải ảnh lên..." : "Chụp ảnh",
+      React.createElement("input", { key:"i", type:"file", accept:"image/*", capture:"environment", disabled:!!uploading, onChange:e=>{ const files=[...e.target.files]; if(files.length) onUpload(files); e.target.value=""; } }),
+      uploadLabel,
     ]),
     (photos && photos.length>0) && React.createElement("div", { key:"g", className:"photoGrid" }, photos.map((url,i) =>
       React.createElement("div", { key:i, className:"photoThumb" }, [
@@ -600,12 +621,15 @@ function ImageReportView(){
   async function addPhotos(field, files){
     if(!selfShop) return;
     const setUploading = field==="anhChecklist" ? setUploadingChecklist : setUploadingCTKM;
-    setUploading(true);
+    setUploading(0);
     try{
       const urls = [];
+      let i = 0;
       for(const file of files){
         const path = `imageReports/${selfShop}/${today}/${field}/${Date.now()}_${file.name}`;
-        urls.push(await uploadImageFile(file, path));
+        const base = Math.round((i/files.length)*100);
+        urls.push(await uploadImageFile(file, path, pct => setUploading(Math.min(99, base + Math.round(pct/files.length)))));
+        i++;
       }
       const current = thisReport ? (thisReport[field] || []) : [];
       await db.collection("imageReports").doc(thisId).set({
