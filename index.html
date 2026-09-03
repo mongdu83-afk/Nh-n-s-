@@ -471,11 +471,18 @@ function ChecklistTemplateEditor({ roles, templates, initialRole, onSave, onClos
   const [role, setRole] = useState(initialRole);
   const [items, setItems] = useState(templates[initialRole] || []);
   const [newLabel, setNewLabel] = useState("");
-  useEffect(()=>{ setItems(templates[role] || []); setNewLabel(""); }, [role]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  useEffect(()=>{ setItems(templates[role] || []); setNewLabel(""); setError(null); }, [role]);
   function updateLabel(id, label){ setItems(items.map(it => it.id===id ? { ...it, label } : it)); }
   function removeItem(id){ setItems(items.filter(it => it.id!==id)); }
   function addItem(){ if(!newLabel.trim()) return; setItems([...items, { id:uid(), label:newLabel.trim() }]); setNewLabel(""); }
-  async function save(){ await onSave(role, items); }
+  async function save(){
+    setSaving(true); setError(null);
+    try{ await onSave(role, items); }
+    catch(err){ console.error("Lưu checklist lỗi:", err); setError("Lưu thất bại: " + (err && err.message ? err.message : "vui lòng thử lại.")); }
+    finally{ setSaving(false); }
+  }
   return React.createElement("div", { className:"modalOverlay", onClick:onClose },
     React.createElement("div", { className:"modal modalWide", onClick:e=>e.stopPropagation() }, [
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, "Chỉnh checklist theo vai trò"),
@@ -483,19 +490,20 @@ function ChecklistTemplateEditor({ roles, templates, initialRole, onSave, onClos
       React.createElement("div", { key:"tabs", className:"btnRow", style:{ marginBottom:14 } }, roles.map(r =>
         React.createElement("button", { key:r, type:"button", className:"btn"+(r===role?" btnPrimary":""), style:{ padding:"6px 12px", fontSize:12.5 }, onClick:()=>setRole(r) }, r)
       )),
-      React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8, marginBottom:12, maxHeight:320, overflowY:"auto" } }, items.map(it =>
-        React.createElement("div", { key:it.id, style:{ display:"flex", gap:8, alignItems:"center" } }, [
-          React.createElement("input", { key:"i", value:it.label, onChange:e=>updateLabel(it.id, e.target.value), style:{ flex:1, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5 } }),
-          React.createElement("button", { key:"d", type:"button", className:"btn btnDanger", style:{ padding:"6px 9px", fontSize:11.5 }, onClick:()=>removeItem(it.id) }, "Xoá"),
+      React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8, marginBottom:12, maxHeight:360, overflowY:"auto" } }, items.map(it =>
+        React.createElement("div", { key:it.id, style:{ display:"flex", gap:8, alignItems:"flex-start" } }, [
+          React.createElement(AutoGrowTextarea, { key:"i", value:it.label, onChange:e=>updateLabel(it.id, e.target.value), style:{ flex:1, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5, resize:"none", fontFamily:"inherit" } }),
+          React.createElement("button", { key:"d", type:"button", className:"btn btnDanger", style:{ padding:"6px 9px", fontSize:11.5, flexShrink:0 }, onClick:()=>removeItem(it.id) }, "Xoá"),
         ])
       )),
-      React.createElement("div", { key:"add", style:{ display:"flex", gap:8, marginBottom:16 } }, [
+      React.createElement("div", { key:"add", style:{ display:"flex", gap:8, marginBottom:12 } }, [
         React.createElement("input", { key:"i", value:newLabel, onChange:e=>setNewLabel(e.target.value), placeholder:"Thêm đầu việc mới...", style:{ flex:1, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5 } }),
         React.createElement("button", { key:"b", type:"button", className:"btn", onClick:addItem }, "＋ Thêm"),
       ]),
+      error && React.createElement("div", { key:"err", style:{ color:"var(--clay)", fontSize:12.5, marginBottom:12 } }, error),
       React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } }, [
-        React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:onClose }, "Huỷ"),
-        React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", onClick:save }, "Lưu checklist"),
+        React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:onClose, disabled:saving }, "Huỷ"),
+        React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", onClick:save, disabled:saving }, saving ? "Đang lưu..." : "Lưu checklist"),
       ]),
     ])
   );
@@ -1890,6 +1898,53 @@ const DEFAULT_CHECKLIST = [
 ];
 function taskDueDate(joinDate, offset){ return addDays(joinDate, offset); }
 
+function TrainingChecklistEditor({ items, onSave, onClose }){
+  const [rows, setRows] = useState(items || []);
+  const [newLabel, setNewLabel] = useState("");
+  const [newOffset, setNewOffset] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  function updateRow(id, field, value){ setRows(rows.map(r => r.id===id ? { ...r, [field]:value } : r)); }
+  function removeRow(id){ setRows(rows.filter(r => r.id!==id)); }
+  function addRow(){
+    if(!newLabel.trim()) return;
+    setRows([...rows, { id:"d"+uid(), label:newLabel.trim(), offset:Number(newOffset)||0 }]);
+    setNewLabel(""); setNewOffset(0);
+  }
+  async function save(){
+    setSaving(true); setError(null);
+    try{
+      const cleaned = rows.filter(r=>r.label.trim()).map(r=>({ ...r, offset:Number(r.offset)||0 })).sort((a,b)=>a.offset-b.offset);
+      await onSave(cleaned);
+    }
+    catch(err){ console.error("Lưu checklist đào tạo lỗi:", err); setError("Lưu thất bại: " + (err && err.message ? err.message : "vui lòng thử lại.")); }
+    finally{ setSaving(false); }
+  }
+  return React.createElement("div", { className:"modalOverlay", onClick:onClose },
+    React.createElement("div", { className:"modal modalWide", onClick:e=>e.stopPropagation() }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, "Chỉnh nội dung checklist đào tạo"),
+      React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } }, "\"Hạn sau (ngày)\" tính từ ngày nhân viên mới vào làm — VD nhập 6 nghĩa là hạn chót đúng 6 ngày sau ngày vào làm."),
+      React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8, marginBottom:12, maxHeight:380, overflowY:"auto" } }, rows.map(r =>
+        React.createElement("div", { key:r.id, style:{ display:"flex", gap:8, alignItems:"flex-start" } }, [
+          React.createElement(AutoGrowTextarea, { key:"l", value:r.label, onChange:e=>updateRow(r.id,"label",e.target.value), style:{ flex:1, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5, resize:"none", fontFamily:"inherit" } }),
+          React.createElement("input", { key:"o", type:"number", min:0, value:r.offset, onChange:e=>updateRow(r.id,"offset",e.target.value), style:{ width:90, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5, flexShrink:0 }, title:"Hạn sau (ngày)" }),
+          React.createElement("button", { key:"d", type:"button", className:"btn btnDanger", style:{ padding:"6px 9px", fontSize:11.5, flexShrink:0 }, onClick:()=>removeRow(r.id) }, "Xoá"),
+        ])
+      )),
+      React.createElement("div", { key:"add", style:{ display:"flex", gap:8, marginBottom:12 } }, [
+        React.createElement("input", { key:"l", value:newLabel, onChange:e=>setNewLabel(e.target.value), placeholder:"Thêm đầu việc đào tạo mới...", style:{ flex:1, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5 } }),
+        React.createElement("input", { key:"o", type:"number", min:0, value:newOffset, onChange:e=>setNewOffset(e.target.value), style:{ width:90, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5 }, title:"Hạn sau (ngày)" }),
+        React.createElement("button", { key:"b", type:"button", className:"btn", onClick:addRow }, "＋ Thêm"),
+      ]),
+      error && React.createElement("div", { key:"err", style:{ color:"var(--clay)", fontSize:12.5, marginBottom:12 } }, error),
+      React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } }, [
+        React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:onClose, disabled:saving }, "Huỷ"),
+        React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", onClick:save, disabled:saving }, saving ? "Đang lưu..." : "Lưu checklist đào tạo"),
+      ]),
+    ])
+  );
+}
+
 function TrainingView({ isAdmin, myStaff }){
   const [hires, setHires] = useState([]);
   const [staff, setStaff] = useState([]);
@@ -2052,8 +2107,10 @@ function TrainingView({ isAdmin, myStaff }){
     metrics,
     isAdmin && React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:16 } }, [
       React.createElement("button", { key:"add", className:"btn btnPrimary", onClick:()=>setShowForm(true) }, "＋ Thêm nhân viên mới"),
+      React.createElement("button", { key:"tpl", type:"button", className:"btn", onClick:()=>setShowTplEditor(true) }, "Chỉnh nội dung checklist đào tạo"),
     ]),
     hireCards, formModal,
+    isAdmin && showTplEditor && React.createElement(TrainingChecklistEditor, { items:checklistTpl, onSave:saveTemplate, onClose:()=>setShowTplEditor(false) }),
   ]);
 }
 
@@ -2112,7 +2169,11 @@ function KudosView({ isAdmin, myStaff }){
     const fromS = staff.find(s=>s.id===giveForm.fromId), toS = staff.find(s=>s.id===giveForm.toId);
     const message = giveForm.message.trim();
     await addDoc("kudos", { fromId:giveForm.fromId, fromName:fromS?fromS.name:"", toId:giveForm.toId, toName:toS?toS.name:"", stars, message, ngay:todayISO() });
-    sendNotifyEmail(notifyEmails, {
+    // Gửi thông báo tới TOÀN BỘ nhân viên đã có tài khoản (lấy email từ tab Nhân viên) —
+    // để cả đội cùng thấy ai vừa được ghi nhận, cộng thêm danh sách email cố định (HR/quản lý).
+    const staffEmails = staff.map(s => s.email).filter(Boolean);
+    const allEmails = Array.from(new Set([...notifyEmails, ...staffEmails]));
+    sendNotifyEmail(allEmails, {
       from_name: fromS ? fromS.name : "", to_name: toS ? toS.name : "",
       shop: (toS && toS.shop) || (fromS && fromS.shop) || "", stars, message, ngay: todayISO(),
     });
@@ -2301,7 +2362,7 @@ function EmailListEditor({ emails, onSave, onClose }){
   return React.createElement("div", { className:"modalOverlay", onClick:onClose },
     React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, "Email nhận thông báo tặng sao"),
-      React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:12 } }, "Mỗi lần có người tặng sao, hệ thống sẽ gửi email tới danh sách này. Mỗi dòng một email."),
+      React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:12 } }, "Mỗi lần có người tặng sao, hệ thống tự động gửi email tới TẤT CẢ nhân viên đã có tài khoản (lấy email ở tab Nhân viên) để cả đội cùng biết. Danh sách bên dưới là các email CỐ ĐỊNH thêm vào ngoài ra (VD: người không có tài khoản trong app nhưng vẫn muốn nhận, như email chung của công ty). Mỗi dòng một email."),
       React.createElement("textarea", { key:"i", rows:6, value:text, onChange:e=>setText(e.target.value), placeholder:"vd: quanly@upharma.vn\nhr@upharma.vn" }),
       React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end", marginTop:14 } }, [
         React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:onClose }, "Huỷ"),
@@ -2333,7 +2394,7 @@ function CreateAccountModal({ staffMember, onClose }){
     e.preventDefault();
     setError(null); setLoading(true);
     try{ await createStaffAccount(email.trim(), password, staffMember.id); setDone(true); }
-    catch(err){ setError(err.code==="auth/email-already-in-use" ? "Email này đã được dùng cho tài khoản khác." : "Tạo tài khoản lỗi: " + err.message); }
+    catch(err){ setError(err.code==="auth/email-already-in-use" ? "Email này đã có tài khoản đăng nhập (có thể do từng tạo trước đó rồi xoá nhân viên nhưng chưa xoá tài khoản). Vào Firebase Console → Authentication → Users, tìm và xoá tài khoản email này, rồi tạo lại." : "Tạo tài khoản lỗi: " + err.message); }
     setLoading(false);
   }
   if(done){
@@ -2387,7 +2448,13 @@ function StaffView(){
     else await addDoc("staff", { name:form.name.trim(), shop:form.shop, role:form.role });
     setShowForm(false); setEditingId(null);
   }
-  async function removeStaff(id){ if(window.confirm("Xoá nhân viên này khỏi danh sách?")) await deleteDoc("staff", id); }
+  async function removeStaff(id){
+    const s = staff.find(x=>x.id===id);
+    const msg = s && s.uid
+      ? `Xoá nhân viên "${s.name}"? Lưu ý: thao tác này chỉ xoá hồ sơ trong app, KHÔNG xoá được tài khoản đăng nhập (${s.email||"—"}) — nếu sau này muốn tạo lại tài khoản với đúng email này, bạn cần vào Firebase Console → Authentication → Users để xoá tài khoản đó trước, nếu không sẽ báo lỗi "email đã tồn tại".`
+      : "Xoá nhân viên này khỏi danh sách?";
+    if(window.confirm(msg)) await deleteDoc("staff", id);
+  }
 
   const table = staff.length===0
     ? React.createElement("div", { className:"emptyState" }, "Chưa có nhân viên nào — thêm để dùng cho Buddy và Tặng sao.")
