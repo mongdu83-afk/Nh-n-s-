@@ -33,6 +33,7 @@
   .brand .mark{ width:11px; height:11px; border-radius:50%; background:var(--pine); }
   .brand h1{ font-family:'Fraunces', serif; font-weight:700; font-size:19px; margin:0; }
   .brand small{ display:block; font-size:10.5px; color:var(--inkSoft); letter-spacing:.06em; text-transform:uppercase; margin-top:-2px; }
+  .logoutBtn{ font-size:12.5px; color:var(--inkSoft); background:none; border:1px solid var(--line); border-radius:7px; padding:6px 11px; cursor:pointer; }
 
   .tabs{ display:flex; gap:2px; overflow-x:auto; padding-bottom:2px; }
   .tabs button{
@@ -147,6 +148,23 @@ firebase.initializeApp(FIREBASE_CONFIG);
 const auth = firebase.auth();
 const db = firebase.firestore();
 const storage = firebase.storage();
+
+// App Firebase phụ, dùng riêng để TẠO tài khoản nhân viên mà không làm mất
+// phiên đăng nhập hiện tại của quản lý (Firebase sẽ tự đăng nhập vào tài
+// khoản vừa tạo nếu dùng app chính — dùng app phụ này để tránh việc đó).
+const secondaryApp = firebase.initializeApp(FIREBASE_CONFIG, "Secondary");
+const secondaryAuth = secondaryApp.auth();
+async function createStaffAccount(email, password, staffId){
+  const cred = await secondaryAuth.createUserWithEmailAndPassword(email, password);
+  const newUid = cred.user.uid;
+  await secondaryAuth.signOut();
+  await updateDoc("staff", staffId, { uid:newUid, email });
+  return newUid;
+}
+
+// Email được coi là tài khoản QUẢN LÝ — thấy được dữ liệu tất cả cửa hàng.
+// Thêm email vào mảng này nếu có nhiều người cần quyền quản lý.
+const ADMIN_EMAILS = ["mongdu83@gmail.com"];
 
 // ================= EMAILJS (thông báo tặng sao qua email) =================
 // Đăng ký miễn phí tại https://www.emailjs.com — điền 3 giá trị bên dưới sau khi tạo
@@ -412,14 +430,14 @@ function PhotoUploadField({ label, photos, uploading, onUpload, onRemove }){
   ]);
 }
 
-function DailyChecklistView(){
+function DailyChecklistView({ isAdmin, myStaff }){
   const [staff, setStaff] = useState([]);
   const [templates, setTemplates] = useState(DEFAULT_DAILY_CHECKLISTS);
   const [reports, setReports] = useState({});
-  const [selfId, setSelfId] = useState("");
+  const [selfId] = useState(myStaff ? myStaff.id : "");
   const [note, setNote] = useState("");
   const [showTplEditor, setShowTplEditor] = useState(false);
-  const [adminOpen, setAdminOpen] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(isAdmin);
   const [adminShop, setAdminShop] = useState("Tất cả");
   const [adminDate, setAdminDate] = useState(todayISO());
   const [reviewReportId, setReviewReportId] = useState(null);
@@ -478,14 +496,6 @@ function DailyChecklistView(){
     await db.collection("dailyReports").doc(reportId).set({ diemChu:diem, nhanXetChu:nhanXet }, { merge:true });
     setReviewReportId(null);
   }
-
-  const staffOptions = staff.map(s => ({ value:s.id, label:`${s.name} · ${s.shop} · ${s.role}` }));
-  const whoBar = React.createElement("div", { className:"whoBar" },
-    React.createElement("div", { className:"field", style:{ minWidth:260, flex:"1 1 260px" } }, [
-      React.createElement("label",{key:"l"},"Bạn là ai?"),
-      React.createElement(NamePicker, { key:"i", options:staffOptions, value:selfId, onChange:setSelfId, placeholder:"Gõ tên để tìm..." }),
-    ])
-  );
 
   let selfCard = null;
   if(selfStaff){
@@ -576,9 +586,9 @@ function DailyChecklistView(){
     report:reviewingReport, tasks:templates[reviewingReport.role] || [], onSave:saveReview, onClose:()=>setReviewReportId(null),
   });
 
-  const adminSection = React.createElement("div", { key:"admin", style:{ marginTop:26 } }, [
+  const adminSection = isAdmin && React.createElement("div", { key:"admin", style:{ marginTop:26 } }, [
     React.createElement("div", { key:"tgl", className:"btnRow", style:{ marginBottom:14, justifyContent:"space-between" } }, [
-      React.createElement("button", { key:"b", type:"button", className:"btn btnGhost", onClick:()=>setAdminOpen(!adminOpen) }, adminOpen ? "▲ Ẩn báo cáo tất cả cửa hàng" : "▾ Xem báo cáo tất cả cửa hàng (Quản lý)"),
+      React.createElement("button", { key:"b", type:"button", className:"btn btnGhost", onClick:()=>setAdminOpen(!adminOpen) }, adminOpen ? "▲ Ẩn báo cáo tất cả cửa hàng" : "▾ Xem báo cáo tất cả cửa hàng"),
       React.createElement("button", { key:"tpl", type:"button", className:"btn", onClick:()=>setShowTplEditor(true) }, "Chỉnh checklist theo vai trò"),
     ]),
     adminOpen && React.createElement(React.Fragment, null, [ adminMetrics, adminFilterRow, adminTable ]),
@@ -586,37 +596,33 @@ function DailyChecklistView(){
 
   return React.createElement(React.Fragment, null, [
     React.createElement("h2", { key:"t", className:"pagetitle" }, "Checklist công việc hàng ngày"),
-    React.createElement("p", { key:"s", className:"pagesub" }, "Từng nhân viên tự chọn tên, tick việc theo checklist đúng vị trí và nộp báo cáo cuối ca."),
-    whoBar, selfCard, tplEditor, adminSection, reviewModal,
+    React.createElement("p", { key:"s", className:"pagesub" }, isAdmin ? "Xem tình hình checklist hàng ngày của tất cả cửa hàng." : "Tick việc theo checklist đúng vị trí và nộp báo cáo cuối ca."),
+    selfCard, tplEditor, adminSection, reviewModal,
   ]);
 }
 
 // ================= MODULE 2: BÁO CÁO HÌNH ẢNH =================
 function imageReportId(shop, ngay){ return shop + "_" + ngay; }
 
-function ImageReportView(){
-  const [staff, setStaff] = useState([]);
+function ImageReportView({ isAdmin, myStaff }){
   const [reportsMap, setReportsMap] = useState({});
-  const [selfShop, setSelfShop] = useState("");
-  const [nguoiUpload, setNguoiUpload] = useState("");
+  const [selfShop] = useState(myStaff ? myStaff.shop : "");
+  const [nguoiUpload] = useState(myStaff ? myStaff.name : "");
   const [uploadingChecklist, setUploadingChecklist] = useState(false);
   const [uploadingCTKM, setUploadingCTKM] = useState(false);
-  const [adminOpen, setAdminOpen] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(isAdmin);
   const [adminShop, setAdminShop] = useState("Tất cả");
   const [adminDate, setAdminDate] = useState(todayISO());
   const [viewReportId, setViewReportId] = useState(null);
 
   useEffect(()=>{
-    const u1 = subscribeCol("staff", setStaff);
     const u2 = subscribeCol("imageReports", rows => { const map = {}; rows.forEach(r => map[r.id] = r); setReportsMap(map); });
-    return ()=>{ u1(); u2(); };
+    return ()=>{ u2(); };
   }, []);
 
   const today = todayISO();
   const thisId = selfShop ? imageReportId(selfShop, today) : null;
   const thisReport = thisId ? reportsMap[thisId] : null;
-  const shopStaffOptions = selfShop ? staff.filter(s => s.shop===selfShop) : [];
-  const nguoiOptions = shopStaffOptions.map(s => ({ value:s.name, label:s.name }));
 
   async function addPhotos(field, files){
     if(!selfShop) return;
@@ -646,20 +652,6 @@ function ImageReportView(){
     current.splice(idx,1);
     await db.collection("imageReports").doc(thisId).set({ [field]:current }, { merge:true });
   }
-
-  const whoBar = React.createElement("div", { className:"whoBar" }, [
-    React.createElement("div", { key:"w", className:"field", style:{ minWidth:220, flex:"1 1 220px" } }, [
-      React.createElement("label",{key:"l"},"Nhà thuốc"),
-      React.createElement("select", { key:"i", value:selfShop, onChange:e=>{ setSelfShop(e.target.value); setNguoiUpload(""); } }, [
-        React.createElement("option",{key:"",value:""},"— chọn cửa hàng —"),
-        ...DEFAULT_SHOPS.map(s => React.createElement("option",{key:s,value:s},s)),
-      ]),
-    ]),
-    selfShop && React.createElement("div", { key:"p", className:"field", style:{ minWidth:220, flex:"1 1 220px" } }, [
-      React.createElement("label",{key:"l"},"Người chụp / nộp ảnh"),
-      React.createElement(NamePicker, { key:"i", options:nguoiOptions, value:nguoiUpload, onChange:setNguoiUpload, placeholder:"Gõ tên để tìm..." }),
-    ]),
-  ]);
 
   const hasAnyPhoto = thisReport && ((thisReport.anhChecklist||[]).length>0 || (thisReport.anhCTKM||[]).length>0);
   const selfCard = selfShop && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
@@ -741,15 +733,15 @@ function ImageReportView(){
     ])
   );
 
-  const adminSection = React.createElement("div", { key:"admin", style:{ marginTop:26 } }, [
-    React.createElement("button", { key:"tgl", type:"button", className:"btn btnGhost", style:{ marginBottom:14 }, onClick:()=>setAdminOpen(!adminOpen) }, adminOpen ? "Ẩn báo cáo tất cả cửa hàng" : "Xem báo cáo tất cả cửa hàng (Quản lý)"),
+  const adminSection = isAdmin && React.createElement("div", { key:"admin", style:{ marginTop:26 } }, [
+    React.createElement("button", { key:"tgl", type:"button", className:"btn btnGhost", style:{ marginBottom:14 }, onClick:()=>setAdminOpen(!adminOpen) }, adminOpen ? "Ẩn báo cáo tất cả cửa hàng" : "Xem báo cáo tất cả cửa hàng"),
     adminOpen && React.createElement(React.Fragment, null, [ adminMetrics, adminFilterRow, adminTable ]),
   ]);
 
   return React.createElement(React.Fragment, null, [
     React.createElement("h2", { key:"t", className:"pagetitle" }, "Báo cáo hình ảnh"),
-    React.createElement("p", { key:"s", className:"pagesub" }, "Mỗi nhà thuốc chụp và nộp ảnh checklist trưng bày & CTKM trong ngày — báo cáo theo đơn vị cửa hàng."),
-    whoBar, selfCard, adminSection, viewModal,
+    React.createElement("p", { key:"s", className:"pagesub" }, isAdmin ? "Xem ảnh checklist & CTKM đã nộp của tất cả cửa hàng." : "Chụp và nộp ảnh checklist trưng bày & CTKM trong ngày cho cửa hàng của bạn."),
+    selfCard, adminSection, viewModal,
   ]);
 }
 
@@ -791,20 +783,18 @@ function WeeklyReviewModal({ report, prevReport, onSave, onClose }){
   );
 }
 
-function WeeklyReportView(){
-  const [staff, setStaff] = useState([]);
+function WeeklyReportView({ isAdmin, myStaff }){
   const [reportsMap, setReportsMap] = useState({});
-  const [selfShop, setSelfShop] = useState("");
-  const [nguoiBaoCao, setNguoiBaoCao] = useState("");
+  const [selfShop] = useState(myStaff ? myStaff.shop : "");
+  const [nguoiBaoCao, setNguoiBaoCao] = useState(myStaff ? myStaff.name : "");
   const [form, setForm] = useState({ ketQuaTuanNay:"", baoCaoTuanNay:"", chiTieuTuanNay:"" });
-  const [adminOpen, setAdminOpen] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(isAdmin);
   const [adminShop, setAdminShop] = useState("Tất cả");
   const [reviewId, setReviewId] = useState(null);
 
   useEffect(()=>{
-    const u1 = subscribeCol("staff", setStaff);
     const u2 = subscribeCol("weeklyReports", rows => { const map = {}; rows.forEach(r => map[r.id] = r); setReportsMap(map); });
-    return ()=>{ u1(); u2(); };
+    return ()=>{ u2(); };
   }, []);
 
   const currentMonday = mondayOf(todayISO());
@@ -813,7 +803,6 @@ function WeeklyReportView(){
   const prevId = selfShop ? weeklyReportId(selfShop, prevMonday) : null;
   const thisReport = thisId ? reportsMap[thisId] : null;
   const prevReport = prevId ? reportsMap[prevId] : null;
-  const shopStaffOptions = selfShop ? staff.filter(s => s.shop===selfShop) : [];
 
   useEffect(()=>{
     setForm({
@@ -837,21 +826,6 @@ function WeeklyReportView(){
     await db.collection("weeklyReports").doc(id).set({ diemChu:diem, nhanXetChu:nhanXet }, { merge:true });
     setReviewId(null);
   }
-
-  const nguoiBaoCaoOptions = shopStaffOptions.map(s => ({ value:s.name, label:s.name }));
-  const whoBar = React.createElement("div", { className:"whoBar" }, [
-    React.createElement("div", { key:"w", className:"field", style:{ minWidth:220, flex:"1 1 220px" } }, [
-      React.createElement("label",{key:"l"},"Nhà thuốc"),
-      React.createElement("select", { key:"i", value:selfShop, onChange:e=>setSelfShop(e.target.value) }, [
-        React.createElement("option",{key:"",value:""},"— chọn cửa hàng —"),
-        ...DEFAULT_SHOPS.map(s => React.createElement("option",{key:s,value:s},s)),
-      ]),
-    ]),
-    selfShop && React.createElement("div", { key:"p", className:"field", style:{ minWidth:220, flex:"1 1 220px" } }, [
-      React.createElement("label",{key:"l"},"Người báo cáo"),
-      React.createElement(NamePicker, { key:"i", options:nguoiBaoCaoOptions, value:nguoiBaoCao, onChange:setNguoiBaoCao, placeholder:"Gõ tên để tìm..." }),
-    ]),
-  ]);
 
   const selfCard = selfShop && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
     React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10, marginBottom:14 } }, [
@@ -935,15 +909,15 @@ function WeeklyReportView(){
   const reviewingPrev = reviewingReport ? reportsMap[weeklyReportId(reviewingReport.shop, addDays(reviewingReport.tuanNgay,-7))] : null;
   const reviewModal = reviewingReport && React.createElement(WeeklyReviewModal, { report:reviewingReport, prevReport:reviewingPrev, onSave:saveReview, onClose:()=>setReviewId(null) });
 
-  const adminSection = React.createElement("div", { key:"admin", style:{ marginTop:26 } }, [
-    React.createElement("button", { key:"tgl", type:"button", className:"btn btnGhost", style:{ marginBottom:14 }, onClick:()=>setAdminOpen(!adminOpen) }, adminOpen ? "▲ Ẩn báo cáo tất cả cửa hàng" : "▾ Xem báo cáo tất cả cửa hàng (Quản lý)"),
+  const adminSection = isAdmin && React.createElement("div", { key:"admin", style:{ marginTop:26 } }, [
+    React.createElement("button", { key:"tgl", type:"button", className:"btn btnGhost", style:{ marginBottom:14 }, onClick:()=>setAdminOpen(!adminOpen) }, adminOpen ? "▲ Ẩn báo cáo tất cả cửa hàng" : "▾ Xem báo cáo tất cả cửa hàng"),
     adminOpen && React.createElement(React.Fragment, null, [ adminMetrics, adminFilterRow, adminTable ]),
   ]);
 
   return React.createElement(React.Fragment, null, [
     React.createElement("h2", { key:"t", className:"pagetitle" }, "Báo cáo công việc tuần"),
-    React.createElement("p", { key:"s", className:"pagesub" }, "Mỗi nhà thuốc báo cáo theo tuần: đối chiếu chỉ tiêu tuần trước, báo cáo kết quả và đặt chỉ tiêu cho tuần tới."),
-    whoBar, selfCard, shopHistoryCard, adminSection, reviewModal,
+    React.createElement("p", { key:"s", className:"pagesub" }, isAdmin ? "Theo dõi báo cáo tuần của tất cả cửa hàng." : "Đối chiếu chỉ tiêu tuần trước, báo cáo kết quả và đặt chỉ tiêu cho tuần tới."),
+    selfCard, shopHistoryCard, adminSection, reviewModal,
   ]);
 }
 
@@ -1202,9 +1176,8 @@ const DEFAULT_REWARDS = [
   { id:"r6", name:"Phiếu quà 500.000đ + Giấy khen \"Ngôi sao của tháng\"", stars:100 },
 ];
 const MONTHLY_GIVE_CAP = 30; // số sao tối đa 1 người có thể TẶNG trong 1 tháng, chống lạm dụng
-const ADMIN_PIN = "1907"; // mã quản lý — đổi số này thành mã riêng của bạn, chỉ ai biết mã mới xoá được lượt tặng sao
 
-function KudosView(){
+function KudosView({ isAdmin, myStaff }){
   const [staff, setStaff] = useState([]);
   const [kudos, setKudos] = useState([]);
   const [rewards, setRewards] = useState(DEFAULT_REWARDS);
@@ -1214,7 +1187,7 @@ function KudosView(){
   const [showEmailEditor, setShowEmailEditor] = useState(false);
   const [showRewardsEditor, setShowRewardsEditor] = useState(false);
   const [showAllLeaderboard, setShowAllLeaderboard] = useState(false);
-  const [giveForm, setGiveForm] = useState({ fromId:"", toId:"", stars:5, message:"" });
+  const [giveForm, setGiveForm] = useState({ fromId: myStaff ? myStaff.id : "", toId:"", stars:5, message:"" });
 
   useEffect(()=>{
     const u1 = subscribeCol("staff", setStaff);
@@ -1256,12 +1229,6 @@ function KudosView(){
   }
   async function saveRewards(items){ await saveConfigDoc("rewards", { items }); setShowRewardsEditor(false); }
   async function saveNotifyEmails(emails){ await saveConfigDoc("kudosNotifyEmails", { emails }); setShowEmailEditor(false); }
-  function openRewardsEditor(){
-    const pin = window.prompt("Nhập mã quản lý để chỉnh danh sách quà tặng:");
-    if(pin===null) return;
-    if(pin!==ADMIN_PIN){ window.alert("Sai mã quản lý."); return; }
-    setShowRewardsEditor(true);
-  }
   async function redeem(staffId, reward){
     const bal = balanceOf(staffId);
     if(bal < reward.stars){ window.alert("Không đủ sao để đổi quà này."); return; }
@@ -1270,9 +1237,6 @@ function KudosView(){
   }
   async function markGiven(id){ await updateDoc("redemptions", id, { trangThai:"Đã trao" }); }
   async function removeRedemption(id){
-    const pin = window.prompt("Nhập mã quản lý để xoá yêu cầu đổi quà này:");
-    if(pin===null) return;
-    if(pin!==ADMIN_PIN){ window.alert("Sai mã quản lý."); return; }
     if(window.confirm("Xác nhận xoá? Số sao đã trừ sẽ được hoàn lại cho nhân viên.")) await deleteDoc("redemptions", id);
   }
 
@@ -1286,9 +1250,6 @@ function KudosView(){
   ]);
 
   async function removeKudos(id){
-    const pin = window.prompt("Nhập mã quản lý để xoá lượt tặng sao này:");
-    if(pin===null) return;
-    if(pin!==ADMIN_PIN){ window.alert("Sai mã quản lý."); return; }
     if(window.confirm("Xác nhận xoá? Số sao sẽ bị trừ khỏi bảng xếp hạng.")) await deleteDoc("kudos", id);
   }
 
@@ -1300,7 +1261,7 @@ function KudosView(){
           React.createElement("div", { key:"h", style:{ fontWeight:700, marginBottom:2, paddingRight:50 } }, `${k.fromName} ➜ ${k.toName}  ·  ${"★".repeat(Math.min(k.stars,5))}${k.stars>5?" +"+(k.stars-5):""} (${k.stars} sao)`),
           React.createElement("div", { key:"m", style:{ color:"var(--ink)" } }, k.message),
           React.createElement("div", { key:"d", style:{ color:"var(--inkSoft)", fontSize:11, marginTop:2 } }, k.ngay),
-          React.createElement("button", { key:"del", type:"button", className:"btn btnDanger", style:{ position:"absolute", top:8, right:8, padding:"3px 9px", fontSize:11 }, onClick:()=>removeKudos(k.id) }, "Xoá"),
+          isAdmin && React.createElement("button", { key:"del", type:"button", className:"btn btnDanger", style:{ position:"absolute", top:8, right:8, padding:"3px 9px", fontSize:11 }, onClick:()=>removeKudos(k.id) }, "Xoá"),
         ])
       )),
   ]);
@@ -1333,9 +1294,9 @@ function KudosView(){
         React.createElement("div", { key:"l" }, `${r.staffName} — ${r.rewardName} (${r.stars}★) · ${r.ngay}`),
         React.createElement("div", { key:"r", style:{ display:"flex", gap:6, alignItems:"center" } }, [
           r.trangThai==="Chờ trao"
-            ? React.createElement("button",{key:"b", className:"btn btnAmber", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>markGiven(r.id)}, "Đánh dấu đã trao")
+            ? (isAdmin && React.createElement("button",{key:"b", className:"btn btnAmber", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>markGiven(r.id)}, "Đánh dấu đã trao"))
             : StatusPill("Đã trao", "good"),
-          React.createElement("button",{key:"d", type:"button", className:"btn btnDanger", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>removeRedemption(r.id)}, "Xoá"),
+          isAdmin && React.createElement("button",{key:"d", type:"button", className:"btn btnDanger", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>removeRedemption(r.id)}, "Xoá"),
         ]),
       ])
     )),
@@ -1346,7 +1307,12 @@ function KudosView(){
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:14 } }, "Tặng sao ghi nhận đồng nghiệp"),
       React.createElement("form", { key:"f", onSubmit:submitGive }, [
         React.createElement("div", { key:"r", style:{ display:"flex", gap:10, marginBottom:10 } }, [
-          React.createElement("div", { key:"a", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Từ (bạn)"), React.createElement("select",{key:"i",value:giveForm.fromId,onChange:e=>setGiveForm({...giveForm,fromId:e.target.value}),required:true}, [React.createElement("option",{key:"",value:""},"— chọn —"),...staff.map(s=>React.createElement("option",{key:s.id,value:s.id},s.name))]) ]),
+          React.createElement("div", { key:"a", className:"field", style:{ flex:1 } }, [
+            React.createElement("label",{key:"l"},"Từ (bạn)"),
+            myStaff
+              ? React.createElement("div", { key:"i", className:"readonlyBox" }, myStaff.name)
+              : React.createElement("select",{key:"i",value:giveForm.fromId,onChange:e=>setGiveForm({...giveForm,fromId:e.target.value}),required:true}, [React.createElement("option",{key:"",value:""},"— chọn —"),...staff.map(s=>React.createElement("option",{key:s.id,value:s.id},s.name))]),
+          ]),
           React.createElement("div", { key:"b", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Tặng cho"), React.createElement("select",{key:"i",value:giveForm.toId,onChange:e=>setGiveForm({...giveForm,toId:e.target.value}),required:true}, [React.createElement("option",{key:"",value:""},"— chọn —"),...staff.filter(s=>s.id!==giveForm.fromId).map(s=>React.createElement("option",{key:s.id,value:s.id},s.name))]) ]),
         ]),
         React.createElement("div", { key:"stars", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},`Số sao (tối đa ${MONTHLY_GIVE_CAP} sao/tháng)`), React.createElement("input",{key:"i",type:"number",min:1,max:MONTHLY_GIVE_CAP,value:giveForm.stars,onChange:e=>setGiveForm({...giveForm,stars:e.target.value})}) ]),
@@ -1371,9 +1337,9 @@ function KudosView(){
     React.createElement("p", { key:"s", className:"pagesub" }, "Nhân viên ghi nhận & tặng sao cho nhau, tích luỹ đổi quà — tăng gắn kết đội ngũ."),
     metrics,
     React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:18, justifyContent:"space-between" } }, [
-      React.createElement("button", { key:"give", className:"btn btnAmber", onClick:()=>setShowGiveForm(true) }, "Tặng sao"),
-      React.createElement("div", { key:"admin", className:"btnRow" }, [
-        React.createElement("button", { key:"rewards", type:"button", className:"btn btnGhost", onClick:openRewardsEditor }, "Quản lý quà tặng"),
+      !isAdmin && React.createElement("button", { key:"give", className:"btn btnAmber", onClick:()=>setShowGiveForm(true) }, "Tặng sao"),
+      isAdmin && React.createElement("div", { key:"admin", className:"btnRow" }, [
+        React.createElement("button", { key:"rewards", type:"button", className:"btn btnGhost", onClick:()=>setShowRewardsEditor(true) }, "Quản lý quà tặng"),
         React.createElement("button", { key:"email", type:"button", className:"btn btnGhost", onClick:()=>setShowEmailEditor(true) },
           `Email nhận thông báo (${notifyEmails.length})`),
       ]),
@@ -1442,11 +1408,70 @@ function EmailListEditor({ emails, onSave, onClose }){
 }
 
 // ================= TAB: NHÂN VIÊN (danh sách dùng chung) =================
+function stripAccents(str){
+  return str.normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/đ/g,"d").replace(/Đ/g,"D");
+}
+function suggestEmail(name){
+  const slug = stripAccents(name).toLowerCase().trim().replace(/[^a-z0-9\s]/g,"").split(/\s+/).join(".");
+  return slug + "@upharma.local";
+}
+function randomPassword(){
+  return Math.random().toString(36).slice(-4) + Math.random().toString(36).slice(-4);
+}
+
+function CreateAccountModal({ staffMember, onClose }){
+  const [email, setEmail] = useState(suggestEmail(staffMember.name));
+  const [password, setPassword] = useState(randomPassword());
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [done, setDone] = useState(false);
+  async function submit(e){
+    e.preventDefault();
+    setError(null); setLoading(true);
+    try{ await createStaffAccount(email.trim(), password, staffMember.id); setDone(true); }
+    catch(err){ setError(err.code==="auth/email-already-in-use" ? "Email này đã được dùng cho tài khoản khác." : "Tạo tài khoản lỗi: " + err.message); }
+    setLoading(false);
+  }
+  if(done){
+    return React.createElement("div", { className:"modalOverlay", onClick:onClose },
+      React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
+        React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:10 } }, "Đã tạo tài khoản"),
+        React.createElement("div", { key:"s", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:14 } }, `Gửi 2 thông tin dưới đây cho ${staffMember.name} để đăng nhập. Mật khẩu chỉ hiện 1 lần ở đây, hãy sao chép lại ngay.`),
+        React.createElement("div", { key:"e", className:"readonlyBox", style:{ marginBottom:8 } }, `Email: ${email}`),
+        React.createElement("div", { key:"p", className:"readonlyBox", style:{ marginBottom:16 } }, `Mật khẩu: ${password}`),
+        React.createElement("button", { key:"c", type:"button", className:"btn btnPrimary", onClick:onClose }, "Xong"),
+      ])
+    );
+  }
+  return React.createElement("div", { className:"modalOverlay", onClick:onClose },
+    React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, `Tạo tài khoản cho ${staffMember.name}`),
+      React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } }, "Nếu nhân viên không có email thật, cứ để email giả dạng như gợi ý — chỉ dùng để đăng nhập app, không cần nhận được thư."),
+      React.createElement("form", { key:"f", onSubmit:submit }, [
+        React.createElement("div", { key:"a", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Email đăng nhập"), React.createElement("input",{key:"i",type:"email",value:email,onChange:e=>setEmail(e.target.value),required:true}) ]),
+        React.createElement("div", { key:"b", className:"field", style:{ marginBottom:16 } }, [
+          React.createElement("label",{key:"l"},"Mật khẩu (tối thiểu 6 ký tự)"),
+          React.createElement("div", { key:"row", style:{ display:"flex", gap:8 } }, [
+            React.createElement("input",{key:"i",value:password,onChange:e=>setPassword(e.target.value),minLength:6,required:true, style:{flex:1}}),
+            React.createElement("button",{key:"r", type:"button", className:"btn", onClick:()=>setPassword(randomPassword())}, "Tạo lại"),
+          ]),
+        ]),
+        error && React.createElement("div", { key:"err", style:{ color:"var(--clay)", fontSize:12.5, marginBottom:12 } }, error),
+        React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } }, [
+          React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:onClose }, "Huỷ"),
+          React.createElement("button", { key:"s", type:"submit", className:"btn btnPrimary", disabled:loading }, loading ? "Đang tạo..." : "Tạo tài khoản"),
+        ]),
+      ]),
+    ])
+  );
+}
+
 function StaffView(){
   const [staff, setStaff] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({ name:"", shop:DEFAULT_SHOPS[0], role:STAFF_ROLES[1] });
+  const [creatingFor, setCreatingFor] = useState(null);
   useEffect(()=>{ const u = subscribeCol("staff", setStaff); return u; }, []);
 
   function openAdd(){ setEditingId(null); setForm({ name:"", shop:DEFAULT_SHOPS[0], role:STAFF_ROLES[1] }); setShowForm(true); }
@@ -1463,12 +1488,14 @@ function StaffView(){
   const table = staff.length===0
     ? React.createElement("div", { className:"emptyState" }, "Chưa có nhân viên nào — thêm để dùng cho Buddy và Tặng sao.")
     : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
-        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Tên","Cửa hàng","Vai trò",""].map((h,i)=>React.createElement("th",{key:i},h)))),
+        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Tên","Cửa hàng","Vai trò","Tài khoản",""].map((h,i)=>React.createElement("th",{key:i},h)))),
         React.createElement("tbody",{key:"b"}, staff.map(s => React.createElement("tr",{key:s.id}, [
           React.createElement("td",{key:"n"}, s.name),
           React.createElement("td",{key:"sh"}, s.shop),
           React.createElement("td",{key:"r"}, s.role),
+          React.createElement("td",{key:"acc"}, s.uid ? StatusPill(s.email || "Đã có", "good") : StatusPill("Chưa có", "warn")),
           React.createElement("td",{key:"a", style:{whiteSpace:"nowrap"}}, [
+            !s.uid && React.createElement("button",{key:"acc", className:"btn btnAmber", style:{padding:"5px 10px",fontSize:11.5,marginRight:6}, onClick:()=>setCreatingFor(s)},"Tạo tài khoản"),
             React.createElement("button",{key:"e", className:"btn", style:{padding:"5px 10px",fontSize:11.5,marginRight:6}, onClick:()=>openEdit(s)},"Sửa"),
             React.createElement("button",{key:"d", className:"btn btnDanger", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>removeStaff(s.id)},"Xoá"),
           ]),
@@ -1492,17 +1519,20 @@ function StaffView(){
     ])
   );
 
+  const createModal = creatingFor && React.createElement(CreateAccountModal, { staffMember:creatingFor, onClose:()=>setCreatingFor(null) });
+
   return React.createElement(React.Fragment, null, [
     React.createElement("h2", { key:"t", className:"pagetitle" }, "Nhân viên"),
-    React.createElement("p", { key:"s", className:"pagesub" }, "Danh sách dùng chung cho Checklist ngày, Báo cáo tuần, Buddy và tặng sao ghi nhận."),
+    React.createElement("p", { key:"s", className:"pagesub" }, "Danh sách dùng chung cho Checklist ngày, Báo cáo tuần, Buddy và tặng sao ghi nhận. Tạo tài khoản để nhân viên đăng nhập thẳng vào giao diện riêng của mình."),
     React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:16 } }, [
       React.createElement("button", { key:"add", className:"btn btnPrimary", onClick:openAdd }, "＋ Thêm nhân viên"),
     ]),
-    table, formModal,
+    table, formModal, createModal,
   ]);
 }
 
 // ================= APP SHELL =================
+const STAFF_TABS = ["checklist","photos","weekly","kudos"];
 const OPS_TABS = [
   { id:"checklist", label:"Checklist ngày" },
   { id:"photos", label:"Báo cáo hình ảnh" },
@@ -1512,8 +1542,57 @@ const OPS_TABS = [
   { id:"kudos", label:"Ghi nhận & Quà" },
   { id:"staff", label:"Nhân viên" },
 ];
-function Dashboard(){
-  const [activeTab, setActiveTab] = useState("checklist");
+
+function LoginScreen(){
+  const [email, setEmail] = useState("");
+  const [pw, setPw] = useState("");
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
+  async function submit(e){
+    e.preventDefault();
+    setError(null); setLoading(true);
+    try{ await auth.signInWithEmailAndPassword(email.trim(), pw); }
+    catch(err){ setError("Sai email hoặc mật khẩu. Kiểm tra lại, hoặc liên hệ quản lý nếu chưa có tài khoản."); }
+    setLoading(false);
+  }
+  return React.createElement("div", { style:{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", padding:16 } },
+    React.createElement("form", { onSubmit:submit, style:{ background:"#fff", border:"1px solid var(--line)", borderRadius:14, padding:"32px 28px", width:360, maxWidth:"100%" } }, [
+      React.createElement("div", { key:"b", style:{ display:"flex", alignItems:"center", gap:9, marginBottom:22 } }, [
+        React.createElement("span", { key:"m", style:{ width:11, height:11, borderRadius:"50%", background:"var(--pine)" } }),
+        React.createElement("div", { key:"t" }, [
+          React.createElement("h1", { key:"h", className:"brandFont", style:{ fontSize:19, fontWeight:700, margin:0 } }, "Upharma Ops"),
+          React.createElement("small", { key:"s", style:{ fontSize:10.5, color:"var(--inkSoft)", letterSpacing:".06em", textTransform:"uppercase" } }, "Vận hành & Nhân sự"),
+        ]),
+      ]),
+      React.createElement("div", { key:"f1", className:"field", style:{ marginBottom:12 } }, [
+        React.createElement("label", { key:"l" }, "Email"),
+        React.createElement("input", { key:"i", type:"email", value:email, onChange:e=>setEmail(e.target.value), required:true, autoFocus:true }),
+      ]),
+      React.createElement("div", { key:"f2", className:"field", style:{ marginBottom:16 } }, [
+        React.createElement("label", { key:"l" }, "Mật khẩu"),
+        React.createElement("input", { key:"i", type:"password", value:pw, onChange:e=>setPw(e.target.value), required:true }),
+      ]),
+      error && React.createElement("div", { key:"err", style:{ color:"var(--clay)", fontSize:12.5, marginBottom:12 } }, error),
+      React.createElement("button", { key:"submit", type:"submit", className:"btn btnPrimary", disabled:loading, style:{ width:"100%", justifyContent:"center", padding:"10px 0" } }, loading ? "Đang đăng nhập..." : "Đăng nhập"),
+      React.createElement("div", { key:"hint", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:14, textAlign:"center" } }, "Chưa có tài khoản? Liên hệ quản lý cửa hàng để được cấp."),
+    ])
+  );
+}
+
+function NoStaffLinkedScreen({ user }){
+  return React.createElement("div", { style:{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", padding:16, textAlign:"center" } },
+    React.createElement("div", { style:{ maxWidth:380 } }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:8 } }, "Tài khoản chưa được gán vào nhân viên nào"),
+      React.createElement("div", { key:"s", style:{ fontSize:13, color:"var(--inkSoft)", marginBottom:18 } }, `Email ${user.email} đã đăng nhập được nhưng chưa liên kết với hồ sơ nhân viên nào. Liên hệ quản lý để được gán lại tài khoản.`),
+      React.createElement("button", { key:"b", className:"btn btnGhost", onClick:()=>auth.signOut() }, "Đăng xuất"),
+    ])
+  );
+}
+
+function Dashboard({ user, isAdmin, myStaff }){
+  const visibleTabs = isAdmin ? OPS_TABS : OPS_TABS.filter(t => STAFF_TABS.includes(t.id));
+  const [activeTab, setActiveTab] = useState(visibleTabs[0].id);
+  const whoLabel = isAdmin ? "Quản lý" : (myStaff ? `${myStaff.name} · ${myStaff.shop}` : "");
   return React.createElement(React.Fragment, null, [
     React.createElement("div", { key:"nav", className:"topnav" }, React.createElement("div", { className:"topnavInner" }, [
       React.createElement("div", { key:"brand", className:"brandRow" }, [
@@ -1524,34 +1603,53 @@ function Dashboard(){
             React.createElement("small", { key:"s" }, "Vận hành & Nhân sự"),
           ]),
         ]),
+        React.createElement("button", { key:"logout", className:"logoutBtn", onClick:()=>auth.signOut() }, `${whoLabel} · Đăng xuất`),
       ]),
-      React.createElement("div", { key:"tabs", className:"tabs" }, OPS_TABS.map(t =>
+      React.createElement("div", { key:"tabs", className:"tabs" }, visibleTabs.map(t =>
         React.createElement("button", { key:t.id, className:activeTab===t.id?"active":"", onClick:()=>setActiveTab(t.id) }, t.label)
       )),
     ])),
     React.createElement("div", { key:"wrap", className:"wrap" }, [
-      activeTab==="checklist" && React.createElement(DailyChecklistView, { key:"v" }),
-      activeTab==="photos" && React.createElement(ImageReportView, { key:"v" }),
-      activeTab==="weekly" && React.createElement(WeeklyReportView, { key:"v" }),
-      activeTab==="performance" && React.createElement(PerformanceView, { key:"v" }),
-      activeTab==="training" && React.createElement(TrainingView, { key:"v" }),
-      activeTab==="kudos" && React.createElement(KudosView, { key:"v" }),
-      activeTab==="staff" && React.createElement(StaffView, { key:"v" }),
+      activeTab==="checklist" && React.createElement(DailyChecklistView, { key:"v", isAdmin, myStaff }),
+      activeTab==="photos" && React.createElement(ImageReportView, { key:"v", isAdmin, myStaff }),
+      activeTab==="weekly" && React.createElement(WeeklyReportView, { key:"v", isAdmin, myStaff }),
+      activeTab==="performance" && isAdmin && React.createElement(PerformanceView, { key:"v" }),
+      activeTab==="training" && isAdmin && React.createElement(TrainingView, { key:"v" }),
+      activeTab==="kudos" && React.createElement(KudosView, { key:"v", isAdmin, myStaff }),
+      activeTab==="staff" && isAdmin && React.createElement(StaffView, { key:"v" }),
     ]),
   ]);
 }
 
 function App(){
-  const [ready, setReady] = useState(false);
+  const [authState, setAuthState] = useState({ status:"loading" }); // loading | out | in
+  const [staff, setStaff] = useState([]);
+  const [staffLoaded, setStaffLoaded] = useState(false);
+
   useEffect(()=>{
     const unsub = auth.onAuthStateChanged(user => {
-      if(user) setReady(true);
-      else auth.signInAnonymously().catch(err => console.error("Đăng nhập ẩn danh lỗi:", err));
+      setAuthState(user ? { status:"in", user } : { status:"out" });
     });
     return unsub;
   }, []);
-  if(!ready) return React.createElement("div", { style:{ padding:40, textAlign:"center", color:"var(--inkSoft)" } }, "Đang tải...");
-  return React.createElement(Dashboard, null);
+
+  useEffect(()=>{
+    if(authState.status!=="in") return;
+    const isAdmin = ADMIN_EMAILS.includes(authState.user.email);
+    if(isAdmin){ setStaffLoaded(true); return; } // admin không cần danh sách staff để vào app
+    const unsub = subscribeCol("staff", rows => { setStaff(rows); setStaffLoaded(true); });
+    return unsub;
+  }, [authState.status, authState.user && authState.user.uid]);
+
+  if(authState.status==="loading") return React.createElement("div", { style:{ padding:40, textAlign:"center", color:"var(--inkSoft)" } }, "Đang tải...");
+  if(authState.status==="out") return React.createElement(LoginScreen, null);
+
+  const user = authState.user;
+  const isAdmin = ADMIN_EMAILS.includes(user.email);
+  if(!isAdmin && !staffLoaded) return React.createElement("div", { style:{ padding:40, textAlign:"center", color:"var(--inkSoft)" } }, "Đang tải...");
+  const myStaff = isAdmin ? null : staff.find(s => s.uid===user.uid);
+  if(!isAdmin && !myStaff) return React.createElement(NoStaffLinkedScreen, { user });
+  return React.createElement(Dashboard, { user, isAdmin, myStaff });
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App, null));
