@@ -1108,6 +1108,8 @@ function CustomerOrderView({ isAdmin, myStaff }){
   const [adminStatus, setAdminStatus] = useState("Đang chờ");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [search, setSearch] = useState("");
+  const [showHistoryId, setShowHistoryId] = useState(null);
 
   useEffect(()=>{ const u = subscribeCol("customerOrders", setOrders); return u; }, []);
 
@@ -1179,10 +1181,13 @@ function CustomerOrderView({ isAdmin, myStaff }){
     const entry = { nguoiSua: myStaff ? myStaff.name : "Quản lý", hanhDong:`Đổi trạng thái: ${trangThai}`, thoiGian:`${todayISO()} ${nowHM()}` };
     await updateDoc("customerOrders", id, { trangThai, lichSuSua:[...((o&&o.lichSuSua)||[]), entry] });
   }
+  async function removeOrder(id){ if(window.confirm("Xoá thông tin khách đặt hàng này?")) await deleteDoc("customerOrders", id); }
 
   const myOrders = myStaff ? orders.filter(o => o.shop===myStaff.shop) : [];
-  const myPending = [...myOrders.filter(o=>o.trangThai==="Đang chờ")].sort((a,b)=> a.ngayHen<b.ngayHen?-1:1);
-  const myDone = [...myOrders.filter(o=>o.trangThai!=="Đang chờ")].sort((a,b)=> (b.ngayTao||"")<(a.ngayTao||"")?-1:1);
+  const searchLc = search.trim().toLowerCase();
+  const matchSearch = o => !searchLc || o.customerName.toLowerCase().includes(searchLc) || o.productName.toLowerCase().includes(searchLc) || (o.customerPhone||"").includes(searchLc);
+  const myPending = [...myOrders.filter(o=>o.trangThai==="Đang chờ" && matchSearch(o))].sort((a,b)=> a.ngayHen<b.ngayHen?-1:1);
+  const myDone = [...myOrders.filter(o=>o.trangThai!=="Đang chờ" && matchSearch(o))].sort((a,b)=> (b.ngayTao||"")<(a.ngayTao||"")?-1:1);
 
   // Gộp theo tên hàng để thấy mặt hàng nào nhiều khách CÙNG cửa hàng này hỏi trùng —
   // chỉ hiện những mặt hàng có từ 2 lượt hỏi trở lên.
@@ -1225,8 +1230,11 @@ function CustomerOrderView({ isAdmin, myStaff }){
       (o.anhSanPham && o.anhSanPham.length>0) && React.createElement("div", { key:"photos", className:"photoGrid", style:{ marginBottom:10 } }, o.anhSanPham.map((url,i) =>
         React.createElement("a", { key:i, href:url, target:"_blank", rel:"noreferrer", className:"photoThumb" }, React.createElement("img",{src:url}))
       )),
-      (o.lichSuSua && o.lichSuSua.length>0) && React.createElement("div", { key:"hist", style:{ fontSize:11, color:"var(--inkSoft)", marginBottom:10, background:"var(--paper)", borderRadius:6, padding:"6px 9px" } }, [
-        React.createElement("div", { key:"t", style:{ fontWeight:700, marginBottom:2 } }, "Lịch sử chỉnh sửa"),
+      (o.lichSuSua && o.lichSuSua.length>0) && React.createElement("div", { key:"histToggle", style:{ marginBottom:8 } },
+        React.createElement("button", { type:"button", onClick:()=>setShowHistoryId(showHistoryId===o.id?null:o.id), style:{ fontSize:11, color:"var(--inkSoft)", background:"none", border:"none", cursor:"pointer", padding:0, textDecoration:"underline" } },
+          showHistoryId===o.id ? "Ẩn lịch sử chỉnh sửa ▲" : `Xem lịch sử chỉnh sửa (${o.lichSuSua.length}) ▾`)
+      ),
+      (o.lichSuSua && o.lichSuSua.length>0 && showHistoryId===o.id) && React.createElement("div", { key:"hist", style:{ fontSize:11, color:"var(--inkSoft)", marginBottom:10, background:"var(--paper)", borderRadius:6, padding:"6px 9px" } }, [
         ...o.lichSuSua.slice(-5).map((h,i) => React.createElement("div", { key:i }, `${h.hanhDong} — ${h.nguoiSua} · ${h.thoiGian}`)),
         o.lichSuSua.length>5 && React.createElement("div", { key:"more" }, `+ ${o.lichSuSua.length-5} thao tác khác`),
       ]),
@@ -1235,14 +1243,16 @@ function CustomerOrderView({ isAdmin, myStaff }){
         o.trangThai==="Đang chờ" && React.createElement("button", { key:"cancel", type:"button", className:"btn btnGhost", style:{padding:"6px 12px",fontSize:12}, onClick:()=>markStatus(o.id,"Khách không lấy nữa") }, "Khách không lấy nữa"),
         o.trangThai!=="Đang chờ" && React.createElement("button", { key:"reopen", type:"button", className:"btn btnGhost", style:{padding:"6px 12px",fontSize:12}, onClick:()=>markStatus(o.id,"Đang chờ") }, "Mở lại"),
         React.createElement("button", { key:"edit", type:"button", className:"btn", style:{padding:"6px 12px",fontSize:12}, onClick:()=>openEdit(o) }, "Sửa"),
+        React.createElement("button", { key:"del", type:"button", className:"btn btnDanger", style:{padding:"6px 12px",fontSize:12}, onClick:()=>removeOrder(o.id) }, "Xoá"),
       ]),
     ]);
   }
 
   const staffSection = !isAdmin && React.createElement(React.Fragment, null, [
-    React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:16 } },
-      React.createElement("button", { key:"add", className:"btn btnPrimary", onClick:openAdd }, "＋ Ghi khách đặt hàng")
-    ),
+    React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:16, justifyContent:"space-between" } }, [
+      React.createElement("button", { key:"add", className:"btn btnPrimary", onClick:openAdd }, "＋ Ghi khách đặt hàng"),
+      React.createElement("input", { key:"search", type:"text", value:search, onChange:e=>setSearch(e.target.value), placeholder:"Tìm theo tên khách, SĐT, hoặc tên hàng...", style:{ flex:"1 1 240px", maxWidth:320, padding:"9px 12px", border:"1px solid var(--line)", borderRadius:8, fontSize:13 } }),
+    ]),
     myDupGroups.length>0 && React.createElement("div", { key:"dup", className:"card", style:{ marginBottom:20 } }, [
       React.createElement("div", { key:"t", className:"cardTitle" }, "Mặt hàng nhiều khách cùng hỏi (tại cửa hàng bạn)"),
       React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8 } }, myDupGroups.map((g,i) =>
@@ -1252,10 +1262,11 @@ function CustomerOrderView({ isAdmin, myStaff }){
         ])
       )),
     ]),
+    React.createElement("div", { key:"pendingHead", style:{ fontWeight:700, fontSize:13.5, marginBottom:10, color:"var(--inkSoft)" } }, `Đang chờ hàng (${myPending.length})`),
     React.createElement("div", { key:"pending", style:{ display:"flex", flexDirection:"column", gap:12, marginBottom:20 } },
-      myPending.length===0 ? React.createElement("div",{className:"emptyState"},"Chưa có khách nào đang chờ hàng.") : myPending.map(orderCard)
+      myPending.length===0 ? React.createElement("div",{className:"emptyState"}, search ? "Không tìm thấy khách nào khớp." : "Chưa có khách nào đang chờ hàng.") : myPending.map(orderCard)
     ),
-    myDone.length>0 && React.createElement("div", { key:"donetitle", style:{ fontWeight:700, fontSize:13.5, marginBottom:10 } }, "Đã xử lý gần đây"),
+    myDone.length>0 && React.createElement("div", { key:"donetitle", style:{ fontWeight:700, fontSize:13.5, marginBottom:10, color:"var(--inkSoft)" } }, `Đã xử lý gần đây (${myDone.length})`),
     myDone.length>0 && React.createElement("div", { key:"done", style:{ display:"flex", flexDirection:"column", gap:12 } }, myDone.slice(0,20).map(orderCard)),
   ]);
 
@@ -1341,7 +1352,7 @@ function CustomerOrderView({ isAdmin, myStaff }){
   const adminTable = isAdmin && (filteredOrders.length===0
     ? React.createElement("div",{className:"emptyState"}, "Không có khách nào trong bộ lọc này.")
     : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
-        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Khách hàng","SĐT","Hàng cần","Cửa hàng","Ngày dự kiến giao","Trạng thái","Người ghi","Ghi chú thêm"].map((h,i)=>React.createElement("th",{key:i},h)))),
+        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Khách hàng","SĐT","Hàng cần","Cửa hàng","Ngày dự kiến giao","Trạng thái","Người ghi","Ghi chú thêm",""].map((h,i)=>React.createElement("th",{key:i},h)))),
         React.createElement("tbody",{key:"b"}, filteredOrders.map(o => {
           const overdue = isOverdue(o);
           return React.createElement("tr",{key:o.id}, [
@@ -1356,6 +1367,9 @@ function CustomerOrderView({ isAdmin, myStaff }){
               (o.lichSuSua && o.lichSuSua.length>0) && React.createElement("div",{key:"h",style:{fontSize:10.5,color:"var(--inkSoft)"}}, `${o.lichSuSua.length} lượt sửa`),
             ]),
             React.createElement("td",{key:"flags"}, [ o.hangHetTon && StatusPill("Hết tồn","warn"), o.hangKhongCoHeThong && StatusPill("Hệ thống không có","warn"), o.deXuatMoTu && StatusPill("Mở tủ","gold") ]),
+            React.createElement("td",{key:"a", style:{whiteSpace:"nowrap"}}, [
+              React.createElement("button",{key:"del", className:"btn btnDanger", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>removeOrder(o.id)}, "Xoá"),
+            ]),
           ]);
         })),
       ])));
