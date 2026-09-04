@@ -937,6 +937,48 @@ function DailyChecklistView({ isAdmin, myStaff }){
 // ================= MODULE 2: BÁO CÁO HÌNH ẢNH =================
 function imageReportId(shop, ngay){ return shop + "_" + ngay; }
 
+function ImageReviewModal({ report, onSave, onClose }){
+  const [trangThai, setTrangThai] = useState(report.trangThaiDuyet || "");
+  const [nhanXet, setNhanXet] = useState(report.nhanXetDuyet || "");
+  const [saving, setSaving] = useState(false);
+  async function save(){
+    setSaving(true);
+    try{ await onSave(report.id, trangThai, nhanXet); }
+    finally{ setSaving(false); }
+  }
+  return React.createElement("div", { className:"modalOverlay", onClick:onClose },
+    React.createElement("div", { className:"modal modalWide", onClick:e=>e.stopPropagation() }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:2 } }, `${report.shop} — ${report.ngay}`),
+      report.nguoiUpload && React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } }, `Người nộp: ${report.nguoiUpload}`),
+      (report.anhChecklist && report.anhChecklist.length>0) && React.createElement("div", { key:"cl", style:{ marginBottom:14 } }, [
+        React.createElement("div",{key:"l",style:{fontWeight:700,fontSize:12.5,marginBottom:4}},"Ảnh checklist hàng ngày"),
+        React.createElement("div", { key:"g", className:"photoGrid" }, report.anhChecklist.map((url,i) =>
+          React.createElement("a", { key:i, href:url, target:"_blank", rel:"noreferrer", className:"photoThumb", style:{ width:110, height:110 } }, React.createElement("img",{src:url}))
+        )),
+      ]),
+      (report.anhCTKM && report.anhCTKM.length>0) && React.createElement("div", { key:"ck", style:{ marginBottom:14 } }, [
+        React.createElement("div",{key:"l",style:{fontWeight:700,fontSize:12.5,marginBottom:4}},"Ảnh trưng bày CTKM"),
+        React.createElement("div", { key:"g", className:"photoGrid" }, report.anhCTKM.map((url,i) =>
+          React.createElement("a", { key:i, href:url, target:"_blank", rel:"noreferrer", className:"photoThumb", style:{ width:110, height:110 } }, React.createElement("img",{src:url}))
+        )),
+      ]),
+      React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:8 } }, "Kiểm tra ảnh đã gọn gàng, đúng vị trí, đúng nội dung chưa rồi đánh giá:"),
+      React.createElement("div", { key:"btns2", className:"btnRow", style:{ marginBottom:14 } }, [
+        React.createElement("button", { key:"ok", type:"button", className:"btn"+(trangThai==="Đạt"?" btnPrimary":""), onClick:()=>setTrangThai("Đạt") }, "✓ Đạt yêu cầu"),
+        React.createElement("button", { key:"bad", type:"button", className:"btn"+(trangThai==="Chưa đạt"?" btnDanger":""), style: trangThai==="Chưa đạt" ? { background:"var(--clay)", color:"#fff", borderColor:"var(--clay)" } : null, onClick:()=>setTrangThai("Chưa đạt") }, "✕ Chưa đạt, cần chụp lại"),
+      ]),
+      React.createElement("div", { key:"cmt", className:"field", style:{ marginBottom:16 } }, [
+        React.createElement("label",{key:"l"},"Nhận xét cho cửa hàng (nếu có)"),
+        React.createElement("textarea",{key:"i", rows:3, value:nhanXet, onChange:e=>setNhanXet(e.target.value), placeholder:"VD: ảnh quầy kệ bị mờ, chụp lại rõ hơn; góc CTKM chưa đúng vị trí..."}),
+      ]),
+      React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } }, [
+        React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:onClose, disabled:saving }, "Đóng"),
+        React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", onClick:save, disabled:saving }, saving ? "Đang lưu..." : "Lưu đánh giá"),
+      ]),
+    ])
+  );
+}
+
 function ImageReportView({ isAdmin, myStaff }){
   const [reportsMap, setReportsMap] = useState({});
   const [selfShop] = useState(myStaff ? myStaff.shop : "");
@@ -985,6 +1027,10 @@ function ImageReportView({ isAdmin, myStaff }){
     current.splice(idx,1);
     await db.collection("imageReports").doc(thisId).set({ [field]:current }, { merge:true });
   }
+  async function saveImageReview(reportId, trangThaiDuyet, nhanXetDuyet){
+    await updateDoc("imageReports", reportId, { trangThaiDuyet, nhanXetDuyet });
+    setViewReportId(null);
+  }
 
   const hasAnyPhoto = thisReport && ((thisReport.anhChecklist||[]).length>0 || (thisReport.anhCTKM||[]).length>0);
   const selfCard = selfShop && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
@@ -1002,6 +1048,14 @@ function ImageReportView({ isAdmin, myStaff }){
       photos: thisReport ? thisReport.anhCTKM : null, uploading:uploadingCTKM,
       onUpload:files=>addPhotos("anhCTKM", files), onRemove:idx=>removePhoto("anhCTKM", idx),
     }),
+    thisReport && thisReport.trangThaiDuyet && React.createElement("div", { key:"review", style:{
+        marginTop:14, borderRadius:8, padding:"9px 12px", fontSize:12.5,
+        background: thisReport.trangThaiDuyet==="Đạt" ? "var(--pineSoft)" : "var(--claySoft)",
+      } }, [
+      React.createElement("div",{key:"t",style:{fontWeight:700,marginBottom:2, color: thisReport.trangThaiDuyet==="Đạt" ? "var(--pine)" : "var(--clay)"}},
+        thisReport.trangThaiDuyet==="Đạt" ? "Quản lý kiểm tra: Đạt yêu cầu" : "Quản lý kiểm tra: Chưa đạt — cần chụp lại"),
+      thisReport.nhanXetDuyet && React.createElement("div",{key:"n",style:{color:"var(--inkSoft)"}}, thisReport.nhanXetDuyet),
+    ]),
   ]);
 
   const shopsInFilter = adminShop==="Tất cả" ? DEFAULT_SHOPS : [adminShop];
@@ -1009,11 +1063,18 @@ function ImageReportView({ isAdmin, myStaff }){
     const r = reportsMap[imageReportId(shop, adminDate)];
     return r && ((r.anhChecklist||[]).length>0 || (r.anhCTKM||[]).length>0);
   });
+  const submittedReports = submittedShops.map(shop => reportsMap[imageReportId(shop, adminDate)]);
+  const passCount = submittedReports.filter(r=>r.trangThaiDuyet==="Đạt").length;
+  const failCount = submittedReports.filter(r=>r.trangThaiDuyet==="Chưa đạt").length;
+  const uncheckedCount = submittedReports.length - passCount - failCount;
 
   const adminMetrics = React.createElement("div", { className:"metrics" }, [
     React.createElement("div", { key:"1", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Cửa hàng trong bộ lọc"), React.createElement("div",{key:"v",className:"value"}, fmtNum(shopsInFilter.length)) ]),
     React.createElement("div", { key:"2", className:"metric good" }, [ React.createElement("div",{key:"l",className:"label"},"Đã nộp ảnh"), React.createElement("div",{key:"v",className:"value"}, fmtNum(submittedShops.length)) ]),
     React.createElement("div", { key:"3", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Chưa nộp ảnh"), React.createElement("div",{key:"v",className:"value"}, fmtNum(Math.max(shopsInFilter.length-submittedShops.length,0))) ]),
+    React.createElement("div", { key:"4", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Chưa kiểm tra"), React.createElement("div",{key:"v",className:"value"}, fmtNum(uncheckedCount)) ]),
+    React.createElement("div", { key:"5", className:"metric good" }, [ React.createElement("div",{key:"l",className:"label"},"Đạt yêu cầu"), React.createElement("div",{key:"v",className:"value"}, fmtNum(passCount)) ]),
+    React.createElement("div", { key:"6", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Chưa đạt"), React.createElement("div",{key:"v",className:"value"}, fmtNum(failCount)) ]),
   ]);
 
   const adminFilterRow = React.createElement("div", { className:"btnRow", style:{ marginBottom:14 } }, [
@@ -1025,7 +1086,7 @@ function ImageReportView({ isAdmin, myStaff }){
   const adminTable = shopsInFilter.length===0
     ? React.createElement("div",{className:"emptyState"}, "Không có cửa hàng trong bộ lọc này.")
     : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
-        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Cửa hàng","Người nộp","Ảnh checklist","Ảnh CTKM","Trạng thái",""].map((h,i)=>React.createElement("th",{key:i},h)))),
+        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Cửa hàng","Người nộp","Ảnh checklist","Ảnh CTKM","Trạng thái","Kiểm tra",""].map((h,i)=>React.createElement("th",{key:i},h)))),
         React.createElement("tbody",{key:"b"}, shopsInFilter.map(shop => {
           const rid = imageReportId(shop, adminDate);
           const r = reportsMap[rid];
@@ -1038,33 +1099,18 @@ function ImageReportView({ isAdmin, myStaff }){
             React.createElement("td",{key:"cl"}, fmtNum(clCount)),
             React.createElement("td",{key:"ck"}, fmtNum(ckCount)),
             React.createElement("td",{key:"st"}, has ? StatusPill("Đã nộp","good") : StatusPill("Chưa nộp","warn")),
-            React.createElement("td",{key:"a"}, has ? React.createElement("button",{className:"btn", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>setViewReportId(rid)}, "Xem ảnh") : "—"),
+            React.createElement("td",{key:"dv"}, has
+              ? (r.trangThaiDuyet==="Đạt" ? StatusPill("Đạt","good") : (r.trangThaiDuyet==="Chưa đạt" ? StatusPill("Chưa đạt","warn") : StatusPill("Chưa kiểm tra","neutral")))
+              : "—"),
+            React.createElement("td",{key:"a"}, has ? React.createElement("button",{className:"btn", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>setViewReportId(rid)}, "Xem & kiểm tra") : "—"),
           ]);
         })),
       ]));
 
   const viewingReport = viewReportId ? reportsMap[viewReportId] : null;
-  const viewModal = viewingReport && React.createElement("div", { className:"modalOverlay", onClick:()=>setViewReportId(null) },
-    React.createElement("div", { className:"modal modalWide", onClick:e=>e.stopPropagation() }, [
-      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:2 } }, `${viewingReport.shop} — ${viewingReport.ngay}`),
-      viewingReport.nguoiUpload && React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } }, `Người nộp: ${viewingReport.nguoiUpload}`),
-      (viewingReport.anhChecklist && viewingReport.anhChecklist.length>0) && React.createElement("div", { key:"cl", style:{ marginBottom:14 } }, [
-        React.createElement("div",{key:"l",style:{fontWeight:700,fontSize:12.5,marginBottom:4}},"Ảnh checklist hàng ngày"),
-        React.createElement("div", { key:"g", className:"photoGrid" }, viewingReport.anhChecklist.map((url,i) =>
-          React.createElement("a", { key:i, href:url, target:"_blank", rel:"noreferrer", className:"photoThumb" }, React.createElement("img",{src:url}))
-        )),
-      ]),
-      (viewingReport.anhCTKM && viewingReport.anhCTKM.length>0) && React.createElement("div", { key:"ck", style:{ marginBottom:14 } }, [
-        React.createElement("div",{key:"l",style:{fontWeight:700,fontSize:12.5,marginBottom:4}},"Ảnh trưng bày CTKM"),
-        React.createElement("div", { key:"g", className:"photoGrid" }, viewingReport.anhCTKM.map((url,i) =>
-          React.createElement("a", { key:i, href:url, target:"_blank", rel:"noreferrer", className:"photoThumb" }, React.createElement("img",{src:url}))
-        )),
-      ]),
-      React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } },
-        React.createElement("button", { type:"button", className:"btn btnGhost", onClick:()=>setViewReportId(null) }, "Đóng")
-      ),
-    ])
-  );
+  const viewModal = viewingReport && React.createElement(ImageReviewModal, {
+    report: viewingReport, onSave: saveImageReview, onClose: ()=>setViewReportId(null),
+  });
 
   const adminSection = isAdmin && React.createElement("div", { key:"admin", style:{ marginTop:26 } }, [
     React.createElement("button", { key:"tgl", type:"button", className:"btn btnGhost", style:{ marginBottom:14 }, onClick:()=>setAdminOpen(!adminOpen) }, adminOpen ? "Ẩn báo cáo tất cả cửa hàng" : "Xem báo cáo tất cả cửa hàng"),
@@ -2197,7 +2243,309 @@ function TaskAssignView({ isAdmin, myStaff }){
   ]);
 }
 
-// ================= MODULE 6: HIỆU SUẤT & TỔNG QUAN CỬA HÀNG =================
+// ================= MODULE 6: KPI (GIAO CHỈ TIÊU & CHẤM ĐIỂM) =================
+// Thang điểm chung 1000 cho mỗi vai trò, mô phỏng đúng theo bảng KPI Excel của Upharma.
+// cachCham: "nguong60" = dưới 60% thực đạt: 0 điểm, từ 60%: %đạt × điểm định mức (không giới hạn trên)
+//           "nguong60_max120" = như trên nhưng % tính điểm không vượt quá 120%
+//           "ty_le_truc_tiep" = % thực đạt (0-100%) × điểm định mức trực tiếp, không có ngưỡng
+//           "nhi_phan" = Đạt/Không đạt: Đạt = full điểm, Không đạt = 0 điểm
+const DEFAULT_KPI_TEMPLATES = {
+  "NVBH": [
+    { key:"khachhang", label:"Khách hàng", items:[
+      { id:"kh_tongkh", label:"Tổng số khách hàng phục vụ trong tháng", tyTrong:0.3, diem:300, cachCham:"nguong60", donVi:"khách" },
+    ]},
+    { key:"donhang", label:"Đơn hàng bán", items:[
+      { id:"dh_sodon", label:"Số đơn bán/tháng", tyTrong:0.2, diem:200, cachCham:"nguong60", donVi:"đơn" },
+      { id:"dh_tbbill", label:"Giá trị trung bình bill", tyTrong:0.1, diem:100, cachCham:"nguong60", donVi:"đ" },
+    ]},
+    { key:"cskh", label:"Chăm sóc khách hàng", items:[
+      { id:"cs_nangHang", label:"Tổng số khách hàng được nâng hạng trong tháng", tyTrong:0.2, diem:200, cachCham:"nguong60_max120", donVi:"khách" },
+    ]},
+    { key:"hanghoa", label:"Hàng hóa", items:[
+      { id:"hh_thuongtruc", label:"Hàng thường trực (tỷ lệ % mã hàng có đủ)", tyTrong:0.1, diem:100, cachCham:"ty_le_truc_tiep", donVi:"%" },
+      { id:"hh_candate", label:"Hàng cận date (≤6th ≤1,2% · ≤12th ≤8%)", tyTrong:0.1, diem:100, cachCham:"nhi_phan", donVi:"" },
+    ]},
+  ],
+  "CHT": [
+    { key:"nhansu", label:"Nhân sự", items:[
+      { id:"ns_soluong", label:"Tổng số lượng nhân sự nhà thuốc phụ trách", tyTrong:0.15, diem:150, cachCham:"nhi_phan", donVi:"" },
+      { id:"ns_level", label:"Level nhân sự", tyTrong:0.15, diem:150, cachCham:"nguong60", donVi:"" },
+    ]},
+    { key:"doanhso", label:"Doanh số", items:[
+      { id:"ds_tong", label:"Doanh số tổng", tyTrong:0.15, diem:150, cachCham:"nguong60", donVi:"đ" },
+      { id:"ds_hhs", label:"Doanh số hàng hệ số", tyTrong:0.15, diem:150, cachCham:"nguong60", donVi:"đ" },
+      { id:"ds_tbbill", label:"Giá trị trung bình bill", tyTrong:0.1, diem:100, cachCham:"nguong60", donVi:"đ" },
+      { id:"ds_cskh", label:"Chăm sóc khách hàng (nâng hạng)", tyTrong:0.1, diem:100, cachCham:"nguong60_max120", donVi:"khách" },
+    ]},
+    { key:"hanghoa", label:"Hàng hóa", items:[
+      { id:"hh_thuongtruc", label:"Hàng thường trực (tỷ lệ % mã hàng có đủ)", tyTrong:0.1, diem:100, cachCham:"ty_le_truc_tiep", donVi:"%" },
+      { id:"hh_candate", label:"Hàng cận date (≤6th ≤1,2% · ≤12th ≤8%)", tyTrong:0.1, diem:100, cachCham:"nhi_phan", donVi:"" },
+    ]},
+  ],
+};
+function kpiRoleKey(staffRole){ return staffRole==="Cửa hàng trưởng" ? "CHT" : "NVBH"; }
+function kpiAssignmentId(staffId, thang){ return staffId + "_" + thang; }
+function currentMonthStr(){ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; }
+// Tính điểm KPI thực tế cho 1 chỉ tiêu, theo đúng công thức từng loại cách chấm.
+function kpiCalcItemScore(item, target, actual){
+  const diem = item.diem;
+  if(item.cachCham==="nhi_phan"){
+    return actual==="Đạt" ? diem : 0;
+  }
+  if(item.cachCham==="ty_le_truc_tiep"){
+    const pct = Number(actual)||0;
+    return Math.max(0, Math.min(1, pct/100)) * diem;
+  }
+  // nguong60 / nguong60_max120
+  const t = Number(target)||0, a = Number(actual);
+  if(!t || actual===""||actual==null||isNaN(a)) return null; // chưa đủ dữ liệu để tính
+  let pct = a / t;
+  if(pct < 0.6) return 0;
+  if(item.cachCham==="nguong60_max120") pct = Math.min(pct, 1.2);
+  return pct * diem;
+}
+function kpiTotalPlan(groups){ return groups.reduce((s,g)=> s + g.items.reduce((s2,it)=>s2+it.diem,0), 0); }
+function kpiTotalActual(groups, targets, actuals){
+  let sum = 0, hasAny = false;
+  groups.forEach(g => g.items.forEach(it => {
+    const sc = kpiCalcItemScore(it, targets[it.id], actuals[it.id]);
+    if(sc!=null){ sum += sc; hasAny = true; }
+  }));
+  return hasAny ? sum : null;
+}
+function kpiXepLoai(pct){ if(pct==null) return "—"; return pct>=0.85 ? "Đạt thưởng" : "Chưa đạt"; }
+
+function KpiItemRow({ item, target, actual, canEditTarget, canEditActual, onTargetChange, onActualChange }){
+  const score = kpiCalcItemScore(item, target, actual);
+  const pct = (item.cachCham!=="nhi_phan" && item.cachCham!=="ty_le_truc_tiep" && target) ? (Number(actual)||0)/Number(target) : null;
+  return React.createElement("div", { style:{ display:"flex", flexWrap:"wrap", alignItems:"center", gap:10, padding:"9px 0", borderBottom:"1px solid #F0EEE2" } }, [
+    React.createElement("div", { key:"l", style:{ flex:"1 1 260px", fontSize:13 } }, [
+      item.label,
+      React.createElement("span",{key:"w", style:{ color:"var(--inkSoft)", fontSize:11.5 }}, ` · tỷ trọng ${Math.round(item.tyTrong*100)}% · tối đa ${item.diem} điểm`),
+    ]),
+    React.createElement("div", { key:"tg", style:{ width:150 } }, [
+      React.createElement("div", { style:{ fontSize:10.5, color:"var(--inkSoft)", marginBottom:2 } }, "Mục tiêu giao"),
+      canEditTarget
+        ? React.createElement("input", { type:"number", defaultValue: target!=null?target:"", onBlur:e=>onTargetChange(e.target.value), placeholder:item.donVi, style:{ width:"100%", padding:"6px 8px", border:"1px solid var(--line)", borderRadius:6, fontSize:12.5 } })
+        : React.createElement("div", { style:{ fontSize:13, fontWeight:600 } }, target!=null && target!=="" ? `${target} ${item.donVi||""}` : "—"),
+    ]),
+    React.createElement("div", { key:"tt", style:{ width:150 } }, [
+      React.createElement("div", { style:{ fontSize:10.5, color:"var(--inkSoft)", marginBottom:2 } }, "Thực tế đạt được"),
+      item.cachCham==="nhi_phan"
+        ? (canEditActual
+            ? React.createElement("select", { value:actual||"", onChange:e=>onActualChange(e.target.value), style:{ width:"100%", padding:"6px 8px", border:"1px solid var(--line)", borderRadius:6, fontSize:12.5 } },
+                ["", "Đạt", "Không đạt"].map(o=>React.createElement("option",{key:o,value:o}, o||"— chọn —")))
+            : React.createElement("div", { style:{ fontSize:13, fontWeight:600 } }, actual || "—"))
+        : (canEditActual
+            ? React.createElement("input", { type:"number", defaultValue: actual!=null?actual:"", onBlur:e=>onActualChange(e.target.value), placeholder:item.cachCham==="ty_le_truc_tiep"?"VD: 85":item.donVi, style:{ width:"100%", padding:"6px 8px", border:"1px solid var(--line)", borderRadius:6, fontSize:12.5 } })
+            : React.createElement("div", { style:{ fontSize:13, fontWeight:600 } }, actual!=null && actual!=="" ? `${actual}${item.cachCham==="ty_le_truc_tiep"?"%":" "+ (item.donVi||"")}` : "—")),
+    ]),
+    React.createElement("div", { key:"pc", style:{ width:70, textAlign:"center" } }, [
+      React.createElement("div", { style:{ fontSize:10.5, color:"var(--inkSoft)", marginBottom:2 } }, "% đạt"),
+      React.createElement("div", { style:{ fontSize:13, fontWeight:600 } }, pct!=null ? `${Math.round(pct*100)}%` : "—"),
+    ]),
+    React.createElement("div", { key:"sc", style:{ width:80, textAlign:"center" } }, [
+      React.createElement("div", { style:{ fontSize:10.5, color:"var(--inkSoft)", marginBottom:2 } }, "Điểm KPI"),
+      React.createElement("div", { style:{ fontSize:14, fontWeight:700, color:"var(--pine)" } }, score!=null ? Math.round(score) : "—"),
+    ]),
+  ]);
+}
+
+function KpiGroups({ groups, targets, actuals, canEditTarget, canEditActual, onTargetChange, onActualChange }){
+  const totalPlan = kpiTotalPlan(groups);
+  const totalActual = kpiTotalActual(groups, targets, actuals);
+  const pctDat = totalActual!=null ? totalActual/totalPlan : null;
+  return React.createElement(React.Fragment, null, [
+    ...groups.map(g => React.createElement("div", { key:g.key, style:{ marginBottom:16 } }, [
+      React.createElement("div", { style:{ fontWeight:700, fontSize:13.5, marginBottom:4, color:"var(--ink)" } }, g.label),
+      ...g.items.map(it => React.createElement(KpiItemRow, {
+        key:it.id, item:it, target:targets[it.id], actual:actuals[it.id],
+        canEditTarget, canEditActual,
+        onTargetChange:v=>onTargetChange(it.id, v), onActualChange:v=>onActualChange(it.id, v),
+      })),
+    ])),
+    React.createElement("div", { style:{ display:"flex", flexWrap:"wrap", gap:14, alignItems:"center", background:"var(--paper)", borderRadius:8, padding:"12px 14px", marginTop:6 } }, [
+      React.createElement("div", { key:"a", style:{ fontSize:13 } }, [ React.createElement("b",null,"Tổng điểm KPI kế hoạch: "), `${totalPlan} điểm` ]),
+      React.createElement("div", { key:"b", style:{ fontSize:13 } }, [ React.createElement("b",null,"Tổng điểm KPI thực tế: "), totalActual!=null ? `${Math.round(totalActual)} điểm` : "—" ]),
+      React.createElement("div", { key:"c", style:{ fontSize:13 } }, [ React.createElement("b",null,"% KPI đạt: "), pctDat!=null ? `${Math.round(pctDat*100)}%` : "—" ]),
+      pctDat!=null && StatusPill(kpiXepLoai(pctDat), pctDat>=0.85?"good":"warn"),
+    ]),
+  ]);
+}
+
+function KpiView({ isAdmin, myStaff }){
+  const [staff, setStaff] = useState([]);
+  const [assignments, setAssignments] = useState({});
+  const [thang, setThang] = useState(currentMonthStr());
+  const [pickedStaffId, setPickedStaffId] = useState("");
+  const [personalDoc, setPersonalDoc] = useState(null);
+  const [showAddPersonal, setShowAddPersonal] = useState(false);
+  const [newItem, setNewItem] = useState({ label:"", diem:100 });
+
+  useEffect(()=>{
+    const u1 = subscribeCol("staff", setStaff);
+    const u2 = subscribeCol("kpiAssignments", rows => { const map={}; rows.forEach(r=>map[r.id]=r); setAssignments(map); });
+    return ()=>{ u1(); u2(); };
+  }, []);
+  useEffect(()=>{
+    if(!isAdmin) return undefined;
+    const u = db.collection("kpiPersonal").doc(thang).onSnapshot(doc => setPersonalDoc(doc.exists ? doc.data() : null));
+    return u;
+  }, [isAdmin, thang]);
+
+  async function saveTarget(staffMember, itemId, value){
+    const id = kpiAssignmentId(staffMember.id, thang);
+    const payload = { staffId:staffMember.id, staffName:staffMember.name, shop:staffMember.shop, role:staffMember.role, thang };
+    payload[`targets.${itemId}`] = value===""? "" : Number(value);
+    await mergeDotFields("kpiAssignments", id, payload);
+  }
+  async function saveActual(staffMember, itemId, value){
+    const id = kpiAssignmentId(staffMember.id, thang);
+    const payload = { staffId:staffMember.id, staffName:staffMember.name, shop:staffMember.shop, role:staffMember.role, thang };
+    payload[`actuals.${itemId}`] = value;
+    await mergeDotFields("kpiAssignments", id, payload);
+  }
+
+  // ---- Nhân viên: tự chấm KPI của chính mình ----
+  const myRoleKey = myStaff ? kpiRoleKey(myStaff.role) : null;
+  const myGroups = myRoleKey ? DEFAULT_KPI_TEMPLATES[myRoleKey] : null;
+  const myAssign = myStaff ? assignments[kpiAssignmentId(myStaff.id, thang)] : null;
+  const myTargets = (myAssign && myAssign.targets) || {};
+  const myActuals = (myAssign && myAssign.actuals) || {};
+  const myHasTargets = Object.keys(myTargets).length > 0;
+
+  const staffSection = !isAdmin && React.createElement("div", { className:"card" }, [
+    React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10, marginBottom:14 } }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15 } }, `KPI tháng ${thang} — ${myStaff ? myStaff.name : ""}`),
+      React.createElement("input", { key:"m", type:"month", value:thang, onChange:e=>setThang(e.target.value), style:{ padding:"7px 9px", border:"1px solid var(--line)", borderRadius:8, fontSize:13 } }),
+    ]),
+    !myHasTargets
+      ? React.createElement("div", { key:"e", className:"emptyState" }, "Quản lý khu vực chưa giao chỉ tiêu KPI cho bạn trong tháng này.")
+      : React.createElement(KpiGroups, {
+          key:"g", groups:myGroups, targets:myTargets, actuals:myActuals,
+          canEditTarget:false, canEditActual:true,
+          onTargetChange:()=>{}, onActualChange:(itemId,v)=>saveActual(myStaff, itemId, v),
+        }),
+  ]);
+
+  // ---- Quản lý: giao chỉ tiêu cho từng nhân viên ----
+  const staffOptions = staff.map(s => ({ value:s.id, label:`${s.name} · ${s.shop} · ${s.role}` }));
+  const pickedStaff = staff.find(s => s.id===pickedStaffId);
+  const pickedRoleKey = pickedStaff ? kpiRoleKey(pickedStaff.role) : null;
+  const pickedGroups = pickedRoleKey ? DEFAULT_KPI_TEMPLATES[pickedRoleKey] : null;
+  const pickedAssign = pickedStaff ? assignments[kpiAssignmentId(pickedStaff.id, thang)] : null;
+  const pickedTargets = (pickedAssign && pickedAssign.targets) || {};
+  const pickedActuals = (pickedAssign && pickedAssign.actuals) || {};
+
+  // Bảng tổng hợp toàn bộ nhân sự trong tháng đang chọn.
+  const summaryRows = staff.map(s => {
+    const roleKey = kpiRoleKey(s.role);
+    const groups = DEFAULT_KPI_TEMPLATES[roleKey];
+    const a = assignments[kpiAssignmentId(s.id, thang)];
+    const targets = (a && a.targets) || {};
+    const actuals = (a && a.actuals) || {};
+    const totalPlan = kpiTotalPlan(groups);
+    const totalActual = kpiTotalActual(groups, targets, actuals);
+    const pct = totalActual!=null ? totalActual/totalPlan : null;
+    return { staff:s, roleKey, hasTargets:Object.keys(targets).length>0, totalPlan, totalActual, pct };
+  }).sort((x,y)=> (y.pct||-1) - (x.pct||-1));
+
+  const adminAssignSection = isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"t", className:"cardTitle" }, "Giao chỉ tiêu KPI cho nhân viên"),
+    React.createElement("div", { key:"row", className:"btnRow", style:{ marginBottom:16 } }, [
+      React.createElement("input", { key:"m", type:"month", value:thang, onChange:e=>setThang(e.target.value), style:{ padding:"8px 10px", border:"1px solid var(--line)", borderRadius:8, fontSize:13 } }),
+      React.createElement(NamePicker, { key:"p", options:staffOptions, value:pickedStaffId, onChange:setPickedStaffId, placeholder:"Gõ tên nhân viên để giao KPI..." }),
+    ]),
+    pickedStaff
+      ? React.createElement(KpiGroups, {
+          key:"g", groups:pickedGroups, targets:pickedTargets, actuals:pickedActuals,
+          canEditTarget:true, canEditActual:false,
+          onTargetChange:(itemId,v)=>saveTarget(pickedStaff, itemId, v), onActualChange:()=>{},
+        })
+      : React.createElement("div", { key:"e", className:"emptyState" }, "Chọn 1 nhân viên ở trên để giao chỉ tiêu KPI tháng này."),
+  ]);
+
+  const adminSummarySection = isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"t", className:"cardTitle" }, `Tổng hợp KPI toàn bộ nhân sự — tháng ${thang}`),
+    summaryRows.length===0
+      ? React.createElement("div",{key:"e",className:"emptyState"},"Chưa có nhân sự.")
+      : React.createElement("div", { key:"tb", className:"tableWrap", style:{ marginBottom:0 } }, React.createElement("table",{className:"data"}, [
+          React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Nhân viên","Cửa hàng","Vai trò","Điểm KH","Điểm thực tế","% đạt","Xếp loại"].map((h,i)=>React.createElement("th",{key:i},h)))),
+          React.createElement("tbody",{key:"b"}, summaryRows.map(r => React.createElement("tr",{key:r.staff.id}, [
+            React.createElement("td",{key:"n"}, r.staff.name),
+            React.createElement("td",{key:"s"}, r.staff.shop),
+            React.createElement("td",{key:"r"}, r.staff.role),
+            React.createElement("td",{key:"p"}, r.totalPlan),
+            React.createElement("td",{key:"a"}, r.totalActual!=null ? Math.round(r.totalActual) : "—"),
+            React.createElement("td",{key:"pc"}, r.pct!=null ? `${Math.round(r.pct*100)}%` : "—"),
+            React.createElement("td",{key:"x"}, r.hasTargets ? StatusPill(kpiXepLoai(r.pct), r.pct!=null && r.pct>=0.85 ? "good" : "warn") : StatusPill("Chưa giao KPI","neutral")),
+          ]))),
+        ])),
+  ]);
+
+  // ---- KPI cá nhân của quản lý (tự đặt mục tiêu + tự chấm) ----
+  const personalItems = (personalDoc && personalDoc.items) || [];
+  async function savePersonalTarget(itemId, field, value){
+    const payload = {};
+    payload[`items.${itemId}.${field}`] = field==="actual" ? value : (value===""?"":Number(value));
+    await mergeDotFields("kpiPersonal", thang, payload);
+  }
+  async function addPersonalItem(){
+    if(!newItem.label.trim()) return;
+    const id = "p" + uid();
+    await mergeDotFields("kpiPersonal", thang, { [`items.${id}`]: { label:newItem.label.trim(), diem:Number(newItem.diem)||100, target:"", actual:"" } });
+    setNewItem({ label:"", diem:100 }); setShowAddPersonal(false);
+  }
+  async function removePersonalItem(itemId){
+    await mergeDotFields("kpiPersonal", thang, { [`items.${itemId}`]: firebase.firestore.FieldValue.delete() });
+  }
+  const personalTotalPlan = Object.values(personalItems).reduce((s,it)=>s+(Number(it.diem)||0),0);
+  const personalTotalActual = (() => {
+    let sum=0, has=false;
+    Object.values(personalItems).forEach(it=>{
+      if(it.target && it.actual!=null && it.actual!==""){
+        const pct = Number(it.actual)/Number(it.target);
+        sum += Math.max(0,pct) * (Number(it.diem)||0); has=true;
+      }
+    });
+    return has ? sum : null;
+  })();
+  const personalPct = (personalTotalActual!=null && personalTotalPlan) ? personalTotalActual/personalTotalPlan : null;
+
+  const adminPersonalSection = isAdmin && React.createElement("div", { className:"card" }, [
+    React.createElement("div", { key:"t", className:"cardTitle" }, `KPI cá nhân quản lý — tháng ${thang}`),
+    React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:12 } }, "Chỉ tiêu do bạn tự đặt ra và tự chấm cho chính mình — tự thêm đầu việc/chỉ tiêu riêng."),
+    Object.keys(personalItems).length===0
+      ? React.createElement("div",{key:"e",className:"emptyState"},"Chưa có chỉ tiêu KPI cá nhân nào — bấm \"+ Thêm chỉ tiêu\" để bắt đầu.")
+      : Object.entries(personalItems).map(([id,it]) => React.createElement("div", { key:id, style:{ display:"flex", flexWrap:"wrap", alignItems:"center", gap:10, padding:"9px 0", borderBottom:"1px solid #F0EEE2" } }, [
+          React.createElement("div", { key:"l", style:{ flex:"1 1 220px", fontSize:13 } }, [ it.label, React.createElement("span",{key:"w",style:{color:"var(--inkSoft)",fontSize:11.5}}, ` · tối đa ${it.diem} điểm`) ]),
+          React.createElement("input", { key:"tg", type:"number", defaultValue:it.target!=null?it.target:"", placeholder:"Mục tiêu", onBlur:e=>savePersonalTarget(id,"target",e.target.value), style:{ width:110, padding:"6px 8px", border:"1px solid var(--line)", borderRadius:6, fontSize:12.5 } }),
+          React.createElement("input", { key:"tt", type:"number", defaultValue:it.actual!=null?it.actual:"", placeholder:"Thực tế", onBlur:e=>savePersonalTarget(id,"actual",e.target.value), style:{ width:110, padding:"6px 8px", border:"1px solid var(--line)", borderRadius:6, fontSize:12.5 } }),
+          React.createElement("button", { key:"d", type:"button", className:"btn btnDanger", style:{padding:"6px 9px",fontSize:11.5}, onClick:()=>removePersonalItem(id) }, "Xoá"),
+        ])),
+    Object.keys(personalItems).length>0 && React.createElement("div", { key:"total", style:{ display:"flex", flexWrap:"wrap", gap:14, alignItems:"center", background:"var(--paper)", borderRadius:8, padding:"12px 14px", marginTop:10, marginBottom:14 } }, [
+      React.createElement("div", { key:"a", style:{ fontSize:13 } }, [ React.createElement("b",null,"Tổng điểm kế hoạch: "), `${personalTotalPlan} điểm` ]),
+      React.createElement("div", { key:"b", style:{ fontSize:13 } }, [ React.createElement("b",null,"Tổng điểm thực tế: "), personalTotalActual!=null ? Math.round(personalTotalActual) : "—" ]),
+      personalPct!=null && StatusPill(kpiXepLoai(personalPct), personalPct>=0.85?"good":"warn"),
+    ]),
+    showAddPersonal
+      ? React.createElement("div", { key:"add", style:{ display:"flex", gap:8, marginTop:10 } }, [
+          React.createElement("input", { key:"l", value:newItem.label, onChange:e=>setNewItem({...newItem,label:e.target.value}), placeholder:"Tên chỉ tiêu...", style:{ flex:1, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5 } }),
+          React.createElement("input", { key:"d", type:"number", value:newItem.diem, onChange:e=>setNewItem({...newItem,diem:e.target.value}), style:{ width:100, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5 } }),
+          React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", onClick:addPersonalItem }, "Lưu"),
+          React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:()=>setShowAddPersonal(false) }, "Huỷ"),
+        ])
+      : React.createElement("button", { key:"open", type:"button", className:"btn", style:{ marginTop:10 }, onClick:()=>setShowAddPersonal(true) }, "＋ Thêm chỉ tiêu"),
+  ]);
+
+  return React.createElement(React.Fragment, null, [
+    React.createElement("h2", { key:"t", className:"pagetitle" }, "KPI"),
+    React.createElement("p", { key:"s", className:"pagesub" }, isAdmin ? "Giao chỉ tiêu KPI cho từng nhân viên theo tháng, theo dõi kết quả toàn khu vực." : "Chỉ tiêu KPI được quản lý giao cho bạn — tự cập nhật kết quả thực tế đạt được."),
+    isAdmin ? React.createElement(React.Fragment, null, [ adminAssignSection, adminSummarySection, adminPersonalSection ]) : staffSection,
+  ]);
+}
+
+// ================= MODULE 7: HIỆU SUẤT & TỔNG QUAN CỬA HÀNG =================
 function PerformanceView(){
   const [staff, setStaff] = useState([]);
   const [dailyReports, setDailyReports] = useState([]);
@@ -2269,7 +2617,7 @@ function PerformanceView(){
   ]);
 }
 
-// ================= MODULE 7: ĐÀO TẠO & BUDDY =================
+// ================= MODULE 8: ĐÀO TẠO & BUDDY =================
 const DEFAULT_CHECKLIST = [
   { id:"d1", offset:0, label:"Giới thiệu quy định cửa hàng, an toàn, GPP cơ bản" },
   { id:"d2", offset:0, label:"Giới thiệu buddy kèm cặp, tham quan cửa hàng, vị trí hàng hoá" },
@@ -2500,7 +2848,7 @@ function TrainingView({ isAdmin, myStaff }){
   ]);
 }
 
-// ================= MODULE 8: GHI NHẬN & TẶNG SAO =================
+// ================= MODULE 9: GHI NHẬN & TẶNG SAO =================
 const DEFAULT_REWARDS = [
   { id:"r1", name:"Phiếu quà 50.000đ", stars:10, mota:"" },
   { id:"r2", name:"Phiếu quà 100.000đ", stars:20, mota:"" },
@@ -2889,13 +3237,14 @@ function StaffView(){
 }
 
 // ================= APP SHELL =================
-const STAFF_TABS = ["checklist","photos","customerOrders","weekly","tasks","training","kudos"];
+const STAFF_TABS = ["checklist","photos","customerOrders","weekly","tasks","kpi","training","kudos"];
 const OPS_TABS = [
   { id:"checklist", label:"Checklist ngày" },
   { id:"photos", label:"Báo cáo hình ảnh" },
   { id:"customerOrders", label:"Khách đặt hàng" },
   { id:"weekly", label:"Báo cáo tuần" },
   { id:"tasks", label:"Giao việc" },
+  { id:"kpi", label:"KPI" },
   { id:"performance", label:"Hiệu suất" },
   { id:"training", label:"Đào tạo & Buddy" },
   { id:"kudos", label:"Ghi nhận & Quà" },
@@ -3016,6 +3365,7 @@ function Dashboard({ user, isAdmin, myStaff }){
       activeTab==="customerOrders" && React.createElement(CustomerOrderView, { key:"v", isAdmin, myStaff }),
       activeTab==="weekly" && React.createElement(WeeklyReportView, { key:"v", isAdmin, myStaff }),
       activeTab==="tasks" && React.createElement(TaskAssignView, { key:"v", isAdmin, myStaff }),
+      activeTab==="kpi" && React.createElement(KpiView, { key:"v", isAdmin, myStaff }),
       activeTab==="performance" && isAdmin && React.createElement(PerformanceView, { key:"v" }),
       activeTab==="training" && React.createElement(TrainingView, { key:"v", isAdmin, myStaff }),
       activeTab==="kudos" && React.createElement(KudosView, { key:"v", isAdmin, myStaff }),
