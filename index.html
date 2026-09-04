@@ -526,27 +526,23 @@ function DailyReviewModal({ report, tasks, onSave, onClose }){
   const customTasks = report.customTasks || {};
   const allTasks = [...tasks, ...Object.keys(customTasks).map(id => ({ id, label:customTasks[id], custom:true }))];
 
-  // Thời gian làm việc tổng quát trong ca: lấy giờ sớm nhất và muộn nhất được ghi nhận
-  // trên tất cả các đầu việc (cả giờ bắt đầu lẫn giờ hoàn thành) để biết nhân viên
-  // làm việc trong khoảng nào, không chỉ xem từng mốc lẻ tẻ theo từng việc.
-  const allTimes = [];
-  Object.values(details).forEach(d => { if(d && d.start) allTimes.push(d.start); if(d && d.time) allTimes.push(d.time); });
-  allTimes.sort();
-  const workSpan = allTimes.length>0 ? `${allTimes[0]} – ${allTimes[allTimes.length-1]}` : null;
+  // Tổng thời gian làm việc trong ca: cộng dồn số giờ nhân viên tự ghi ở từng đầu việc.
+  const totalHours = Object.values(details).reduce((sum,d) => sum + (d && d.soGio ? Number(d.soGio)||0 : 0), 0);
+  const workSpan = totalHours>0 ? `${totalHours} giờ` : null;
 
   return React.createElement("div", { className:"modalOverlay", onClick:onClose },
     React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, `${report.staffName} — ${report.ngay}`),
       React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom: workSpan?4:14 } }, `${report.shop} · ${report.role}`),
-      workSpan && React.createElement("div", { key:"ws", style:{ fontSize:12.5, color:"var(--pine)", fontWeight:600, marginBottom:14 } }, `Thời gian làm việc trong ca: ${workSpan}`),
+      workSpan && React.createElement("div", { key:"ws", style:{ fontSize:12.5, color:"var(--pine)", fontWeight:600, marginBottom:14 } }, `Tổng thời gian làm việc trong ca: ${workSpan}`),
       React.createElement("div", { key:"list", style:{ marginBottom:14, maxHeight:260, overflowY:"auto" } }, allTasks.map(t => {
         const d = details[t.id] || {};
-        const timeRange = [d.start, d.time].filter(Boolean).join(" – ");
+        const hoursLabel = (d.soGio!=null && d.soGio!=="") ? `${d.soGio} giờ` : "";
         return React.createElement("div", { key:t.id, style:{ padding:"5px 0", borderBottom:"1px solid #F0EEE2" } }, [
           React.createElement("div", { key:"main", style:{ display:"flex", gap:8, fontSize:12.5, color: done[t.id] ? "var(--ink)" : "var(--clay)" } }, [
             React.createElement("span",{key:"i"}, done[t.id] ? "✓" : "✕"),
             React.createElement("span",{key:"l"}, t.label + (t.custom ? " (tự thêm)" : "")),
-            timeRange && React.createElement("span",{key:"tm",style:{marginLeft:"auto",whiteSpace:"nowrap"}}, StatusPill(timeRange, "neutral")),
+            hoursLabel && React.createElement("span",{key:"tm",style:{marginLeft:"auto",whiteSpace:"nowrap"}}, StatusPill(hoursLabel, "neutral")),
           ]),
           d.ketQua && React.createElement("div", { key:"kq", style:{ fontSize:12, color:"var(--inkSoft)", marginLeft:20, marginTop:2 } }, [ React.createElement("b",{key:"b"},"Kết quả: "), d.ketQua ]),
           ((d.link) || (d.files && d.files.length>0)) && React.createElement("div", { key:"attHead", style:{ fontSize:11, fontWeight:700, color:"var(--inkSoft)", marginLeft:20, marginTop:4 } }, "Kết quả đính kèm:"),
@@ -652,7 +648,6 @@ function DailyChecklistView({ isAdmin, myStaff }){
   const doneCount = Object.keys(effectiveDoneMap).filter(k => effectiveDoneMap[k]).length;
   const pct = selfTasks.length ? Math.round(doneCount/selfTasks.length*100) : 0;
   const taskDetailsMap = selfReport ? (selfReport.taskDetails || {}) : {};
-  const taskTimes = {}; Object.keys(taskDetailsMap).forEach(k => { taskTimes[k] = taskDetailsMap[k] && taskDetailsMap[k].time; });
 
   useEffect(()=>{ setNote(selfReport ? (selfReport.ghiChu || "") : ""); }, [selfReportId, selfReport && selfReport.ghiChu]);
 
@@ -683,7 +678,6 @@ function DailyChecklistView({ isAdmin, myStaff }){
     // gửi cả object doneIds rồi merge sẽ KHÔNG xoá được key vắng mặt,
     // đây là lý do bỏ tick trước đây không có tác dụng.
     payload[`doneIds.${taskId}`] = checked ? true : firebase.firestore.FieldValue.delete();
-    if(checked && !(taskTimes[taskId])) payload[`taskDetails.${taskId}.time`] = nowHM();
     try{
       await mergeDotFields("dailyReports", selfReportId, payload);
     } catch(err){
@@ -693,19 +687,11 @@ function DailyChecklistView({ isAdmin, myStaff }){
       window.alert("Không thể lưu thay đổi (kiểm tra kết nối mạng) — vui lòng thử lại.");
     }
   }
-  async function saveTaskTime(taskId, time){
+  async function saveTaskHours(taskId, soGio){
     if(!selfStaff) return;
     await mergeDotFields("dailyReports", selfReportId, {
       staffId:selfStaff.id, staffName:selfStaff.name, shop:selfStaff.shop, role:selfStaff.role, ngay:today,
-      [`taskDetails.${taskId}.time`]: time,
-      updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
-    });
-  }
-  async function saveTaskStart(taskId, time){
-    if(!selfStaff) return;
-    await mergeDotFields("dailyReports", selfReportId, {
-      staffId:selfStaff.id, staffName:selfStaff.name, shop:selfStaff.shop, role:selfStaff.role, ngay:today,
-      [`taskDetails.${taskId}.start`]: time,
+      [`taskDetails.${taskId}.soGio`]: soGio===""? "" : Number(soGio),
       updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
     });
   }
@@ -828,13 +814,9 @@ function DailyChecklistView({ isAdmin, myStaff }){
             ]),
             React.createElement("div", { key:"extra", className:"taskExtra" }, [
               React.createElement("div", { key:"time", className:"taskTimeRow" }, [
-                React.createElement("div", { key:"start", className:"taskTimeItem" }, [
-                  React.createElement("span", { key:"l1", className:"taskTimeLbl" }, "Giờ bắt đầu"),
-                  React.createElement("input", { key:"i1", type:"time", defaultValue:detail.start || "", onChange:e=>saveTaskStart(t.id, e.target.value) }),
-                ]),
-                React.createElement("div", { key:"end", className:"taskTimeItem" }, [
-                  React.createElement("span", { key:"l2", className:"taskTimeLbl" }, "Giờ hoàn thành"),
-                  React.createElement("input", { key:"i2", type:"time", defaultValue:detail.time || "", onChange:e=>saveTaskTime(t.id, e.target.value) }),
+                React.createElement("div", { key:"hours", className:"taskTimeItem" }, [
+                  React.createElement("span", { key:"l1", className:"taskTimeLbl" }, "Tổng thời gian làm (giờ)"),
+                  React.createElement("input", { key:"i1", type:"number", min:0, step:0.25, placeholder:"VD: 0.5", defaultValue: detail.soGio!=null ? detail.soGio : "", onBlur:e=>saveTaskHours(t.id, e.target.value), style:{ width:90 } }),
                 ]),
               ]),
               React.createElement("textarea", { key:"kq", className:"taskResultInput", rows:2, defaultValue:detail.ketQua || "", onBlur:e=>saveTaskResult(t.id, e.target.value), placeholder:"Báo cáo kết quả (nếu có)..." }),
@@ -1110,12 +1092,26 @@ function CustomerOrderView({ isAdmin, myStaff }){
   const [error, setError] = useState(null);
   const [search, setSearch] = useState("");
   const [showHistoryId, setShowHistoryId] = useState(null);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   useEffect(()=>{ const u = subscribeCol("customerOrders", setOrders); return u; }, []);
 
   const today = todayISO();
   function isOverdue(o){ return o.trangThai==="Đang chờ" && !!o.ngayHen && o.ngayHen < today; }
+  function inDateRange(o){
+    const d = o.ngayTao || "";
+    if(dateFrom && d < dateFrom) return false;
+    if(dateTo && d > dateTo) return false;
+    return true;
+  }
   function isDueToday(o){ return o.trangThai==="Đang chờ" && !!o.ngayHen && o.ngayHen===today; }
+
+  const dateRangeRow = React.createElement("div", { className:"btnRow", style:{ marginBottom:14, alignItems:"flex-end" } }, [
+    React.createElement("div", { key:"f", className:"field", style:{ maxWidth:160 } }, [ React.createElement("label",{key:"l"},"Từ ngày"), React.createElement("input",{key:"i",type:"date",value:dateFrom,onChange:e=>setDateFrom(e.target.value)}) ]),
+    React.createElement("div", { key:"t", className:"field", style:{ maxWidth:160 } }, [ React.createElement("label",{key:"l"},"Đến ngày"), React.createElement("input",{key:"i",type:"date",value:dateTo,onChange:e=>setDateTo(e.target.value)}) ]),
+    (dateFrom || dateTo) && React.createElement("button", { key:"clear", type:"button", className:"btn btnGhost", onClick:()=>{ setDateFrom(""); setDateTo(""); } }, "Xem tất cả"),
+  ]);
 
   function openAdd(){
     setEditingId(null);
@@ -1183,7 +1179,7 @@ function CustomerOrderView({ isAdmin, myStaff }){
   }
   async function removeOrder(id){ if(window.confirm("Xoá thông tin khách đặt hàng này?")) await deleteDoc("customerOrders", id); }
 
-  const myOrders = myStaff ? orders.filter(o => o.shop===myStaff.shop) : [];
+  const myOrders = myStaff ? orders.filter(o => o.shop===myStaff.shop && inDateRange(o)) : [];
   const searchLc = search.trim().toLowerCase();
   const matchSearch = o => !searchLc || o.customerName.toLowerCase().includes(searchLc) || o.productName.toLowerCase().includes(searchLc) || (o.customerPhone||"").includes(searchLc);
   const myPending = [...myOrders.filter(o=>o.trangThai==="Đang chờ" && matchSearch(o))].sort((a,b)=> a.ngayHen<b.ngayHen?-1:1);
@@ -1253,6 +1249,7 @@ function CustomerOrderView({ isAdmin, myStaff }){
       React.createElement("button", { key:"add", className:"btn btnPrimary", onClick:openAdd }, "＋ Ghi khách đặt hàng"),
       React.createElement("input", { key:"search", type:"text", value:search, onChange:e=>setSearch(e.target.value), placeholder:"Tìm theo tên khách, SĐT, hoặc tên hàng...", style:{ flex:"1 1 240px", maxWidth:320, padding:"9px 12px", border:"1px solid var(--line)", borderRadius:8, fontSize:13 } }),
     ]),
+    dateRangeRow,
     myDupGroups.length>0 && React.createElement("div", { key:"dup", className:"card", style:{ marginBottom:20 } }, [
       React.createElement("div", { key:"t", className:"cardTitle" }, "Mặt hàng nhiều khách cùng hỏi (tại cửa hàng bạn)"),
       React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8 } }, myDupGroups.map((g,i) =>
@@ -1271,7 +1268,7 @@ function CustomerOrderView({ isAdmin, myStaff }){
   ]);
 
   const shopsInFilter = adminShop==="Tất cả" ? DEFAULT_SHOPS : [adminShop];
-  let filteredOrders = orders.filter(o => shopsInFilter.includes(o.shop));
+  let filteredOrders = orders.filter(o => shopsInFilter.includes(o.shop) && inDateRange(o));
   if(adminStatus==="Đang chờ") filteredOrders = filteredOrders.filter(o=>o.trangThai==="Đang chờ");
   else if(adminStatus==="Quá hạn") filteredOrders = filteredOrders.filter(isOverdue);
   else if(adminStatus!=="Tất cả") filteredOrders = filteredOrders.filter(o=>o.trangThai===adminStatus);
@@ -1297,7 +1294,7 @@ function CustomerOrderView({ isAdmin, myStaff }){
   // khách/nhiều cửa hàng cùng hỏi (đáng cân nhắc nhập bán thường xuyên hơn cả).
   const moTuGroups = (() => {
     const map = {};
-    orders.filter(o=>o.deXuatMoTu).forEach(o => {
+    orders.filter(o=>o.deXuatMoTu && inDateRange(o)).forEach(o => {
       const key = o.productName.trim().toLowerCase();
       if(!map[key]) map[key] = { productName:o.productName, count:0, shops:new Set() };
       map[key].count++; map[key].shops.add(o.shop);
@@ -1318,7 +1315,7 @@ function CustomerOrderView({ isAdmin, myStaff }){
   // đề xuất mở tủ hay không) — gộp theo tên để biết mặt hàng nào bị hỏi hụt nhiều nhất.
   const allProductGroups = (() => {
     const map = {};
-    orders.forEach(o => {
+    orders.filter(inDateRange).forEach(o => {
       const key = o.productName.trim().toLowerCase();
       if(!map[key]) map[key] = { productName:o.productName, count:0, shops:new Set(), hetTon:0, khongCoHeThong:0 };
       map[key].count++; map[key].shops.add(o.shop);
@@ -1423,7 +1420,7 @@ function CustomerOrderView({ isAdmin, myStaff }){
   return React.createElement(React.Fragment, null, [
     React.createElement("h2", { key:"t", className:"pagetitle" }, "Khách đặt hàng"),
     React.createElement("p", { key:"s", className:"pagesub" }, isAdmin ? "Theo dõi khách đặt hàng còn thiếu của tất cả cửa hàng." : "Ghi lại khi khách hỏi hàng không có — cả cửa hàng đều thấy và cập nhật được, không riêng người ghi."),
-    isAdmin && adminMetrics, statsCard, moTuCard, isAdmin && adminFilterRow, isAdmin && adminTable,
+    isAdmin && adminMetrics, isAdmin && dateRangeRow, statsCard, moTuCard, isAdmin && adminFilterRow, isAdmin && adminTable,
     staffSection, formModal,
   ]);
 }
