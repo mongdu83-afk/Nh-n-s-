@@ -11,7 +11,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-storage-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <style>
@@ -361,6 +361,43 @@ async function mergeDotFields(collectionName, docId, dotFields, createExtras){
   const ref = db.collection(collectionName).doc(docId);
   try{ await ref.update(dotFields); }
   catch(err){ await ref.set({ ...(createExtras||{}), ...dotFields }, { merge:true }); }
+}
+// Định dạng 1 sheet Excel cho dễ đọc: tự giãn độ rộng cột theo nội dung dài nhất, tô đậm +
+// đổ màu dòng tiêu đề, kẻ viền toàn bảng, căn giữa tiêu đề, số căn phải/chữ căn trái, so le
+// màu dòng cho dễ dò — dùng chung cho MỌI file Excel xuất ra.
+function styleExportSheet(ws, rows){
+  if(!rows || rows.length===0) return;
+  const headers = Object.keys(rows[0]);
+  ws["!cols"] = headers.map(h => {
+    let maxLen = String(h).length;
+    rows.forEach(r => { const v = r[h]; if(v!=null){ const len = String(v).length; if(len>maxLen) maxLen = len; } });
+    return { wch: Math.max(10, Math.min(48, maxLen + 3)) };
+  });
+  ws["!rows"] = [{ hpt: 26 }];
+  const thinBorder = { style:"thin", color:{ rgb:"D9D6C8" } };
+  const headerStyle = {
+    font: { bold:true, sz:11, color:{ rgb:"FFFFFF" } },
+    fill: { fgColor:{ rgb:"1F6E52" } },
+    alignment: { horizontal:"center", vertical:"center", wrapText:true },
+    border: { top:thinBorder, bottom:thinBorder, left:thinBorder, right:thinBorder },
+  };
+  const range = XLSX.utils.decode_range(ws["!ref"]);
+  for(let C = range.s.c; C <= range.e.c; C++){
+    const headAddr = XLSX.utils.encode_cell({ r:0, c:C });
+    if(ws[headAddr]) ws[headAddr].s = headerStyle;
+    for(let R = 1; R <= range.e.r; R++){
+      const addr = XLSX.utils.encode_cell({ r:R, c:C });
+      const cell = ws[addr];
+      if(!cell) continue;
+      const isNum = typeof cell.v === "number";
+      cell.s = {
+        font: { sz:11 },
+        alignment: { vertical:"center", horizontal: isNum ? "right" : "left", wrapText:false },
+        border: { top:thinBorder, bottom:thinBorder, left:thinBorder, right:thinBorder },
+        fill: R % 2 === 0 ? { fgColor:{ rgb:"F7F5EE" } } : undefined,
+      };
+    }
+  }
 }
 function subscribeConfigDoc(docId, cb){
   return db.collection("opsConfig").doc(docId).onSnapshot(doc => cb(doc.exists ? doc.data() : {}));
@@ -1395,6 +1432,7 @@ function CustomerOrderView({ isAdmin, myStaff }){
       "Cách báo khi có hàng":o.cachBao||"", "Ghi chú":o.ghiChu||"", "Người ghi":o.nguoiTao||"", "Ngày ghi":o.ngayTao||"",
     }));
     const ws = XLSX.utils.json_to_sheet(data);
+    styleExportSheet(ws, data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Khách đặt hàng");
     XLSX.writeFile(wb, filename);
@@ -2396,20 +2434,30 @@ function kpiCtahId(staffId, thang){ return staffId + "_" + thang; }
 // tác phong/thái độ lần thứ 3 trở lên, nghĩa là tháng đó KHÔNG được xét KPI (không tính %).
 function kpiCtahCalc(doc){
   if(!doc) return { adj:0, khongXet:false };
-  let adj = 0;
+  let adj = 0, khongXet = false;
+  // Đào tạo
   if(doc.baiKiemTra!=null && doc.baiKiemTra!==""){
     const d = Number(doc.baiKiemTra);
     if(d < 60) adj -= 50; else if(d >= 99) adj += 50;
   }
   adj -= 20 * (Number(doc.hopNhomThieu)||0);
   if(doc.rolePlay==="Không đạt") adj -= 50;
-  if(doc.tuHocLMS==="Không đạt") adj -= 50;
-  const dp = Number(doc.dongPhucLan)||0;
-  if(dp===1) adj -= 5; else if(dp===2) adj -= 10;
-  const td = Number(doc.thaiDoLan)||0;
-  if(td===1) adj -= 5; else if(td===2) adj -= 10;
-  adj -= (Number(doc.chuyenCanTru)||0) + (Number(doc.bangGiaoCa)||0) + (Number(doc.veSinh)||0) + (Number(doc.kiemKe)||0) + (Number(doc.congViecKhac)||0);
-  const khongXet = dp>=3 || td>=3;
+  if(doc.tuHocLoTrinh==="Không đạt") adj -= 50;
+  adj -= 20 * (Number(doc.coachingThieu)||0); // chỉ áp dụng CHT/Phụ trách cửa hàng
+  // Tác phong & vận hành — cùng quy tắc "số lần vi phạm": lần 1: -5, lần 2: -10, lần 3 trở lên: không xét KPI
+  ["dongPhucLan","thaiDoLan","bangGiaoCaLan","veSinhLan","kiemKeLan","congViecKhacLan"].forEach(f => {
+    const n = Number(doc[f])||0;
+    if(n===1) adj -= 5;
+    else if(n===2) adj -= 10;
+    else if(n>=3) khongXet = true;
+  });
+  // Chuyên cần — riêng: lần 1 (nghỉ đúng phép/có xin phép) không trừ, lần 2: -5, lần 3: -10, lần 4 trở lên: không xét KPI
+  const cc = Number(doc.chuyenCanLan)||0;
+  if(cc===2) adj -= 5;
+  else if(cc===3) adj -= 10;
+  else if(cc>=4) khongXet = true;
+  // Phát hiện kiểm kê không trung thực: không tính điểm KPI phần này (xử lý lương tách riêng, ngoài KPI)
+  if(doc.kiemKeGianLan) khongXet = true;
   return { adj, khongXet };
 }
 // CTAH riêng cho Quản lý địa bàn (QLKV) — công thức khác với NVBH/CHT theo đúng file mẫu:
@@ -2581,21 +2629,20 @@ function KpiView({ isAdmin, myStaff }){
   const [showTplEditor, setShowTplEditor] = useState(false);
   const [ctahDocs, setCtahDocs] = useState({});
   const [ctahStaffId, setCtahStaffId] = useState("");
-  const [revenueYear, setRevenueYear] = useState(new Date().getFullYear());
-  const [revenuePlans, setRevenuePlans] = useState({});
   const [uploadingKpiEvidence, setUploadingKpiEvidence] = useState(false);
   const [chtStaffId, setChtStaffId] = useState("");
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState(null);
   const [chtNhanXet, setChtNhanXet] = useState("");
+  const [importingQlkv, setImportingQlkv] = useState(false);
+  const [importQlkvMsg, setImportQlkvMsg] = useState(null);
 
   useEffect(()=>{
     const u1 = subscribeCol("staff", setStaff);
     const u2 = subscribeCol("kpiAssignments", rows => { const map={}; rows.forEach(r=>map[r.id]=r); setAssignments(map); });
     const u3 = subscribeConfigDoc("kpiTemplates", d => setTemplates(d && d.NVBH ? d : DEFAULT_KPI_TEMPLATES));
     const u4 = subscribeCol("kpiCTAH", rows => { const map={}; rows.forEach(r=>map[r.id]=r); setCtahDocs(map); });
-    const u5 = subscribeCol("quarterRevenuePlan", rows => { const map={}; rows.forEach(r=>map[r.id]=r); setRevenuePlans(map); });
-    return ()=>{ u1(); u2(); u3(); u4(); u5(); };
+    return ()=>{ u1(); u2(); u3(); u4(); };
   }, []);
   async function saveTemplates(next){ await saveConfigDoc("kpiTemplates", next); setShowTplEditor(false); }
 
@@ -2696,7 +2743,7 @@ function KpiView({ isAdmin, myStaff }){
         background: myCtah.khongXet ? "var(--claySoft)" : (myCtah.adj>=0 ? "var(--pineSoft)" : "var(--claySoft)"),
       } }, [
       React.createElement("div",{key:"t",style:{fontWeight:700,marginBottom:2}}, "Tiêu chí ảnh hưởng (đào tạo, tác phong...)"),
-      React.createElement("div",{key:"a"}, myCtah.khongXet ? "Vi phạm tác phong/thái độ từ lần 3 — tháng này KHÔNG được xét KPI." : `Điểm cộng/trừ vào KPI: ${myCtah.adj>0?"+":""}${myCtah.adj} điểm`),
+      React.createElement("div",{key:"a"}, myCtah.khongXet ? "Vi phạm nghiêm trọng ở 1 hoặc nhiều tiêu chí ảnh hưởng — tháng này KHÔNG được xét KPI." : `Điểm cộng/trừ vào KPI: ${myCtah.adj>0?"+":""}${myCtah.adj} điểm`),
       myCtahDoc.ketLuanChung && React.createElement("div",{key:"n",style:{color:"var(--inkSoft)",marginTop:2}}, myCtahDoc.ketLuanChung),
     ]),
   ]);
@@ -2780,6 +2827,7 @@ function KpiView({ isAdmin, myStaff }){
         return row;
       });
       const ws = XLSX.utils.json_to_sheet(rows);
+      styleExportSheet(ws, rows);
       XLSX.utils.book_append_sheet(wb, ws, roleKey);
     });
     XLSX.writeFile(wb, `KPI_${thang}.xlsx`);
@@ -2808,14 +2856,16 @@ function KpiView({ isAdmin, myStaff }){
         row["Đào tạo — Bài kiểm tra kiến thức"] = c.baiKiemTra!=null ? c.baiKiemTra : "";
         row["Đào tạo — Họp nhóm (số buổi thiếu)"] = c.hopNhomThieu!=null ? c.hopNhomThieu : "";
         row["Đào tạo — Role play"] = c.rolePlay || "";
-        row["Đào tạo — Tự học LMS"] = c.tuHocLMS || "";
+        row["Đào tạo — Tự học lộ trình"] = c.tuHocLoTrinh || "";
+        row["Đào tạo — Coaching thiếu (CHT, số người)"] = c.coachingThieu!=null ? c.coachingThieu : "";
         row["Tác phong — Đồng phục, bề ngoài (lần)"] = c.dongPhucLan!=null ? c.dongPhucLan : "";
         row["Tác phong — Thái độ làm việc (lần)"] = c.thaiDoLan!=null ? c.thaiDoLan : "";
-        row["Chuyên cần (điểm trừ)"] = c.chuyenCanTru!=null ? c.chuyenCanTru : "";
-        row["Báo cáo bàn giao ca (điểm trừ)"] = c.bangGiaoCa!=null ? c.bangGiaoCa : "";
-        row["Vệ sinh nhà thuốc (điểm trừ)"] = c.veSinh!=null ? c.veSinh : "";
-        row["Kiểm kê hàng hoá (điểm trừ)"] = c.kiemKe!=null ? c.kiemKe : "";
-        row["Công việc khác (điểm trừ)"] = c.congViecKhac!=null ? c.congViecKhac : "";
+        row["Tác phong — Chuyên cần (lần)"] = c.chuyenCanLan!=null ? c.chuyenCanLan : "";
+        row["Vận hành — Báo cáo bàn giao ca (lần)"] = c.bangGiaoCaLan!=null ? c.bangGiaoCaLan : "";
+        row["Vận hành — Vệ sinh nhà thuốc (lần)"] = c.veSinhLan!=null ? c.veSinhLan : "";
+        row["Vận hành — Kiểm kê hàng hoá (lần)"] = c.kiemKeLan!=null ? c.kiemKeLan : "";
+        row["Vận hành — Kiểm kê không trung thực"] = c.kiemKeGianLan ? "Có" : "";
+        row["Vận hành — Ghi chép sổ sách/công việc khác (lần)"] = c.congViecKhacLan!=null ? c.congViecKhacLan : "";
         row["Kết luận chung (CTAH)"] = c.ketLuanChung || "";
         row["Tổng KPI bị trừ/cộng (CTAH)"] = ctah.adj;
         const totalPlan = kpiTotalPlan(groups);
@@ -2831,6 +2881,7 @@ function KpiView({ isAdmin, myStaff }){
         return row;
       });
       const ws = XLSX.utils.json_to_sheet(rows);
+      styleExportSheet(ws, rows);
       XLSX.utils.book_append_sheet(wb, ws, "Tổng hợp "+roleKey);
     });
     XLSX.writeFile(wb, `Tong_hop_KPI_HR_${thang}.xlsx`);
@@ -2895,28 +2946,96 @@ function KpiView({ isAdmin, myStaff }){
     showTplEditor && React.createElement(KpiTemplateEditor, { templates, onSave:saveTemplates, onClose:()=>setShowTplEditor(false) }),
   ]);
 
+  // ---- Tiêu chí ảnh hưởng (CTAH): đào tạo, tác phong, chuyên cần... — chấm ngay trong
+  // dòng của từng nhân viên ở bảng tổng hợp, để thấy trực tiếp kết quả cuối cùng bị ảnh hưởng thế nào.
+  const ctahStaff = staff.find(s=>s.id===ctahStaffId);
+  const ctahDoc = ctahStaff ? (ctahDocs[kpiCtahId(ctahStaff.id, thang)] || {}) : {};
+  async function saveCtahField(field, value){
+    if(!ctahStaff) return;
+    const id = kpiCtahId(ctahStaff.id, thang);
+    await mergeDotFields("kpiCTAH", id, { staffId:ctahStaff.id, staffName:ctahStaff.name, shop:ctahStaff.shop, role:ctahStaff.role, thang, [field]:value });
+  }
+  const ctahPreview = kpiCtahCalc(ctahDoc);
+  const lanSelect = (field, label, isCTHint) => React.createElement("div", { key:field }, [
+    React.createElement("div",{style:{fontSize:11,color:"var(--inkSoft)"}}, label),
+    React.createElement("select",{defaultValue:ctahDoc[field]||0,onChange:e=>saveCtahField(field,Number(e.target.value)),style:{padding:"6px 8px",border:"1px solid var(--line)",borderRadius:6}},
+      [0,1,2,3].map(n=>React.createElement("option",{key:n,value:n}, n===0?"Không vi phạm":`Lần ${n}${n===3?" trở lên — không xét KPI":""}`))),
+  ]);
+  const ctahInlineForm = ctahStaff && React.createElement(React.Fragment, null, [
+    React.createElement("div", { key:"g1", style:{ fontWeight:700, fontSize:13, marginBottom:6 } }, "Đào tạo"),
+    React.createElement("div", { key:"g1r", className:"btnRow", style:{ marginBottom:14, alignItems:"flex-end" } }, [
+      React.createElement("div", { key:"a" }, [ React.createElement("div",{style:{fontSize:11,color:"var(--inkSoft)"}},"Điểm TB bài kiểm tra (<60: -50 · 60-98: không ảnh hưởng · ≥99: +50)"), React.createElement("input",{type:"number",defaultValue:ctahDoc.baiKiemTra!=null?ctahDoc.baiKiemTra:"",onBlur:e=>saveCtahField("baiKiemTra",e.target.value===""?"":Number(e.target.value)),style:{width:130,padding:"6px 8px",border:"1px solid var(--line)",borderRadius:6}}) ]),
+      React.createElement("div", { key:"b" }, [ React.createElement("div",{style:{fontSize:11,color:"var(--inkSoft)"}},"Số buổi họp nhóm thiếu (-20/buổi)"), React.createElement("input",{type:"number",defaultValue:ctahDoc.hopNhomThieu!=null?ctahDoc.hopNhomThieu:"",onBlur:e=>saveCtahField("hopNhomThieu",e.target.value===""?"":Number(e.target.value)),style:{width:130,padding:"6px 8px",border:"1px solid var(--line)",borderRadius:6}}) ]),
+      React.createElement("div", { key:"c" }, [ React.createElement("div",{style:{fontSize:11,color:"var(--inkSoft)"}},"Role play (không đạt: -50)"), React.createElement("select",{defaultValue:ctahDoc.rolePlay||"",onChange:e=>saveCtahField("rolePlay",e.target.value),style:{padding:"6px 8px",border:"1px solid var(--line)",borderRadius:6}}, ["","Đạt","Không đạt"].map(o=>React.createElement("option",{key:o,value:o},o||"—"))) ]),
+      React.createElement("div", { key:"d" }, [ React.createElement("div",{style:{fontSize:11,color:"var(--inkSoft)"}},"Tự học lộ trình 3/6/9/12 tháng (không đạt: -50)"), React.createElement("select",{defaultValue:ctahDoc.tuHocLoTrinh||"",onChange:e=>saveCtahField("tuHocLoTrinh",e.target.value),style:{padding:"6px 8px",border:"1px solid var(--line)",borderRadius:6}}, ["","Đạt","Không đạt"].map(o=>React.createElement("option",{key:o,value:o},o||"—"))) ]),
+      ctahStaff.role==="Cửa hàng trưởng" && React.createElement("div", { key:"e" }, [ React.createElement("div",{style:{fontSize:11,color:"var(--inkSoft)"}},"Coaching thiếu — số nhân viên chưa được coach (-20/người, chỉ áp dụng CHT)"), React.createElement("input",{type:"number",defaultValue:ctahDoc.coachingThieu!=null?ctahDoc.coachingThieu:"",onBlur:e=>saveCtahField("coachingThieu",e.target.value===""?"":Number(e.target.value)),style:{width:130,padding:"6px 8px",border:"1px solid var(--line)",borderRadius:6}}) ]),
+    ]),
+    React.createElement("div", { key:"g2", style:{ fontWeight:700, fontSize:13, marginBottom:6 } }, "Tác phong làm việc"),
+    React.createElement("div", { key:"g2r", className:"btnRow", style:{ marginBottom:14, alignItems:"flex-end" } }, [
+      lanSelect("dongPhucLan", "Đồng phục, bề ngoài — số lần vi phạm"),
+      lanSelect("thaiDoLan", "Thái độ làm việc — số lần vi phạm"),
+      React.createElement("div", { key:"cc" }, [
+        React.createElement("div",{style:{fontSize:11,color:"var(--inkSoft)"}}, "Chuyên cần — số lần nghỉ không phép"),
+        React.createElement("select",{defaultValue:ctahDoc.chuyenCanLan||0,onChange:e=>saveCtahField("chuyenCanLan",Number(e.target.value)),style:{padding:"6px 8px",border:"1px solid var(--line)",borderRadius:6}}, [
+          [0,"Không nghỉ"], [1,"Lần 1 (có phép) — không trừ"], [2,"Lần 2 — trừ 5"], [3,"Lần 3 — trừ 10"], [4,"Lần 4 trở lên — không xét KPI"],
+        ].map(([n,l])=>React.createElement("option",{key:n,value:n},l))),
+      ]),
+    ]),
+    React.createElement("div", { key:"g3", style:{ fontWeight:700, fontSize:13, marginBottom:6 } }, "Vận hành cửa hàng"),
+    React.createElement("div", { key:"g3r", className:"btnRow", style:{ marginBottom:10, alignItems:"flex-end" } }, [
+      lanSelect("bangGiaoCaLan", "Báo cáo bàn giao ca — số lần vi phạm"),
+      lanSelect("veSinhLan", "Vệ sinh nhà thuốc — số lần vi phạm"),
+      lanSelect("kiemKeLan", "Kiểm kê hàng hoá — số lần vi phạm"),
+      lanSelect("congViecKhacLan", "Ghi chép sổ sách / công việc khác — số lần vi phạm"),
+    ]),
+    React.createElement("label", { key:"gian", style:{ display:"flex", alignItems:"center", gap:8, fontSize:12.5, marginBottom:14, cursor:"pointer", color:"var(--clay)" } }, [
+      React.createElement("input", { type:"checkbox", checked:!!ctahDoc.kiemKeGianLan, onChange:e=>saveCtahField("kiemKeGianLan", e.target.checked) }),
+      "Phát hiện kiểm kê không trung thực — không tính điểm KPI phần này (xử lý trừ lương ngoài KPI, tự xử lý riêng)",
+    ]),
+    React.createElement("div", { key:"note", className:"field", style:{ marginBottom:12 } }, [
+      React.createElement("label",{key:"l"},"Kết luận chung"),
+      React.createElement("textarea",{key:"i", rows:2, defaultValue:ctahDoc.ketLuanChung||"", onBlur:e=>saveCtahField("ketLuanChung",e.target.value)}),
+    ]),
+    React.createElement("div", { key:"total", style:{ background:"var(--paper)", borderRadius:8, padding:"10px 14px", fontSize:13 } }, [
+      React.createElement("b",null,"Tổng điểm CTAH cộng/trừ vào KPI: "), `${ctahPreview.adj>0?"+":""}${ctahPreview.adj} điểm`,
+      ctahPreview.khongXet && StatusPill("Không xét KPI tháng này","warn"),
+    ]),
+  ]);
+
   const adminSummarySection = isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
     React.createElement("div", { key:"th", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:12 } }, [
       React.createElement("div", { key:"t", className:"cardTitle", style:{ marginBottom:0 } }, `Tổng hợp KPI toàn bộ nhân sự — tháng ${thang}`),
       React.createElement("button", { key:"exp", type:"button", className:"btn btnPrimary", onClick:exportKpiFullSummary }, "Tải tổng hợp đầy đủ (gửi HR tính thưởng)"),
     ]),
+    React.createElement("div", { key:"hint", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:12 } }, "Bấm \"Chấm CTAH\" ở đúng dòng nhân viên để chấm tiêu chí ảnh hưởng (đào tạo, tác phong, chuyên cần...) — điểm này tự cộng/trừ ngay vào kết quả KPI cuối cùng của người đó."),
     summaryRows.length===0
       ? React.createElement("div",{key:"e",className:"emptyState"},"Chưa có nhân sự.")
       : React.createElement("div", { key:"tb", className:"tableWrap", style:{ marginBottom:0 } }, React.createElement("table",{className:"data"}, [
           React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Nhân viên","Cửa hàng","Vai trò","Điểm KH","Điểm gốc + CTAH","% đạt","Xếp loại","Duyệt",""].map((h,i)=>React.createElement("th",{key:i},h)))),
-          React.createElement("tbody",{key:"b"}, summaryRows.map(r => React.createElement("tr",{key:r.staff.id}, [
-            React.createElement("td",{key:"n"}, r.staff.name),
-            React.createElement("td",{key:"s"}, r.staff.shop),
-            React.createElement("td",{key:"r"}, r.staff.role),
-            React.createElement("td",{key:"p"}, r.totalPlan),
-            React.createElement("td",{key:"a"}, r.totalActual!=null ? `${Math.round(r.totalActual)}${r.ctahAdj?` (CTAH ${r.ctahAdj>0?"+":""}${r.ctahAdj})`:""}` : "—"),
-            React.createElement("td",{key:"pc"}, r.khongXet ? "—" : (r.pct!=null ? `${Math.round(r.pct*100)}%` : "—")),
-            React.createElement("td",{key:"x"}, r.khongXet ? StatusPill("Không xét KPI","warn") : (r.hasTargets ? StatusPill(kpiXepLoai(r.pct), r.pct!=null && r.pct>=0.85 ? "good" : "warn") : StatusPill("Chưa giao KPI","neutral"))),
-            React.createElement("td",{key:"dv"}, r.trangThaiDuyet ? StatusPill(r.trangThaiDuyet, r.trangThaiDuyet==="QLKV đã duyệt"?"good":"neutral") : StatusPill("Chưa duyệt","warn")),
-            React.createElement("td",{key:"btn"}, r.totalActual!=null && r.trangThaiDuyet!=="QLKV đã duyệt"
-              ? React.createElement("button",{className:"btn",style:{padding:"5px 10px",fontSize:11.5},onClick:()=>qlkvDuyet(r.staff)}, "Duyệt cuối")
-              : "—"),
-          ]))),
+          React.createElement("tbody",{key:"b"}, summaryRows.flatMap(r => {
+            const isOpen = ctahStaffId===r.staff.id;
+            const rowEls = [
+              React.createElement("tr",{key:r.staff.id}, [
+                React.createElement("td",{key:"n"}, r.staff.name),
+                React.createElement("td",{key:"s"}, r.staff.shop),
+                React.createElement("td",{key:"r"}, r.staff.role),
+                React.createElement("td",{key:"p"}, r.totalPlan),
+                React.createElement("td",{key:"a"}, r.totalActual!=null ? `${Math.round(r.totalActual)}${r.ctahAdj?` (CTAH ${r.ctahAdj>0?"+":""}${r.ctahAdj})`:""}` : "—"),
+                React.createElement("td",{key:"pc"}, r.khongXet ? "—" : (r.pct!=null ? `${Math.round(r.pct*100)}%` : "—")),
+                React.createElement("td",{key:"x"}, r.khongXet ? StatusPill("Không xét KPI","warn") : (r.hasTargets ? StatusPill(kpiXepLoai(r.pct), r.pct!=null && r.pct>=0.85 ? "good" : "warn") : StatusPill("Chưa giao KPI","neutral"))),
+                React.createElement("td",{key:"dv"}, r.trangThaiDuyet ? StatusPill(r.trangThaiDuyet, r.trangThaiDuyet==="QLKV đã duyệt"?"good":"neutral") : StatusPill("Chưa duyệt","warn")),
+                React.createElement("td",{key:"btn", style:{whiteSpace:"nowrap"}}, [
+                  React.createElement("button",{key:"ctah", className:"btn"+(isOpen?" btnPrimary":" btnGhost"),style:{padding:"5px 10px",fontSize:11.5,marginRight:6},onClick:()=>setCtahStaffId(isOpen?"":r.staff.id)}, isOpen?"Đóng CTAH":"Chấm CTAH"),
+                  (r.totalActual!=null && r.trangThaiDuyet!=="QLKV đã duyệt") &&
+                    React.createElement("button",{key:"duyet",className:"btn",style:{padding:"5px 10px",fontSize:11.5},onClick:()=>qlkvDuyet(r.staff)}, "Duyệt cuối"),
+                ]),
+              ]),
+            ];
+            if(isOpen){
+              rowEls.push(React.createElement("tr",{key:r.staff.id+"_ctah"}, React.createElement("td",{colSpan:9, style:{background:"var(--paper)",padding:"14px 16px"}}, ctahInlineForm)));
+            }
+            return rowEls;
+          })),
         ])),
   ]);
 
@@ -2940,54 +3059,62 @@ function KpiView({ isAdmin, myStaff }){
     await mergeDotFields("kpiCTAH", kpiCtahId(QLKV_ID, thang), { staffId:QLKV_ID, staffName:"Quản lý địa bàn", role:"QLKV", thang, [field]:value });
   }
 
-  // ---- Tiêu chí ảnh hưởng (CTAH): đào tạo, tác phong, chuyên cần... cộng/trừ vào KPI ----
-  const ctahStaff = staff.find(s=>s.id===ctahStaffId);
-  const ctahDoc = ctahStaff ? (ctahDocs[kpiCtahId(ctahStaff.id, thang)] || {}) : {};
-  async function saveCtahField(field, value){
-    if(!ctahStaff) return;
-    const id = kpiCtahId(ctahStaff.id, thang);
-    await mergeDotFields("kpiCTAH", id, { staffId:ctahStaff.id, staffName:ctahStaff.name, shop:ctahStaff.shop, role:ctahStaff.role, thang, [field]:value });
+
+  function exportQlkvExcel(){
+    const groups = templates.QLKV;
+    const row = { "Tên":"Quản lý địa bàn", "Tháng":thang };
+    groups.forEach(g => g.items.forEach(it => {
+      row[`${it.label} - Mục tiêu`] = qlkvTargets[it.id]!=null ? qlkvTargets[it.id] : "";
+      row[`${it.label} - Thực tế`] = qlkvActuals[it.id]!=null ? qlkvActuals[it.id] : "";
+    }));
+    const totalPlan = kpiTotalPlan(groups);
+    const totalActual = kpiTotalActual(groups, qlkvTargets, qlkvActuals);
+    row["Tổng điểm KH"] = totalPlan;
+    row["Tổng điểm thực tế"] = totalActual!=null ? Math.round(totalActual) : "";
+    row["% KPI đạt"] = totalActual!=null ? `${Math.round(totalActual/totalPlan*100)}%` : "";
+    const ws = XLSX.utils.json_to_sheet([row]);
+    styleExportSheet(ws, [row]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "QLKV");
+    XLSX.writeFile(wb, `KPI_QLKV_${thang}.xlsx`);
   }
-  const ctahPreview = kpiCtahCalc(ctahDoc);
-  const adminCtahSection = isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
-    React.createElement("div", { key:"t", className:"cardTitle" }, "Tiêu chí ảnh hưởng (đào tạo, tác phong, chuyên cần...)"),
-    React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:12 } }, "Các tiêu chí này cộng/trừ thêm vào tổng điểm KPI chính — không thay thế bộ chỉ tiêu KPI ở trên."),
-    React.createElement("div", { key:"pick", className:"btnRow", style:{ marginBottom:16 } },
-      React.createElement(NamePicker, { options:staffOptions, value:ctahStaffId, onChange:setCtahStaffId, placeholder:"Gõ tên nhân viên để chấm..." })
-    ),
-    ctahStaff ? React.createElement(React.Fragment, null, [
-      React.createElement("div", { key:"g1", style:{ fontWeight:700, fontSize:13, marginBottom:6 } }, "Đào tạo"),
-      React.createElement("div", { key:"g1r", className:"btnRow", style:{ marginBottom:14, alignItems:"flex-end" } }, [
-        React.createElement("div", { key:"a" }, [ React.createElement("div",{style:{fontSize:11,color:"var(--inkSoft)"}},"Điểm TB bài kiểm tra (<60: -50 · ≥99: +50)"), React.createElement("input",{type:"number",defaultValue:ctahDoc.baiKiemTra!=null?ctahDoc.baiKiemTra:"",onBlur:e=>saveCtahField("baiKiemTra",e.target.value===""?"":Number(e.target.value)),style:{width:120,padding:"6px 8px",border:"1px solid var(--line)",borderRadius:6}}) ]),
-        React.createElement("div", { key:"b" }, [ React.createElement("div",{style:{fontSize:11,color:"var(--inkSoft)"}},"Số buổi họp nhóm thiếu (-20/buổi)"), React.createElement("input",{type:"number",defaultValue:ctahDoc.hopNhomThieu!=null?ctahDoc.hopNhomThieu:"",onBlur:e=>saveCtahField("hopNhomThieu",e.target.value===""?"":Number(e.target.value)),style:{width:120,padding:"6px 8px",border:"1px solid var(--line)",borderRadius:6}}) ]),
-        React.createElement("div", { key:"c" }, [ React.createElement("div",{style:{fontSize:11,color:"var(--inkSoft)"}},"Role play (không đạt: -50)"), React.createElement("select",{defaultValue:ctahDoc.rolePlay||"",onChange:e=>saveCtahField("rolePlay",e.target.value),style:{padding:"6px 8px",border:"1px solid var(--line)",borderRadius:6}}, ["","Đạt","Không đạt"].map(o=>React.createElement("option",{key:o,value:o},o||"—"))) ]),
-        React.createElement("div", { key:"d" }, [ React.createElement("div",{style:{fontSize:11,color:"var(--inkSoft)"}},"Tự học LMS (không đạt: -50)"), React.createElement("select",{defaultValue:ctahDoc.tuHocLMS||"",onChange:e=>saveCtahField("tuHocLMS",e.target.value),style:{padding:"6px 8px",border:"1px solid var(--line)",borderRadius:6}}, ["","Đạt","Không đạt"].map(o=>React.createElement("option",{key:o,value:o},o||"—"))) ]),
-      ]),
-      React.createElement("div", { key:"g2", style:{ fontWeight:700, fontSize:13, marginBottom:6 } }, "Tác phong làm việc"),
-      React.createElement("div", { key:"g2r", className:"btnRow", style:{ marginBottom:14, alignItems:"flex-end" } }, [
-        React.createElement("div", { key:"a" }, [ React.createElement("div",{style:{fontSize:11,color:"var(--inkSoft)"}},"Đồng phục, bề ngoài — số lần vi phạm"), React.createElement("select",{defaultValue:ctahDoc.dongPhucLan||0,onChange:e=>saveCtahField("dongPhucLan",Number(e.target.value)),style:{padding:"6px 8px",border:"1px solid var(--line)",borderRadius:6}}, [0,1,2,3].map(n=>React.createElement("option",{key:n,value:n}, n===0?"Không vi phạm":`Lần ${n}${n===3?" — không xét KPI":""}`))) ]),
-        React.createElement("div", { key:"b" }, [ React.createElement("div",{style:{fontSize:11,color:"var(--inkSoft)"}},"Thái độ làm việc — số lần vi phạm"), React.createElement("select",{defaultValue:ctahDoc.thaiDoLan||0,onChange:e=>saveCtahField("thaiDoLan",Number(e.target.value)),style:{padding:"6px 8px",border:"1px solid var(--line)",borderRadius:6}}, [0,1,2,3].map(n=>React.createElement("option",{key:n,value:n}, n===0?"Không vi phạm":`Lần ${n}${n===3?" — không xét KPI":""}`))) ]),
-      ]),
-      React.createElement("div", { key:"g3", style:{ fontWeight:700, fontSize:13, marginBottom:6 } }, "Khác (điểm bị trừ, nếu có)"),
-      React.createElement("div", { key:"g3r", className:"btnRow", style:{ marginBottom:14, alignItems:"flex-end" } }, [
-        ["chuyenCanTru","Chuyên cần"], ["bangGiaoCa","Báo cáo bàn giao ca"], ["veSinh","Vệ sinh nhà thuốc"], ["kiemKe","Kiểm kê hàng hoá"], ["congViecKhac","Công việc khác"],
-      ].map(([f,l]) => React.createElement("div", { key:f }, [
-        React.createElement("div",{style:{fontSize:11,color:"var(--inkSoft)"}}, l),
-        React.createElement("input",{type:"number",defaultValue:ctahDoc[f]!=null?ctahDoc[f]:"",onBlur:e=>saveCtahField(f,e.target.value===""?"":Number(e.target.value)),style:{width:110,padding:"6px 8px",border:"1px solid var(--line)",borderRadius:6}}),
-      ]))),
-      React.createElement("div", { key:"note", className:"field", style:{ marginBottom:12 } }, [
-        React.createElement("label",{key:"l"},"Kết luận chung"),
-        React.createElement("textarea",{key:"i", rows:2, defaultValue:ctahDoc.ketLuanChung||"", onBlur:e=>saveCtahField("ketLuanChung",e.target.value)}),
-      ]),
-      React.createElement("div", { key:"total", style:{ background:"var(--paper)", borderRadius:8, padding:"10px 14px", fontSize:13 } }, [
-        React.createElement("b",null,"Tổng điểm CTAH cộng/trừ vào KPI: "), `${ctahPreview.adj>0?"+":""}${ctahPreview.adj} điểm`,
-        ctahPreview.khongXet && StatusPill("Không xét KPI tháng này","warn"),
-      ]),
-    ]) : React.createElement("div", { className:"emptyState" }, "Chọn 1 nhân viên ở trên để chấm."),
-  ]);
+  async function importQlkvExcel(file){
+    setImportingQlkv(true); setImportQlkvMsg(null);
+    try{
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type:"array" });
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval:"" });
+      if(rows.length===0){ setImportQlkvMsg("File không có dữ liệu."); return; }
+      const row = rows[0];
+      const groups = templates.QLKV;
+      let count = 0;
+      for(const g of groups){
+        for(const it of g.items){
+          const tKey = Object.keys(row).find(k => k.startsWith(it.label) && k.includes("Mục tiêu"));
+          if(tKey && row[tKey]!==""){ await saveQlkvTarget(it.id, row[tKey]); count++; }
+          const aKey = Object.keys(row).find(k => k.startsWith(it.label) && k.includes("Thực tế"));
+          if(aKey && row[aKey]!==""){ await saveQlkvActual(it.id, row[aKey]); }
+        }
+      }
+      setImportQlkvMsg(`Đã nhập ${count} chỉ tiêu.`);
+    } catch(err){
+      console.error("Nhập Excel QLKV lỗi:", err);
+      setImportQlkvMsg("Đọc file lỗi — kiểm tra đúng định dạng file đã tải xuống trước đó.");
+    } finally { setImportingQlkv(false); }
+  }
 
   const adminPersonalSection = isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
-    React.createElement("div", { key:"t", className:"cardTitle" }, `KPI Quản lý địa bàn (tự đăng ký & tự chấm) — tháng ${thang}`),
+    React.createElement("div", { key:"th", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:10 } }, [
+      React.createElement("div", { key:"t", className:"cardTitle", style:{ marginBottom:0 } }, `KPI Quản lý địa bàn (tự đăng ký & tự chấm) — tháng ${thang}`),
+      React.createElement("div", { key:"btns", className:"btnRow" }, [
+        React.createElement("label", { key:"imp", className:"btn btnGhost", style:{ cursor:importingQlkv?"default":"pointer" } }, [
+          React.createElement("input", { key:"i", type:"file", accept:".xlsx,.xls", style:{ display:"none" }, disabled:importingQlkv, onChange:e=>{ const f=e.target.files[0]; if(f) importQlkvExcel(f); e.target.value=""; } }),
+          importingQlkv ? "Đang nhập..." : "Tải Excel lên",
+        ]),
+        React.createElement("button", { key:"exp", type:"button", className:"btn btnGhost", onClick:exportQlkvExcel }, "Tải Excel xuống"),
+      ]),
+    ]),
+    importQlkvMsg && React.createElement("div", { key:"msg", style:{ fontSize:12.5, color:"var(--pine)", background:"var(--pineSoft)", borderRadius:8, padding:"8px 10px", marginBottom:12 } }, importQlkvMsg),
     React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:12 } }, "Đúng theo mẫu \"Bảng tiêu chí KPI đánh giá Quản lý địa bàn\" — bạn tự đặt Mục tiêu giao và tự chấm Thực tế đạt được cho chính mình."),
     React.createElement(KpiGroups, {
       key:"g", groups:templates.QLKV, targets:qlkvTargets, actuals:qlkvActuals,
@@ -3020,54 +3147,10 @@ function KpiView({ isAdmin, myStaff }){
     ]),
   ]);
 
-  // ---- Chi tiết doanh số theo quý (kế hoạch năm, luỹ kế, còn thiếu — theo cửa hàng) ----
-  async function saveRevenueField(shop, loai, field, value){
-    const id = `${shop}_${revenueYear}`;
-    const payload = { shop, year:revenueYear };
-    payload[`${loai}.${field}`] = value===""? "" : Number(value);
-    await mergeDotFields("quarterRevenuePlan", id, payload);
-  }
-  function revenueCell(shop, loai, field, editable){
-    const doc = revenuePlans[`${shop}_${revenueYear}`];
-    const v = doc && doc[loai] ? doc[loai][field] : "";
-    return editable
-      ? React.createElement("input", { type:"number", defaultValue:v!=null?v:"", onBlur:e=>saveRevenueField(shop, loai, field, e.target.value), style:{ width:110, padding:"5px 7px", border:"1px solid var(--line)", borderRadius:5, fontSize:11.5 } })
-      : v!=null && v!=="" ? fmtVND(v) : "—";
-  }
-  const adminRevenueSection = isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
-    React.createElement("div", { key:"th", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:4 } }, [
-      React.createElement("div", { key:"t", className:"cardTitle", style:{ marginBottom:0 } }, "Chi tiết doanh số theo quý"),
-      React.createElement("input", { key:"y", type:"number", value:revenueYear, onChange:e=>setRevenueYear(Number(e.target.value)||revenueYear), style:{ width:90, padding:"6px 8px", border:"1px solid var(--line)", borderRadius:6, fontSize:13 } }),
-    ]),
-    React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:12 } }, "TB tháng & Còn thiếu tự tính từ Kế hoạch năm và KQ 6 tháng đầu năm."),
-    React.createElement("div", { key:"tb", className:"tableWrap", style:{ marginBottom:0 } }, React.createElement("table",{className:"data"}, [
-      React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Nhà thuốc","Loại chỉ tiêu","Kế hoạch năm","KQ 6 tháng đầu năm","TB tháng","Còn thiếu","Quý 3","Tháng 7","Tháng 8","Tháng 9"].map((h,i)=>React.createElement("th",{key:i},h)))),
-      React.createElement("tbody",{key:"b"}, DEFAULT_SHOPS.flatMap(shop => ["tong","heSo"].map(loai => {
-        const doc = revenuePlans[`${shop}_${revenueYear}`];
-        const d = (doc && doc[loai]) || {};
-        const keHoach = Number(d.keHoachNam)||0, kq6 = Number(d.kq6thang)||0;
-        const tbThang = kq6 ? kq6/6 : 0;
-        const conThieu = keHoach - kq6;
-        return React.createElement("tr",{key:shop+loai}, [
-          React.createElement("td",{key:"sh"}, loai==="tong" ? shop : ""),
-          React.createElement("td",{key:"l"}, loai==="tong" ? "Doanh số tổng" : "Doanh số hệ số"),
-          React.createElement("td",{key:"kh"}, revenueCell(shop,loai,"keHoachNam",true)),
-          React.createElement("td",{key:"kq"}, revenueCell(shop,loai,"kq6thang",true)),
-          React.createElement("td",{key:"tb"}, keHoach||kq6 ? fmtVND(tbThang) : "—"),
-          React.createElement("td",{key:"ct"}, keHoach||kq6 ? fmtVND(conThieu) : "—"),
-          React.createElement("td",{key:"q3"}, revenueCell(shop,loai,"quy3",true)),
-          React.createElement("td",{key:"t7"}, revenueCell(shop,loai,"thang7",true)),
-          React.createElement("td",{key:"t8"}, revenueCell(shop,loai,"thang8",true)),
-          React.createElement("td",{key:"t9"}, revenueCell(shop,loai,"thang9",true)),
-        ]);
-      }))),
-    ])),
-  ]);
-
   return React.createElement(React.Fragment, null, [
     React.createElement("h2", { key:"t", className:"pagetitle" }, "KPI"),
     React.createElement("p", { key:"s", className:"pagesub" }, isAdmin ? "Giao chỉ tiêu KPI cho từng nhân viên theo tháng, theo dõi kết quả toàn khu vực." : "Chỉ tiêu KPI được quản lý giao cho bạn — tự cập nhật kết quả thực tế đạt được."),
-    isAdmin ? React.createElement(React.Fragment, null, [ adminAssignSection, adminSummarySection, adminCtahSection, adminRevenueSection, adminPersonalSection, adminQlkvCtahSection ]) : React.createElement(React.Fragment, null, [ staffSection, chtReviewSection ]),
+    isAdmin ? React.createElement(React.Fragment, null, [ adminAssignSection, adminSummarySection, adminPersonalSection, adminQlkvCtahSection ]) : React.createElement(React.Fragment, null, [ staffSection, chtReviewSection ]),
   ]);
 }
 
@@ -3225,7 +3308,7 @@ function TrainingView({ isAdmin, myStaff }){
       const map = {}; rows.forEach(r=> map[r.hireId] = r); setProgressDocs(map);
     });
     const u5 = subscribeCol("buddyReports", setReports, "createdAtTs");
-    return ()=>{ u1(); u2(); u3(); u4(); u5(); };
+    return ()=>{ u1(); u2(); u3(); u4(); };
   }, []);
 
   async function addHire(e){
@@ -3403,7 +3486,7 @@ function KudosView({ isAdmin, myStaff }){
     const u3 = subscribeConfigDoc("rewards", (d)=> setRewards(d && d.items ? d.items : DEFAULT_REWARDS));
     const u4 = subscribeCol("redemptions", setRedemptions, "createdAtTs");
     const u5 = subscribeConfigDoc("kudosNotifyEmails", (d)=> setNotifyEmails(d && d.emails ? d.emails : []));
-    return ()=>{ u1(); u2(); u3(); u4(); u5(); };
+    return ()=>{ u1(); u2(); u3(); u4(); };
   }, []);
 
   const thisMonth = todayISO().slice(0,7);
