@@ -11,6 +11,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-storage-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <style>
@@ -1294,6 +1295,7 @@ function CustomerOrderView({ isAdmin, myStaff }){
     React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:16, justifyContent:"space-between" } }, [
       React.createElement("button", { key:"add", className:"btn btnPrimary", onClick:openAdd }, "＋ Ghi khách đặt hàng"),
       React.createElement("input", { key:"search", type:"text", value:search, onChange:e=>setSearch(e.target.value), placeholder:"Tìm theo tên khách, SĐT, hoặc tên hàng...", style:{ flex:"1 1 240px", maxWidth:320, padding:"9px 12px", border:"1px solid var(--line)", borderRadius:8, fontSize:13 } }),
+      React.createElement("button", { key:"exp", type:"button", className:"btn btnGhost", onClick:()=>exportOrdersExcel(myOrders, `Khach_dat_hang_${myStaff?myStaff.shop:""}_${todayISO()}.xlsx`) }, "Tải thống kê Excel"),
     ]),
     dateRangeRow,
     myDupGroups.length>0 && React.createElement("div", { key:"dup", className:"card", style:{ marginBottom:20 } }, [
@@ -1385,11 +1387,25 @@ function CustomerOrderView({ isAdmin, myStaff }){
     ])),
   ]);
 
+  function exportOrdersExcel(rows, filename){
+    const data = rows.map(o => ({
+      "Khách hàng":o.customerName, "SĐT":o.customerPhone||"", "Hàng cần":o.productName, "Cửa hàng":o.shop,
+      "Ngày dự kiến giao":o.ngayHen||"", "Trạng thái":o.trangThai,
+      "Hàng hết tồn":o.hangHetTon?"Có":"", "Hàng hệ thống không có":o.hangKhongCoHeThong?"Có":"", "Đề xuất mở tủ":o.deXuatMoTu?"Có":"",
+      "Cách báo khi có hàng":o.cachBao||"", "Ghi chú":o.ghiChu||"", "Người ghi":o.nguoiTao||"", "Ngày ghi":o.ngayTao||"",
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Khách đặt hàng");
+    XLSX.writeFile(wb, filename);
+  }
+
   const adminFilterRow = isAdmin && React.createElement("div", { className:"btnRow", style:{ marginBottom:14 } }, [
     React.createElement("select", { key:"shop", value:adminShop, onChange:e=>setAdminShop(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } },
       ["Tất cả", ...DEFAULT_SHOPS].map(s => React.createElement("option",{key:s,value:s},s))),
     React.createElement("select", { key:"status", value:adminStatus, onChange:e=>setAdminStatus(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } },
       ["Đang chờ","Quá hạn","Đã có hàng - đã báo khách","Khách không lấy nữa","Tất cả"].map(s => React.createElement("option",{key:s,value:s},s))),
+    React.createElement("button", { key:"exp", type:"button", className:"btn btnGhost", onClick:()=>exportOrdersExcel(filteredOrders, `Khach_dat_hang_${todayISO()}.xlsx`) }, "Tải thống kê Excel"),
   ]);
 
   const adminTable = isAdmin && (filteredOrders.length===0
@@ -1651,7 +1667,7 @@ function AutoGrowTextarea({ className, value, onChange, ...rest }){
 // mode "plan": nhân viên tự nhập nội dung kế hoạch + target cam kết cho tuần này, thêm/xoá dòng tự do.
 // mode "result": dòng kế thừa từ kế hoạch tuần trước hiển thị nội dung + target (chỉ đọc), chỉ điền "Kết quả
 // thực hiện"; nhân viên vẫn có thể bấm "+ Thêm dòng" để báo cáo thêm việc phát sinh.
-function WeeklyCategorySection({ label, rows, mode, onChange, onAdd, onRemove }){
+function WeeklyCategorySection({ label, rows, mode, onChange, onAdd, onRemove, uploadingRow, onUploadFiles, onRemoveFile, onLinkChange }){
   return React.createElement("div", { className:"weeklyCatBlock" }, [
     React.createElement("div", { key:"t", className:"weeklyCatTitle" }, [
       React.createElement("span",{key:"d", className:"dot"}),
@@ -1691,6 +1707,12 @@ function WeeklyCategorySection({ label, rows, mode, onChange, onAdd, onRemove })
               React.createElement("span",{key:"l",className:"weeklyRowLbl"},"Kết quả thực hiện"),
               React.createElement(AutoGrowTextarea,{key:"i", className:"taskResultInput", value:r.ketQua,
                 onChange:e=>onChange(r.id,"ketQua",e.target.value), placeholder:"Đã làm được gì, số liệu thực tế..." }),
+              React.createElement(TaskAttachments, {
+                key:"att", files:r.files || [], link:r.link || "", uploading:uploadingRow && uploadingRow[r.id],
+                onUploadFiles:files=>onUploadFiles(r.id, files),
+                onRemoveFile:fileMeta=>onRemoveFile(r.id, fileMeta),
+                onLinkBlur:text=>onLinkChange(r.id, text),
+              }),
             ]),
           ];
       return React.createElement("div", { key:r.id, className:"weeklyRow" }, [
@@ -1722,6 +1744,12 @@ function WeeklyReviewModal({ report, prevReport, onSave, onClose }){
             rows.map(r => React.createElement("div", { key:r.id, style:{ fontSize:12, padding:"5px 0", borderBottom:"1px solid #F0EEE2" } }, [
               React.createElement("div",{key:"n"}, [ React.createElement("b",{key:"b"},"Kế hoạch: "), r.noiDung || "—", r.target ? ` (Target: ${r.target})` : "" ]),
               React.createElement("div",{key:"q",style:{color:"var(--inkSoft)"}}, [ React.createElement("b",{key:"b"},"Kết quả: "), r.ketQua || "—" ]),
+              r.link && React.createElement("div",{key:"lk",style:{marginTop:2}}, React.createElement("a",{href:r.link,target:"_blank",rel:"noreferrer"}, r.link)),
+              (r.files && r.files.length>0) && React.createElement("div",{key:"fl",className:"taskFileList",style:{marginTop:4}}, r.files.map((f,i) =>
+                f.type==="image"
+                  ? React.createElement("a",{key:i,href:f.url,target:"_blank",rel:"noreferrer"}, React.createElement("img",{src:f.url,style:{width:44,height:44,objectFit:"cover",borderRadius:6,border:"1px solid var(--line)"}}))
+                  : React.createElement("a",{key:i,href:f.url,target:"_blank",rel:"noreferrer",style:{fontSize:11,color:"var(--pine)"}}, f.name || "Tệp đính kèm")
+              )),
             ])),
           ]);
         }),
@@ -1774,6 +1802,7 @@ function WeeklyReportView({ isAdmin, myStaff }){
   const [adminShop, setAdminShop] = useState("Tất cả");
   const [reviewId, setReviewId] = useState(null);
   const [historyWeek, setHistoryWeek] = useState("Tất cả");
+  const [uploadingRow, setUploadingRow] = useState({});
 
   useEffect(()=>{
     const u2 = subscribeCol("weeklyReports", rows => { const map = {}; rows.forEach(r => map[r.id] = r); setReportsMap(map); });
@@ -1829,6 +1858,30 @@ function WeeklyReportView({ isAdmin, myStaff }){
   function changeProgress(key, field, value){
     setProgressData(prev => ({ ...prev, [key]: { ...prev[key], [field]:value } }));
   }
+  function addRowFile(catKey, rowId, meta){
+    setKetQuaData(prev => ({ ...prev, [catKey]: (prev[catKey]||[]).map(r => r.id===rowId ? { ...r, files:[...(r.files||[]), meta] } : r) }));
+  }
+  function removeRowFile(catKey, rowId, meta){
+    setKetQuaData(prev => ({ ...prev, [catKey]: (prev[catKey]||[]).map(r => r.id===rowId ? { ...r, files:(r.files||[]).filter(f=>f.url!==meta.url) } : r) }));
+  }
+  async function uploadRowFiles(catKey, rowId, files){
+    setUploadingRow(prev => ({ ...prev, [rowId]:true }));
+    try{
+      for(const file of files){
+        const path = `weeklyReports/${selfShop}/${currentMonday}/${catKey}/${rowId}/${Date.now()}_${file.name}`;
+        const meta = await uploadTaskAttachmentFile(file, path, pct=>setUploadingRow(prev=>({...prev,[rowId]:pct})));
+        addRowFile(catKey, rowId, meta);
+      }
+    } catch(err){
+      console.error("uploadRowFiles lỗi:", err);
+      window.alert("Tải tệp lên thất bại — vui lòng thử lại.");
+    } finally {
+      setUploadingRow(prev => { const n = { ...prev }; delete n[rowId]; return n; });
+    }
+  }
+  function saveRowLink(catKey, rowId, text){
+    changeRow("ketQua", catKey, rowId, "link", text);
+  }
 
   async function submitWeekly(e){
     e.preventDefault();
@@ -1873,6 +1926,8 @@ function WeeklyReportView({ isAdmin, myStaff }){
         key:"r"+c.key, label:c.label, rows:ketQuaData[c.key]||[], mode:"result",
         onChange:(rowId,field,value)=>changeRow("ketQua",c.key,rowId,field,value),
         onAdd:()=>addRow("ketQua",c.key), onRemove:rowId=>removeRow("ketQua",c.key,rowId),
+        uploadingRow, onUploadFiles:(rowId,files)=>uploadRowFiles(c.key,rowId,files),
+        onRemoveFile:(rowId,meta)=>removeRowFile(c.key,rowId,meta), onLinkChange:(rowId,text)=>saveRowLink(c.key,rowId,text),
       })),
       React.createElement("div", { key:"secP", className:"weeklySectionHead", style:{ marginTop:6 } }, React.createElement("h3",{style:{margin:0,fontSize:14.5}},"3. Kế hoạch & target cam kết tuần này")),
       React.createElement("div", { key:"hintP", className:"weeklySectionHint" }, "Liệt kê từng đầu việc/chỉ tiêu dự kiến cho tuần này kèm target cam kết — đây sẽ là căn cứ để báo cáo kết quả vào tuần sau."),
@@ -2282,6 +2337,27 @@ const DEFAULT_KPI_TEMPLATES = {
       { id:"hh_candate", label:"Hàng cận date (≤6th ≤1,2% · ≤12th ≤8%)", tyTrong:0.1, diem:100, cachCham:"nhi_phan", donVi:"" },
     ]},
   ],
+  "QLKV": [
+    { key:"nhansu", label:"Nhân sự", items:[
+      { id:"ns_tongns", label:"Tổng số lượng nhân sự toàn khu vực", tyTrong:0.1, diem:100, cachCham:"nguong60", donVi:"người" },
+      { id:"ns_socht", label:"Số nhân sự là CHT", tyTrong:0.1, diem:100, cachCham:"nguong60", donVi:"người" },
+      { id:"ns_level1", label:"Số nhân viên đạt level 1", tyTrong:0.1, diem:100, cachCham:"nguong60", donVi:"người" },
+      { id:"ns_level2", label:"Số nhân viên đạt level 2", tyTrong:0, diem:0, cachCham:"nguong60", donVi:"người" },
+      { id:"ns_level3", label:"Số nhân viên đạt level 3", tyTrong:0, diem:0, cachCham:"nguong60", donVi:"người" },
+      { id:"ns_level4", label:"Số nhân viên đạt level 4", tyTrong:0, diem:0, cachCham:"nguong60", donVi:"người" },
+    ]},
+    { key:"diemban", label:"Điểm bán", items:[
+      { id:"db_sonha", label:"Số nhà thuốc vận hành", tyTrong:0.1, diem:100, cachCham:"nguong60", donVi:"nhà" },
+      { id:"db_luottham", label:"Số lượt viếng thăm & kiểm tra nhà thuốc (2 lần/nhà/tháng + check tồn kho)", tyTrong:0.1, diem:100, cachCham:"nhi_phan", donVi:"lượt" },
+    ]},
+    { key:"modiem", label:"Mở điểm", items:[
+      { id:"md_chotdiem", label:"Chốt điểm / Thi công / Thẩm định (theo tiến độ OKR quý)", tyTrong:0, diem:200, cachCham:"nhi_phan", donVi:"" },
+    ]},
+    { key:"doanhso", label:"Doanh số", items:[
+      { id:"ds_kehoach", label:"Doanh số kế hoạch", tyTrong:0.25, diem:150, cachCham:"nguong60", donVi:"đ" },
+      { id:"ds_heso1", label:"Hệ số 1 kế hoạch", tyTrong:0.25, diem:150, cachCham:"nguong60", donVi:"đ" },
+    ]},
+  ],
 };
 function kpiRoleKey(staffRole){ return staffRole==="Cửa hàng trưởng" ? "CHT" : "NVBH"; }
 function kpiAssignmentId(staffId, thang){ return staffId + "_" + thang; }
@@ -2335,6 +2411,22 @@ function kpiCtahCalc(doc){
   adj -= (Number(doc.chuyenCanTru)||0) + (Number(doc.bangGiaoCa)||0) + (Number(doc.veSinh)||0) + (Number(doc.kiemKe)||0) + (Number(doc.congViecKhac)||0);
   const khongXet = dp>=3 || td>=3;
   return { adj, khongXet };
+}
+// CTAH riêng cho Quản lý địa bàn (QLKV) — công thức khác với NVBH/CHT theo đúng file mẫu:
+// bài kiểm tra không có mức thưởng +50, role play có 3 mức, tự học LMS trừ 20 (không phải 50),
+// và có thêm mục "duyệt kế hoạch web NVBH" tính theo số NVBH bị ảnh hưởng.
+function kpiCtahQlkvCalc(doc){
+  if(!doc) return { adj:0 };
+  let adj = 0;
+  if(doc.baiKiemTra!=null && doc.baiKiemTra!==""){
+    if(Number(doc.baiKiemTra) < 60) adj -= 50;
+  }
+  adj -= 20 * (Number(doc.hopNhomThieu)||0);
+  if(doc.rolePlay==="Không đạt") adj -= 10;
+  else if(doc.rolePlay==="Không thực hiện") adj -= 20;
+  if(doc.tuHocLMS==="Không đạt") adj -= 20;
+  adj -= 20 * (Number(doc.soNvbhKhongDuyet)||0);
+  return { adj };
 }
 
 function KpiItemRow({ item, target, actual, canEditTarget, canEditActual, onTargetChange, onActualChange }){
@@ -2485,15 +2577,17 @@ function KpiView({ isAdmin, myStaff }){
   const [assignments, setAssignments] = useState({});
   const [thang, setThang] = useState(currentMonthStr());
   const [pickedStaffId, setPickedStaffId] = useState("");
-  const [personalDoc, setPersonalDoc] = useState(null);
-  const [showAddPersonal, setShowAddPersonal] = useState(false);
-  const [newItem, setNewItem] = useState({ label:"", diem:100 });
   const [templates, setTemplates] = useState(DEFAULT_KPI_TEMPLATES);
   const [showTplEditor, setShowTplEditor] = useState(false);
   const [ctahDocs, setCtahDocs] = useState({});
   const [ctahStaffId, setCtahStaffId] = useState("");
   const [revenueYear, setRevenueYear] = useState(new Date().getFullYear());
   const [revenuePlans, setRevenuePlans] = useState({});
+  const [uploadingKpiEvidence, setUploadingKpiEvidence] = useState(false);
+  const [chtStaffId, setChtStaffId] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState(null);
+  const [chtNhanXet, setChtNhanXet] = useState("");
 
   useEffect(()=>{
     const u1 = subscribeCol("staff", setStaff);
@@ -2503,11 +2597,6 @@ function KpiView({ isAdmin, myStaff }){
     const u5 = subscribeCol("quarterRevenuePlan", rows => { const map={}; rows.forEach(r=>map[r.id]=r); setRevenuePlans(map); });
     return ()=>{ u1(); u2(); u3(); u4(); u5(); };
   }, []);
-  useEffect(()=>{
-    if(!isAdmin) return undefined;
-    const u = db.collection("kpiPersonal").doc(thang).onSnapshot(doc => setPersonalDoc(doc.exists ? doc.data() : null));
-    return u;
-  }, [isAdmin, thang]);
   async function saveTemplates(next){ await saveConfigDoc("kpiTemplates", next); setShowTplEditor(false); }
 
   async function saveTarget(staffMember, itemId, value){
@@ -2520,7 +2609,39 @@ function KpiView({ isAdmin, myStaff }){
     const id = kpiAssignmentId(staffMember.id, thang);
     const payload = { staffId:staffMember.id, staffName:staffMember.name, shop:staffMember.shop, role:staffMember.role, thang };
     payload[`actuals.${itemId}`] = value;
+    payload.trangThaiDuyet = ""; // sửa kết quả thì trạng thái duyệt trước đó không còn hiệu lực
     await mergeDotFields("kpiAssignments", id, payload);
+  }
+  async function saveLinkKetQua(staffMember, value){
+    const id = kpiAssignmentId(staffMember.id, thang);
+    await mergeDotFields("kpiAssignments", id, {
+      staffId:staffMember.id, staffName:staffMember.name, shop:staffMember.shop, role:staffMember.role, thang,
+      linkKetQua: value,
+    });
+  }
+  async function addEvidencePhoto(staffMember, files, current){
+    const id = kpiAssignmentId(staffMember.id, thang);
+    const urls = [];
+    for(const file of files){
+      const path = `kpiEvidence/${staffMember.id}/${thang}/${Date.now()}_${file.name}`;
+      urls.push(await uploadImageFile(file, path, ()=>{}));
+    }
+    await mergeDotFields("kpiAssignments", id, {
+      staffId:staffMember.id, staffName:staffMember.name, shop:staffMember.shop, role:staffMember.role, thang,
+      anhKetQua: [...(current||[]), ...urls],
+    });
+  }
+  async function removeEvidencePhoto(staffMember, current, idx){
+    const id = kpiAssignmentId(staffMember.id, thang);
+    const next = [...current]; next.splice(idx,1);
+    await mergeDotFields("kpiAssignments", id, { anhKetQua: next });
+  }
+  async function saveChtReview(staffMember, nhanXet){
+    const id = kpiAssignmentId(staffMember.id, thang);
+    await mergeDotFields("kpiAssignments", id, {
+      staffId:staffMember.id, staffName:staffMember.name, shop:staffMember.shop, role:staffMember.role, thang,
+      trangThaiDuyet:"CHT đã duyệt", nhanXetCHT:nhanXet||"",
+    });
   }
 
   // ---- Nhân viên: tự chấm KPI của chính mình ----
@@ -2533,6 +2654,9 @@ function KpiView({ isAdmin, myStaff }){
 
   const myCtahDoc = myStaff ? ctahDocs[kpiCtahId(myStaff.id, thang)] : null;
   const myCtah = kpiCtahCalc(myCtahDoc);
+  const myIsCHT = myStaff && myStaff.role==="Cửa hàng trưởng";
+  const myShopHasCHT = myStaff && !myIsCHT && staff.some(s => s.shop===myStaff.shop && s.role==="Cửa hàng trưởng");
+  const myDuyet = (myAssign && myAssign.trangThaiDuyet) || "";
   const staffSection = !isAdmin && React.createElement("div", { className:"card" }, [
     React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10, marginBottom:14 } }, [
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15 } }, `KPI tháng ${thang} — ${myStaff ? myStaff.name : ""}`),
@@ -2540,11 +2664,33 @@ function KpiView({ isAdmin, myStaff }){
     ]),
     !myHasTargets
       ? React.createElement("div", { key:"e", className:"emptyState" }, "Quản lý khu vực chưa giao chỉ tiêu KPI cho bạn trong tháng này.")
-      : React.createElement(KpiGroups, {
-          key:"g", groups:myGroups, targets:myTargets, actuals:myActuals,
-          canEditTarget:false, canEditActual:true,
-          onTargetChange:()=>{}, onActualChange:(itemId,v)=>saveActual(myStaff, itemId, v),
-        }),
+      : React.createElement(React.Fragment, { key:"f" }, [
+          React.createElement(KpiGroups, {
+            key:"g", groups:myGroups, targets:myTargets, actuals:myActuals,
+            canEditTarget:false, canEditActual:true,
+            onTargetChange:()=>{}, onActualChange:(itemId,v)=>saveActual(myStaff, itemId, v),
+          }),
+          React.createElement("div", { key:"ev", style:{ marginTop:16 } }, [
+            React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:8 } }, "Đính kèm minh chứng kết quả (nếu có)"),
+            React.createElement("div", { key:"link", className:"field", style:{ marginBottom:10 } }, [
+              React.createElement("label",{key:"l"},"Link kết quả (báo cáo, Google Sheet, ảnh chụp màn hình...)"),
+              React.createElement("input", { key:"i", defaultValue:(myAssign&&myAssign.linkKetQua)||"", placeholder:"https://...", onBlur:e=>saveLinkKetQua(myStaff, e.target.value) }),
+            ]),
+            React.createElement(PhotoUploadField, {
+              key:"ph", label:"Ảnh minh chứng", photos:(myAssign&&myAssign.anhKetQua)||[], uploading:uploadingKpiEvidence, requireMobile:false,
+              onUpload: async files => { setUploadingKpiEvidence(true); try{ await addEvidencePhoto(myStaff, files, (myAssign&&myAssign.anhKetQua)||[]); } finally { setUploadingKpiEvidence(false); } },
+              onRemove: idx => removeEvidencePhoto(myStaff, (myAssign&&myAssign.anhKetQua)||[], idx),
+            }),
+          ]),
+          React.createElement("div", { key:"duyet", style:{ marginTop:14, borderRadius:8, padding:"10px 14px", fontSize:12.5,
+              background: myDuyet==="QLKV đã duyệt" ? "var(--pineSoft)" : (myDuyet==="CHT đã duyệt" ? "var(--goldSoft)" : "var(--paper)") } }, [
+            React.createElement("b",{key:"b"},"Trạng thái duyệt: "),
+            myDuyet==="QLKV đã duyệt" ? "Quản lý khu vực đã duyệt"
+              : myDuyet==="CHT đã duyệt" ? "Cửa hàng trưởng đã duyệt — đang chờ Quản lý khu vực"
+              : (myShopHasCHT ? "Chờ Cửa hàng trưởng duyệt" : "Chờ Quản lý khu vực duyệt"),
+            myAssign && myAssign.nhanXetCHT && React.createElement("div",{key:"n",style:{marginTop:4,color:"var(--inkSoft)"}}, `Nhận xét CHT: ${myAssign.nhanXetCHT}`),
+          ]),
+        ]),
     myCtahDoc && React.createElement("div", { key:"ctah", style:{
         marginTop:14, borderRadius:8, padding:"10px 14px", fontSize:12.5,
         background: myCtah.khongXet ? "var(--claySoft)" : (myCtah.adj>=0 ? "var(--pineSoft)" : "var(--claySoft)"),
@@ -2553,6 +2699,39 @@ function KpiView({ isAdmin, myStaff }){
       React.createElement("div",{key:"a"}, myCtah.khongXet ? "Vi phạm tác phong/thái độ từ lần 3 — tháng này KHÔNG được xét KPI." : `Điểm cộng/trừ vào KPI: ${myCtah.adj>0?"+":""}${myCtah.adj} điểm`),
       myCtahDoc.ketLuanChung && React.createElement("div",{key:"n",style:{color:"var(--inkSoft)",marginTop:2}}, myCtahDoc.ketLuanChung),
     ]),
+  ]);
+
+  // ---- Cửa hàng trưởng: duyệt KPI của nhân viên cùng cửa hàng ----
+  const myShopTeam = (myIsCHT && myStaff) ? staff.filter(s => s.shop===myStaff.shop && s.role!=="Cửa hàng trưởng") : [];
+  const chtTeamOptions = myShopTeam.map(s => ({ value:s.id, label:`${s.name} · ${s.role}` }));
+  const chtPickedStaff = myShopTeam.find(s=>s.id===chtStaffId);
+  const chtPickedRoleKey = chtPickedStaff ? kpiRoleKey(chtPickedStaff.role) : null;
+  const chtPickedGroups = chtPickedRoleKey ? templates[chtPickedRoleKey] : null;
+  const chtPickedAssign = chtPickedStaff ? assignments[kpiAssignmentId(chtPickedStaff.id, thang)] : null;
+  const chtReviewSection = myIsCHT && React.createElement("div", { className:"card", style:{ marginTop:20 } }, [
+    React.createElement("div", { key:"t", className:"cardTitle" }, "Duyệt KPI nhân viên cửa hàng"),
+    React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:12 } }, "Xem kết quả nhân viên tự chấm, kiểm tra minh chứng rồi duyệt — sau đó Quản lý khu vực sẽ xem tiếp."),
+    React.createElement("div", { key:"pick", className:"btnRow", style:{ marginBottom:14 } },
+      React.createElement(NamePicker, { options:chtTeamOptions, value:chtStaffId, onChange:v=>{ setChtStaffId(v); setChtNhanXet(""); }, placeholder:"Chọn nhân viên để duyệt..." })
+    ),
+    chtPickedStaff ? React.createElement(React.Fragment, null, [
+      React.createElement(KpiGroups, {
+        key:"g", groups:chtPickedGroups, targets:(chtPickedAssign&&chtPickedAssign.targets)||{}, actuals:(chtPickedAssign&&chtPickedAssign.actuals)||{},
+        canEditTarget:false, canEditActual:false, onTargetChange:()=>{}, onActualChange:()=>{},
+      }),
+      (chtPickedAssign && chtPickedAssign.linkKetQua) && React.createElement("div", { key:"lk", style:{ fontSize:12.5, marginTop:10 } }, [ React.createElement("b",null,"Link minh chứng: "), React.createElement("a",{href:chtPickedAssign.linkKetQua,target:"_blank",rel:"noreferrer"},chtPickedAssign.linkKetQua) ]),
+      (chtPickedAssign && chtPickedAssign.anhKetQua && chtPickedAssign.anhKetQua.length>0) && React.createElement("div", { key:"ph", className:"photoGrid", style:{ marginTop:8 } }, chtPickedAssign.anhKetQua.map((url,i)=>
+        React.createElement("a",{key:i,href:url,target:"_blank",rel:"noreferrer",className:"photoThumb"}, React.createElement("img",{src:url})))),
+      React.createElement("div", { key:"st", style:{ fontSize:12.5, marginTop:12, marginBottom:8 } }, [
+        React.createElement("b",null,"Trạng thái hiện tại: "),
+        (chtPickedAssign && chtPickedAssign.trangThaiDuyet) || "Chờ CHT duyệt",
+      ]),
+      React.createElement("div", { key:"cmt", className:"field", style:{ marginBottom:10 } }, [
+        React.createElement("label",{key:"l"},"Nhận xét (nếu có)"),
+        React.createElement("textarea",{key:"i", rows:2, value:chtNhanXet, onChange:e=>setChtNhanXet(e.target.value)}),
+      ]),
+      React.createElement("button", { key:"btn", type:"button", className:"btn btnPrimary", onClick:()=>saveChtReview(chtPickedStaff, chtNhanXet) }, "Duyệt KPI nhân viên này"),
+    ]) : React.createElement("div", { className:"emptyState" }, myShopTeam.length===0 ? "Cửa hàng bạn chưa có nhân viên nào khác." : "Chọn 1 nhân viên ở trên để duyệt."),
   ]);
 
   // ---- Quản lý: giao chỉ tiêu cho từng nhân viên ----
@@ -2576,14 +2755,132 @@ function KpiView({ isAdmin, myStaff }){
     const ctah = kpiCtahCalc(ctahDocs[kpiCtahId(s.id, thang)]);
     const totalActual = totalActualBase!=null ? Math.max(0, totalActualBase + ctah.adj) : null;
     const pct = totalActual!=null ? totalActual/totalPlan : null;
-    return { staff:s, roleKey, hasTargets:Object.keys(targets).length>0, totalPlan, totalActual, pct, ctahAdj:ctah.adj, khongXet:ctah.khongXet };
+    return { staff:s, roleKey, hasTargets:Object.keys(targets).length>0, totalPlan, totalActual, pct, ctahAdj:ctah.adj, khongXet:ctah.khongXet, trangThaiDuyet:(a&&a.trangThaiDuyet)||"" };
   }).sort((x,y)=> (y.pct||-1) - (x.pct||-1));
+  async function qlkvDuyet(staffMember){ await updateDoc("kpiAssignments", kpiAssignmentId(staffMember.id, thang), { trangThaiDuyet:"QLKV đã duyệt" }); }
+
+  // ---- Nhập/xuất Excel chỉ tiêu KPI ----
+  function exportKpiExcel(){
+    const wb = XLSX.utils.book_new();
+    ["NVBH","CHT"].forEach(roleKey => {
+      const groups = templates[roleKey];
+      const rows = staff.filter(s=>kpiRoleKey(s.role)===roleKey).map(s => {
+        const a = assignments[kpiAssignmentId(s.id, thang)] || {};
+        const targets = a.targets || {}, actuals = a.actuals || {};
+        const row = { "Tên nhân viên":s.name, "Cửa hàng":s.shop, "Vai trò":s.role };
+        groups.forEach(g => g.items.forEach(it => {
+          row[`${it.label} - Mục tiêu`] = targets[it.id]!=null ? targets[it.id] : "";
+          row[`${it.label} - Thực tế`] = actuals[it.id]!=null ? actuals[it.id] : "";
+        }));
+        const totalPlan = kpiTotalPlan(groups);
+        const totalActual = kpiTotalActual(groups, targets, actuals);
+        row["Tổng điểm KH"] = totalPlan;
+        row["Tổng điểm thực tế"] = totalActual!=null ? Math.round(totalActual) : "";
+        row["% KPI đạt"] = totalActual!=null ? `${Math.round(totalActual/totalPlan*100)}%` : "";
+        return row;
+      });
+      const ws = XLSX.utils.json_to_sheet(rows);
+      XLSX.utils.book_append_sheet(wb, ws, roleKey);
+    });
+    XLSX.writeFile(wb, `KPI_${thang}.xlsx`);
+  }
+  // Xuất bảng TỔNG HỢP đầy đủ (đúng theo cấu trúc "QLKV Chấm KPI" trong file mẫu) để gửi
+  // Hành chính nhân sự tính thưởng — gồm cả chi tiết từng chỉ tiêu KPI, cả phần Tiêu chí
+  // ảnh hưởng (đào tạo/tác phong/chuyên cần...), điểm tổng, % đạt và xếp loại cuối cùng.
+  function exportKpiFullSummary(){
+    const wb = XLSX.utils.book_new();
+    ["NVBH","CHT"].forEach(roleKey => {
+      const groups = templates[roleKey];
+      const rows = staff.filter(s=>kpiRoleKey(s.role)===roleKey).map((s,i) => {
+        const a = assignments[kpiAssignmentId(s.id, thang)] || {};
+        const targets = a.targets || {}, actuals = a.actuals || {};
+        const c = ctahDocs[kpiCtahId(s.id, thang)] || {};
+        const ctah = kpiCtahCalc(c);
+        const row = { "STT":i+1, "Tên nhân viên":s.name, "Cửa hàng":s.shop, "Địa bàn":s.shop, "Vai trò":s.role };
+        groups.forEach(g => g.items.forEach(it => {
+          const t = targets[it.id], ac = actuals[it.id];
+          const score = kpiCalcItemScore(it, t, ac);
+          row[`${it.label} — Mục tiêu giao`] = t!=null ? t : "";
+          row[`${it.label} — Thực tế đạt`] = ac!=null ? ac : "";
+          row[`${it.label} — % Hoàn thành`] = (t && ac!=null && ac!=="" && it.cachCham!=="nhi_phan" && it.cachCham!=="ty_le_truc_tiep") ? `${Math.round((Number(ac)/Number(t))*100)}%` : "";
+          row[`${it.label} — Điểm KPI thực tế`] = score!=null ? Math.round(score) : "";
+        }));
+        row["Đào tạo — Bài kiểm tra kiến thức"] = c.baiKiemTra!=null ? c.baiKiemTra : "";
+        row["Đào tạo — Họp nhóm (số buổi thiếu)"] = c.hopNhomThieu!=null ? c.hopNhomThieu : "";
+        row["Đào tạo — Role play"] = c.rolePlay || "";
+        row["Đào tạo — Tự học LMS"] = c.tuHocLMS || "";
+        row["Tác phong — Đồng phục, bề ngoài (lần)"] = c.dongPhucLan!=null ? c.dongPhucLan : "";
+        row["Tác phong — Thái độ làm việc (lần)"] = c.thaiDoLan!=null ? c.thaiDoLan : "";
+        row["Chuyên cần (điểm trừ)"] = c.chuyenCanTru!=null ? c.chuyenCanTru : "";
+        row["Báo cáo bàn giao ca (điểm trừ)"] = c.bangGiaoCa!=null ? c.bangGiaoCa : "";
+        row["Vệ sinh nhà thuốc (điểm trừ)"] = c.veSinh!=null ? c.veSinh : "";
+        row["Kiểm kê hàng hoá (điểm trừ)"] = c.kiemKe!=null ? c.kiemKe : "";
+        row["Công việc khác (điểm trừ)"] = c.congViecKhac!=null ? c.congViecKhac : "";
+        row["Kết luận chung (CTAH)"] = c.ketLuanChung || "";
+        row["Tổng KPI bị trừ/cộng (CTAH)"] = ctah.adj;
+        const totalPlan = kpiTotalPlan(groups);
+        const totalActualBase = kpiTotalActual(groups, targets, actuals);
+        const totalActual = totalActualBase!=null ? Math.max(0, totalActualBase + ctah.adj) : null;
+        row["Tổng điểm KPI kế hoạch"] = totalPlan;
+        row["Tổng điểm KPI thực tế"] = totalActual!=null ? Math.round(totalActual) : "";
+        row["% KPI đạt"] = ctah.khongXet ? "" : (totalActual!=null ? `${Math.round(totalActual/totalPlan*100)}%` : "");
+        row["Xếp loại"] = ctah.khongXet ? "Không xét KPI" : (totalActual!=null ? kpiXepLoai(totalActual/totalPlan) : "");
+        row["Trạng thái duyệt"] = a.trangThaiDuyet || "Chưa duyệt";
+        row["Nhận xét CHT"] = a.nhanXetCHT || "";
+        row["Link minh chứng"] = a.linkKetQua || "";
+        return row;
+      });
+      const ws = XLSX.utils.json_to_sheet(rows);
+      XLSX.utils.book_append_sheet(wb, ws, "Tổng hợp "+roleKey);
+    });
+    XLSX.writeFile(wb, `Tong_hop_KPI_HR_${thang}.xlsx`);
+  }
+  async function importKpiExcel(file){
+    setImporting(true); setImportMsg(null);
+    try{
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type:"array" });
+      let matched = 0, unmatched = [];
+      for(const sheetName of wb.SheetNames){
+        const roleKey = sheetName.toUpperCase().includes("CHT") ? "CHT" : "NVBH";
+        const groups = templates[roleKey];
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval:"" });
+        for(const row of rows){
+          const ten = (row["Tên nhân viên"]||row["Tên NV"]||"").toString().trim();
+          const shop = (row["Cửa hàng"]||row["Nhà thuốc"]||"").toString().trim();
+          if(!ten) continue;
+          const s = staff.find(x => x.name.trim()===ten && (!shop || x.shop===shop));
+          if(!s){ unmatched.push(ten); continue; }
+          const payload = { staffId:s.id, staffName:s.name, shop:s.shop, role:s.role, thang };
+          let any = false;
+          groups.forEach(it0 => it0.items.forEach(it => {
+            const key = Object.keys(row).find(k => k.startsWith(it.label) && k.includes("Mục tiêu"));
+            if(key && row[key]!==""){ payload[`targets.${it.id}`] = Number(row[key]); any = true; }
+          }));
+          if(any){ await mergeDotFields("kpiAssignments", kpiAssignmentId(s.id, thang), payload); matched++; }
+        }
+      }
+      setImportMsg(`Đã nhập chỉ tiêu cho ${matched} nhân viên.${unmatched.length? " Không khớp tên: "+unmatched.join(", ") : ""}`);
+    } catch(err){
+      console.error("Nhập Excel lỗi:", err);
+      setImportMsg("Đọc file lỗi — kiểm tra đúng định dạng file đã tải xuống trước đó.");
+    } finally { setImporting(false); }
+  }
 
   const adminAssignSection = isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
     React.createElement("div", { key:"th", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:10 } }, [
       React.createElement("div", { key:"t", className:"cardTitle", style:{ marginBottom:0 } }, "Giao chỉ tiêu KPI cho nhân viên"),
-      React.createElement("button", { key:"tpl", type:"button", className:"btn", onClick:()=>setShowTplEditor(true) }, "Tuỳ chỉnh tỷ trọng KPI"),
+      React.createElement("div", { key:"btns", className:"btnRow" }, [
+        React.createElement("label", { key:"imp", className:"btn btnGhost", style:{ cursor:importing?"default":"pointer" } }, [
+          React.createElement("input", { key:"i", type:"file", accept:".xlsx,.xls", style:{ display:"none" }, disabled:importing, onChange:e=>{ const f=e.target.files[0]; if(f) importKpiExcel(f); e.target.value=""; } }),
+          importing ? "Đang nhập..." : "Tải Excel lên (nhập chỉ tiêu)",
+        ]),
+        React.createElement("button", { key:"exp", type:"button", className:"btn btnGhost", onClick:exportKpiExcel }, "Tải Excel xuống"),
+        React.createElement("button", { key:"tpl", type:"button", className:"btn", onClick:()=>setShowTplEditor(true) }, "Tuỳ chỉnh tỷ trọng KPI"),
+      ]),
     ]),
+    importMsg && React.createElement("div", { key:"msg", style:{ fontSize:12.5, color:"var(--pine)", background:"var(--pineSoft)", borderRadius:8, padding:"8px 10px", marginBottom:12 } }, importMsg),
+    React.createElement("div", { key:"h2", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:12 } }, "File Excel nhập vào cần có cột \"Tên nhân viên\", \"Cửa hàng\" và các cột \"[Tên chỉ tiêu] - Mục tiêu\" — dễ nhất là tải file xuống trước, điền số vào rồi tải ngược lên."),
     React.createElement("div", { key:"row", className:"btnRow", style:{ marginBottom:16 } }, [
       React.createElement("input", { key:"m", type:"month", value:thang, onChange:e=>setThang(e.target.value), style:{ padding:"8px 10px", border:"1px solid var(--line)", borderRadius:8, fontSize:13 } }),
       React.createElement(NamePicker, { key:"p", options:staffOptions, value:pickedStaffId, onChange:setPickedStaffId, placeholder:"Gõ tên nhân viên để giao KPI..." }),
@@ -2599,11 +2896,14 @@ function KpiView({ isAdmin, myStaff }){
   ]);
 
   const adminSummarySection = isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
-    React.createElement("div", { key:"t", className:"cardTitle" }, `Tổng hợp KPI toàn bộ nhân sự — tháng ${thang}`),
+    React.createElement("div", { key:"th", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:12 } }, [
+      React.createElement("div", { key:"t", className:"cardTitle", style:{ marginBottom:0 } }, `Tổng hợp KPI toàn bộ nhân sự — tháng ${thang}`),
+      React.createElement("button", { key:"exp", type:"button", className:"btn btnPrimary", onClick:exportKpiFullSummary }, "Tải tổng hợp đầy đủ (gửi HR tính thưởng)"),
+    ]),
     summaryRows.length===0
       ? React.createElement("div",{key:"e",className:"emptyState"},"Chưa có nhân sự.")
       : React.createElement("div", { key:"tb", className:"tableWrap", style:{ marginBottom:0 } }, React.createElement("table",{className:"data"}, [
-          React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Nhân viên","Cửa hàng","Vai trò","Điểm KH","Điểm gốc + CTAH","% đạt","Xếp loại"].map((h,i)=>React.createElement("th",{key:i},h)))),
+          React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Nhân viên","Cửa hàng","Vai trò","Điểm KH","Điểm gốc + CTAH","% đạt","Xếp loại","Duyệt",""].map((h,i)=>React.createElement("th",{key:i},h)))),
           React.createElement("tbody",{key:"b"}, summaryRows.map(r => React.createElement("tr",{key:r.staff.id}, [
             React.createElement("td",{key:"n"}, r.staff.name),
             React.createElement("td",{key:"s"}, r.staff.shop),
@@ -2612,38 +2912,33 @@ function KpiView({ isAdmin, myStaff }){
             React.createElement("td",{key:"a"}, r.totalActual!=null ? `${Math.round(r.totalActual)}${r.ctahAdj?` (CTAH ${r.ctahAdj>0?"+":""}${r.ctahAdj})`:""}` : "—"),
             React.createElement("td",{key:"pc"}, r.khongXet ? "—" : (r.pct!=null ? `${Math.round(r.pct*100)}%` : "—")),
             React.createElement("td",{key:"x"}, r.khongXet ? StatusPill("Không xét KPI","warn") : (r.hasTargets ? StatusPill(kpiXepLoai(r.pct), r.pct!=null && r.pct>=0.85 ? "good" : "warn") : StatusPill("Chưa giao KPI","neutral"))),
+            React.createElement("td",{key:"dv"}, r.trangThaiDuyet ? StatusPill(r.trangThaiDuyet, r.trangThaiDuyet==="QLKV đã duyệt"?"good":"neutral") : StatusPill("Chưa duyệt","warn")),
+            React.createElement("td",{key:"btn"}, r.totalActual!=null && r.trangThaiDuyet!=="QLKV đã duyệt"
+              ? React.createElement("button",{className:"btn",style:{padding:"5px 10px",fontSize:11.5},onClick:()=>qlkvDuyet(r.staff)}, "Duyệt cuối")
+              : "—"),
           ]))),
         ])),
   ]);
 
-  // ---- KPI cá nhân của quản lý (tự đặt mục tiêu + tự chấm) ----
-  const personalItems = (personalDoc && personalDoc.items) || [];
-  async function savePersonalTarget(itemId, field, value){
-    const payload = {};
-    payload[`items.${itemId}.${field}`] = field==="actual" ? value : (value===""?"":Number(value));
-    await mergeDotFields("kpiPersonal", thang, payload);
+  // ---- KPI Quản lý địa bàn (tự đăng ký chỉ tiêu + tự chấm cho chính mình) ----
+  const QLKV_ID = "qlkv_self";
+  const qlkvAssign = assignments[kpiAssignmentId(QLKV_ID, thang)];
+  const qlkvTargets = (qlkvAssign && qlkvAssign.targets) || {};
+  const qlkvActuals = (qlkvAssign && qlkvAssign.actuals) || {};
+  async function saveQlkvTarget(itemId, value){
+    const payload = { staffId:QLKV_ID, staffName:"Quản lý địa bàn", role:"QLKV", thang };
+    payload[`targets.${itemId}`] = value===""? "" : Number(value);
+    await mergeDotFields("kpiAssignments", kpiAssignmentId(QLKV_ID, thang), payload);
   }
-  async function addPersonalItem(){
-    if(!newItem.label.trim()) return;
-    const id = "p" + uid();
-    await mergeDotFields("kpiPersonal", thang, { [`items.${id}`]: { label:newItem.label.trim(), diem:Number(newItem.diem)||100, target:"", actual:"" } });
-    setNewItem({ label:"", diem:100 }); setShowAddPersonal(false);
+  async function saveQlkvActual(itemId, value){
+    const payload = { staffId:QLKV_ID, staffName:"Quản lý địa bàn", role:"QLKV", thang };
+    payload[`actuals.${itemId}`] = value;
+    await mergeDotFields("kpiAssignments", kpiAssignmentId(QLKV_ID, thang), payload);
   }
-  async function removePersonalItem(itemId){
-    await mergeDotFields("kpiPersonal", thang, { [`items.${itemId}`]: firebase.firestore.FieldValue.delete() });
+  const qlkvCtahDoc = ctahDocs[kpiCtahId(QLKV_ID, thang)] || {};
+  async function saveQlkvCtahField(field, value){
+    await mergeDotFields("kpiCTAH", kpiCtahId(QLKV_ID, thang), { staffId:QLKV_ID, staffName:"Quản lý địa bàn", role:"QLKV", thang, [field]:value });
   }
-  const personalTotalPlan = Object.values(personalItems).reduce((s,it)=>s+(Number(it.diem)||0),0);
-  const personalTotalActual = (() => {
-    let sum=0, has=false;
-    Object.values(personalItems).forEach(it=>{
-      if(it.target && it.actual!=null && it.actual!==""){
-        const pct = Number(it.actual)/Number(it.target);
-        sum += Math.max(0,pct) * (Number(it.diem)||0); has=true;
-      }
-    });
-    return has ? sum : null;
-  })();
-  const personalPct = (personalTotalActual!=null && personalTotalPlan) ? personalTotalActual/personalTotalPlan : null;
 
   // ---- Tiêu chí ảnh hưởng (CTAH): đào tạo, tác phong, chuyên cần... cộng/trừ vào KPI ----
   const ctahStaff = staff.find(s=>s.id===ctahStaffId);
@@ -2691,30 +2986,38 @@ function KpiView({ isAdmin, myStaff }){
     ]) : React.createElement("div", { className:"emptyState" }, "Chọn 1 nhân viên ở trên để chấm."),
   ]);
 
-  const adminPersonalSection = isAdmin && React.createElement("div", { className:"card" }, [
-    React.createElement("div", { key:"t", className:"cardTitle" }, `KPI cá nhân quản lý — tháng ${thang}`),
-    React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:12 } }, "Chỉ tiêu do bạn tự đặt ra và tự chấm cho chính mình — tự thêm đầu việc/chỉ tiêu riêng."),
-    Object.keys(personalItems).length===0
-      ? React.createElement("div",{key:"e",className:"emptyState"},"Chưa có chỉ tiêu KPI cá nhân nào — bấm \"+ Thêm chỉ tiêu\" để bắt đầu.")
-      : Object.entries(personalItems).map(([id,it]) => React.createElement("div", { key:id, style:{ display:"flex", flexWrap:"wrap", alignItems:"center", gap:10, padding:"9px 0", borderBottom:"1px solid #F0EEE2" } }, [
-          React.createElement("div", { key:"l", style:{ flex:"1 1 220px", fontSize:13 } }, [ it.label, React.createElement("span",{key:"w",style:{color:"var(--inkSoft)",fontSize:11.5}}, ` · tối đa ${it.diem} điểm`) ]),
-          React.createElement("input", { key:"tg", type:"number", defaultValue:it.target!=null?it.target:"", placeholder:"Mục tiêu", onBlur:e=>savePersonalTarget(id,"target",e.target.value), style:{ width:110, padding:"6px 8px", border:"1px solid var(--line)", borderRadius:6, fontSize:12.5 } }),
-          React.createElement("input", { key:"tt", type:"number", defaultValue:it.actual!=null?it.actual:"", placeholder:"Thực tế", onBlur:e=>savePersonalTarget(id,"actual",e.target.value), style:{ width:110, padding:"6px 8px", border:"1px solid var(--line)", borderRadius:6, fontSize:12.5 } }),
-          React.createElement("button", { key:"d", type:"button", className:"btn btnDanger", style:{padding:"6px 9px",fontSize:11.5}, onClick:()=>removePersonalItem(id) }, "Xoá"),
-        ])),
-    Object.keys(personalItems).length>0 && React.createElement("div", { key:"total", style:{ display:"flex", flexWrap:"wrap", gap:14, alignItems:"center", background:"var(--paper)", borderRadius:8, padding:"12px 14px", marginTop:10, marginBottom:14 } }, [
-      React.createElement("div", { key:"a", style:{ fontSize:13 } }, [ React.createElement("b",null,"Tổng điểm kế hoạch: "), `${personalTotalPlan} điểm` ]),
-      React.createElement("div", { key:"b", style:{ fontSize:13 } }, [ React.createElement("b",null,"Tổng điểm thực tế: "), personalTotalActual!=null ? Math.round(personalTotalActual) : "—" ]),
-      personalPct!=null && StatusPill(kpiXepLoai(personalPct), personalPct>=0.85?"good":"warn"),
+  const adminPersonalSection = isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"t", className:"cardTitle" }, `KPI Quản lý địa bàn (tự đăng ký & tự chấm) — tháng ${thang}`),
+    React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:12 } }, "Đúng theo mẫu \"Bảng tiêu chí KPI đánh giá Quản lý địa bàn\" — bạn tự đặt Mục tiêu giao và tự chấm Thực tế đạt được cho chính mình."),
+    React.createElement(KpiGroups, {
+      key:"g", groups:templates.QLKV, targets:qlkvTargets, actuals:qlkvActuals,
+      canEditTarget:true, canEditActual:true,
+      onTargetChange:(itemId,v)=>saveQlkvTarget(itemId,v), onActualChange:(itemId,v)=>saveQlkvActual(itemId,v),
+    }),
+  ]);
+
+  // ---- CTAH riêng cho Quản lý địa bàn ----
+  const qlkvCtahPreview = kpiCtahQlkvCalc(qlkvCtahDoc);
+  const adminQlkvCtahSection = isAdmin && React.createElement("div", { className:"card" }, [
+    React.createElement("div", { key:"t", className:"cardTitle" }, "Tiêu chí ảnh hưởng KPI Quản lý địa bàn"),
+    React.createElement("div", { key:"g1", style:{ fontWeight:700, fontSize:13, marginBottom:6 } }, "Đào tạo"),
+    React.createElement("div", { key:"g1r", className:"btnRow", style:{ marginBottom:14, alignItems:"flex-end" } }, [
+      React.createElement("div", { key:"a" }, [ React.createElement("div",{style:{fontSize:11,color:"var(--inkSoft)"}},"Điểm TB bài kiểm tra (<60: -50)"), React.createElement("input",{type:"number",defaultValue:qlkvCtahDoc.baiKiemTra!=null?qlkvCtahDoc.baiKiemTra:"",onBlur:e=>saveQlkvCtahField("baiKiemTra",e.target.value===""?"":Number(e.target.value)),style:{width:130,padding:"6px 8px",border:"1px solid var(--line)",borderRadius:6}}) ]),
+      React.createElement("div", { key:"b" }, [ React.createElement("div",{style:{fontSize:11,color:"var(--inkSoft)"}},"Số buổi họp nhóm thiếu (-20/buổi)"), React.createElement("input",{type:"number",defaultValue:qlkvCtahDoc.hopNhomThieu!=null?qlkvCtahDoc.hopNhomThieu:"",onBlur:e=>saveQlkvCtahField("hopNhomThieu",e.target.value===""?"":Number(e.target.value)),style:{width:130,padding:"6px 8px",border:"1px solid var(--line)",borderRadius:6}}) ]),
+      React.createElement("div", { key:"c" }, [ React.createElement("div",{style:{fontSize:11,color:"var(--inkSoft)"}},"Role play (không đạt: -10 · không thực hiện: -20)"), React.createElement("select",{defaultValue:qlkvCtahDoc.rolePlay||"",onChange:e=>saveQlkvCtahField("rolePlay",e.target.value),style:{padding:"6px 8px",border:"1px solid var(--line)",borderRadius:6}}, ["","Đạt","Không đạt","Không thực hiện"].map(o=>React.createElement("option",{key:o,value:o},o||"—"))) ]),
+      React.createElement("div", { key:"d" }, [ React.createElement("div",{style:{fontSize:11,color:"var(--inkSoft)"}},"Tự học LMS (không đạt: -20)"), React.createElement("select",{defaultValue:qlkvCtahDoc.tuHocLMS||"",onChange:e=>saveQlkvCtahField("tuHocLMS",e.target.value),style:{padding:"6px 8px",border:"1px solid var(--line)",borderRadius:6}}, ["","Đạt","Không đạt"].map(o=>React.createElement("option",{key:o,value:o},o||"—"))) ]),
     ]),
-    showAddPersonal
-      ? React.createElement("div", { key:"add", style:{ display:"flex", gap:8, marginTop:10 } }, [
-          React.createElement("input", { key:"l", value:newItem.label, onChange:e=>setNewItem({...newItem,label:e.target.value}), placeholder:"Tên chỉ tiêu...", style:{ flex:1, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5 } }),
-          React.createElement("input", { key:"d", type:"number", value:newItem.diem, onChange:e=>setNewItem({...newItem,diem:e.target.value}), style:{ width:100, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5 } }),
-          React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", onClick:addPersonalItem }, "Lưu"),
-          React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:()=>setShowAddPersonal(false) }, "Huỷ"),
-        ])
-      : React.createElement("button", { key:"open", type:"button", className:"btn", style:{ marginTop:10 }, onClick:()=>setShowAddPersonal(true) }, "＋ Thêm chỉ tiêu"),
+    React.createElement("div", { key:"g2", style:{ fontWeight:700, fontSize:13, marginBottom:6 } }, "Công việc khác"),
+    React.createElement("div", { key:"g2r", className:"btnRow", style:{ marginBottom:14, alignItems:"flex-end" } }, [
+      React.createElement("div", { key:"a" }, [ React.createElement("div",{style:{fontSize:11,color:"var(--inkSoft)"}},"Số NVBH không được duyệt kế hoạch web (-20/người)"), React.createElement("input",{type:"number",defaultValue:qlkvCtahDoc.soNvbhKhongDuyet!=null?qlkvCtahDoc.soNvbhKhongDuyet:"",onBlur:e=>saveQlkvCtahField("soNvbhKhongDuyet",e.target.value===""?"":Number(e.target.value)),style:{width:130,padding:"6px 8px",border:"1px solid var(--line)",borderRadius:6}}) ]),
+    ]),
+    React.createElement("div", { key:"note", className:"field", style:{ marginBottom:12 } }, [
+      React.createElement("label",{key:"l"},"Kết luận chung"),
+      React.createElement("textarea",{key:"i", rows:2, defaultValue:qlkvCtahDoc.ketLuanChung||"", onBlur:e=>saveQlkvCtahField("ketLuanChung",e.target.value)}),
+    ]),
+    React.createElement("div", { key:"total", style:{ background:"var(--paper)", borderRadius:8, padding:"10px 14px", fontSize:13 } }, [
+      React.createElement("b",null,"Tổng điểm CTAH cộng/trừ vào KPI: "), `${qlkvCtahPreview.adj>0?"+":""}${qlkvCtahPreview.adj} điểm`,
+    ]),
   ]);
 
   // ---- Chi tiết doanh số theo quý (kế hoạch năm, luỹ kế, còn thiếu — theo cửa hàng) ----
@@ -2764,7 +3067,7 @@ function KpiView({ isAdmin, myStaff }){
   return React.createElement(React.Fragment, null, [
     React.createElement("h2", { key:"t", className:"pagetitle" }, "KPI"),
     React.createElement("p", { key:"s", className:"pagesub" }, isAdmin ? "Giao chỉ tiêu KPI cho từng nhân viên theo tháng, theo dõi kết quả toàn khu vực." : "Chỉ tiêu KPI được quản lý giao cho bạn — tự cập nhật kết quả thực tế đạt được."),
-    isAdmin ? React.createElement(React.Fragment, null, [ adminAssignSection, adminSummarySection, adminCtahSection, adminRevenueSection, adminPersonalSection ]) : staffSection,
+    isAdmin ? React.createElement(React.Fragment, null, [ adminAssignSection, adminSummarySection, adminCtahSection, adminRevenueSection, adminPersonalSection, adminQlkvCtahSection ]) : React.createElement(React.Fragment, null, [ staffSection, chtReviewSection ]),
   ]);
 }
 
