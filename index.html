@@ -227,7 +227,7 @@ const db = firebase.firestore();
 const storage = firebase.storage();
 // Khoá "VAPID" dùng cho thông báo đẩy (Web Push) — lấy ở Firebase Console:
 // Project Settings > Cloud Messaging > Web configuration > "Generate key pair", dán vào đây.
-const FCM_VAPID_KEY = "BHp0H9G6vblCIpkPRi8yDlXcJ6o4yhVAJGuMpcuNG99J-Ptrx-ZCsOid-EM530rmnIV1MHZYK7j-Wdkq1YeaMAM";
+const FCM_VAPID_KEY = "DÁN_VAPID_KEY_CỦA_BẠN_VÀO_ĐÂY";
 
 // App Firebase phụ, dùng riêng để TẠO tài khoản nhân viên mà không làm mất
 // phiên đăng nhập hiện tại của quản lý (Firebase sẽ tự đăng nhập vào tài
@@ -2178,6 +2178,7 @@ function TaskAssignView({ isAdmin, myStaff }){
     await updateDoc("tasks", taskId, { ketQuaLink: text });
   }
   async function removeTask(id){ if(window.confirm("Xoá công việc này?")) await deleteDoc("tasks", id); }
+  async function saveTaskFeedback(id, text){ await updateDoc("tasks", id, { nhanXetQuanLy: text }); setViewTask(v => v ? { ...v, nhanXetQuanLy:text } : v); }
   async function reopenTask(id){ await updateDoc("tasks", id, { trangThai:"Đang giao", ketQua:"" }); }
 
   // ---- Giao diện nhân viên: việc giao riêng cho mình + việc giao chung cho cửa hàng ----
@@ -2252,6 +2253,7 @@ function TaskAssignView({ isAdmin, myStaff }){
         React.createElement("div",{key:"h",style:{fontWeight:700,marginBottom:2}}, `${t.title} · hoàn thành ${t.ngayHoanThanh}${t.nguoiBaoCao ? " · "+t.nguoiBaoCao : ""}`),
         React.createElement("div",{key:"k",style:{color:"var(--inkSoft)"}}, `Kết quả: ${t.ketQua}`),
         resultAttachmentsView(t),
+        t.nhanXetQuanLy && React.createElement("div",{key:"fb",style:{marginTop:6,color:"var(--pine)",fontWeight:600}}, `Nhận xét của quản lý: ${t.nhanXetQuanLy}`),
       ])
     )),
   ]);
@@ -2304,6 +2306,7 @@ function TaskAssignView({ isAdmin, myStaff }){
         })),
       ])));
 
+  const [feedbackText, setFeedbackText] = useState("");
   const viewModal = viewTask && React.createElement("div", { className:"modalOverlay", onClick:()=>setViewTask(null) },
     React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:2 } }, viewTask.title),
@@ -2316,6 +2319,14 @@ function TaskAssignView({ isAdmin, myStaff }){
             resultAttachmentsView(viewTask),
           ])
         : React.createElement("div", { key:"kq", style:{ marginBottom:14, fontSize:12.5, color:"var(--inkSoft)" } }, "Chưa có kết quả trả về."),
+      isAdmin && viewTask.trangThai==="Đã hoàn thành" && React.createElement("div", { key:"fb", className:"field", style:{ marginBottom:14 } }, [
+        React.createElement("label",{key:"l"},"Nhận xét của quản lý (nhân viên sẽ nhận được thông báo)"),
+        React.createElement("textarea",{key:"i", rows:2, defaultValue:viewTask.nhanXetQuanLy||"", onChange:e=>setFeedbackText(e.target.value), placeholder:"Làm tốt lắm! / Cần bổ sung thêm..."}),
+        React.createElement("button",{key:"b", type:"button", className:"btn btnPrimary", style:{marginTop:8,padding:"6px 12px",fontSize:12.5}, onClick:()=>saveTaskFeedback(viewTask.id, feedbackText||viewTask.nhanXetQuanLy||"")}, "Lưu nhận xét"),
+      ]),
+      !isAdmin && viewTask.nhanXetQuanLy && React.createElement("div", { key:"fbview", style:{ marginBottom:14, background:"var(--pineSoft)", borderRadius:8, padding:"9px 12px", fontSize:12.5 } }, [
+        React.createElement("div",{key:"l",style:{fontWeight:700,marginBottom:2}},"Nhận xét của quản lý"), viewTask.nhanXetQuanLy,
+      ]),
       React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } },
         React.createElement("button", { type:"button", className:"btn btnGhost", onClick:()=>setViewTask(null) }, "Đóng")
       ),
@@ -3325,16 +3336,45 @@ function PerformanceView(){
 
 // ================= MODULE 8: ĐÀO TẠO & BUDDY =================
 const DEFAULT_CHECKLIST = [
+  // Tháng 1 - Tuần 1
   { id:"d1", offset:0, label:"Giới thiệu quy định cửa hàng, an toàn, GPP cơ bản" },
   { id:"d2", offset:0, label:"Giới thiệu buddy kèm cặp, tham quan cửa hàng, vị trí hàng hoá" },
-  { id:"d3", offset:2, label:"Hướng dẫn sử dụng phần mềm bán hàng (POS)" },
-  { id:"d4", offset:2, label:"Quy trình chào đón & tư vấn khách hàng cơ bản" },
-  { id:"d5", offset:6, label:"Kiến thức nhóm sản phẩm chính (giảm đau hạ sốt, tiêu hoá, vitamin...)" },
-  { id:"d6", offset:6, label:"Quy trình xử lý đơn hàng, đổi trả, hoá đơn" },
-  { id:"d7", offset:13, label:"Kiến thức nhóm sản phẩm mạn tính (tim mạch, tiểu đường, huyết áp)" },
-  { id:"d8", offset:13, label:"Xử lý tình huống khách hàng khó, khiếu nại" },
-  { id:"d9", offset:29, label:"Đánh giá cuối thử việc — kiểm tra kiến thức tổng hợp" },
-  { id:"d10", offset:29, label:"Phỏng vấn phản hồi 2 chiều (nhân viên mới và quản lý)" },
+  { id:"d3", offset:3, label:"Slide giới thiệu công ty CPC1 HN, công ty Upharma, nhà thuốc Upharma và các chế độ liên quan" },
+  { id:"d4", offset:5, label:"Hướng dẫn sử dụng phần mềm bán hàng: POS, app Nhà thuốc, máy quẹt thẻ" },
+  { id:"d5", offset:5, label:"Vào POS tìm hiểu sản phẩm CPC1HN, hàng hệ số 1, hàng hệ số 0,5, các quy định & SOP" },
+  { id:"d6", offset:7, label:"Quy định nhà thuốc: giờ giấc làm việc, chấm công, vệ sinh cửa hàng, trang phục, biển tên" },
+  { id:"d7", offset:7, label:"Thái độ làm việc: cử chỉ, lời nói bán hàng; tương tác nhóm qua Skype/Zalo/Facebook" },
+  { id:"d8", offset:7, label:"Học layout: vị trí, sắp xếp nhóm thuốc tại nhà thuốc" },
+  // Tháng 1 - Tuần 2
+  { id:"d9", offset:15, label:"Học đào tạo cùng bộ phận đào tạo; ôn lại kiến thức đã học" },
+  { id:"d10", offset:15, label:"Thực hành cắt liều, ra đơn, thao tác trên POS" },
+  { id:"d11", offset:15, label:"Ôn lại layout, vị trí sắp xếp nhóm thuốc tại nhà thuốc" },
+  // Tháng 1 - Tuần 3
+  { id:"d12", offset:23, label:"KPI: chăm sóc khách mới/khách cũ, tạo nhóm CSKH, ra đơn online" },
+  { id:"d13", offset:23, label:"KPI: doanh số cá nhân, doanh số nhà thuốc" },
+  { id:"d14", offset:23, label:"KPI: hàng hệ số (hệ số 1, hệ số 0,5), hàng chậm luân chuyển, hàng cận date" },
+  { id:"d15", offset:23, label:"Bắt đầu kiểm tra định kỳ 2 bài/tuần + Zoom thứ 6 hàng tuần, roleplay & coaching hàng tháng" },
+  { id:"d16", offset:23, label:"Tham gia họp nhóm hàng tuần" },
+  // Tháng 1 - Tuần 4
+  { id:"d17", offset:31, label:"Thao tác POS: bán hàng/xuất bill, dự trù hàng hoá, nhập hàng hoá, tìm kiếm hàng hoá & tồn kho" },
+  { id:"d18", offset:31, label:"Thao tác POS: kiểm kê hàng hoá, báo cáo kết ca" },
+  { id:"d19", offset:31, label:"Công việc tại nhà thuốc: sắp xếp thuốc theo khu vực, lau dọn quầy kệ, vệ sinh; ghi chép sổ sách, xử lý hàng cận date khi kiểm kê" },
+  { id:"d20", offset:31, label:"Đánh giá cuối thử việc — kiểm tra kiến thức tổng hợp" },
+  { id:"d21", offset:31, label:"Phỏng vấn phản hồi 2 chiều (nhân viên mới và quản lý)" },
+  // Tháng 2 - Tuần 1
+  { id:"d22", offset:39, label:"Thực hành bán hàng, tư vấn khách hàng" },
+  { id:"d23", offset:39, label:"Kiểm tra thao tác POS: đăng ký lịch làm việc, xem công, đăng ký nghỉ phép/làm thêm giờ" },
+  { id:"d24", offset:39, label:"Kiểm tra thao tác POS: tạo/chỉnh sửa đơn hàng, tra cứu hàng hoá & giá, xác nhận đơn hàng/đơn đặt/đơn bán" },
+  { id:"d25", offset:39, label:"Kiểm tra thao tác POS: bán đơn khuyến mãi, xử lý đơn lỗi/mở lại đơn, nộp tiền kế toán, bàn giao ca" },
+  // Tháng 2 - Tuần 2
+  { id:"d26", offset:47, label:"Kiểm tra thao tác POS: tìm kiếm & cài vị trí sản phẩm; kiểm kê hàng hoá (tạo phiếu, xử lý sai lệch tồn kho)" },
+  { id:"d27", offset:47, label:"Kiểm tra thao tác POS: check tồn kho các shop/hệ thống; xử lý trả hàng của khách & trả hàng về kho tổng; xử lý hàng cận/hết date" },
+  // Tháng 2 - Tuần 3
+  { id:"d28", offset:54, label:"Kiểm tra thao tác POS: nhập kho; gọi hàng (phân biệt trạng thái đơn, gọi hàng tuần/gọi gấp); tra cứu tình trạng xử lý đơn hàng" },
+  // Tháng 2 - Tuần 4
+  { id:"d29", offset:61, label:"Kiểm tra thao tác POS: tra cứu tài liệu sản phẩm công ty/SOP/quy trình quy định; tra cứu kết quả kiểm tra" },
+  { id:"d30", offset:61, label:"Ghi chép sổ sách: lưu đơn với thuốc mua theo đơn, kháng sinh, kháng virus; theo dõi dữ liệu nhiệt kế ẩm tự ghi" },
+  { id:"d31", offset:61, label:"Tổng kết 2 tháng đào tạo buddy — đánh giá cuối cùng" },
 ];
 function taskDueDate(joinDate, offset){ return addDays(joinDate, offset); }
 
@@ -4009,7 +4049,20 @@ function TaskLiveNotifier({ myStaff }){
   const [notifErr, setNotifErr] = useState(null);
   const seenIds = useRef(new Set());
   const isFirstSnap = useRef(true);
+  const seenKudos = useRef(new Set());
+  const isFirstKudos = useRef(true);
+  const prevDaily = useRef({});
+  const prevWeekly = useRef({});
+  const prevTaskFeedback = useRef({});
 
+  function fireLocalNotif(title, body){
+    setToast({ title, body });
+    if(typeof Notification !== "undefined" && Notification.permission==="granted"){
+      try{ new Notification(title, { body }); } catch(err){}
+    }
+  }
+
+  // Việc mới được giao
   useEffect(()=>{
     if(!myStaff) return undefined;
     seenIds.current = new Set();
@@ -4017,26 +4070,92 @@ function TaskLiveNotifier({ myStaff }){
     const unsub = db.collection("tasks").onSnapshot(snap => {
       if(isFirstSnap.current){
         // Lần tải đầu tiên: chỉ ghi nhớ các việc đã có sẵn từ trước, không báo cho việc cũ.
-        snap.docs.forEach(d => seenIds.current.add(d.id));
+        snap.docs.forEach(d => { seenIds.current.add(d.id); prevTaskFeedback.current[d.id] = d.data().nhanXetQuanLy || ""; });
         isFirstSnap.current = false;
         return;
       }
       snap.docChanges().forEach(change => {
-        if(change.type!=="added") return;
         const t = { id:change.doc.id, ...change.doc.data() };
-        if(seenIds.current.has(t.id)) return;
-        seenIds.current.add(t.id);
         const isMine = (t.assignType==="staff" && t.staffId===myStaff.id) || (t.assignType==="shop" && t.shop===myStaff.shop);
         if(!isMine) return;
-        const body = `${t.title} — hạn ${t.deadline}${t.hanGio ? " "+t.hanGio : ""}`;
-        setToast({ title:"🔔 Việc mới được giao", body });
-        if(typeof Notification !== "undefined" && Notification.permission==="granted"){
-          try{ new Notification("Việc mới được giao", { body }); } catch(err){}
+        if(change.type==="added" && !seenIds.current.has(t.id)){
+          seenIds.current.add(t.id);
+          fireLocalNotif("🔔 Việc mới được giao", `${t.title} — hạn ${t.deadline}${t.hanGio ? " "+t.hanGio : ""}`);
         }
-      });
-    }, err => console.error("TaskLiveNotifier lỗi:", err));
+        if(change.type==="modified"){
+          const prevFb = prevTaskFeedback.current[t.id];
+          if(prevFb!==undefined && !prevFb && t.nhanXetQuanLy){
+            fireLocalNotif("💬 Quản lý phản hồi việc bạn đã làm", `${t.title}: ${t.nhanXetQuanLy}`);
+          }
+          prevTaskFeedback.current[t.id] = t.nhanXetQuanLy || "";
+        }
+        if(change.type!=="removed") seenIds.current.add(t.id);      });
+    }, err => console.error("TaskLiveNotifier (tasks) lỗi:", err));
     return unsub;
   }, [myStaff && myStaff.id]);
+
+  // Được tặng sao
+  useEffect(()=>{
+    if(!myStaff) return undefined;
+    seenKudos.current = new Set();
+    isFirstKudos.current = true;
+    const unsub = db.collection("kudos").onSnapshot(snap => {
+      if(isFirstKudos.current){
+        snap.docs.forEach(d => seenKudos.current.add(d.id));
+        isFirstKudos.current = false;
+        return;
+      }
+      snap.docChanges().forEach(change => {
+        if(change.type!=="added") return;
+        const k = { id:change.doc.id, ...change.doc.data() };
+        if(seenKudos.current.has(k.id)) return;
+        seenKudos.current.add(k.id);
+        if(k.toId!==myStaff.id) return;
+        fireLocalNotif("⭐ Bạn vừa được tặng sao", `${k.fromName} tặng bạn ${k.stars}★${k.message ? ": "+k.message : ""}`);
+      });
+    }, err => console.error("TaskLiveNotifier (kudos) lỗi:", err));
+    return unsub;
+  }, [myStaff && myStaff.id]);
+
+  // Quản lý chấm checklist ngày
+  useEffect(()=>{
+    if(!myStaff) return undefined;
+    prevDaily.current = {};
+    let first = true;
+    const unsub = db.collection("dailyReports").where("staffId","==",myStaff.id).onSnapshot(snap => {
+      if(first){ snap.docs.forEach(d => prevDaily.current[d.id] = d.data().diemChu!=null); first = false; return; }
+      snap.docChanges().forEach(change => {
+        if(change.type!=="modified") return;
+        const r = change.doc.data();
+        const had = prevDaily.current[change.doc.id];
+        if(had===false && r.diemChu!=null){
+          fireLocalNotif("✅ Quản lý đã chấm checklist ngày", `${r.ngay}: ${"★".repeat(r.diemChu)}${r.nhanXetChu ? " — "+r.nhanXetChu : ""}`);
+        }
+        prevDaily.current[change.doc.id] = r.diemChu!=null;
+      });
+    }, err => console.error("TaskLiveNotifier (dailyReports) lỗi:", err));
+    return unsub;
+  }, [myStaff && myStaff.id]);
+
+  // Quản lý chấm báo cáo tuần (theo cửa hàng — cả cửa hàng đều nhận)
+  useEffect(()=>{
+    if(!myStaff) return undefined;
+    prevWeekly.current = {};
+    let first = true;
+    const unsub = db.collection("weeklyReports").where("shop","==",myStaff.shop).onSnapshot(snap => {
+      if(first){ snap.docs.forEach(d => prevWeekly.current[d.id] = d.data().diemChu!=null); first = false; return; }
+      snap.docChanges().forEach(change => {
+        if(change.type!=="modified") return;
+        const r = change.doc.data();
+        const had = prevWeekly.current[change.doc.id];
+        if(had===false && r.diemChu!=null){
+          fireLocalNotif("✅ Quản lý đã chấm báo cáo tuần", `Tuần ${r.tuanNgay}: ${"★".repeat(r.diemChu)}${r.nhanXetChu ? " — "+r.nhanXetChu : ""}`);
+        }
+        prevWeekly.current[change.doc.id] = r.diemChu!=null;
+      });
+    }, err => console.error("TaskLiveNotifier (weeklyReports) lỗi:", err));
+    return unsub;
+  }, [myStaff && myStaff.id, myStaff && myStaff.shop]);
 
   useEffect(()=>{
     if(!toast) return undefined;
@@ -4044,12 +4163,12 @@ function TaskLiveNotifier({ myStaff }){
     return ()=>clearTimeout(t);
   }, [toast]);
 
-  async function enableNotif(){
+  async function enableNotif(silent){
     if(typeof Notification === "undefined") return;
-    const perm = await Notification.requestPermission();
+    const perm = silent ? Notification.permission : await Notification.requestPermission();
     setNotifPerm(perm);
     if(perm!=="granted" || !myStaff) return;
-    setNotifErr(null);
+    if(!silent) setNotifErr(null);
     // Đăng ký nhận thông báo đẩy thật (hoạt động cả khi tắt hẳn trình duyệt) — cần Service
     // Worker + khoá VAPID (FCM_VAPID_KEY) + Cloud Function đứng giữa gửi đi (xem hướng dẫn deploy).
     try{
@@ -4063,6 +4182,7 @@ function TaskLiveNotifier({ myStaff }){
           staffName: myStaff.name, shop: myStaff.shop,
           updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
         }, { merge:true });
+        try{ localStorage.setItem("fcmOk_"+myStaff.id, "1"); } catch(e){}
         setNotifErr("__OK__");
       } else {
         setNotifErr("Không lấy được token (getToken trả về rỗng) — thường do khoá VAPID sai hoặc chưa đúng.");
@@ -4073,18 +4193,33 @@ function TaskLiveNotifier({ myStaff }){
     }
   }
 
+  // Nếu đã từng cho phép (granted) nhưng thiết bị này chưa được xác nhận đăng ký thành công
+  // (chưa đánh dấu trong localStorage), tự động thử đăng ký NGẦM 1 lần khi tải trang —
+  // không cần bấm gì cả, đỡ phải hỏi lại "Thử đăng ký lại" mỗi lần vào app.
+  useEffect(()=>{
+    if(!myStaff) return;
+    if(notifPerm!=="granted") return;
+    let already = false;
+    try{ already = localStorage.getItem("fcmOk_"+myStaff.id)==="1"; } catch(e){}
+    if(!already) enableNotif(true);
+  }, [myStaff && myStaff.id, notifPerm]);
+
+  useEffect(()=>{
+    if(notifErr!=="__OK__") return undefined;
+    const t = setTimeout(()=>setNotifErr(null), 6000);
+    return ()=>clearTimeout(t);
+  }, [notifErr]);
+
   return React.createElement(React.Fragment, null, [
-    notifErr && notifErr!=="__OK__" && React.createElement("div", { key:"errbanner", style:{ background:"var(--claySoft)", padding:"9px 16px", fontSize:12, textAlign:"center", color:"var(--clay)", fontWeight:600 } },
-      `Đăng ký thông báo lỗi: ${notifErr}`),
+    notifErr && notifErr!=="__OK__" && React.createElement("div", { key:"errbanner", style:{ background:"var(--claySoft)", padding:"9px 16px", fontSize:12, display:"flex", justifyContent:"center", alignItems:"center", gap:10, flexWrap:"wrap", color:"var(--clay)", fontWeight:600 } }, [
+      `Đăng ký thông báo lỗi: ${notifErr}`,
+      React.createElement("button",{key:"b", type:"button", className:"btn", style:{padding:"4px 10px",fontSize:11.5}, onClick:()=>enableNotif(false)}, "Thử lại"),
+    ]),
     notifErr==="__OK__" && React.createElement("div", { key:"okbanner", style:{ background:"var(--pineSoft)", padding:"9px 16px", fontSize:12.5, textAlign:"center", color:"var(--pine)", fontWeight:600 } },
       "Đã đăng ký nhận thông báo thành công cho thiết bị này."),
     notifPerm==="default" && React.createElement("div", { key:"banner", style:{ background:"var(--goldSoft)", padding:"9px 16px", fontSize:12.5, display:"flex", justifyContent:"center", alignItems:"center", gap:12, flexWrap:"wrap" } }, [
       "Bật thông báo để biết ngay khi có việc mới được giao — kể cả khi đã tắt hẳn trình duyệt.",
-      React.createElement("button", { key:"b", type:"button", className:"btn btnPrimary", style:{padding:"5px 12px",fontSize:12}, onClick:enableNotif }, "Bật thông báo"),
-    ]),
-    notifPerm==="granted" && notifErr!=="__OK__" && React.createElement("div", { key:"retrybanner", style:{ background:"var(--paper)", padding:"9px 16px", fontSize:12.5, display:"flex", justifyContent:"center", alignItems:"center", gap:12, flexWrap:"wrap" } }, [
-      "Đã cho phép thông báo, nhưng chưa xác nhận đăng ký thành công với hệ thống — bấm để thử lại:",
-      React.createElement("button", { key:"b", type:"button", className:"btn", style:{padding:"5px 12px",fontSize:12}, onClick:enableNotif }, "Thử đăng ký lại"),
+      React.createElement("button", { key:"b", type:"button", className:"btn btnPrimary", style:{padding:"5px 12px",fontSize:12}, onClick:()=>enableNotif(false) }, "Bật thông báo"),
     ]),
     notifPerm==="unsupported" && isIOSNotInstalled() && React.createElement("div", { key:"iosbanner", style:{ background:"var(--claySoft)", padding:"9px 16px", fontSize:12.5, textAlign:"center" } },
       "Trên iPhone, cần \"Thêm vào Màn hình chính\" (nút Chia sẻ trong Safari → Add to Home Screen) rồi mở lại app từ biểu tượng đó mới bật được thông báo."),
