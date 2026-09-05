@@ -81,6 +81,8 @@
   table.data input:hover, table.data select:hover{ border-color:var(--line); }
   .pill{ display:inline-block; font-size:10.5px; font-weight:700; padding:3px 9px; border-radius:20px; }
   .emptyState{ text-align:center; padding:34px 16px; color:var(--inkSoft); font-size:13px; }
+  .salesGridRow{ cursor:pointer; }
+  .salesGridRow:hover td{ background:var(--paper); }
 
   .modalOverlay{ position:fixed; inset:0; background:rgba(35,49,41,.45); display:flex; align-items:center; justify-content:center; z-index:50; padding:16px; }
   .modal{ background:#fff; border-radius:14px; width:520px; max-width:100%; max-height:88vh; overflow-y:auto; padding:22px 22px 18px; }
@@ -4171,6 +4173,115 @@ function exportSalesExcel(shops, monthStr, reportsMap, checkpoints){
   XLSX.writeFile(wb, `BaoCaoDoanhSo_${monthStr}.xlsx`);
 }
 
+// Bảng lưới tái hiện ĐÚNG bố cục file Excel mẫu gốc: dòng tiêu đề gộp theo từng khung giờ
+// (15h/22h/TỔNG, mỗi nhóm 3 cột con: Số lượt khách/Số khách mới/Số bill), đủ mọi ngày trong tháng
+// (kể cả ngày chưa nhập, hiện dấu "—"), và dòng TỔNG THÁNG ở cuối — dùng cho cả xem của nhân viên
+// lẫn quản lý, tách biệt hoàn toàn với file Excel THẬT XUẤT RA (buildSalesExportRows/exportSalesExcel).
+const SALES_GRID_TH_MAIN = { padding:"8px 6px", fontSize:10.5, fontWeight:700, color:"#fff", background:"var(--pine)", textAlign:"center", border:"1px solid rgba(255,255,255,.28)", whiteSpace:"pre-line", verticalAlign:"middle" };
+const SALES_GRID_TH_SUB = { padding:"6px 5px", fontSize:10, fontWeight:700, color:"var(--inkSoft)", background:"#F5F2E7", textAlign:"center", border:"1px solid var(--line)", whiteSpace:"nowrap" };
+const SALES_GRID_TD_C = { padding:"6px 8px", textAlign:"center", borderBottom:"1px solid #F0EEE2", whiteSpace:"nowrap" };
+const SALES_GRID_TD_R = { padding:"6px 8px", textAlign:"right", borderBottom:"1px solid #F0EEE2", whiteSpace:"nowrap" };
+const SALES_GRID_GROUP_COLORS = ["var(--pineSoft)","var(--amberSoft)","var(--claySoft)"];
+function salesGridGroupTh(g, idx){
+  return { padding:"7px 6px", fontSize:11, fontWeight:700, color:"var(--ink)", textAlign:"center", border:"1px solid var(--line)",
+    background: g.isTotal ? "var(--goldSoft)" : SALES_GRID_GROUP_COLORS[idx % SALES_GRID_GROUP_COLORS.length] };
+}
+function SalesMonthGridTable({ shop, monthStr, reportsMap, checkpoints, onPickDate }){
+  const daysInM = new Date(Number(monthStr.slice(0,4)), Number(monthStr.slice(5,7)), 0).getDate();
+  const groups = [...checkpoints, { id:"__total__", label:"TỔNG", isTotal:true }];
+  const headBase = ["Thứ","Ngày","Target HS","Thực đạt HS","Target ngày","Doanh số đạt\ntheo ngày","Doanh số cùng ngày\ntuần trước","Số lượt bill\ntuần trước"];
+
+  const totals = { targetHS:0, thucHS:0, targetNgay:0, doanhSo:0, dsTuanTruoc:0, billTuanTruoc:0 };
+  const gTotals = {}; groups.forEach(g => gTotals[g.id] = { luotKhach:0, khachMoi:0, soBill:0 });
+  let anyDoc = false;
+
+  const bodyRows = [];
+  for(let d=1; d<=daysInM; d++){
+    const iso = `${monthStr}-${String(d).padStart(2,"0")}`;
+    const doc = reportsMap[salesReportId(shop, iso)];
+    const prevDoc = reportsMap[salesReportId(shop, addDays(iso,-7))];
+    const targetNgay = doc ? salesDayTarget(doc.targetThangDoanhSo, iso) : 0;
+    const targetHsNgay = doc ? salesDayTarget(doc.targetThangHeSo, iso) : 0;
+    const tongKhach = doc ? salesSumField(doc, checkpoints, "luotKhach") : 0;
+    const tongMoi = doc ? salesSumField(doc, checkpoints, "khachMoi") : 0;
+    const tongBill = doc ? salesSumField(doc, checkpoints, "soBill") : 0;
+    if(doc){
+      anyDoc = true;
+      totals.targetHS += targetHsNgay; totals.thucHS += Number(doc.heSoDat)||0;
+      totals.targetNgay += targetNgay; totals.doanhSo += Number(doc.doanhSoDat)||0;
+      totals.dsTuanTruoc += prevDoc ? (Number(prevDoc.doanhSoDat)||0) : 0;
+      totals.billTuanTruoc += prevDoc ? salesSumField(prevDoc, checkpoints, "soBill") : 0;
+      checkpoints.forEach(cp => {
+        const c = (doc.checkpoints && doc.checkpoints[cp.id]) || {};
+        gTotals[cp.id].luotKhach += Number(c.luotKhach)||0;
+        gTotals[cp.id].khachMoi += Number(c.khachMoi)||0;
+        gTotals[cp.id].soBill += Number(c.soBill)||0;
+      });
+      gTotals.__total__.luotKhach += tongKhach; gTotals.__total__.khachMoi += tongMoi; gTotals.__total__.soBill += tongBill;
+    }
+    const tb = (doc && tongBill>0) ? (Number(doc.doanhSoDat)||0)/tongBill : null;
+    const isToday = iso===todayISO();
+    bodyRows.push(React.createElement("tr", {
+      key:iso, style: isToday ? { background:"var(--pineSoft)" } : undefined,
+      onClick: onPickDate ? ()=>onPickDate(iso) : undefined, className: onPickDate ? "salesGridRow" : undefined,
+    }, [
+      React.createElement("td",{key:"w",style:SALES_GRID_TD_C}, weekdayLabel(iso)),
+      React.createElement("td",{key:"d",style:SALES_GRID_TD_C}, `${String(d).padStart(2,"0")}/${monthStr.slice(5,7)}`),
+      React.createElement("td",{key:"ths",style:SALES_GRID_TD_R}, doc && targetHsNgay ? fmtNum(targetHsNgay) : "—"),
+      React.createElement("td",{key:"ahs",style:SALES_GRID_TD_R}, doc && doc.heSoDat!=null && doc.heSoDat!=="" ? fmtNum(doc.heSoDat) : "—"),
+      React.createElement("td",{key:"tn",style:SALES_GRID_TD_R}, doc && targetNgay ? fmtNum(targetNgay) : "—"),
+      React.createElement("td",{key:"ds",style:{...SALES_GRID_TD_R,fontWeight:700}}, doc && doc.doanhSoDat!=null && doc.doanhSoDat!=="" ? fmtNum(doc.doanhSoDat) : "—"),
+      React.createElement("td",{key:"dstt",style:SALES_GRID_TD_R}, prevDoc && prevDoc.doanhSoDat!=null ? fmtNum(prevDoc.doanhSoDat) : "—"),
+      React.createElement("td",{key:"btt",style:SALES_GRID_TD_R}, prevDoc ? fmtNum(salesSumField(prevDoc, checkpoints, "soBill")) : "—"),
+      ...checkpoints.flatMap(cp => {
+        const c = (doc && doc.checkpoints && doc.checkpoints[cp.id]) || {};
+        return [
+          React.createElement("td",{key:cp.id+"lk",style:SALES_GRID_TD_R}, doc && c.luotKhach!=null && c.luotKhach!=="" ? fmtNum(c.luotKhach) : "—"),
+          React.createElement("td",{key:cp.id+"km",style:SALES_GRID_TD_R}, doc && c.khachMoi!=null && c.khachMoi!=="" ? fmtNum(c.khachMoi) : "—"),
+          React.createElement("td",{key:cp.id+"sb",style:SALES_GRID_TD_R}, doc && c.soBill!=null && c.soBill!=="" ? fmtNum(c.soBill) : "—"),
+        ];
+      }),
+      React.createElement("td",{key:"tlk",style:{...SALES_GRID_TD_R,fontWeight:700}}, doc ? fmtNum(tongKhach) : "—"),
+      React.createElement("td",{key:"tkm",style:{...SALES_GRID_TD_R,fontWeight:700}}, doc ? fmtNum(tongMoi) : "—"),
+      React.createElement("td",{key:"tsb",style:{...SALES_GRID_TD_R,fontWeight:700}}, doc ? fmtNum(tongBill) : "—"),
+      React.createElement("td",{key:"tbb",style:SALES_GRID_TD_R}, tb!=null ? fmtNum(Math.round(tb)) : "—"),
+    ]));
+  }
+
+  const totalRow = anyDoc && React.createElement("tr", { key:"total", style:{ background:"#F5F2E7", fontWeight:700 } }, [
+    React.createElement("td",{key:"lbl", colSpan:2, style:SALES_GRID_TD_C}, "TỔNG THÁNG"),
+    React.createElement("td",{key:"ths",style:SALES_GRID_TD_R}, fmtNum(totals.targetHS)),
+    React.createElement("td",{key:"ahs",style:SALES_GRID_TD_R}, fmtNum(totals.thucHS)),
+    React.createElement("td",{key:"tn",style:SALES_GRID_TD_R}, fmtNum(totals.targetNgay)),
+    React.createElement("td",{key:"ds",style:SALES_GRID_TD_R}, fmtNum(totals.doanhSo)),
+    React.createElement("td",{key:"dstt",style:SALES_GRID_TD_R}, fmtNum(totals.dsTuanTruoc)),
+    React.createElement("td",{key:"btt",style:SALES_GRID_TD_R}, fmtNum(totals.billTuanTruoc)),
+    ...checkpoints.flatMap(cp => [
+      React.createElement("td",{key:cp.id+"lk",style:SALES_GRID_TD_R}, fmtNum(gTotals[cp.id].luotKhach)),
+      React.createElement("td",{key:cp.id+"km",style:SALES_GRID_TD_R}, fmtNum(gTotals[cp.id].khachMoi)),
+      React.createElement("td",{key:cp.id+"sb",style:SALES_GRID_TD_R}, fmtNum(gTotals[cp.id].soBill)),
+    ]),
+    React.createElement("td",{key:"tlk",style:SALES_GRID_TD_R}, fmtNum(gTotals.__total__.luotKhach)),
+    React.createElement("td",{key:"tkm",style:SALES_GRID_TD_R}, fmtNum(gTotals.__total__.khachMoi)),
+    React.createElement("td",{key:"tsb",style:SALES_GRID_TD_R}, fmtNum(gTotals.__total__.soBill)),
+    React.createElement("td",{key:"tbb",style:SALES_GRID_TD_R}, gTotals.__total__.soBill>0 ? fmtNum(Math.round(totals.doanhSo/gTotals.__total__.soBill)) : "—"),
+  ]);
+
+  return React.createElement("div", { className:"tableWrap" }, React.createElement("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12, minWidth:checkpoints.length*180+760 } }, [
+    React.createElement("thead", { key:"h" }, [
+      React.createElement("tr", { key:"r1" }, [
+        ...headBase.map((h,i)=>React.createElement("th",{key:"b"+i, rowSpan:2, style:SALES_GRID_TH_MAIN}, h)),
+        ...groups.map((g,idx)=>React.createElement("th",{key:g.id, colSpan:3, style:salesGridGroupTh(g,idx)}, g.label)),
+        React.createElement("th",{key:"avg", rowSpan:2, style:SALES_GRID_TH_MAIN}, "Trung bình\ngiá trị bill"),
+      ]),
+      React.createElement("tr", { key:"r2" },
+        groups.flatMap(g => ["Số lượt\nkhách","Số khách\nmới","Số bill"].map((h,i)=>React.createElement("th",{key:g.id+"_"+i, style:SALES_GRID_TH_SUB}, h)))
+      ),
+    ]),
+    React.createElement("tbody", { key:"b" }, [ ...bodyRows, totalRow ]),
+  ]));
+}
+
 function SalesReportView({ isAdmin, myStaff }){
   const [reportsMap, setReportsMap] = useState({});
   const [checkpoints, setCheckpoints] = useState(DEFAULT_SALES_CHECKPOINTS);
@@ -4327,25 +4438,8 @@ function SalesReportView({ isAdmin, myStaff }){
       React.createElement("span",{key:"s"}, `Lịch sử báo cáo tháng ${selfMonthStr}`),
       React.createElement("button",{key:"e", type:"button", className:"btn", style:{padding:"6px 11px",fontSize:12}, onClick:()=>exportSalesExcel([selfShop], selfMonthStr, reportsMap, checkpoints)}, "⭳ Xuất Excel"),
     ]),
-    shopMonthReports.length===0 ? React.createElement("div",{className:"emptyState"},"Chưa có báo cáo ngày nào trong tháng này.")
-      : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
-          React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Thứ","Ngày","Doanh số đạt","Target ngày","% đạt","Tổng bill","TB bill",""].map((h,i)=>React.createElement("th",{key:i},h)))),
-          React.createElement("tbody",{key:"b"}, shopMonthReports.map(r => {
-            const tn = salesDayTarget(r.targetThangDoanhSo, r.ngay);
-            const pct = tn>0 ? Math.round((Number(r.doanhSoDat)||0)/tn*100) : null;
-            const tb = salesSumField(r, checkpoints, "soBill");
-            return React.createElement("tr",{key:r.id}, [
-              React.createElement("td",{key:"w"}, weekdayLabel(r.ngay)),
-              React.createElement("td",{key:"d"}, r.ngay),
-              React.createElement("td",{key:"ds"}, fmtVND(r.doanhSoDat||0)),
-              React.createElement("td",{key:"tg"}, tn>0?fmtVND(tn):"—"),
-              React.createElement("td",{key:"p"}, pct==null?"—":`${pct}%`),
-              React.createElement("td",{key:"b"}, fmtNum(tb)),
-              React.createElement("td",{key:"a"}, tb>0?fmtVND((Number(r.doanhSoDat)||0)/tb):"—"),
-              React.createElement("td",{key:"act"}, React.createElement("button",{className:"btn",style:{padding:"5px 10px",fontSize:11.5},onClick:()=>setSelectedDate(r.ngay)},"Sửa")),
-            ]);
-          })),
-        ])),
+    shopMonthReports.length===0 && React.createElement("div", { key:"hint", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:8 } }, "Chưa có báo cáo ngày nào trong tháng này — bấm vào 1 ngày trong bảng dưới để nhập."),
+    React.createElement(SalesMonthGridTable, { key:"grid", shop:selfShop, monthStr:selfMonthStr, reportsMap, checkpoints, onPickDate:setSelectedDate }),
   ]);
 
   const adminMonthReports = Object.values(reportsMap).filter(r => monthOf(r.ngay)===adminMonth && (adminShop==="Tất cả" || r.shop===adminShop));
@@ -4380,7 +4474,9 @@ function SalesReportView({ isAdmin, myStaff }){
       "Tổng bill": bill, "TB bill": bill>0 ? Math.round(doanhSo/bill) : "",
     };
   });
-  const adminTable = adminShop==="Tất cả" ? objRowsToTable(summaryRows) : objRowsToTable(buildSalesExportRows(adminShop, adminMonth, reportsMap, checkpoints), "Cửa hàng này chưa có báo cáo trong tháng đã chọn.");
+  const adminTable = adminShop==="Tất cả"
+    ? objRowsToTable(summaryRows)
+    : React.createElement(SalesMonthGridTable, { shop:adminShop, monthStr:adminMonth, reportsMap, checkpoints });
   const adminSection = isAdmin && React.createElement("div", { key:"admin", style:{ marginTop:26 } }, [
     React.createElement("button", { key:"tgl", type:"button", className:"btn btnGhost", style:{ marginBottom:14 }, onClick:()=>setAdminOpen(!adminOpen) }, adminOpen ? "▲ Ẩn báo cáo tất cả cửa hàng" : "▾ Xem báo cáo tất cả cửa hàng"),
     adminOpen && React.createElement(React.Fragment, null, [ adminMetrics, adminFilterRow, adminTable ]),
