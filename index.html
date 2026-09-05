@@ -3384,12 +3384,28 @@ function TrainingChecklistEditor({ items, onSave, onClose }){
   const [newOffset, setNewOffset] = useState(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [showBulk, setShowBulk] = useState(false);
+  const [bulkText, setBulkText] = useState("");
+  const [bulkMode, setBulkMode] = useState("append");
   function updateRow(id, field, value){ setRows(rows.map(r => r.id===id ? { ...r, [field]:value } : r)); }
   function removeRow(id){ setRows(rows.filter(r => r.id!==id)); }
   function addRow(){
     if(!newLabel.trim()) return;
     setRows([...rows, { id:"d"+uid(), label:newLabel.trim(), offset:Number(newOffset)||0 }]);
     setNewLabel(""); setNewOffset(0);
+  }
+  function parseBulkLines(text){
+    return text.split("\n").map(line => line.trim()).filter(Boolean).map(line => {
+      const m = line.match(/^(.*?)\s*[—–-]\s*(\d+)\s*$/);
+      if(m) return { id:"d"+uid(), label:m[1].trim(), offset:Number(m[2])||0 };
+      return { id:"d"+uid(), label:line, offset:0 };
+    }).filter(r => r.label);
+  }
+  function applyBulk(){
+    const parsed = parseBulkLines(bulkText);
+    if(!parsed.length) return;
+    setRows(bulkMode==="replace" ? parsed : [...rows, ...parsed]);
+    setBulkText(""); setShowBulk(false);
   }
   async function save(){
     setSaving(true); setError(null);
@@ -3404,6 +3420,24 @@ function TrainingChecklistEditor({ items, onSave, onClose }){
     React.createElement("div", { className:"modal modalWide", onClick:e=>e.stopPropagation() }, [
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, "Chỉnh nội dung checklist đào tạo"),
       React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } }, "\"Hạn sau (ngày)\" tính từ ngày nhân viên mới vào làm — VD nhập 6 nghĩa là hạn chót đúng 6 ngày sau ngày vào làm."),
+      React.createElement("div", { key:"bulkToggle", style:{ marginBottom:12 } },
+        React.createElement("button", { type:"button", className:"btn btnGhost", style:{ fontSize:12 }, onClick:()=>setShowBulk(!showBulk) }, showBulk ? "▾ Ẩn khung dán hàng loạt" : "▸ Dán hàng loạt (nhiều dòng cùng lúc)")
+      ),
+      showBulk && React.createElement("div", { key:"bulk", style:{ border:"1px solid var(--line)", borderRadius:8, padding:12, marginBottom:14, background:"var(--paper)" } }, [
+        React.createElement("div", { key:"hint", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8 } }, "Mỗi dòng 1 đầu việc, theo định dạng: Nội dung — số ngày. Ví dụ: Hướng dẫn sử dụng POS — 7"),
+        React.createElement("textarea", { key:"ta", value:bulkText, onChange:e=>setBulkText(e.target.value), rows:8, placeholder:"Dán danh sách vào đây, mỗi dòng một đầu việc...\nVí dụ:\nGiới thiệu quy định cửa hàng — 0\nHướng dẫn sử dụng POS — 7", style:{ width:"100%", padding:"8px 10px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5, fontFamily:"inherit", resize:"vertical" } }),
+        React.createElement("div", { key:"opts", style:{ display:"flex", gap:14, alignItems:"center", marginTop:10, marginBottom:10, fontSize:12.5 } }, [
+          React.createElement("label", { key:"a", style:{ display:"flex", alignItems:"center", gap:5, cursor:"pointer" } }, [
+            React.createElement("input", { key:"i", type:"radio", checked:bulkMode==="append", onChange:()=>setBulkMode("append") }),
+            "Thêm vào danh sách hiện tại",
+          ]),
+          React.createElement("label", { key:"b", style:{ display:"flex", alignItems:"center", gap:5, cursor:"pointer" } }, [
+            React.createElement("input", { key:"i", type:"radio", checked:bulkMode==="replace", onChange:()=>setBulkMode("replace") }),
+            "Thay thế toàn bộ danh sách hiện tại",
+          ]),
+        ]),
+        React.createElement("button", { key:"apply", type:"button", className:"btn btnPrimary", onClick:applyBulk }, "Áp dụng vào danh sách bên dưới"),
+      ]),
       React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8, marginBottom:12, maxHeight:380, overflowY:"auto" } }, rows.map(r =>
         React.createElement("div", { key:r.id, style:{ display:"flex", gap:8, alignItems:"flex-start" } }, [
           React.createElement(AutoGrowTextarea, { key:"l", value:r.label, onChange:e=>updateRow(r.id,"label",e.target.value), style:{ flex:1, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5, resize:"none", fontFamily:"inherit" } }),
