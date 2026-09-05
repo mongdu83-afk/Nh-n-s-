@@ -10,6 +10,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-storage-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-messaging-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -224,6 +225,9 @@ firebase.initializeApp(FIREBASE_CONFIG);
 const auth = firebase.auth();
 const db = firebase.firestore();
 const storage = firebase.storage();
+// Khoá "VAPID" dùng cho thông báo đẩy (Web Push) — lấy ở Firebase Console:
+// Project Settings > Cloud Messaging > Web configuration > "Generate key pair", dán vào đây.
+const FCM_VAPID_KEY = "DÁN_VAPID_KEY_CỦA_BẠN_VÀO_ĐÂY";
 
 // App Firebase phụ, dùng riêng để TẠO tài khoản nhân viên mà không làm mất
 // phiên đăng nhập hiện tại của quản lý (Firebase sẽ tự đăng nhập vào tài
@@ -341,6 +345,13 @@ function nowHM(){ const d=new Date(); return `${String(d.getHours()).padStart(2,
 // desktop bỏ qua, mở hộp chọn file bình thường thay vì bắt buộc mở camera).
 function isMobileDevice(){
   return /Android|iPhone|iPad|iPod|Mobile|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent || "");
+}
+// iPhone/iPad mở bằng tab Safari bình thường (chưa "Thêm vào Màn hình chính") không hỗ trợ
+// Notification API — chỉ hoạt động khi mở app ở chế độ "standalone" (từ biểu tượng home screen).
+function isIOSNotInstalled(){
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent || "") && !window.MSStream;
+  const isStandalone = window.navigator.standalone === true || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+  return isIOS && !isStandalone;
 }
 function addDays(iso, n){ const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
 function daysBetween(a, b){ return Math.round((new Date(b+"T00:00:00") - new Date(a+"T00:00:00")) / 86400000); }
@@ -3992,6 +4003,84 @@ function NoStaffLinkedScreen({ user }){
   );
 }
 
+function TaskLiveNotifier({ myStaff }){
+  const [toast, setToast] = useState(null);
+  const [notifPerm, setNotifPerm] = useState(typeof Notification !== "undefined" ? Notification.permission : "unsupported");
+  const seenIds = useRef(new Set());
+  const isFirstSnap = useRef(true);
+
+  useEffect(()=>{
+    if(!myStaff) return undefined;
+    seenIds.current = new Set();
+    isFirstSnap.current = true;
+    const unsub = db.collection("tasks").onSnapshot(snap => {
+      if(isFirstSnap.current){
+        // Lần tải đầu tiên: chỉ ghi nhớ các việc đã có sẵn từ trước, không báo cho việc cũ.
+        snap.docs.forEach(d => seenIds.current.add(d.id));
+        isFirstSnap.current = false;
+        return;
+      }
+      snap.docChanges().forEach(change => {
+        if(change.type!=="added") return;
+        const t = { id:change.doc.id, ...change.doc.data() };
+        if(seenIds.current.has(t.id)) return;
+        seenIds.current.add(t.id);
+        const isMine = (t.assignType==="staff" && t.staffId===myStaff.id) || (t.assignType==="shop" && t.shop===myStaff.shop);
+        if(!isMine) return;
+        const body = `${t.title} — hạn ${t.deadline}${t.hanGio ? " "+t.hanGio : ""}`;
+        setToast({ title:"🔔 Việc mới được giao", body });
+        if(typeof Notification !== "undefined" && Notification.permission==="granted"){
+          try{ new Notification("Việc mới được giao", { body }); } catch(err){}
+        }
+      });
+    }, err => console.error("TaskLiveNotifier lỗi:", err));
+    return unsub;
+  }, [myStaff && myStaff.id]);
+
+  useEffect(()=>{
+    if(!toast) return undefined;
+    const t = setTimeout(()=>setToast(null), 9000);
+    return ()=>clearTimeout(t);
+  }, [toast]);
+
+  async function enableNotif(){
+    if(typeof Notification === "undefined") return;
+    const perm = await Notification.requestPermission();
+    setNotifPerm(perm);
+    if(perm!=="granted" || !myStaff) return;
+    // Đăng ký nhận thông báo đẩy thật (hoạt động cả khi tắt hẳn trình duyệt) — cần Service
+    // Worker + khoá VAPID (FCM_VAPID_KEY) + Cloud Function đứng giữa gửi đi (xem hướng dẫn deploy).
+    try{
+      if(!("serviceWorker" in navigator)) return;
+      const reg = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
+      const messaging = firebase.messaging();
+      const token = await messaging.getToken({ vapidKey:FCM_VAPID_KEY, serviceWorkerRegistration:reg });
+      if(token){
+        await db.collection("fcmTokens").doc(myStaff.id).set({
+          tokens: firebase.firestore.FieldValue.arrayUnion(token),
+          staffName: myStaff.name, shop: myStaff.shop,
+          updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
+        }, { merge:true });
+      }
+    } catch(err){
+      console.error("Đăng ký thông báo đẩy lỗi:", err);
+    }
+  }
+
+  return React.createElement(React.Fragment, null, [
+    notifPerm==="default" && React.createElement("div", { key:"banner", style:{ background:"var(--goldSoft)", padding:"9px 16px", fontSize:12.5, display:"flex", justifyContent:"center", alignItems:"center", gap:12, flexWrap:"wrap" } }, [
+      "Bật thông báo để biết ngay khi có việc mới được giao — kể cả khi đã tắt hẳn trình duyệt.",
+      React.createElement("button", { key:"b", type:"button", className:"btn btnPrimary", style:{padding:"5px 12px",fontSize:12}, onClick:enableNotif }, "Bật thông báo"),
+    ]),
+    notifPerm==="unsupported" && isIOSNotInstalled() && React.createElement("div", { key:"iosbanner", style:{ background:"var(--claySoft)", padding:"9px 16px", fontSize:12.5, textAlign:"center" } },
+      "Trên iPhone, cần \"Thêm vào Màn hình chính\" (nút Chia sẻ trong Safari → Add to Home Screen) rồi mở lại app từ biểu tượng đó mới bật được thông báo."),
+    toast && React.createElement("div", { key:"toast", style:{ position:"fixed", top:16, right:16, left:16, maxWidth:340, marginLeft:"auto", zIndex:100, background:"var(--pine)", color:"#fff", borderRadius:10, padding:"14px 18px", boxShadow:"0 6px 20px rgba(0,0,0,.25)" } }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, marginBottom:4 } }, toast.title),
+      React.createElement("div", { key:"b", style:{ fontSize:12.5 } }, toast.body),
+    ]),
+  ]);
+}
+
 function TaskReminderBanner({ myStaff, onOpenTasks }){
   const [tasks, setTasks] = useState([]);
   useEffect(()=>{
@@ -4052,6 +4141,7 @@ function Dashboard({ user, isAdmin, myStaff }){
         React.createElement("button", { key:t.id, className:activeTab===t.id?"active":"", onClick:()=>setActiveTab(t.id) }, t.label)
       )),
     ])),
+    !isAdmin && React.createElement(TaskLiveNotifier, { key:"livenotify", myStaff }),
     !isAdmin && React.createElement(TaskReminderBanner, { key:"reminder", myStaff, onOpenTasks:()=>setActiveTab("tasks") }),
     !isAdmin && React.createElement(CustomerOrderReminderBanner, { key:"custreminder", myStaff, onOpen:()=>setActiveTab("customerOrders") }),
     React.createElement("div", { key:"wrap", className:"wrap" }, [
