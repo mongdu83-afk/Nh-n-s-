@@ -72,6 +72,24 @@
   .metric.good .value{ color:var(--pine); }
   .metric.gold .value{ color:var(--gold); }
 
+  .revBoard{ border:1px solid var(--line); border-radius:12px; overflow:hidden; margin-top:18px; }
+  .revBoardGrid{ display:grid; grid-template-columns:1fr 1fr; }
+  @media (max-width:720px){ .revBoardGrid{ grid-template-columns:1fr; } }
+  .revCol + .revCol{ border-left:1px solid var(--line); }
+  @media (max-width:720px){ .revCol + .revCol{ border-left:none; border-top:1px solid var(--line); } }
+  .revColHead{ background:var(--pine); color:#fff; font-weight:800; font-size:13px; text-align:center; padding:10px 8px; letter-spacing:.02em; text-transform:uppercase; }
+  .revRow{ display:flex; justify-content:space-between; align-items:center; gap:10px; padding:8px 14px; font-size:13px; border-bottom:1px solid #EFEDE0; }
+  .revRow:last-child{ border-bottom:none; }
+  .revRow.stripe{ background:#F7F6EF; }
+  .revRow .revLabel{ color:var(--ink); font-weight:600; }
+  .revRow.derived .revLabel{ color:var(--clay); font-weight:700; }
+  .revRow .revValue{ font-weight:700; white-space:nowrap; }
+  .revRow.derived .revValue{ color:var(--clay); }
+  .revRow.good .revValue{ color:var(--pine); }
+  .revRow.warn .revValue{ color:var(--clay); }
+  .revMetaBar{ display:flex; flex-wrap:wrap; gap:14px; padding:9px 14px; background:#F0EEE2; font-size:12px; color:var(--inkSoft); border-bottom:1px solid var(--line); }
+  .revMetaBar b{ color:var(--ink); }
+
   .tableWrap{ background:#fff; border:1px solid var(--line); border-radius:12px; overflow-x:auto; -webkit-overflow-scrolling:touch; margin-bottom:20px; }
   table.data{ width:100%; border-collapse:collapse; font-size:12.5px; min-width:640px; }
   table.data th{ text-align:left; background:#F5F2E7; padding:9px 10px; font-weight:700; color:#5A5748; border-bottom:1px solid var(--line); white-space:nowrap; font-size:11px; text-transform:uppercase; }
@@ -4045,6 +4063,24 @@ function salesDayTarget(monthlyTarget, iso){
   const t = Number(monthlyTarget) || 0;
   return t>0 ? t/daysInMonthOf(iso) : 0;
 }
+function dayOfMonthNum(iso){ return Number(iso.slice(8,10)); }
+// Doanh số/hệ số luỹ kế trong tháng của 1 cửa hàng, cộng dồn các báo cáo có ngày <= uptoIso (cùng tháng).
+function salesMonthAchieved(allReports, shop, monthStr, uptoIso, key){
+  return allReports
+    .filter(r => r.shop===shop && monthOf(r.ngay)===monthStr && r.ngay<=uptoIso && Number(r[key]))
+    .reduce((s,r)=> s + Number(r[key]), 0);
+}
+// Target ngày = phần chỉ tiêu tháng CÒN LẠI (chỉ tiêu tháng trừ đi luỹ kế đã đạt các ngày TRƯỚC ngày này)
+// chia đều cho số ngày CÒN LẠI của tháng (tính từ ngày này đến hết tháng, bao gồm cả ngày này).
+// => Target ngày tự tăng nếu những ngày trước bán chậm hơn kế hoạch, tự giảm nếu bán nhanh hơn kế hoạch.
+function salesDayTargetDynamic(monthlyTarget, achievedBeforeToday, iso){
+  const t = Number(monthlyTarget) || 0;
+  if(t<=0) return 0;
+  const totalDays = daysInMonthOf(iso);
+  const dayNum = dayOfMonthNum(iso);
+  const remainingDays = Math.max(1, totalDays - dayNum + 1);
+  return (t - achievedBeforeToday) / remainingDays;
+}
 
 // Khối cấu hình các khung giờ chốt số liệu trong ngày (VD: 15h, 22h) — dùng chung cho mọi cửa hàng,
 // chỉ Quản lý mới chỉnh sửa được. Có thể thêm/bớt/đổi tên/đổi giờ tuỳ nhu cầu vận hành thực tế.
@@ -4282,6 +4318,36 @@ function SalesMonthGridTable({ shop, monthStr, reportsMap, checkpoints, onPickDa
   ]));
 }
 
+// Khối trực quan "Báo cáo doanh thu ngày" — tái hiện bố cục 2 cột (Doanh thu | Hệ số) giống file
+// Excel mẫu, dùng cho phần "Kết quả trong ngày" trong SalesReportView.
+function revPct(v){ return v==null ? "—" : `${Math.round(v)}%`; }
+function revRow(label, value, opts={}){
+  const cls = ["revRow"];
+  if(opts.stripe) cls.push("stripe");
+  if(opts.derived) cls.push("derived");
+  if(opts.tone) cls.push(opts.tone);
+  return React.createElement("div", { key:label, className:cls.join(" ") }, [
+    React.createElement("span", { key:"l", className:"revLabel" }, label),
+    React.createElement("span", { key:"v", className:"revValue" }, value),
+  ]);
+}
+function toneFor(pct){ return pct==null ? undefined : (pct>=100 ? "good" : "warn"); }
+function DayRevenueBoard({ meta, leftRows, rightRows }){
+  return React.createElement("div", { className:"revBoard" }, [
+    React.createElement("div", { key:"meta", className:"revMetaBar" }, meta),
+    React.createElement("div", { key:"grid", className:"revBoardGrid" }, [
+      React.createElement("div", { key:"L", className:"revCol" }, [
+        React.createElement("div", { key:"h", className:"revColHead" }, "Báo cáo doanh thu"),
+        ...leftRows,
+      ]),
+      React.createElement("div", { key:"R", className:"revCol" }, [
+        React.createElement("div", { key:"h", className:"revColHead" }, "Báo cáo hệ số"),
+        ...rightRows,
+      ]),
+    ]),
+  ]);
+}
+
 function SalesReportView({ isAdmin, myStaff }){
   const [reportsMap, setReportsMap] = useState({});
   const [checkpoints, setCheckpoints] = useState(DEFAULT_SALES_CHECKPOINTS);
@@ -4354,10 +4420,45 @@ function SalesReportView({ isAdmin, myStaff }){
   const tongKhachMoi = salesSumField(previewDoc, checkpoints, "khachMoi");
   const tongBill = salesSumField(previewDoc, checkpoints, "soBill");
   const tbBill = tongBill>0 ? (Number(doanhSoDat)||0)/tongBill : 0;
-  const targetNgay = salesDayTarget(targetThangDoanhSo, selectedDate);
-  const tyLeHoanThanh = targetNgay>0 ? (Number(doanhSoDat)||0)/targetNgay*100 : null;
+
   const prevWeekReport = selfShop ? reportsMap[salesReportId(selfShop, addDays(selectedDate,-7))] : null;
   const prevWeekDoanhSo = prevWeekReport && prevWeekReport.doanhSoDat!=null ? Number(prevWeekReport.doanhSoDat) : null;
+  const prevWeekHeSo = prevWeekReport && prevWeekReport.heSoDat!=null ? Number(prevWeekReport.heSoDat) : null;
+  const prevWeekBill = prevWeekReport ? salesSumField(prevWeekReport, checkpoints, "soBill") : null;
+
+  // ==== Luỹ kế tháng & Target ngày tự điều chỉnh theo tốc độ bán các ngày TRƯỚC ngày đang xem ====
+  const monthStrSel = monthOf(selectedDate);
+  const totalDaysSel = daysInMonthOf(selectedDate);
+  const dayNumSel = dayOfMonthNum(selectedDate);
+  const yesterdaySel = addDays(selectedDate, -1);
+  const dsAchievedBefore = selfShop ? salesMonthAchieved(allReportsForSeed, selfShop, monthStrSel, yesterdaySel, "doanhSoDat") : 0;
+  const hsAchievedBefore = selfShop ? salesMonthAchieved(allReportsForSeed, selfShop, monthStrSel, yesterdaySel, "heSoDat") : 0;
+  const dsAchievedThruToday = dsAchievedBefore + (Number(doanhSoDat)||0);
+  const hsAchievedThruToday = hsAchievedBefore + (Number(heSoDat)||0);
+
+  // Target ngày = phần còn lại của target tháng chia đều cho số ngày còn lại — tăng nếu các ngày
+  // trước bán chậm hơn kế hoạch, giảm nếu bán nhanh hơn kế hoạch.
+  const targetNgay = salesDayTargetDynamic(targetThangDoanhSo, dsAchievedBefore, selectedDate);
+  const targetHsNgay = salesDayTargetDynamic(targetThangHeSo, hsAchievedBefore, selectedDate);
+  const tyLeHoanThanh = targetNgay>0 ? (Number(doanhSoDat)||0)/targetNgay*100 : null;
+  const tyLeHoanThanhHs = targetHsNgay>0 ? (Number(heSoDat)||0)/targetHsNgay*100 : null;
+
+  const tyLeDoanhThuTuanTruoc = prevWeekDoanhSo ? (Number(doanhSoDat)||0)/prevWeekDoanhSo*100 : null;
+  const tyLeHsTuanTruoc = prevWeekHeSo ? (Number(heSoDat)||0)/prevWeekHeSo*100 : null;
+  const tyLeBillTuanTruoc = prevWeekBill ? tongBill/prevWeekBill*100 : null;
+
+  const targetThangDS = Number(targetThangDoanhSo)||0;
+  const targetThangHS = Number(targetThangHeSo)||0;
+  const tyLeThangDS = targetThangDS>0 ? dsAchievedThruToday/targetThangDS*100 : null;
+  const tyLeThangHS = targetThangHS>0 ? hsAchievedThruToday/targetThangHS*100 : null;
+  const conLaiThangDS = targetThangDS>0 ? targetThangDS - dsAchievedThruToday : null;
+  const conLaiThangHS = targetThangHS>0 ? targetThangHS - hsAchievedThruToday : null;
+  // Doanh thu/hệ số luỹ kế dự kiến cuối tháng = ngoại suy theo tốc độ bán bình quân từ đầu tháng đến nay.
+  const duKienDS = dayNumSel>0 ? dsAchievedThruToday/dayNumSel*totalDaysSel : 0;
+  const duKienHS = dayNumSel>0 ? hsAchievedThruToday/dayNumSel*totalDaysSel : 0;
+  const tyLeDuKienDS = targetThangDS>0 ? duKienDS/targetThangDS*100 : null;
+  const tyLeDuKienHS = targetThangHS>0 ? duKienHS/targetThangHS*100 : null;
+  const tyLeHsTrenDs = dsAchievedThruToday>0 ? hsAchievedThruToday/dsAchievedThruToday*100 : null;
 
   const selfCard = selfShop && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
     React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10, marginBottom:14 } }, [
@@ -4373,7 +4474,7 @@ function SalesReportView({ isAdmin, myStaff }){
         React.createElement("input",{key:"i", value:nguoiBaoCao, onChange:e=>setNguoiBaoCao(e.target.value)}),
       ]),
       React.createElement("div", { key:"secT", className:"weeklySectionHead" }, React.createElement("h3",{style:{margin:0,fontSize:14.5}},"Chỉ tiêu tháng")),
-      React.createElement("div", { key:"hintT", className:"weeklySectionHint" }, "Chỉ cần nhập 1 lần đầu tháng — các ngày sau tự kế thừa, hệ thống tự chia đều theo số ngày trong tháng để ra chỉ tiêu ngày."),
+      React.createElement("div", { key:"hintT", className:"weeklySectionHint" }, "Chỉ cần nhập 1 lần đầu tháng — các ngày sau tự kế thừa. Target ngày = phần chỉ tiêu tháng còn lại chia đều cho số ngày còn lại, nên sẽ tự tăng nếu các ngày trước bán chậm và tự giảm nếu bán nhanh hơn kế hoạch."),
       React.createElement("div", { key:"tgRow", style:{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:18 } }, [
         React.createElement("div", { key:"ds", className:"field", style:{ flex:"1 1 220px" } }, [
           React.createElement("label",{key:"l"},"Chỉ tiêu doanh số tháng"),
@@ -4420,15 +4521,47 @@ function SalesReportView({ isAdmin, myStaff }){
       ]),
       React.createElement("button", { key:"submit", type:"submit", className:"btn btnPrimary" }, "Lưu báo cáo ngày"),
     ]),
-    React.createElement("div", { key:"metrics", className:"metrics", style:{ marginTop:20, marginBottom:0 } }, [
-      React.createElement("div", { key:"1", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Target ngày"), React.createElement("div",{key:"v",className:"value"}, targetNgay>0?fmtVND(targetNgay):"—") ]),
-      React.createElement("div", { key:"2", className:"metric" + (tyLeHoanThanh==null?"":(tyLeHoanThanh>=100?" good":" warn")) }, [ React.createElement("div",{key:"l",className:"label"},"Tỉ lệ hoàn thành target ngày"), React.createElement("div",{key:"v",className:"value"}, tyLeHoanThanh==null?"—":`${Math.round(tyLeHoanThanh)}%`) ]),
-      React.createElement("div", { key:"3", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Doanh số cùng ngày tuần trước"), React.createElement("div",{key:"v",className:"value"}, prevWeekDoanhSo!=null?fmtVND(prevWeekDoanhSo):"—") ]),
-      React.createElement("div", { key:"4", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Tổng lượt khách"), React.createElement("div",{key:"v",className:"value"}, fmtNum(tongLuotKhach)) ]),
-      React.createElement("div", { key:"5", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Tổng khách mới"), React.createElement("div",{key:"v",className:"value"}, fmtNum(tongKhachMoi)) ]),
-      React.createElement("div", { key:"6", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Tổng số bill"), React.createElement("div",{key:"v",className:"value"}, fmtNum(tongBill)) ]),
-      React.createElement("div", { key:"7", className:"metric gold" }, [ React.createElement("div",{key:"l",className:"label"},"Trung bình giá trị bill"), React.createElement("div",{key:"v",className:"value"}, fmtVND(tbBill)) ]),
-    ]),
+    React.createElement(DayRevenueBoard, {
+      key:"revboard",
+      meta:[
+        React.createElement("span",{key:"a"},["Ngày ", React.createElement("b",{key:"b"}, `${weekdayLabel(selectedDate)} ${selectedDate}`)]),
+        React.createElement("span",{key:"c"},["Người báo cáo ", React.createElement("b",{key:"d"}, nguoiBaoCao || "—")]),
+        React.createElement("span",{key:"e"},["Cập nhật lúc ", React.createElement("b",{key:"f"}, thisReport && thisReport.updatedAtTs && thisReport.updatedAtTs.toDate ? thisReport.updatedAtTs.toDate().toLocaleString("vi-VN") : "—")]),
+      ],
+      leftRows:[
+        revRow("TARGET doanh số ngày", targetNgay>0?fmtVND(targetNgay):"—", { stripe:true }),
+        revRow("Doanh số đạt trong ngày", doanhSoDat!==""?fmtVND(Number(doanhSoDat)):"—"),
+        revRow("Tỉ lệ hoàn thành target ngày", revPct(tyLeHoanThanh), { derived:true, tone:toneFor(tyLeHoanThanh) }),
+        revRow("Doanh số cùng ngày tuần trước", prevWeekDoanhSo!=null?fmtVND(prevWeekDoanhSo):"—", { stripe:true }),
+        revRow("% doanh thu so với tuần trước", revPct(tyLeDoanhThuTuanTruoc), { derived:true }),
+        revRow("Số lượt khách", fmtNum(tongLuotKhach), { stripe:true }),
+        revRow("Số khách mới", fmtNum(tongKhachMoi)),
+        revRow("Số lượt bill", fmtNum(tongBill), { stripe:true }),
+        revRow("Số lượt bill tuần trước", prevWeekBill!=null?fmtNum(prevWeekBill):"—"),
+        revRow("% lượt bill so với tuần trước", revPct(tyLeBillTuanTruoc), { derived:true, stripe:true }),
+        revRow("Trung bình giá trị bill", fmtVND(tbBill)),
+        revRow("Doanh số tháng theo target", targetThangDS>0?fmtVND(targetThangDS):"—", { stripe:true }),
+        revRow("Doanh số tháng hiện tại (luỹ kế)", fmtVND(dsAchievedThruToday)),
+        revRow("Tỉ lệ hoàn thành target tháng", revPct(tyLeThangDS), { derived:true, tone:toneFor(tyLeThangDS), stripe:true }),
+        revRow("Target tháng còn lại", conLaiThangDS!=null?fmtVND(conLaiThangDS):"—"),
+        revRow("Doanh thu luỹ kế dự kiến cuối tháng", targetThangDS>0?fmtVND(duKienDS):"—", { derived:true, stripe:true }),
+        revRow("Tỉ lệ hoàn thành target dự kiến", revPct(tyLeDuKienDS), { derived:true, tone:toneFor(tyLeDuKienDS) }),
+      ],
+      rightRows:[
+        revRow("TARGET hệ số ngày", targetHsNgay>0?fmtVND(targetHsNgay):"—", { stripe:true }),
+        revRow("Hàng hệ số đạt trong ngày", heSoDat!==""?fmtVND(Number(heSoDat)):"—"),
+        revRow("Tỉ lệ hoàn thành target ngày", revPct(tyLeHoanThanhHs), { derived:true, tone:toneFor(tyLeHoanThanhHs) }),
+        revRow("Hệ số cùng ngày tuần trước", prevWeekHeSo!=null?fmtVND(prevWeekHeSo):"—", { stripe:true }),
+        revRow("% hàng hệ số so với tuần trước", revPct(tyLeHsTuanTruoc), { derived:true }),
+        revRow("Chỉ tiêu hàng hệ số tháng", targetThangHS>0?fmtVND(targetThangHS):"—", { stripe:true }),
+        revRow("Hệ số tháng hiện tại (luỹ kế)", fmtVND(hsAchievedThruToday)),
+        revRow("Tỉ lệ hoàn thành target tháng", revPct(tyLeThangHS), { derived:true, tone:toneFor(tyLeThangHS), stripe:true }),
+        revRow("Target tháng còn lại", conLaiThangHS!=null?fmtVND(conLaiThangHS):"—"),
+        revRow("Hệ số luỹ kế dự kiến cuối tháng", targetThangHS>0?fmtVND(duKienHS):"—", { derived:true, stripe:true }),
+        revRow("Tỉ lệ hoàn thành target dự kiến", revPct(tyLeDuKienHS), { derived:true, tone:toneFor(tyLeDuKienHS) }),
+        revRow("Tỷ lệ hàng hệ số / doanh số", revPct(tyLeHsTrenDs), { derived:true, stripe:true }),
+      ],
+    }),
   ]);
 
   const selfMonthStr = monthOf(selectedDate);
