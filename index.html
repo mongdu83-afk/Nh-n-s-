@@ -4006,6 +4006,7 @@ function NoStaffLinkedScreen({ user }){
 function TaskLiveNotifier({ myStaff }){
   const [toast, setToast] = useState(null);
   const [notifPerm, setNotifPerm] = useState(typeof Notification !== "undefined" ? Notification.permission : "unsupported");
+  const [notifErr, setNotifErr] = useState(null);
   const seenIds = useRef(new Set());
   const isFirstSnap = useRef(true);
 
@@ -4048,10 +4049,11 @@ function TaskLiveNotifier({ myStaff }){
     const perm = await Notification.requestPermission();
     setNotifPerm(perm);
     if(perm!=="granted" || !myStaff) return;
+    setNotifErr(null);
     // Đăng ký nhận thông báo đẩy thật (hoạt động cả khi tắt hẳn trình duyệt) — cần Service
     // Worker + khoá VAPID (FCM_VAPID_KEY) + Cloud Function đứng giữa gửi đi (xem hướng dẫn deploy).
     try{
-      if(!("serviceWorker" in navigator)) return;
+      if(!("serviceWorker" in navigator)) { setNotifErr("Trình duyệt này không hỗ trợ Service Worker."); return; }
       const reg = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
       const messaging = firebase.messaging();
       const token = await messaging.getToken({ vapidKey:FCM_VAPID_KEY, serviceWorkerRegistration:reg });
@@ -4061,16 +4063,28 @@ function TaskLiveNotifier({ myStaff }){
           staffName: myStaff.name, shop: myStaff.shop,
           updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
         }, { merge:true });
+        setNotifErr("__OK__");
+      } else {
+        setNotifErr("Không lấy được token (getToken trả về rỗng) — thường do khoá VAPID sai hoặc chưa đúng.");
       }
     } catch(err){
       console.error("Đăng ký thông báo đẩy lỗi:", err);
+      setNotifErr((err && err.code ? `[${err.code}] ` : "") + (err && err.message ? err.message : String(err)));
     }
   }
 
   return React.createElement(React.Fragment, null, [
+    notifErr && notifErr!=="__OK__" && React.createElement("div", { key:"errbanner", style:{ background:"var(--claySoft)", padding:"9px 16px", fontSize:12, textAlign:"center", color:"var(--clay)", fontWeight:600 } },
+      `Đăng ký thông báo lỗi: ${notifErr}`),
+    notifErr==="__OK__" && React.createElement("div", { key:"okbanner", style:{ background:"var(--pineSoft)", padding:"9px 16px", fontSize:12.5, textAlign:"center", color:"var(--pine)", fontWeight:600 } },
+      "Đã đăng ký nhận thông báo thành công cho thiết bị này."),
     notifPerm==="default" && React.createElement("div", { key:"banner", style:{ background:"var(--goldSoft)", padding:"9px 16px", fontSize:12.5, display:"flex", justifyContent:"center", alignItems:"center", gap:12, flexWrap:"wrap" } }, [
       "Bật thông báo để biết ngay khi có việc mới được giao — kể cả khi đã tắt hẳn trình duyệt.",
       React.createElement("button", { key:"b", type:"button", className:"btn btnPrimary", style:{padding:"5px 12px",fontSize:12}, onClick:enableNotif }, "Bật thông báo"),
+    ]),
+    notifPerm==="granted" && notifErr!=="__OK__" && React.createElement("div", { key:"retrybanner", style:{ background:"var(--paper)", padding:"9px 16px", fontSize:12.5, display:"flex", justifyContent:"center", alignItems:"center", gap:12, flexWrap:"wrap" } }, [
+      "Đã cho phép thông báo, nhưng chưa xác nhận đăng ký thành công với hệ thống — bấm để thử lại:",
+      React.createElement("button", { key:"b", type:"button", className:"btn", style:{padding:"5px 12px",fontSize:12}, onClick:enableNotif }, "Thử đăng ký lại"),
     ]),
     notifPerm==="unsupported" && isIOSNotInstalled() && React.createElement("div", { key:"iosbanner", style:{ background:"var(--claySoft)", padding:"9px 16px", fontSize:12.5, textAlign:"center" } },
       "Trên iPhone, cần \"Thêm vào Màn hình chính\" (nút Chia sẻ trong Safari → Add to Home Screen) rồi mở lại app từ biểu tượng đó mới bật được thông báo."),
