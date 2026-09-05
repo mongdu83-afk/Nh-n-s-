@@ -29,7 +29,7 @@
   ::-webkit-scrollbar{ height:6px; width:6px; }
 
   .topnav{ background:#fff; border-bottom:1px solid var(--line); position:sticky; top:0; z-index:20; }
-  .topnavInner{ max-width:1100px; margin:0 auto; padding:0 16px; }
+  .topnavInner{ margin:0 auto; padding:0 24px; }
   .brandRow{ display:flex; align-items:center; gap:10px; padding:12px 0; justify-content:space-between; }
   .brand{ display:flex; align-items:center; gap:9px; }
   .brand .mark{ width:11px; height:11px; border-radius:50%; background:var(--pine); }
@@ -37,7 +37,7 @@
   .brand small{ display:block; font-size:10.5px; color:var(--inkSoft); letter-spacing:.06em; text-transform:uppercase; margin-top:-2px; }
   .logoutBtn{ font-size:12.5px; color:var(--inkSoft); background:none; border:1px solid var(--line); border-radius:7px; padding:6px 11px; cursor:pointer; }
 
-  .tabs{ display:flex; gap:2px; overflow-x:auto; padding-bottom:2px; }
+  .tabs{ display:flex; gap:2px; flex-wrap:wrap; overflow-x:auto; padding-bottom:2px; }
   .tabs button{
     font-family:inherit; font-size:13px; font-weight:700; color:var(--inkSoft);
     background:none; border:none; border-bottom:3px solid transparent; white-space:nowrap;
@@ -45,7 +45,7 @@
   }
   .tabs button.active{ color:var(--pine); border-bottom-color:var(--pine); }
 
-  .wrap{ max-width:1100px; margin:0 auto; padding:20px 16px 90px; }
+  .wrap{ margin:0 auto; padding:20px 24px 90px; }
   .pagetitle{ font-family:'Fraunces', serif; font-size:24px; font-weight:700; margin:0 0 4px; }
   .pagesub{ color:var(--inkSoft); font-size:13px; margin:0 0 18px; }
 
@@ -72,23 +72,28 @@
   .metric.good .value{ color:var(--pine); }
   .metric.gold .value{ color:var(--gold); }
 
-  .revBoard{ border:1px solid var(--line); border-radius:12px; overflow:hidden; margin-top:18px; }
+  .revBoard{ border:1px solid var(--line); border-radius:14px; overflow:hidden; margin-top:18px; box-shadow:0 3px 14px rgba(35,49,41,.08); }
   .revBoardGrid{ display:grid; grid-template-columns:1fr 1fr; }
   @media (max-width:720px){ .revBoardGrid{ grid-template-columns:1fr; } }
-  .revCol + .revCol{ border-left:1px solid var(--line); }
-  @media (max-width:720px){ .revCol + .revCol{ border-left:none; border-top:1px solid var(--line); } }
-  .revColHead{ background:var(--pine); color:#fff; font-weight:800; font-size:13px; text-align:center; padding:10px 8px; letter-spacing:.02em; text-transform:uppercase; }
-  .revRow{ display:flex; justify-content:space-between; align-items:center; gap:10px; padding:8px 14px; font-size:13px; border-bottom:1px solid #EFEDE0; }
+  .revCol + .revCol{ border-left:2px solid var(--line); }
+  @media (max-width:720px){ .revCol + .revCol{ border-left:none; border-top:2px solid var(--line); } }
+  .revColHead{ color:#fff; font-weight:800; font-size:14px; text-align:center; padding:12px 8px; letter-spacing:.03em; text-transform:uppercase; text-shadow:0 1px 2px rgba(0,0,0,.15); }
+  .revColHead.left{ background:linear-gradient(135deg, var(--pine), #12523d); }
+  .revColHead.right{ background:linear-gradient(135deg, var(--amber), #b56f10); }
+  .revRow{ display:flex; justify-content:space-between; align-items:center; gap:10px; padding:9px 14px; font-size:13.5px; border-bottom:1px solid #EFEDE0; }
   .revRow:last-child{ border-bottom:none; }
-  .revRow.stripe{ background:#F7F6EF; }
-  .revRow .revLabel{ color:var(--ink); font-weight:600; }
-  .revRow.derived .revLabel{ color:var(--clay); font-weight:700; }
-  .revRow .revValue{ font-weight:700; white-space:nowrap; }
-  .revRow.derived .revValue{ color:var(--clay); }
-  .revRow.good .revValue{ color:var(--pine); }
-  .revRow.warn .revValue{ color:var(--clay); }
-  .revMetaBar{ display:flex; flex-wrap:wrap; gap:14px; padding:9px 14px; background:#F0EEE2; font-size:12px; color:var(--inkSoft); border-bottom:1px solid var(--line); }
-  .revMetaBar b{ color:var(--ink); }
+  .revCol:first-child .revRow.stripe{ background:var(--pineSoft); }
+  .revCol:last-child .revRow.stripe{ background:var(--amberSoft); }
+  .revRow .revLabel{ color:var(--ink); font-weight:700; }
+  .revRow.derived .revLabel{ color:var(--clay); font-weight:800; }
+  .revRow .revValue{ font-weight:800; font-size:14.5px; white-space:nowrap; }
+  .revRow.derived .revValue{ color:var(--clay); font-size:15.5px; }
+  .revRow.good{ background:var(--pineSoft) !important; }
+  .revRow.good .revValue{ color:var(--pine); font-size:16px; }
+  .revRow.warn{ background:var(--claySoft) !important; }
+  .revRow.warn .revValue{ color:var(--clay); font-size:16px; }
+  .revMetaBar{ display:flex; flex-wrap:wrap; gap:14px; padding:10px 14px; background:#233129; font-size:12.5px; color:#D9E4DC; border-bottom:1px solid var(--line); }
+  .revMetaBar b{ color:#fff; }
 
   .tableWrap{ background:#fff; border:1px solid var(--line); border-radius:12px; overflow-x:auto; -webkit-overflow-scrolling:touch; margin-bottom:20px; }
   table.data{ width:100%; border-collapse:collapse; font-size:12.5px; min-width:640px; }
@@ -379,11 +384,32 @@ function fmtNum(n){ if(n==null||isNaN(n)) return "0"; return Math.round(n).toLoc
 function fmtVND(n){ return fmtNum(n) + "đ"; }
 
 // ================= FIRESTORE HELPERS =================
+// Ghi lại 1 lỗi hệ thống (Firestore listener lỗi, JS lỗi không bắt được, promise bị reject...) vào
+// collection "systemErrors" để Quản lý nhận được thông báo đẩy (qua SystemError listener trong
+// TaskLiveNotifier) ngay cả khi không đang mở đúng màn hình xảy ra lỗi.
+async function logSystemError(source, err){
+  console.error(source, err);
+  try{
+    await db.collection("systemErrors").add({
+      source: String(source),
+      message: (err && err.message) ? String(err.message) : String(err || "Lỗi không rõ"),
+      code: (err && err.code) ? String(err.code) : "",
+      stack: (err && err.stack) ? String(err.stack).slice(0, 1500) : "",
+      url: (typeof location!=="undefined" ? location.href : ""),
+      userEmail: (typeof auth!=="undefined" && auth.currentUser && auth.currentUser.email) || "",
+      createdAtTs: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch(e){ console.error("Không ghi được systemErrors:", e); }
+}
 function subscribeCol(name, cb, orderField){
   let q = db.collection(name);
   if(orderField) q = q.orderBy(orderField, "desc");
-  return q.onSnapshot(snap => cb(snap.docs.map(d => ({ id:d.id, ...d.data() }))), err => console.error(name, err));
+  return q.onSnapshot(snap => cb(snap.docs.map(d => ({ id:d.id, ...d.data() }))), err => logSystemError(name, err));
 }
+// Bắt lỗi JS không được try/catch xử lý và promise bị reject nhưng không .catch — để không
+// còn lỗi "ngầm" nào lọt lưới, tất cả đều được ghi vào systemErrors cho Quản lý.
+window.addEventListener("error", e => logSystemError("window.onerror", e.error || e.message));
+window.addEventListener("unhandledrejection", e => logSystemError("unhandledrejection", e.reason));
 async function addDoc(name, data){ return db.collection(name).add({ ...data, createdAtTs: firebase.firestore.FieldValue.serverTimestamp() }); }
 async function updateDoc(name, id, data){ return db.collection(name).doc(id).update(data); }
 async function deleteDoc(name, id){ return db.collection(name).doc(id).delete(); }
@@ -1577,7 +1603,7 @@ function CustomerOrderReminderBanner({ myStaff, onOpen }){
   const alertOrders = [...myPending.filter(o => o.ngayHen && o.ngayHen<=today)].sort((a,b)=> a.ngayHen<b.ngayHen?-1:1);
   if(alertOrders.length===0) return null;
 
-  return React.createElement("div", { className:"card", style:{ maxWidth:1100, margin:"16px auto 0", borderColor:"var(--claySoft)", background:"var(--claySoft)" } }, [
+  return React.createElement("div", { className:"card", style:{ margin:"16px 24px 0", borderColor:"var(--claySoft)", background:"var(--claySoft)" } }, [
     React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13.5, marginBottom:8, color:"var(--clay)" } },
       `Có ${alertOrders.length} khách đến ngày dự kiến giao hôm nay hoặc đã quá hạn`),
     React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:6, marginBottom:10 } }, alertOrders.slice(0,5).map(o =>
@@ -4337,11 +4363,11 @@ function DayRevenueBoard({ meta, leftRows, rightRows }){
     React.createElement("div", { key:"meta", className:"revMetaBar" }, meta),
     React.createElement("div", { key:"grid", className:"revBoardGrid" }, [
       React.createElement("div", { key:"L", className:"revCol" }, [
-        React.createElement("div", { key:"h", className:"revColHead" }, "Báo cáo doanh thu"),
+        React.createElement("div", { key:"h", className:"revColHead left" }, "💰 Báo cáo doanh thu"),
         ...leftRows,
       ]),
       React.createElement("div", { key:"R", className:"revCol" }, [
-        React.createElement("div", { key:"h", className:"revColHead" }, "Báo cáo hệ số"),
+        React.createElement("div", { key:"h", className:"revColHead right" }, "📦 Báo cáo hệ số"),
         ...rightRows,
       ]),
     ]),
@@ -4685,7 +4711,7 @@ function NoStaffLinkedScreen({ user }){
   );
 }
 
-function TaskLiveNotifier({ myStaff }){
+function TaskLiveNotifier({ myStaff, isAdmin }){
   const [toast, setToast] = useState(null);
   const [notifPerm, setNotifPerm] = useState(typeof Notification !== "undefined" ? Notification.permission : "unsupported");
   const [notifErr, setNotifErr] = useState(null);
@@ -4696,6 +4722,12 @@ function TaskLiveNotifier({ myStaff }){
   const prevDaily = useRef({});
   const prevWeekly = useRef({});
   const prevTaskFeedback = useRef({});
+  const seenSysErr = useRef(new Set());
+  const isFirstSysErr = useRef(true);
+  // Quản lý không có myStaff — dùng khoá cố định "admin" để vẫn đăng ký được token thông báo đẩy.
+  const notifKey = myStaff ? myStaff.id : (isAdmin ? "admin" : null);
+  const notifName = myStaff ? myStaff.name : "Quản lý";
+  const notifShop = myStaff ? myStaff.shop : "Tất cả";
 
   function fireLocalNotif(title, body){
     setToast({ title, body });
@@ -4799,6 +4831,29 @@ function TaskLiveNotifier({ myStaff }){
     return unsub;
   }, [myStaff && myStaff.id, myStaff && myStaff.shop]);
 
+  // Hệ thống gặp lỗi ngầm (Firestore listener lỗi, JS lỗi không bắt được...) — chỉ Quản lý nhận,
+  // dùng chính collection "systemErrors" do logSystemError() ghi vào (xem FIRESTORE HELPERS).
+  // Lỗi ở đây KHÔNG gọi logSystemError để tránh vòng lặp lỗi tự sinh ra lỗi.
+  useEffect(()=>{
+    if(!isAdmin) return undefined;
+    seenSysErr.current = new Set();
+    isFirstSysErr.current = true;
+    const unsub = db.collection("systemErrors").orderBy("createdAtTs","desc").limit(20).onSnapshot(snap => {
+      if(isFirstSysErr.current){
+        snap.docs.forEach(d => seenSysErr.current.add(d.id));
+        isFirstSysErr.current = false;
+        return;
+      }
+      snap.docChanges().forEach(change => {
+        if(change.type!=="added" || seenSysErr.current.has(change.doc.id)) return;
+        seenSysErr.current.add(change.doc.id);
+        const e = change.doc.data();
+        fireLocalNotif("⚠️ Hệ thống gặp lỗi", `${e.source || "?"}: ${e.message || "Lỗi không rõ"}`.slice(0,180));
+      });
+    }, err => console.error("TaskLiveNotifier (systemErrors) lỗi:", err));
+    return unsub;
+  }, [isAdmin]);
+
   useEffect(()=>{
     if(!toast) return undefined;
     const t = setTimeout(()=>setToast(null), 9000);
@@ -4809,7 +4864,7 @@ function TaskLiveNotifier({ myStaff }){
     if(typeof Notification === "undefined") return;
     const perm = silent ? Notification.permission : await Notification.requestPermission();
     setNotifPerm(perm);
-    if(perm!=="granted" || !myStaff) return;
+    if(perm!=="granted" || !notifKey) return;
     if(!silent) setNotifErr(null);
     // Đăng ký nhận thông báo đẩy thật (hoạt động cả khi tắt hẳn trình duyệt) — cần Service
     // Worker + khoá VAPID (FCM_VAPID_KEY) + Cloud Function đứng giữa gửi đi (xem hướng dẫn deploy).
@@ -4819,12 +4874,12 @@ function TaskLiveNotifier({ myStaff }){
       const messaging = firebase.messaging();
       const token = await messaging.getToken({ vapidKey:FCM_VAPID_KEY, serviceWorkerRegistration:reg });
       if(token){
-        await db.collection("fcmTokens").doc(myStaff.id).set({
+        await db.collection("fcmTokens").doc(notifKey).set({
           tokens: firebase.firestore.FieldValue.arrayUnion(token),
-          staffName: myStaff.name, shop: myStaff.shop,
+          staffName: notifName, shop: notifShop, isAdmin: !!isAdmin,
           updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
         }, { merge:true });
-        try{ localStorage.setItem("fcmOk_"+myStaff.id, "1"); } catch(e){}
+        try{ localStorage.setItem("fcmOk_"+notifKey, "1"); } catch(e){}
         setNotifErr("__OK__");
       } else {
         setNotifErr("Không lấy được token (getToken trả về rỗng) — thường do khoá VAPID sai hoặc chưa đúng.");
@@ -4839,12 +4894,12 @@ function TaskLiveNotifier({ myStaff }){
   // (chưa đánh dấu trong localStorage), tự động thử đăng ký NGẦM 1 lần khi tải trang —
   // không cần bấm gì cả, đỡ phải hỏi lại "Thử đăng ký lại" mỗi lần vào app.
   useEffect(()=>{
-    if(!myStaff) return;
+    if(!notifKey) return;
     if(notifPerm!=="granted") return;
     let already = false;
-    try{ already = localStorage.getItem("fcmOk_"+myStaff.id)==="1"; } catch(e){}
+    try{ already = localStorage.getItem("fcmOk_"+notifKey)==="1"; } catch(e){}
     if(!already) enableNotif(true);
-  }, [myStaff && myStaff.id, notifPerm]);
+  }, [notifKey, notifPerm]);
 
   useEffect(()=>{
     if(notifErr!=="__OK__") return undefined;
@@ -4860,7 +4915,7 @@ function TaskLiveNotifier({ myStaff }){
     notifErr==="__OK__" && React.createElement("div", { key:"okbanner", style:{ background:"var(--pineSoft)", padding:"9px 16px", fontSize:12.5, textAlign:"center", color:"var(--pine)", fontWeight:600 } },
       "Đã đăng ký nhận thông báo thành công cho thiết bị này."),
     notifPerm==="default" && React.createElement("div", { key:"banner", style:{ background:"var(--goldSoft)", padding:"9px 16px", fontSize:12.5, display:"flex", justifyContent:"center", alignItems:"center", gap:12, flexWrap:"wrap" } }, [
-      "Bật thông báo để biết ngay khi có việc mới được giao — kể cả khi đã tắt hẳn trình duyệt.",
+      isAdmin ? "Bật thông báo để biết ngay khi hệ thống gặp lỗi — kể cả khi đã tắt hẳn trình duyệt." : "Bật thông báo để biết ngay khi có việc mới được giao — kể cả khi đã tắt hẳn trình duyệt.",
       React.createElement("button", { key:"b", type:"button", className:"btn btnPrimary", style:{padding:"5px 12px",fontSize:12}, onClick:()=>enableNotif(false) }, "Bật thông báo"),
     ]),
     notifPerm==="unsupported" && isIOSNotInstalled() && React.createElement("div", { key:"iosbanner", style:{ background:"var(--claySoft)", padding:"9px 16px", fontSize:12.5, textAlign:"center" } },
@@ -4898,7 +4953,7 @@ function TaskReminderBanner({ myStaff, onOpenTasks }){
   const alertTasks = [...overdue, ...dueSoon];
   if(alertTasks.length===0) return null;
 
-  return React.createElement("div", { className:"card", style:{ maxWidth:1100, margin:"16px auto 0", borderColor:"var(--claySoft)", background:"var(--claySoft)" } }, [
+  return React.createElement("div", { className:"card", style:{ margin:"16px 24px 0", borderColor:"var(--claySoft)", background:"var(--claySoft)" } }, [
     React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13.5, marginBottom:8, color:"var(--clay)" } },
       `🔔 Bạn có ${alertTasks.length} việc được giao ${overdue.length>0 ? "quá hạn hoặc " : ""}sắp đến hạn`),
     React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:6, marginBottom:10 } }, alertTasks.slice(0,5).map(t =>
@@ -4932,7 +4987,7 @@ function Dashboard({ user, isAdmin, myStaff }){
         React.createElement("button", { key:t.id, className:activeTab===t.id?"active":"", onClick:()=>setActiveTab(t.id) }, t.label)
       )),
     ])),
-    !isAdmin && React.createElement(TaskLiveNotifier, { key:"livenotify", myStaff }),
+    React.createElement(TaskLiveNotifier, { key:"livenotify", myStaff, isAdmin }),
     !isAdmin && React.createElement(TaskReminderBanner, { key:"reminder", myStaff, onOpenTasks:()=>setActiveTab("tasks") }),
     !isAdmin && React.createElement(CustomerOrderReminderBanner, { key:"custreminder", myStaff, onOpen:()=>setActiveTab("customerOrders") }),
     React.createElement("div", { key:"wrap", className:"wrap" }, [
