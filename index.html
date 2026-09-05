@@ -84,6 +84,10 @@
   .modalOverlay{ position:fixed; inset:0; background:rgba(35,49,41,.45); display:flex; align-items:center; justify-content:center; z-index:50; padding:16px; }
   .modal{ background:#fff; border-radius:14px; width:520px; max-width:100%; max-height:88vh; overflow-y:auto; padding:22px 22px 18px; }
   .modalWide{ width:640px; }
+  .modalFull{ width:min(96vw, 1180px); max-height:94vh; }
+  .reviewRow{ display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:10px 0; border-bottom:1px solid #F0EEE2; }
+  .reviewRow .lbl{ font-size:10.5; font-weight:700; color:var(--inkSoft); text-transform:uppercase; letter-spacing:.03em; margin-bottom:3px; }
+  @media (max-width:720px){ .reviewRow{ grid-template-columns:1fr; } }
 
   .progressOuter{ background:#EFEDE0; border-radius:20px; height:8px; overflow:hidden; flex:1; }
   .progressInner{ height:100%; border-radius:20px; background:var(--pine); transition:width .25s; }
@@ -1770,59 +1774,75 @@ function WeeklyReviewModal({ report, prevReport, onSave, onClose }){
   const [nhanXet, setNhanXet] = useState(report.nhanXetChu || "");
   const ketQua = report.ketQua || {};
   const keHoach = report.keHoach || {};
+
+  const fileChip = f => f.type==="image"
+    ? React.createElement("a",{key:f.url,href:f.url,target:"_blank",rel:"noreferrer"}, React.createElement("img",{src:f.url,style:{width:52,height:52,objectFit:"cover",borderRadius:6,border:"1px solid var(--line)"}}))
+    : React.createElement("a",{key:f.url,href:f.url,target:"_blank",rel:"noreferrer",style:{fontSize:11.5,color:"var(--pine)"}}, f.name || "Tệp đính kèm");
+
   return React.createElement("div", { className:"modalOverlay", onClick:onClose },
-    React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
-      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:2 } }, `${report.shop} — Tuần ${report.tuanNgay}`),
-      React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } }, report.nguoiBaoCao ? `Người báo cáo: ${report.nguoiBaoCao}` : "Chưa ghi người báo cáo"),
-      React.createElement("div", { key:"body", style:{ marginBottom:14, maxHeight:340, overflowY:"auto" } }, [
-        React.createElement("div", { key:"h1", style:{ fontWeight:700, fontSize:13, marginBottom:8 } }, "Kết quả thực hiện tuần trước"),
-        WEEKLY_CATEGORIES.map(c => {
+    React.createElement("div", { className:"modal modalFull", onClick:e=>e.stopPropagation() }, [
+      React.createElement("div", { key:"head", style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:10, marginBottom:16, paddingBottom:14, borderBottom:"2px solid var(--line)" } }, [
+        React.createElement("div", { key:"l" }, [
+          React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:19 } }, `${report.shop} — Tuần ${report.tuanNgay}`),
+          React.createElement("div", { key:"s", style:{ fontSize:13, color:"var(--inkSoft)", marginTop:2 } }, report.nguoiBaoCao ? `Người báo cáo: ${report.nguoiBaoCao}` : "Chưa ghi người báo cáo"),
+        ]),
+        React.createElement("button", { key:"x", type:"button", className:"btn btnGhost", onClick:onClose }, "✕ Đóng"),
+      ]),
+      React.createElement("div", { key:"body", style:{ marginBottom:16, maxHeight:"58vh", overflowY:"auto", paddingRight:6 } }, [
+        React.createElement("div", { key:"h1", style:{ fontWeight:700, fontSize:14.5, marginBottom:4, color:"var(--pine)" } }, "① Kết quả thực hiện tuần trước"),
+        React.createElement("div", { key:"colHead", className:"reviewRow", style:{ borderBottom:"2px solid var(--line)", paddingTop:0 } }, [
+          React.createElement("div",{key:"a",className:"lbl"},"Kế hoạch đã cam kết"),
+          React.createElement("div",{key:"b",className:"lbl"},"Kết quả thực tế"),
+        ]),
+        ...WEEKLY_CATEGORIES.flatMap(c => {
           const rows = ketQua[c.key] || [];
-          if(rows.length===0) return null;
-          return React.createElement("div", { key:"k"+c.key, style:{ marginBottom:10 } }, [
-            React.createElement("div",{key:"l",style:{fontWeight:600,fontSize:12.5,marginBottom:4}}, c.label),
-            rows.map(r => React.createElement("div", { key:r.id, style:{ fontSize:12, padding:"5px 0", borderBottom:"1px solid #F0EEE2" } }, [
-              React.createElement("div",{key:"n"}, [ React.createElement("b",{key:"b"},"Kế hoạch: "), r.noiDung || "—", r.target ? ` (Target: ${r.target})` : "" ]),
-              React.createElement("div",{key:"q",style:{color:"var(--inkSoft)"}}, [ React.createElement("b",{key:"b"},"Kết quả: "), r.ketQua || "—" ]),
-              r.link && React.createElement("div",{key:"lk",style:{marginTop:2}}, React.createElement("a",{href:r.link,target:"_blank",rel:"noreferrer"}, r.link)),
-              (r.files && r.files.length>0) && React.createElement("div",{key:"fl",className:"taskFileList",style:{marginTop:4}}, r.files.map((f,i) =>
-                f.type==="image"
-                  ? React.createElement("a",{key:i,href:f.url,target:"_blank",rel:"noreferrer"}, React.createElement("img",{src:f.url,style:{width:44,height:44,objectFit:"cover",borderRadius:6,border:"1px solid var(--line)"}}))
-                  : React.createElement("a",{key:i,href:f.url,target:"_blank",rel:"noreferrer",style:{fontSize:11,color:"var(--pine)"}}, f.name || "Tệp đính kèm")
-              )),
+          if(rows.length===0) return [];
+          return [
+            React.createElement("div",{key:"cat"+c.key,style:{fontWeight:700,fontSize:12.5,marginTop:10,marginBottom:2,color:"var(--ink)"}}, c.label),
+            ...rows.map(r => React.createElement("div", { key:r.id, className:"reviewRow" }, [
+              React.createElement("div", { key:"a", style:{ fontSize:13 } }, [ r.noiDung || "—", r.target && React.createElement("div",{key:"tg",style:{fontSize:11.5,color:"var(--inkSoft)",marginTop:2}}, `Target: ${r.target}`) ]),
+              React.createElement("div", { key:"b", style:{ fontSize:13 } }, [
+                r.ketQua || "—",
+                r.link && React.createElement("div",{key:"lk",style:{marginTop:4}}, React.createElement("a",{href:r.link,target:"_blank",rel:"noreferrer",style:{fontSize:11.5}}, r.link)),
+                (r.files && r.files.length>0) && React.createElement("div",{key:"fl",style:{display:"flex",flexWrap:"wrap",gap:6,marginTop:6}}, r.files.map(fileChip)),
+              ]),
             ])),
-          ]);
+          ];
         }),
-        React.createElement("div", { key:"h3", style:{ fontWeight:700, fontSize:13, margin:"14px 0 8px" } }, "Tiến độ doanh thu & hàng hệ số"),
-        WEEKLY_PROGRESS_ITEMS.map(it => {
-          const val = report[it.key];
-          if(!val || (!val.target && !val.actualWeek)) return null;
-          return React.createElement("div", { key:"g"+it.key, style:{ fontSize:12, padding:"5px 0", borderBottom:"1px solid #F0EEE2" } }, [
-            React.createElement("b",{key:"b"}, it.label+": "),
-            `Tuần này ${fmtProgressVal(Number(val.actualWeek)||0, it.unit)}`,
-            val.target ? ` / Chỉ tiêu tháng ${fmtProgressVal(Number(val.target)||0, it.unit)}` : "",
-          ]);
-        }),
-        React.createElement("div", { key:"h2", style:{ fontWeight:700, fontSize:13, margin:"14px 0 8px" } }, "Kế hoạch & target cam kết tuần này"),
-        WEEKLY_CATEGORIES.map(c => {
+        React.createElement("div", { key:"h3", style:{ fontWeight:700, fontSize:14.5, margin:"20px 0 8px", color:"var(--pine)" } }, "② Tiến độ doanh thu & hàng hệ số"),
+        React.createElement("div", { key:"prog", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(220px,1fr))", gap:10 } },
+          WEEKLY_PROGRESS_ITEMS.map(it => {
+            const val = report[it.key];
+            if(!val || (!val.target && !val.actualWeek)) return null;
+            return React.createElement("div", { key:"g"+it.key, style:{ background:"var(--paper)", borderRadius:8, padding:"9px 12px" } }, [
+              React.createElement("div",{key:"l",style:{fontSize:11.5,color:"var(--inkSoft)",marginBottom:2}}, it.label),
+              React.createElement("div",{key:"v",style:{fontSize:14,fontWeight:700}}, fmtProgressVal(Number(val.actualWeek)||0, it.unit)),
+              val.target && React.createElement("div",{key:"t",style:{fontSize:11.5,color:"var(--inkSoft)"}}, `Chỉ tiêu tháng: ${fmtProgressVal(Number(val.target)||0, it.unit)}`),
+            ]);
+          })
+        ),
+        React.createElement("div", { key:"h2", style:{ fontWeight:700, fontSize:14.5, margin:"20px 0 8px", color:"var(--pine)" } }, "③ Kế hoạch & target cam kết tuần này"),
+        ...WEEKLY_CATEGORIES.flatMap(c => {
           const rows = keHoach[c.key] || [];
-          if(rows.length===0) return null;
-          return React.createElement("div", { key:"p"+c.key, style:{ marginBottom:10 } }, [
-            React.createElement("div",{key:"l",style:{fontWeight:600,fontSize:12.5,marginBottom:4}}, c.label),
-            rows.map(r => React.createElement("div", { key:r.id, style:{ fontSize:12, padding:"5px 0", borderBottom:"1px solid #F0EEE2" } },
+          if(rows.length===0) return [];
+          return [
+            React.createElement("div",{key:"cat"+c.key,style:{fontWeight:700,fontSize:12.5,marginTop:10,marginBottom:2,color:"var(--ink)"}}, c.label),
+            ...rows.map(r => React.createElement("div", { key:r.id, style:{ fontSize:13, padding:"6px 0", borderBottom:"1px solid #F0EEE2" } },
               [ r.noiDung || "—", r.target ? ` — Target: ${r.target}` : "" ].join(""))),
-          ]);
+          ];
         }),
       ]),
-      React.createElement("div", { key:"score", className:"field", style:{ marginBottom:10 } }, [
-        React.createElement("label",{key:"l"},"Chấm điểm hiệu suất"),
-        React.createElement(StarSelect, { key:"i", value:diem, onChange:setDiem }),
+      React.createElement("div", { key:"scorebox", style:{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:16, alignItems:"start", background:"var(--paper)", borderRadius:10, padding:16 } }, [
+        React.createElement("div", { key:"score", className:"field", style:{ marginBottom:0 } }, [
+          React.createElement("label",{key:"l"},"Chấm điểm hiệu suất"),
+          React.createElement(StarSelect, { key:"i", value:diem, onChange:setDiem }),
+        ]),
+        React.createElement("div", { key:"cmt", className:"field", style:{ marginBottom:0 } }, [
+          React.createElement("label",{key:"l"},"Nhận xét"),
+          React.createElement("textarea",{key:"i", rows:2, value:nhanXet, onChange:e=>setNhanXet(e.target.value)}),
+        ]),
       ]),
-      React.createElement("div", { key:"cmt", className:"field", style:{ marginBottom:16 } }, [
-        React.createElement("label",{key:"l"},"Nhận xét"),
-        React.createElement("textarea",{key:"i", rows:3, value:nhanXet, onChange:e=>setNhanXet(e.target.value)}),
-      ]),
-      React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } }, [
+      React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end", marginTop:14 } }, [
         React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:onClose }, "Đóng"),
         React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", onClick:()=>onSave(report.id, diem, nhanXet) }, "Lưu đánh giá"),
       ]),
@@ -2622,7 +2642,38 @@ function KpiTemplateEditor({ templates, onSave, onClose }){
   );
 }
 
-function CtahForm({ staffRole, ctahDoc, onSaveField }){
+function CtahForm({ staffRole, ctahDoc, onSaveField, readOnly }){
+  if(readOnly){
+    const preview = kpiCtahCalc(ctahDoc);
+    const lines = [
+      ["Bài kiểm tra kiến thức", ctahDoc.baiKiemTra!=null && ctahDoc.baiKiemTra!=="" ? ctahDoc.baiKiemTra : "—"],
+      ["Họp nhóm thiếu (buổi)", ctahDoc.hopNhomThieu!=null && ctahDoc.hopNhomThieu!=="" ? ctahDoc.hopNhomThieu : "—"],
+      ["Role play", ctahDoc.rolePlay || "—"],
+      ["Tự học lộ trình", ctahDoc.tuHocLoTrinh || "—"],
+      staffRole==="Cửa hàng trưởng" && ["Coaching thiếu (người)", ctahDoc.coachingThieu!=null && ctahDoc.coachingThieu!=="" ? ctahDoc.coachingThieu : "—"],
+      ["Đồng phục, bề ngoài (lần)", ctahDoc.dongPhucLan || 0],
+      ["Thái độ làm việc (lần)", ctahDoc.thaiDoLan || 0],
+      ["Chuyên cần (lần)", ctahDoc.chuyenCanLan || 0],
+      ["Báo cáo bàn giao ca (lần)", ctahDoc.bangGiaoCaLan || 0],
+      ["Vệ sinh nhà thuốc (lần)", ctahDoc.veSinhLan || 0],
+      ["Kiểm kê hàng hoá (lần)", ctahDoc.kiemKeLan || 0],
+      ["Ghi chép sổ sách/việc khác (lần)", ctahDoc.congViecKhacLan || 0],
+      ctahDoc.kiemKeGianLan && ["Kiểm kê không trung thực", "Có"],
+    ].filter(Boolean);
+    return React.createElement(React.Fragment, null, [
+      React.createElement("div", { key:"h", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:10 } }, "Nhân viên/CHT tự chấm mục này — quản lý chỉ xem kết quả, không chỉnh sửa."),
+      React.createElement("div", { key:"grid", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(210px, 1fr))", gap:8, marginBottom:12 } },
+        lines.map(([l,v],i) => React.createElement("div", { key:i, style:{ fontSize:12.5 } }, [
+          React.createElement("span",{key:"l",style:{color:"var(--inkSoft)"}}, l+": "), React.createElement("b",{key:"v"}, v),
+        ]))
+      ),
+      ctahDoc.ketLuanChung && React.createElement("div", { key:"note", style:{ fontSize:12.5, marginBottom:12 } }, [ React.createElement("b",null,"Kết luận chung: "), ctahDoc.ketLuanChung ]),
+      React.createElement("div", { key:"total", style:{ background:"var(--paper)", borderRadius:8, padding:"10px 14px", fontSize:13 } }, [
+        React.createElement("b",null,"Tổng điểm CTAH cộng/trừ vào KPI: "), `${preview.adj>0?"+":""}${preview.adj} điểm`,
+        preview.khongXet && StatusPill("Không xét KPI tháng này","warn"),
+      ]),
+    ]);
+  }
   const lanSelect = (field, label) => React.createElement("div", { key:field }, [
     React.createElement("div",{style:{fontSize:11,color:"var(--inkSoft)"}}, label),
     React.createElement("select",{defaultValue:ctahDoc[field]||0,onChange:e=>onSaveField(field,Number(e.target.value)),style:{padding:"6px 8px",border:"1px solid var(--line)",borderRadius:6}},
@@ -3030,25 +3081,19 @@ function KpiView({ isAdmin, myStaff }){
     showTplEditor && React.createElement(KpiTemplateEditor, { templates, onSave:saveTemplates, onClose:()=>setShowTplEditor(false) }),
   ]);
 
-  // ---- Tiêu chí ảnh hưởng (CTAH): đào tạo, tác phong, chuyên cần... — chấm ngay trong
-  // dòng của từng nhân viên ở bảng tổng hợp, để thấy trực tiếp kết quả cuối cùng bị ảnh hưởng thế nào.
-  // Quản lý vẫn xem/điều chỉnh được ở đây, nhưng nhân viên & CHT giờ TỰ chấm phần này của
-  // chính mình trong trang KPI của họ (staffSection) — 2 nơi cùng ghi vào 1 dữ liệu.
+  // ---- Tiêu chí ảnh hưởng (CTAH): đào tạo, tác phong, chuyên cần... — nhân viên & CHT tự
+  // chấm phần này của chính mình trong trang KPI của họ (staffSection). Quản lý khu vực
+  // KHÔNG chấm, chỉ xem lại kết quả ngay trong dòng của từng người ở bảng tổng hợp.
   const ctahStaff = staff.find(s=>s.id===ctahStaffId);
   const ctahDoc = ctahStaff ? (ctahDocs[kpiCtahId(ctahStaff.id, thang)] || {}) : {};
-  async function saveCtahField(field, value){
-    if(!ctahStaff) return;
-    const id = kpiCtahId(ctahStaff.id, thang);
-    await mergeDotFields("kpiCTAH", id, { staffId:ctahStaff.id, staffName:ctahStaff.name, shop:ctahStaff.shop, role:ctahStaff.role, thang, [field]:value });
-  }
-  const ctahInlineForm = ctahStaff && React.createElement(CtahForm, { staffRole:ctahStaff.role, ctahDoc, onSaveField:saveCtahField });
+  const ctahInlineForm = ctahStaff && React.createElement(CtahForm, { staffRole:ctahStaff.role, ctahDoc, readOnly:true });
 
   const adminSummarySection = isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
     React.createElement("div", { key:"th", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:12 } }, [
       React.createElement("div", { key:"t", className:"cardTitle", style:{ marginBottom:0 } }, `Tổng hợp KPI toàn bộ nhân sự — tháng ${thang}`),
       React.createElement("button", { key:"exp", type:"button", className:"btn btnPrimary", onClick:exportKpiFullSummary }, "Tải tổng hợp đầy đủ (gửi HR tính thưởng)"),
     ]),
-    React.createElement("div", { key:"hint", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:12 } }, "Bấm \"Chấm CTAH\" ở đúng dòng nhân viên để chấm tiêu chí ảnh hưởng (đào tạo, tác phong, chuyên cần...) — điểm này tự cộng/trừ ngay vào kết quả KPI cuối cùng của người đó."),
+    React.createElement("div", { key:"hint", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:12 } }, "Bấm \"Xem CTAH\" ở đúng dòng nhân viên để xem tiêu chí ảnh hưởng (đào tạo, tác phong, chuyên cần...) họ đã tự chấm — điểm này tự cộng/trừ vào kết quả KPI cuối cùng của người đó."),
     summaryRows.length===0
       ? React.createElement("div",{key:"e",className:"emptyState"},"Chưa có nhân sự.")
       : React.createElement("div", { key:"tb", className:"tableWrap", style:{ marginBottom:0 } }, React.createElement("table",{className:"data"}, [
@@ -3066,7 +3111,7 @@ function KpiView({ isAdmin, myStaff }){
                 React.createElement("td",{key:"x"}, r.khongXet ? StatusPill("Không xét KPI","warn") : (r.hasTargets ? StatusPill(kpiXepLoai(r.pct), r.pct!=null && r.pct>=0.85 ? "good" : "warn") : StatusPill("Chưa giao KPI","neutral"))),
                 React.createElement("td",{key:"dv"}, r.trangThaiDuyet ? StatusPill(r.trangThaiDuyet, r.trangThaiDuyet==="QLKV đã duyệt"?"good":"neutral") : StatusPill("Chưa duyệt","warn")),
                 React.createElement("td",{key:"btn", style:{whiteSpace:"nowrap"}}, [
-                  React.createElement("button",{key:"ctah", className:"btn"+(isOpen?" btnPrimary":" btnGhost"),style:{padding:"5px 10px",fontSize:11.5,marginRight:6},onClick:()=>setCtahStaffId(isOpen?"":r.staff.id)}, isOpen?"Đóng CTAH":"Chấm CTAH"),
+                  React.createElement("button",{key:"ctah", className:"btn"+(isOpen?" btnPrimary":" btnGhost"),style:{padding:"5px 10px",fontSize:11.5,marginRight:6},onClick:()=>setCtahStaffId(isOpen?"":r.staff.id)}, isOpen?"Đóng CTAH":"Xem CTAH"),
                   (r.totalActual!=null && r.trangThaiDuyet!=="QLKV đã duyệt") &&
                     React.createElement("button",{key:"duyet",className:"btn",style:{padding:"5px 10px",fontSize:11.5},onClick:()=>qlkvDuyet(r.staff)}, "Duyệt cuối"),
                 ]),
