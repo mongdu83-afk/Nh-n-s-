@@ -4016,12 +4016,391 @@ function StaffView(){
   ]);
 }
 
+// ================= MODULE: BÁO CÁO DOANH SỐ THEO NGÀY =================
+const WEEKDAY_LABELS = ["CN","T2","T3","T4","T5","T6","T7"];
+function weekdayLabel(iso){ return WEEKDAY_LABELS[new Date(iso + "T00:00:00").getDay()]; }
+function salesReportId(shop, iso){ return shop + "_" + iso; }
+const DEFAULT_SALES_CHECKPOINTS = [
+  { id:"cp1", label:"15h", time:"15:00" },
+  { id:"cp2", label:"22h", time:"22:00" },
+];
+function salesCheckpointEmpty(){ return { luotKhach:"", khachMoi:"", soBill:"" }; }
+// Cộng dồn 1 trường số liệu (lượt khách/khách mới/số bill) qua tất cả các khung giờ chốt trong ngày —
+// tương ứng cột "TỔNG" trong file mẫu (15h + 22h, hoặc bao nhiêu khung giờ tuỳ cấu hình).
+function salesSumField(doc, checkpoints, field){
+  return checkpoints.reduce((s,cp) => s + (Number(doc && doc.checkpoints && doc.checkpoints[cp.id] && doc.checkpoints[cp.id][field]) || 0), 0);
+}
+// Chỉ tiêu tháng chỉ cần nhập 1 lần đầu tháng — các ngày sau tự kế thừa chỉ tiêu tháng gần nhất
+// đã nhập trong cùng tháng cho cùng cửa hàng (giống cơ chế của báo cáo tuần).
+function salesLatestMonthTarget(allReports, shop, monthStr, beforeIso, key){
+  const list = allReports
+    .filter(r => r.shop===shop && monthOf(r.ngay)===monthStr && r.ngay<beforeIso && Number(r[key]))
+    .sort((a,b)=> a.ngay<b.ngay?1:-1);
+  return list.length>0 ? list[0][key] : "";
+}
+// Chỉ tiêu ngày = chỉ tiêu tháng chia đều cho số ngày thực tế của tháng đó (đúng cách tính trong file mẫu gốc).
+function salesDayTarget(monthlyTarget, iso){
+  const t = Number(monthlyTarget) || 0;
+  return t>0 ? t/daysInMonthOf(iso) : 0;
+}
+
+// Khối cấu hình các khung giờ chốt số liệu trong ngày (VD: 15h, 22h) — dùng chung cho mọi cửa hàng,
+// chỉ Quản lý mới chỉnh sửa được. Có thể thêm/bớt/đổi tên/đổi giờ tuỳ nhu cầu vận hành thực tế.
+function SalesCheckpointEditor({ checkpoints, onSave, onClose }){
+  const [list, setList] = useState(checkpoints.map(cp => ({ ...cp })));
+  function change(idx, field, value){ setList(prev => prev.map((cp,i)=> i===idx ? { ...cp, [field]:value } : cp)); }
+  function addCp(){ setList(prev => [...prev, { id:uid(), label:"", time:"" }]); }
+  function removeCp(idx){ setList(prev => prev.filter((_,i)=>i!==idx)); }
+  return React.createElement("div", { className:"modalOverlay", onClick:onClose }, React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
+    React.createElement("h3", { key:"t", style:{ marginTop:0 } }, "Khung giờ chốt số liệu"),
+    React.createElement("p", { key:"s", style:{ fontSize:12.5, color:"var(--inkSoft)", marginTop:-6 } },
+      "Áp dụng chung cho tất cả cửa hàng — mỗi khung giờ tương ứng 1 lần chụp màn hình báo cáo doanh thu trong ngày."),
+    React.createElement("div", { key:"list" }, list.map((cp,idx) => React.createElement("div", { key:cp.id, style:{ display:"flex", gap:8, marginBottom:10, alignItems:"flex-end" } }, [
+      React.createElement("div", { key:"l", className:"field", style:{ flex:1 } }, [
+        React.createElement("label",{key:"k"},"Tên khung giờ"),
+        React.createElement("input",{key:"i", value:cp.label, placeholder:"VD: 15h", onChange:e=>change(idx,"label",e.target.value)}),
+      ]),
+      React.createElement("div", { key:"t", className:"field", style:{ width:120 } }, [
+        React.createElement("label",{key:"k"},"Giờ chốt"),
+        React.createElement("input",{key:"i", type:"time", value:cp.time, onChange:e=>change(idx,"time",e.target.value)}),
+      ]),
+      list.length>1 && React.createElement("button",{key:"rm", type:"button", className:"btn btnDanger", style:{padding:"9px 12px"}, onClick:()=>removeCp(idx)},"Xoá"),
+    ]))),
+    React.createElement("div", { key:"btns", className:"btnRow", style:{ marginTop:6 } }, [
+      React.createElement("button",{key:"add", type:"button", className:"btn", onClick:addCp},"+ Thêm khung giờ"),
+      React.createElement("button",{key:"save", type:"button", className:"btn btnPrimary", onClick:()=>onSave(list.filter(cp=>cp.label.trim()))},"Lưu"),
+      React.createElement("button",{key:"cancel", type:"button", className:"btn btnGhost", onClick:onClose},"Huỷ"),
+    ]),
+  ]));
+}
+
+// Hiển thị 1 mảng object (mỗi object = 1 dòng, key = tên cột) thành bảng HTML — dùng chung cho cả
+// bảng chi tiết theo cửa hàng (đúng cấu trúc file xuất Excel) lẫn bảng tổng hợp nhiều cửa hàng.
+function objRowsToTable(rows, emptyLabel){
+  if(!rows || rows.length===0) return React.createElement("div",{className:"emptyState"}, emptyLabel || "Chưa có dữ liệu.");
+  const headers = Object.keys(rows[0]);
+  return React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+    React.createElement("thead",{key:"h"}, React.createElement("tr",null, headers.map((h,i)=>React.createElement("th",{key:i},h)))),
+    React.createElement("tbody",{key:"b"}, rows.map((r,ri)=>React.createElement("tr",{key:ri}, headers.map((h,ci)=>{
+      const v = r[h];
+      return React.createElement("td",{key:ci}, typeof v==="number" ? fmtNum(v) : (v===""||v==null ? "—" : v));
+    })))),
+  ]));
+}
+
+// Dựng đúng bộ cột như file mẫu gốc (Thứ, Ngày, Target HS, Thực đạt HS, Target ngày, Doanh số đạt theo
+// ngày, so sánh tuần trước, chi tiết từng khung giờ, TỔNG, Trung bình giá trị bill) + dòng TỔNG THÁNG,
+// dùng chung cho cả xem trên app (objRowsToTable) và xuất Excel.
+function buildSalesExportRows(shop, monthStr, reportsMap, checkpoints){
+  const daysInM = new Date(Number(monthStr.slice(0,4)), Number(monthStr.slice(5,7)), 0).getDate();
+  const rows = [];
+  let totalTargetHS=0, totalThucHS=0, totalTargetNgay=0, totalDoanhSo=0, totalDoanhSoTuanTruoc=0, totalBillTuanTruoc=0;
+  let totalTongKhach=0, totalTongMoi=0, totalTongBill=0;
+  const cpTotals = {}; checkpoints.forEach(cp => cpTotals[cp.id] = { luotKhach:0, khachMoi:0, soBill:0 });
+  for(let d=1; d<=daysInM; d++){
+    const iso = `${monthStr}-${String(d).padStart(2,"0")}`;
+    const doc = reportsMap[salesReportId(shop, iso)];
+    if(!doc) continue;
+    const targetNgay = salesDayTarget(doc.targetThangDoanhSo, iso);
+    const targetHsNgay = salesDayTarget(doc.targetThangHeSo, iso);
+    const prevDoc = reportsMap[salesReportId(shop, addDays(iso,-7))];
+    const row = {
+      "Thứ": weekdayLabel(iso), "Ngày": iso,
+      "Target HS": targetHsNgay ? Math.round(targetHsNgay) : "",
+      "Thực đạt HS": doc.heSoDat!=null && doc.heSoDat!=="" ? Number(doc.heSoDat) : "",
+      "Target ngày": targetNgay ? Math.round(targetNgay) : "",
+      "Doanh số đạt theo ngày": doc.doanhSoDat!=null && doc.doanhSoDat!=="" ? Number(doc.doanhSoDat) : "",
+      "Doanh số cùng ngày tuần trước": prevDoc && prevDoc.doanhSoDat!=null ? Number(prevDoc.doanhSoDat) : "",
+      "Số lượt bill tuần trước": prevDoc ? salesSumField(prevDoc, checkpoints, "soBill") : "",
+    };
+    checkpoints.forEach(cp => {
+      const c = (doc.checkpoints && doc.checkpoints[cp.id]) || {};
+      row[`${cp.label} - Số lượt khách`] = c.luotKhach || "";
+      row[`${cp.label} - Số khách mới`] = c.khachMoi || "";
+      row[`${cp.label} - Số bill`] = c.soBill || "";
+      cpTotals[cp.id].luotKhach += Number(c.luotKhach)||0;
+      cpTotals[cp.id].khachMoi += Number(c.khachMoi)||0;
+      cpTotals[cp.id].soBill += Number(c.soBill)||0;
+    });
+    const tongKhach = salesSumField(doc, checkpoints, "luotKhach");
+    const tongMoi = salesSumField(doc, checkpoints, "khachMoi");
+    const tongBill = salesSumField(doc, checkpoints, "soBill");
+    row["TỔNG - Số lượt khách"] = tongKhach;
+    row["TỔNG - Số khách mới"] = tongMoi;
+    row["TỔNG - Số bill"] = tongBill;
+    row["Trung bình giá trị bill"] = tongBill>0 ? Math.round((Number(doc.doanhSoDat)||0)/tongBill) : "";
+    rows.push(row);
+    totalTargetHS += targetHsNgay; totalThucHS += Number(doc.heSoDat)||0;
+    totalTargetNgay += targetNgay; totalDoanhSo += Number(doc.doanhSoDat)||0;
+    totalDoanhSoTuanTruoc += prevDoc ? (Number(prevDoc.doanhSoDat)||0) : 0;
+    totalBillTuanTruoc += prevDoc ? salesSumField(prevDoc, checkpoints, "soBill") : 0;
+    totalTongKhach += tongKhach; totalTongMoi += tongMoi; totalTongBill += tongBill;
+  }
+  if(rows.length>0){
+    const totalRow = {
+      "Thứ": "TỔNG THÁNG", "Ngày": "",
+      "Target HS": Math.round(totalTargetHS), "Thực đạt HS": Math.round(totalThucHS),
+      "Target ngày": Math.round(totalTargetNgay), "Doanh số đạt theo ngày": Math.round(totalDoanhSo),
+      "Doanh số cùng ngày tuần trước": Math.round(totalDoanhSoTuanTruoc), "Số lượt bill tuần trước": totalBillTuanTruoc,
+    };
+    checkpoints.forEach(cp => {
+      totalRow[`${cp.label} - Số lượt khách`] = cpTotals[cp.id].luotKhach;
+      totalRow[`${cp.label} - Số khách mới`] = cpTotals[cp.id].khachMoi;
+      totalRow[`${cp.label} - Số bill`] = cpTotals[cp.id].soBill;
+    });
+    totalRow["TỔNG - Số lượt khách"] = totalTongKhach;
+    totalRow["TỔNG - Số khách mới"] = totalTongMoi;
+    totalRow["TỔNG - Số bill"] = totalTongBill;
+    totalRow["Trung bình giá trị bill"] = totalTongBill>0 ? Math.round(totalDoanhSo/totalTongBill) : "";
+    rows.push(totalRow);
+  }
+  return rows;
+}
+function exportSalesExcel(shops, monthStr, reportsMap, checkpoints){
+  const wb = XLSX.utils.book_new();
+  let any = false;
+  shops.forEach(shop => {
+    const rows = buildSalesExportRows(shop, monthStr, reportsMap, checkpoints);
+    if(rows.length===0) return;
+    any = true;
+    const ws = XLSX.utils.json_to_sheet(rows);
+    styleExportSheet(ws, rows);
+    XLSX.utils.book_append_sheet(wb, ws, shop.slice(0,31));
+  });
+  if(!any){ window.alert("Chưa có báo cáo nào trong tháng này để xuất."); return; }
+  XLSX.writeFile(wb, `BaoCaoDoanhSo_${monthStr}.xlsx`);
+}
+
+function SalesReportView({ isAdmin, myStaff }){
+  const [reportsMap, setReportsMap] = useState({});
+  const [checkpoints, setCheckpoints] = useState(DEFAULT_SALES_CHECKPOINTS);
+  const [selfShop] = useState(myStaff ? myStaff.shop : "");
+  const [selectedDate, setSelectedDate] = useState(todayISO());
+  const [nguoiBaoCao, setNguoiBaoCao] = useState(myStaff ? myStaff.name : "");
+  const [targetThangDoanhSo, setTargetThangDoanhSo] = useState("");
+  const [targetThangHeSo, setTargetThangHeSo] = useState("");
+  const [doanhSoDat, setDoanhSoDat] = useState("");
+  const [heSoDat, setHeSoDat] = useState("");
+  const [cpData, setCpData] = useState({});
+  const [ghiChu, setGhiChu] = useState("");
+  const [adminOpen, setAdminOpen] = useState(isAdmin);
+  const [adminShop, setAdminShop] = useState("Tất cả");
+  const [adminMonth, setAdminMonth] = useState(currentMonthStr());
+  const [showCpEditor, setShowCpEditor] = useState(false);
+
+  useEffect(()=>{
+    const u1 = subscribeCol("salesReports", rows => { const map={}; rows.forEach(r=>map[r.id]=r); setReportsMap(map); });
+    const u2 = subscribeConfigDoc("salesCheckpoints", d => setCheckpoints(d && d.list && d.list.length ? d.list : DEFAULT_SALES_CHECKPOINTS));
+    return ()=>{ u1(); u2(); };
+  }, []);
+
+  const thisId = selfShop ? salesReportId(selfShop, selectedDate) : null;
+  const thisReport = thisId ? reportsMap[thisId] : null;
+  const allReportsForSeed = Object.values(reportsMap);
+
+  useEffect(()=>{
+    if(!selfShop) return;
+    const monthStr = monthOf(selectedDate);
+    setNguoiBaoCao(thisReport ? (thisReport.nguoiBaoCao || (myStaff?myStaff.name:"")) : (myStaff?myStaff.name:""));
+    setDoanhSoDat(thisReport && thisReport.doanhSoDat!=null ? thisReport.doanhSoDat : "");
+    setHeSoDat(thisReport && thisReport.heSoDat!=null ? thisReport.heSoDat : "");
+    setGhiChu(thisReport ? (thisReport.ghiChu || "") : "");
+    const savedTargetDS = thisReport && Number(thisReport.targetThangDoanhSo) ? thisReport.targetThangDoanhSo : salesLatestMonthTarget(allReportsForSeed, selfShop, monthStr, selectedDate, "targetThangDoanhSo");
+    const savedTargetHS = thisReport && Number(thisReport.targetThangHeSo) ? thisReport.targetThangHeSo : salesLatestMonthTarget(allReportsForSeed, selfShop, monthStr, selectedDate, "targetThangHeSo");
+    setTargetThangDoanhSo(savedTargetDS);
+    setTargetThangHeSo(savedTargetHS);
+    const nextCp = {};
+    checkpoints.forEach(cp => {
+      const saved = thisReport && thisReport.checkpoints && thisReport.checkpoints[cp.id];
+      nextCp[cp.id] = saved ? { luotKhach:saved.luotKhach||"", khachMoi:saved.khachMoi||"", soBill:saved.soBill||"" } : salesCheckpointEmpty();
+    });
+    setCpData(nextCp);
+  }, [thisId, thisReport && thisReport.updatedAtTs, selfShop, selectedDate, checkpoints.length, allReportsForSeed.length]);
+
+  function changeCp(cpId, field, value){
+    setCpData(prev => ({ ...prev, [cpId]: { ...prev[cpId], [field]:value } }));
+  }
+  async function submitDay(e){
+    e.preventDefault();
+    if(!selfShop) return;
+    await db.collection("salesReports").doc(thisId).set({
+      shop:selfShop, ngay:selectedDate, nguoiBaoCao:nguoiBaoCao.trim(),
+      targetThangDoanhSo: targetThangDoanhSo===""?"":Number(targetThangDoanhSo),
+      targetThangHeSo: targetThangHeSo===""?"":Number(targetThangHeSo),
+      doanhSoDat: doanhSoDat===""?"":Number(doanhSoDat),
+      heSoDat: heSoDat===""?"":Number(heSoDat),
+      checkpoints: cpData, ghiChu: ghiChu.trim(),
+      updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
+    }, { merge:true });
+  }
+  async function saveCheckpointsConfig(list){
+    await saveConfigDoc("salesCheckpoints", { list });
+    setShowCpEditor(false);
+  }
+
+  const previewDoc = { checkpoints:cpData };
+  const tongLuotKhach = salesSumField(previewDoc, checkpoints, "luotKhach");
+  const tongKhachMoi = salesSumField(previewDoc, checkpoints, "khachMoi");
+  const tongBill = salesSumField(previewDoc, checkpoints, "soBill");
+  const tbBill = tongBill>0 ? (Number(doanhSoDat)||0)/tongBill : 0;
+  const targetNgay = salesDayTarget(targetThangDoanhSo, selectedDate);
+  const tyLeHoanThanh = targetNgay>0 ? (Number(doanhSoDat)||0)/targetNgay*100 : null;
+  const prevWeekReport = selfShop ? reportsMap[salesReportId(selfShop, addDays(selectedDate,-7))] : null;
+  const prevWeekDoanhSo = prevWeekReport && prevWeekReport.doanhSoDat!=null ? Number(prevWeekReport.doanhSoDat) : null;
+
+  const selfCard = selfShop && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10, marginBottom:14 } }, [
+      React.createElement("div", { key:"l", style:{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" } }, [
+        React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15 } }, `${selfShop} — ${weekdayLabel(selectedDate)} ${selectedDate}`),
+        React.createElement("input", { key:"d", type:"date", value:selectedDate, max:todayISO(), onChange:e=>setSelectedDate(e.target.value), style:{ padding:"7px 9px", border:"1px solid var(--line)", borderRadius:8, fontSize:13 } }),
+      ]),
+      thisReport ? StatusPill("Đã báo cáo — có thể cập nhật lại", "good") : StatusPill("Chưa báo cáo ngày này", "warn"),
+    ]),
+    React.createElement("form", { key:"f", onSubmit:submitDay }, [
+      React.createElement("div", { key:"who", className:"field", style:{ marginBottom:16, maxWidth:320 } }, [
+        React.createElement("label",{key:"l"},"Người báo cáo"),
+        React.createElement("input",{key:"i", value:nguoiBaoCao, onChange:e=>setNguoiBaoCao(e.target.value)}),
+      ]),
+      React.createElement("div", { key:"secT", className:"weeklySectionHead" }, React.createElement("h3",{style:{margin:0,fontSize:14.5}},"Chỉ tiêu tháng")),
+      React.createElement("div", { key:"hintT", className:"weeklySectionHint" }, "Chỉ cần nhập 1 lần đầu tháng — các ngày sau tự kế thừa, hệ thống tự chia đều theo số ngày trong tháng để ra chỉ tiêu ngày."),
+      React.createElement("div", { key:"tgRow", style:{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:18 } }, [
+        React.createElement("div", { key:"ds", className:"field", style:{ flex:"1 1 220px" } }, [
+          React.createElement("label",{key:"l"},"Chỉ tiêu doanh số tháng"),
+          React.createElement("input",{key:"i", type:"number", inputMode:"decimal", value:targetThangDoanhSo, placeholder:"VD: 195000000", onChange:e=>setTargetThangDoanhSo(e.target.value)}),
+        ]),
+        React.createElement("div", { key:"hs", className:"field", style:{ flex:"1 1 220px" } }, [
+          React.createElement("label",{key:"l"},"Chỉ tiêu hàng hệ số tháng"),
+          React.createElement("input",{key:"i", type:"number", inputMode:"decimal", value:targetThangHeSo, placeholder:"VD: 56550000", onChange:e=>setTargetThangHeSo(e.target.value)}),
+        ]),
+      ]),
+      React.createElement("div", { key:"secC", className:"weeklySectionHead" }, React.createElement("h3",{style:{margin:0,fontSize:14.5}},"Số liệu theo khung giờ")),
+      React.createElement("div", { key:"hintC", className:"weeklySectionHint" }, "Nhà thuốc chụp màn hình báo cáo doanh thu ở từng khung giờ và nhập số liệu tương ứng."),
+      React.createElement("div", { key:"cpGrid", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:12, marginBottom:18 } },
+        checkpoints.map(cp => React.createElement("div", { key:cp.id, className:"progressBlock" }, [
+          React.createElement("div", { key:"t", className:"progressBlockTitle" }, [ React.createElement("span",{key:"d",className:"dot"}), `${cp.label}${cp.time?" ("+cp.time+")":""}` ]),
+          React.createElement("div", { key:"lk", className:"field", style:{ marginBottom:8 } }, [
+            React.createElement("label",{key:"l"},"Số lượt khách"),
+            React.createElement("input",{key:"i", type:"number", inputMode:"numeric", value:(cpData[cp.id]&&cpData[cp.id].luotKhach)||"", onChange:e=>changeCp(cp.id,"luotKhach",e.target.value)}),
+          ]),
+          React.createElement("div", { key:"km", className:"field", style:{ marginBottom:8 } }, [
+            React.createElement("label",{key:"l"},"Số khách mới"),
+            React.createElement("input",{key:"i", type:"number", inputMode:"numeric", value:(cpData[cp.id]&&cpData[cp.id].khachMoi)||"", onChange:e=>changeCp(cp.id,"khachMoi",e.target.value)}),
+          ]),
+          React.createElement("div", { key:"sb", className:"field" }, [
+            React.createElement("label",{key:"l"},"Số bill"),
+            React.createElement("input",{key:"i", type:"number", inputMode:"numeric", value:(cpData[cp.id]&&cpData[cp.id].soBill)||"", onChange:e=>changeCp(cp.id,"soBill",e.target.value)}),
+          ]),
+        ]))
+      ),
+      React.createElement("div", { key:"secD", className:"weeklySectionHead" }, React.createElement("h3",{style:{margin:0,fontSize:14.5}},"Kết quả trong ngày")),
+      React.createElement("div", { key:"dsRow", style:{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:16 } }, [
+        React.createElement("div", { key:"ds", className:"field", style:{ flex:"1 1 220px" } }, [
+          React.createElement("label",{key:"l"},"Doanh số đạt trong ngày"),
+          React.createElement("input",{key:"i", type:"number", inputMode:"decimal", value:doanhSoDat, onChange:e=>setDoanhSoDat(e.target.value)}),
+        ]),
+        React.createElement("div", { key:"hs", className:"field", style:{ flex:"1 1 220px" } }, [
+          React.createElement("label",{key:"l"},"Thực đạt hàng hệ số trong ngày"),
+          React.createElement("input",{key:"i", type:"number", inputMode:"decimal", value:heSoDat, onChange:e=>setHeSoDat(e.target.value)}),
+        ]),
+      ]),
+      React.createElement("div", { key:"gc", className:"field", style:{ marginBottom:16 } }, [
+        React.createElement("label",{key:"l"},"Ghi chú (nếu có)"),
+        React.createElement("textarea",{key:"i", rows:2, value:ghiChu, onChange:e=>setGhiChu(e.target.value)}),
+      ]),
+      React.createElement("button", { key:"submit", type:"submit", className:"btn btnPrimary" }, "Lưu báo cáo ngày"),
+    ]),
+    React.createElement("div", { key:"metrics", className:"metrics", style:{ marginTop:20, marginBottom:0 } }, [
+      React.createElement("div", { key:"1", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Target ngày"), React.createElement("div",{key:"v",className:"value"}, targetNgay>0?fmtVND(targetNgay):"—") ]),
+      React.createElement("div", { key:"2", className:"metric" + (tyLeHoanThanh==null?"":(tyLeHoanThanh>=100?" good":" warn")) }, [ React.createElement("div",{key:"l",className:"label"},"Tỉ lệ hoàn thành target ngày"), React.createElement("div",{key:"v",className:"value"}, tyLeHoanThanh==null?"—":`${Math.round(tyLeHoanThanh)}%`) ]),
+      React.createElement("div", { key:"3", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Doanh số cùng ngày tuần trước"), React.createElement("div",{key:"v",className:"value"}, prevWeekDoanhSo!=null?fmtVND(prevWeekDoanhSo):"—") ]),
+      React.createElement("div", { key:"4", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Tổng lượt khách"), React.createElement("div",{key:"v",className:"value"}, fmtNum(tongLuotKhach)) ]),
+      React.createElement("div", { key:"5", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Tổng khách mới"), React.createElement("div",{key:"v",className:"value"}, fmtNum(tongKhachMoi)) ]),
+      React.createElement("div", { key:"6", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Tổng số bill"), React.createElement("div",{key:"v",className:"value"}, fmtNum(tongBill)) ]),
+      React.createElement("div", { key:"7", className:"metric gold" }, [ React.createElement("div",{key:"l",className:"label"},"Trung bình giá trị bill"), React.createElement("div",{key:"v",className:"value"}, fmtVND(tbBill)) ]),
+    ]),
+  ]);
+
+  const selfMonthStr = monthOf(selectedDate);
+  const shopMonthReports = Object.values(reportsMap).filter(r=>r.shop===selfShop && monthOf(r.ngay)===selfMonthStr).sort((a,b)=> a.ngay<b.ngay?1:-1);
+  const historyCard = selfShop && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:14, marginBottom:12, display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 } }, [
+      React.createElement("span",{key:"s"}, `Lịch sử báo cáo tháng ${selfMonthStr}`),
+      React.createElement("button",{key:"e", type:"button", className:"btn", style:{padding:"6px 11px",fontSize:12}, onClick:()=>exportSalesExcel([selfShop], selfMonthStr, reportsMap, checkpoints)}, "⭳ Xuất Excel"),
+    ]),
+    shopMonthReports.length===0 ? React.createElement("div",{className:"emptyState"},"Chưa có báo cáo ngày nào trong tháng này.")
+      : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+          React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Thứ","Ngày","Doanh số đạt","Target ngày","% đạt","Tổng bill","TB bill",""].map((h,i)=>React.createElement("th",{key:i},h)))),
+          React.createElement("tbody",{key:"b"}, shopMonthReports.map(r => {
+            const tn = salesDayTarget(r.targetThangDoanhSo, r.ngay);
+            const pct = tn>0 ? Math.round((Number(r.doanhSoDat)||0)/tn*100) : null;
+            const tb = salesSumField(r, checkpoints, "soBill");
+            return React.createElement("tr",{key:r.id}, [
+              React.createElement("td",{key:"w"}, weekdayLabel(r.ngay)),
+              React.createElement("td",{key:"d"}, r.ngay),
+              React.createElement("td",{key:"ds"}, fmtVND(r.doanhSoDat||0)),
+              React.createElement("td",{key:"tg"}, tn>0?fmtVND(tn):"—"),
+              React.createElement("td",{key:"p"}, pct==null?"—":`${pct}%`),
+              React.createElement("td",{key:"b"}, fmtNum(tb)),
+              React.createElement("td",{key:"a"}, tb>0?fmtVND((Number(r.doanhSoDat)||0)/tb):"—"),
+              React.createElement("td",{key:"act"}, React.createElement("button",{className:"btn",style:{padding:"5px 10px",fontSize:11.5},onClick:()=>setSelectedDate(r.ngay)},"Sửa")),
+            ]);
+          })),
+        ])),
+  ]);
+
+  const adminMonthReports = Object.values(reportsMap).filter(r => monthOf(r.ngay)===adminMonth && (adminShop==="Tất cả" || r.shop===adminShop));
+  const adminTotalDoanhSo = adminMonthReports.reduce((s,r)=>s+(Number(r.doanhSoDat)||0),0);
+  const adminTotalBill = adminMonthReports.reduce((s,r)=>s+salesSumField(r,checkpoints,"soBill"),0);
+  const adminAvgBill = adminTotalBill>0 ? adminTotalDoanhSo/adminTotalBill : 0;
+  const adminDaysReported = adminMonthReports.length;
+  const adminMetrics = React.createElement("div", { className:"metrics" }, [
+    React.createElement("div", { key:"1", className:"metric gold" }, [ React.createElement("div",{key:"l",className:"label"},"Doanh số tháng (bộ lọc)"), React.createElement("div",{key:"v",className:"value"}, fmtVND(adminTotalDoanhSo)) ]),
+    React.createElement("div", { key:"2", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Tổng số bill"), React.createElement("div",{key:"v",className:"value"}, fmtNum(adminTotalBill)) ]),
+    React.createElement("div", { key:"3", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"TB giá trị bill"), React.createElement("div",{key:"v",className:"value"}, fmtVND(adminAvgBill)) ]),
+    React.createElement("div", { key:"4", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Số lượt báo cáo ngày"), React.createElement("div",{key:"v",className:"value"}, fmtNum(adminDaysReported)) ]),
+  ]);
+  const adminFilterRow = React.createElement("div", { className:"btnRow", style:{ marginBottom:14, alignItems:"center" } }, [
+    React.createElement("select", { key:"shop", value:adminShop, onChange:e=>setAdminShop(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } },
+      ["Tất cả", ...DEFAULT_SHOPS].map(s => React.createElement("option",{key:s,value:s},s))),
+    React.createElement("input", { key:"month", type:"month", value:adminMonth, onChange:e=>setAdminMonth(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } }),
+    React.createElement("button", { key:"cp", type:"button", className:"btn", onClick:()=>setShowCpEditor(true) }, "⚙ Khung giờ chốt số liệu"),
+    React.createElement("button", { key:"exp", type:"button", className:"btn btnAmber", onClick:()=>exportSalesExcel(adminShop==="Tất cả"?DEFAULT_SHOPS:[adminShop], adminMonth, reportsMap, checkpoints) }, "⭳ Xuất Excel"),
+  ]);
+  const summaryRows = DEFAULT_SHOPS.map(shop => {
+    const rows = Object.values(reportsMap).filter(r=>r.shop===shop && monthOf(r.ngay)===adminMonth);
+    const doanhSo = rows.reduce((s,r)=>s+(Number(r.doanhSoDat)||0),0);
+    const bill = rows.reduce((s,r)=>s+salesSumField(r,checkpoints,"soBill"),0);
+    const withTarget = rows.filter(r=>Number(r.targetThangDoanhSo)).sort((a,b)=>a.ngay<b.ngay?1:-1);
+    const targetThang = withTarget.length ? Number(withTarget[0].targetThangDoanhSo) : 0;
+    const pct = targetThang>0 ? Math.round(doanhSo/targetThang*100) : null;
+    return {
+      "Cửa hàng": shop, "Số ngày đã báo cáo": rows.length,
+      "Doanh số tháng": doanhSo, "Chỉ tiêu tháng": targetThang || "",
+      "% hoàn thành": pct==null ? "" : `${pct}%`,
+      "Tổng bill": bill, "TB bill": bill>0 ? Math.round(doanhSo/bill) : "",
+    };
+  });
+  const adminTable = adminShop==="Tất cả" ? objRowsToTable(summaryRows) : objRowsToTable(buildSalesExportRows(adminShop, adminMonth, reportsMap, checkpoints), "Cửa hàng này chưa có báo cáo trong tháng đã chọn.");
+  const adminSection = isAdmin && React.createElement("div", { key:"admin", style:{ marginTop:26 } }, [
+    React.createElement("button", { key:"tgl", type:"button", className:"btn btnGhost", style:{ marginBottom:14 }, onClick:()=>setAdminOpen(!adminOpen) }, adminOpen ? "▲ Ẩn báo cáo tất cả cửa hàng" : "▾ Xem báo cáo tất cả cửa hàng"),
+    adminOpen && React.createElement(React.Fragment, null, [ adminMetrics, adminFilterRow, adminTable ]),
+  ]);
+
+  return React.createElement(React.Fragment, null, [
+    React.createElement("h2", { key:"t", className:"pagetitle" }, "Báo cáo doanh số"),
+    React.createElement("p", { key:"s", className:"pagesub" }, isAdmin ? "Theo dõi doanh số theo ngày & khung giờ của tất cả cửa hàng." : "Nhập số liệu doanh số theo từng khung giờ trong ngày, đối chiếu chỉ tiêu."),
+    selfCard, historyCard, adminSection,
+    showCpEditor && React.createElement(SalesCheckpointEditor, { checkpoints, onSave:saveCheckpointsConfig, onClose:()=>setShowCpEditor(false) }),
+  ]);
+}
+
 // ================= APP SHELL =================
-const STAFF_TABS = ["checklist","photos","customerOrders","weekly","tasks","kpi","training","kudos"];
+const STAFF_TABS = ["checklist","photos","customerOrders","sales","weekly","tasks","kpi","training","kudos"];
 const OPS_TABS = [
   { id:"checklist", label:"Checklist ngày" },
   { id:"photos", label:"Báo cáo hình ảnh" },
   { id:"customerOrders", label:"Khách đặt hàng" },
+  { id:"sales", label:"Báo cáo doanh số" },
   { id:"weekly", label:"Báo cáo tuần" },
   { id:"tasks", label:"Giao việc" },
   { id:"kpi", label:"KPI" },
@@ -4331,6 +4710,7 @@ function Dashboard({ user, isAdmin, myStaff }){
       activeTab==="checklist" && React.createElement(DailyChecklistView, { key:"v", isAdmin, myStaff }),
       activeTab==="photos" && React.createElement(ImageReportView, { key:"v", isAdmin, myStaff }),
       activeTab==="customerOrders" && React.createElement(CustomerOrderView, { key:"v", isAdmin, myStaff }),
+      activeTab==="sales" && React.createElement(SalesReportView, { key:"v", isAdmin, myStaff }),
       activeTab==="weekly" && React.createElement(WeeklyReportView, { key:"v", isAdmin, myStaff }),
       activeTab==="tasks" && React.createElement(TaskAssignView, { key:"v", isAdmin, myStaff }),
       activeTab==="kpi" && React.createElement(KpiView, { key:"v", isAdmin, myStaff }),
