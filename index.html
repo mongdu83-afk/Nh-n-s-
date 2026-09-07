@@ -1759,6 +1759,19 @@ function weeklySeedResultFromPlan(prevPlan){
   });
   return o;
 }
+// Từ kế hoạch tuần trước, dựng sẵn các dòng "kế hoạch tuần này" để nhân viên đỡ phải gõ lại
+// từ đầu — nội dung & target được điền sẵn nhưng vẫn SỬA/XOÁ được bình thường (khác phần
+// Kết quả ở trên, vốn khoá cứng để đối chiếu đúng những gì đã cam kết).
+function weeklySeedPlanFromPrev(prevPlan){
+  const o = {};
+  WEEKLY_CATEGORIES.forEach(c => {
+    const rows = (prevPlan && prevPlan[c.key]) || [];
+    o[c.key] = rows.length>0
+      ? rows.map(r => weeklyEmptyRow({ noiDung:r.noiDung, target:r.target }))
+      : [weeklyEmptyRow()];
+  });
+  return o;
+}
 
 // ---- Tiến độ doanh thu & hàng hệ số (theo dõi hàng tuần, đối chiếu chỉ tiêu tháng) ----
 const WEEKLY_PROGRESS_ITEMS = [
@@ -2046,7 +2059,7 @@ function WeeklyReportView({ isAdmin, myStaff }){
     // Nếu tuần này đã có báo cáo lưu rồi thì dùng đúng dữ liệu đã lưu (kể cả các dòng
     // phát sinh nhân viên tự thêm). Nếu chưa, dựng sẵn phần "kết quả" từ kế hoạch tuần trước.
     setKetQuaData(thisReport && thisReport.ketQua ? thisReport.ketQua : weeklySeedResultFromPlan(prevReport && prevReport.keHoach));
-    setKeHoachData(thisReport && thisReport.keHoach ? thisReport.keHoach : weeklyDefaultCategoryData());
+    setKeHoachData(thisReport && thisReport.keHoach ? thisReport.keHoach : weeklySeedPlanFromPrev(prevReport && prevReport.keHoach));
     setGhiChu(thisReport ? (thisReport.ghiChu || "") : "");
     setNguoiBaoCao(thisReport ? (thisReport.nguoiBaoCao || (myStaff ? myStaff.name : "")) : (myStaff ? myStaff.name : ""));
     // Chỉ tiêu tháng (doanh thu/hàng hệ số) chỉ cần nhập 1 lần đầu tháng — nếu tuần này chưa có
