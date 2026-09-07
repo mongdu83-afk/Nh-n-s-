@@ -444,6 +444,43 @@ function StarSelect({ value, onChange, max }){
 }
 
 // ================= HELPER: TÌM & CHỌN TÊN (GÕ ĐỂ TÌM) =================
+function NamePickerMulti({ options, values, onChange, placeholder }){
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const selectedSet = new Set(values || []);
+  const selectedOptions = options.filter(o => selectedSet.has(o.value));
+  const q = query.trim().toLowerCase();
+  const remaining = options.filter(o => !selectedSet.has(o.value));
+  const filtered = q ? remaining.filter(o => o.label.toLowerCase().includes(q)) : remaining;
+  function addOne(v){ onChange([...(values||[]), v]); setQuery(""); setOpen(false); }
+  function removeOne(v){ onChange((values||[]).filter(x => x!==v)); }
+  return React.createElement("div", null, [
+    selectedOptions.length>0 && React.createElement("div", { key:"chips", style:{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:6 } },
+      selectedOptions.map(o => React.createElement("span", { key:o.value, className:"pickerChip", style:{ display:"inline-flex", alignItems:"center", gap:5, padding:"4px 8px", borderRadius:14, background:"var(--chipBg, #eef2f6)", fontSize:12 } }, [
+        React.createElement("span",{key:"t"}, o.label),
+        React.createElement("button", { key:"x", type:"button", onClick:()=>removeOne(o.value), style:{ border:"none", background:"none", cursor:"pointer", fontSize:13, lineHeight:1, color:"var(--inkSoft)" } }, "✕"),
+      ]))
+    ),
+    React.createElement("div", { key:"wrap", className:"pickerWrap" }, [
+      React.createElement("input", {
+        key:"i", type:"text", value:query, autoComplete:"off",
+        placeholder: placeholder || "Gõ để tìm và thêm...",
+        onChange:e=>{ setQuery(e.target.value); setOpen(true); },
+        onFocus:()=>setOpen(true),
+        onBlur:()=>{ setTimeout(()=>setOpen(false), 150); },
+      }),
+      open && React.createElement("div", { key:"list", className:"pickerList" },
+        filtered.length===0
+          ? React.createElement("div", { className:"pickerEmpty" }, remaining.length===0 ? "Đã chọn hết" : "Không tìm thấy")
+          : filtered.map(o => React.createElement("div", {
+              key:o.value, className:"pickerItem",
+              onMouseDown:(e)=>{ e.preventDefault(); addOne(o.value); },
+            }, o.label))
+      ),
+    ]),
+  ]);
+}
+
 function NamePicker({ options, value, onChange, placeholder }){
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -1190,7 +1227,7 @@ function CustomerOrderView({ isAdmin, myStaff }){
   const [editingId, setEditingId] = useState(null);
   const [pendingId, setPendingId] = useState(null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
-  const [form, setForm] = useState({ customerName:"", customerPhone:"", productName:"", coHenNgay:false, ngayHen:addDays(todayISO(),3), cachBao:"Gọi điện thoại", ghiChu:"", hangHetTon:false, hangKhongCoHeThong:false, deXuatMoTu:false, anhSanPham:[] });
+  const [form, setForm] = useState({ loaiDon:"hangThieu", customerName:"", customerPhone:"", productName:"", soLuong:"", coHenNgay:false, ngayHen:addDays(todayISO(),3), cachBao:"Gọi điện thoại", ghiChu:"", hangHetTon:false, hangKhongCoHeThong:false, deXuatMoTu:false, anhSanPham:[], diaChiGiao:"", donViVanChuyen:"Tự giao (nhân viên/shop)", phiShip:"", hinhThucTT:"COD - thu hộ khi giao" });
   const [adminShop, setAdminShop] = useState("Tất cả");
   const [adminStatus, setAdminStatus] = useState("Đang chờ");
   const [saving, setSaving] = useState(false);
@@ -1221,13 +1258,13 @@ function CustomerOrderView({ isAdmin, myStaff }){
   function openAdd(){
     setEditingId(null);
     setPendingId(db.collection("customerOrders").doc().id);
-    setForm({ customerName:"", customerPhone:"", productName:"", coHenNgay:false, ngayHen:addDays(today,3), cachBao:"Gọi điện thoại", ghiChu:"", hangHetTon:false, hangKhongCoHeThong:false, deXuatMoTu:false, anhSanPham:[] });
+    setForm({ loaiDon:"hangThieu", customerName:"", customerPhone:"", productName:"", soLuong:"", coHenNgay:false, ngayHen:addDays(today,3), cachBao:"Gọi điện thoại", ghiChu:"", hangHetTon:false, hangKhongCoHeThong:false, deXuatMoTu:false, anhSanPham:[], diaChiGiao:"", donViVanChuyen:"Tự giao (nhân viên/shop)", phiShip:"", hinhThucTT:"COD - thu hộ khi giao" });
     setError(null); setShowForm(true);
   }
   function openEdit(o){
     setEditingId(o.id);
     setPendingId(o.id);
-    setForm({ customerName:o.customerName||"", customerPhone:o.customerPhone||"", productName:o.productName||"", coHenNgay: o.coHenNgay!=null ? !!o.coHenNgay : !!o.ngayHen, ngayHen:o.ngayHen||today, cachBao:o.cachBao||"Gọi điện thoại", ghiChu:o.ghiChu||"", hangHetTon:!!o.hangHetTon, hangKhongCoHeThong:!!o.hangKhongCoHeThong, deXuatMoTu:!!o.deXuatMoTu, anhSanPham:o.anhSanPham||[] });
+    setForm({ loaiDon:o.loaiDon||"hangThieu", customerName:o.customerName||"", customerPhone:o.customerPhone||"", productName:o.productName||"", soLuong:o.soLuong||"", coHenNgay: o.coHenNgay!=null ? !!o.coHenNgay : !!o.ngayHen, ngayHen:o.ngayHen||today, cachBao:o.cachBao||"Gọi điện thoại", ghiChu:o.ghiChu||"", hangHetTon:!!o.hangHetTon, hangKhongCoHeThong:!!o.hangKhongCoHeThong, deXuatMoTu:!!o.deXuatMoTu, anhSanPham:o.anhSanPham||[], diaChiGiao:o.diaChiGiao||"", donViVanChuyen:o.donViVanChuyen||"Tự giao (nhân viên/shop)", phiShip:o.phiShip!=null?String(o.phiShip):"", hinhThucTT:o.hinhThucTT||"COD - thu hộ khi giao" });
     setError(null); setShowForm(true);
   }
   async function addOrderPhoto(files){
@@ -1251,24 +1288,34 @@ function CustomerOrderView({ isAdmin, myStaff }){
   async function submit(e){
     e.preventDefault();
     if(!myStaff || !form.customerName.trim() || !form.productName.trim()) return;
-    if(form.coHenNgay && !form.ngayHen) return;
-    const ngayHenVal = form.coHenNgay ? form.ngayHen : "";
+    const isShip = form.loaiDon==="shipHang";
+    if(isShip && !form.diaChiGiao.trim()) return;
+    if(!isShip && form.coHenNgay && !form.ngayHen) return;
+    const ngayHenVal = (!isShip && form.coHenNgay) ? form.ngayHen : "";
     setSaving(true); setError(null);
     try{
+      const shared = {
+        customerName:form.customerName.trim(), customerPhone:form.customerPhone.trim(),
+        productName:form.productName.trim(), soLuong:form.soLuong.trim(), ghiChu:form.ghiChu.trim(), anhSanPham:form.anhSanPham,
+      };
+      const shipFields = isShip ? {
+        diaChiGiao:form.diaChiGiao.trim(), donViVanChuyen:form.donViVanChuyen, phiShip:form.phiShip===""?"":Number(form.phiShip), hinhThucTT:form.hinhThucTT,
+        coHenNgay:false, ngayHen:"", cachBao:"", hangHetTon:false, hangKhongCoHeThong:false, deXuatMoTu:false,
+      } : {
+        coHenNgay:form.coHenNgay, ngayHen:ngayHenVal, cachBao:form.coHenNgay ? "" : form.cachBao,
+        hangHetTon:form.hangHetTon, hangKhongCoHeThong:form.hangKhongCoHeThong, deXuatMoTu:form.deXuatMoTu,
+        diaChiGiao:"", donViVanChuyen:"", phiShip:"", hinhThucTT:"",
+      };
       if(editingId){
         const o = orders.find(x=>x.id===editingId);
         const entry = { nguoiSua: myStaff.name, hanhDong:"Sửa thông tin", thoiGian:`${today} ${nowHM()}` };
         await updateDoc("customerOrders", editingId, {
-          customerName:form.customerName.trim(), customerPhone:form.customerPhone.trim(),
-          productName:form.productName.trim(), coHenNgay:form.coHenNgay, ngayHen:ngayHenVal, ghiChu:form.ghiChu.trim(),
-          cachBao:form.coHenNgay ? "" : form.cachBao, hangHetTon:form.hangHetTon, hangKhongCoHeThong:form.hangKhongCoHeThong, deXuatMoTu:form.deXuatMoTu, anhSanPham:form.anhSanPham,
+          loaiDon:form.loaiDon, ...shared, ...shipFields,
           lichSuSua:[...((o&&o.lichSuSua)||[]), entry],
         });
       } else {
         await db.collection("customerOrders").doc(pendingId).set({
-          shop:myStaff.shop, customerName:form.customerName.trim(), customerPhone:form.customerPhone.trim(),
-          productName:form.productName.trim(), coHenNgay:form.coHenNgay, ngayHen:ngayHenVal, ghiChu:form.ghiChu.trim(),
-          cachBao:form.coHenNgay ? "" : form.cachBao, hangHetTon:form.hangHetTon, hangKhongCoHeThong:form.hangKhongCoHeThong, deXuatMoTu:form.deXuatMoTu, anhSanPham:form.anhSanPham,
+          loaiDon:form.loaiDon, shop:myStaff.shop, ...shared, ...shipFields,
           trangThai:"Đang chờ", nguoiTao:myStaff.name, ngayTao:today,
           createdAtTs: firebase.firestore.FieldValue.serverTimestamp(),
         });
@@ -1283,12 +1330,16 @@ function CustomerOrderView({ isAdmin, myStaff }){
     await updateDoc("customerOrders", id, { trangThai, lichSuSua:[...((o&&o.lichSuSua)||[]), entry] });
   }
   async function removeOrder(id){ if(window.confirm("Xoá thông tin khách đặt hàng này?")) await deleteDoc("customerOrders", id); }
+  function isTerminalOrder(o){
+    if(o.loaiDon==="shipHang") return o.trangThai==="Đã giao thành công" || o.trangThai==="Giao thất bại - hoàn hàng" || o.trangThai==="Khách huỷ đơn";
+    return o.trangThai!=="Đang chờ";
+  }
 
   const myOrders = myStaff ? orders.filter(o => o.shop===myStaff.shop && inDateRange(o)) : [];
   const searchLc = search.trim().toLowerCase();
   const matchSearch = o => !searchLc || o.customerName.toLowerCase().includes(searchLc) || o.productName.toLowerCase().includes(searchLc) || (o.customerPhone||"").includes(searchLc);
-  const myPending = [...myOrders.filter(o=>o.trangThai==="Đang chờ" && matchSearch(o))].sort((a,b)=> a.ngayHen<b.ngayHen?-1:1);
-  const myDone = [...myOrders.filter(o=>o.trangThai!=="Đang chờ" && matchSearch(o))].sort((a,b)=> (b.ngayTao||"")<(a.ngayTao||"")?-1:1);
+  const myPending = [...myOrders.filter(o=>!isTerminalOrder(o) && matchSearch(o))].sort((a,b)=> (a.ngayHen||"")<(b.ngayHen||"")?-1:1);
+  const myDone = [...myOrders.filter(o=>isTerminalOrder(o) && matchSearch(o))].sort((a,b)=> (b.ngayTao||"")<(a.ngayTao||"")?-1:1);
 
   // Gộp theo tên hàng để thấy mặt hàng nào nhiều khách CÙNG cửa hàng này hỏi trùng —
   // chỉ hiện những mặt hàng có từ 2 lượt hỏi trở lên.
@@ -1303,29 +1354,35 @@ function CustomerOrderView({ isAdmin, myStaff }){
   })();
 
   function orderCard(o){
+    const isShip = o.loaiDon==="shipHang";
     const overdue = isOverdue(o);
     const dueToday = isDueToday(o);
     const tone = overdue ? "warn" : (dueToday ? "warn" : "neutral");
     return React.createElement("div", { key:o.id, className:"card", style: overdue ? { borderColor:"var(--claySoft)" } : null }, [
       React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:8, marginBottom:6 } }, [
         React.createElement("div", { key:"l" }, [
+          isShip && React.createElement("div", { key:"tag", style:{ marginBottom:4 } }, StatusPill("Đơn ship hàng", "gold")),
           React.createElement("div", { key:"n", style:{ fontWeight:700, fontSize:14.5 } }, `${o.customerName}${o.customerPhone ? " · "+o.customerPhone : ""}`),
-          React.createElement("div", { key:"p", style:{ fontSize:13, color:"var(--ink)", marginTop:2 } }, `Hàng cần: ${o.productName}`),
+          React.createElement("div", { key:"p", style:{ fontSize:13, color:"var(--ink)", marginTop:2 } }, `${isShip?"Sản phẩm đặt":"Hàng cần"}: ${o.productName}${o.soLuong ? " · SL: "+o.soLuong : ""}`),
+          isShip && o.diaChiGiao && React.createElement("div", { key:"addr", style:{ fontSize:12.5, color:"var(--inkSoft)", marginTop:2 } }, `Địa chỉ giao: ${o.diaChiGiao}`),
+          isShip && React.createElement("div", { key:"shipinfo", style:{ fontSize:12, color:"var(--inkSoft)", marginTop:2 } }, `${o.donViVanChuyen||"—"} · ${o.hinhThucTT||"—"}${o.phiShip!=="" && o.phiShip!=null ? " · Phí ship: "+fmtNum(o.phiShip)+"đ" : ""}`),
           isAdmin
             ? React.createElement("div", { key:"s", style:{ fontSize:11, color:"var(--inkSoft)", marginTop:2 } }, `${o.shop} · người ghi: ${o.nguoiTao||"—"}`)
             : React.createElement("div", { key:"s", style:{ fontSize:11, color:"var(--inkSoft)", marginTop:2 } }, `Người ghi: ${o.nguoiTao||"—"} · ${o.ngayTao||""}`),
-          (o.hangHetTon || o.hangKhongCoHeThong || o.deXuatMoTu) && React.createElement("div", { key:"flags", className:"btnRow", style:{ marginTop:6 } }, [
+          (!isShip && (o.hangHetTon || o.hangKhongCoHeThong || o.deXuatMoTu)) && React.createElement("div", { key:"flags", className:"btnRow", style:{ marginTop:6 } }, [
             o.hangHetTon && StatusPill("Hàng hết tồn", "warn"),
             o.hangKhongCoHeThong && StatusPill("Hàng hệ thống không có", "warn"),
             o.deXuatMoTu && StatusPill("Đề xuất mở tủ", "gold"),
           ]),
-          (!o.ngayHen && o.cachBao && o.trangThai==="Đang chờ") && React.createElement("div", { key:"cb", style:{ fontSize:12, color:"var(--pine)", fontWeight:600, marginTop:6 } }, `Khi có hàng: ${o.cachBao}`),
+          (!isShip && !o.ngayHen && o.cachBao && o.trangThai==="Đang chờ") && React.createElement("div", { key:"cb", style:{ fontSize:12, color:"var(--pine)", fontWeight:600, marginTop:6 } }, `Khi có hàng: ${o.cachBao}`),
         ]),
-        o.trangThai==="Đang chờ"
-          ? (o.ngayHen
-              ? StatusPill(overdue ? `Quá hạn — dự kiến giao ${o.ngayHen}` : (dueToday ? `Dự kiến giao hôm nay` : `Dự kiến giao ${o.ngayHen}`), tone)
-              : StatusPill("Chưa hẹn ngày cụ thể", "neutral"))
-          : StatusPill(o.trangThai, o.trangThai==="Đã có hàng - đã báo khách" ? "good" : "neutral"),
+        isShip
+          ? StatusPill(o.trangThai==="Đang chờ" ? "Chưa gửi hàng" : o.trangThai, (o.trangThai==="Đã giao thành công") ? "good" : (o.trangThai==="Giao thất bại - hoàn hàng" ? "warn" : "neutral"))
+          : (o.trangThai==="Đang chờ"
+              ? (o.ngayHen
+                  ? StatusPill(overdue ? `Quá hạn — dự kiến giao ${o.ngayHen}` : (dueToday ? `Dự kiến giao hôm nay` : `Dự kiến giao ${o.ngayHen}`), tone)
+                  : StatusPill("Chưa hẹn ngày cụ thể", "neutral"))
+              : StatusPill(o.trangThai, o.trangThai==="Đã có hàng - đã báo khách" ? "good" : "neutral")),
       ]),
       o.ghiChu && React.createElement("div", { key:"g", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:10 } }, o.ghiChu),
       (o.anhSanPham && o.anhSanPham.length>0) && React.createElement("div", { key:"photos", className:"photoGrid", style:{ marginBottom:10 } }, o.anhSanPham.map((url,i) =>
@@ -1340,9 +1397,19 @@ function CustomerOrderView({ isAdmin, myStaff }){
         o.lichSuSua.length>5 && React.createElement("div", { key:"more" }, `+ ${o.lichSuSua.length-5} thao tác khác`),
       ]),
       React.createElement("div", { key:"btns", className:"btnRow" }, [
-        o.trangThai==="Đang chờ" && React.createElement("button", { key:"ok", type:"button", className:"btn btnPrimary", style:{padding:"6px 12px",fontSize:12}, onClick:()=>markStatus(o.id,"Đã có hàng - đã báo khách") }, "Đã có hàng — đã báo khách"),
-        o.trangThai==="Đang chờ" && React.createElement("button", { key:"cancel", type:"button", className:"btn btnGhost", style:{padding:"6px 12px",fontSize:12}, onClick:()=>markStatus(o.id,"Khách không lấy nữa") }, "Khách không lấy nữa"),
-        o.trangThai!=="Đang chờ" && React.createElement("button", { key:"reopen", type:"button", className:"btn btnGhost", style:{padding:"6px 12px",fontSize:12}, onClick:()=>markStatus(o.id,"Đang chờ") }, "Mở lại"),
+        isShip
+          ? [
+              o.trangThai==="Đang chờ" && React.createElement("button", { key:"ship", type:"button", className:"btn btnPrimary", style:{padding:"6px 12px",fontSize:12}, onClick:()=>markStatus(o.id,"Đang giao hàng") }, "Đã gửi hàng — đang giao"),
+              o.trangThai==="Đang giao hàng" && React.createElement("button", { key:"ok", type:"button", className:"btn btnPrimary", style:{padding:"6px 12px",fontSize:12}, onClick:()=>markStatus(o.id,"Đã giao thành công") }, "Đã giao thành công"),
+              o.trangThai==="Đang giao hàng" && React.createElement("button", { key:"fail", type:"button", className:"btn btnGhost", style:{padding:"6px 12px",fontSize:12}, onClick:()=>markStatus(o.id,"Giao thất bại - hoàn hàng") }, "Giao thất bại / hoàn hàng"),
+              o.trangThai==="Đang chờ" && React.createElement("button", { key:"cancel", type:"button", className:"btn btnGhost", style:{padding:"6px 12px",fontSize:12}, onClick:()=>markStatus(o.id,"Khách huỷ đơn") }, "Khách huỷ đơn"),
+              isTerminalOrder(o) && React.createElement("button", { key:"reopen", type:"button", className:"btn btnGhost", style:{padding:"6px 12px",fontSize:12}, onClick:()=>markStatus(o.id,"Đang chờ") }, "Mở lại"),
+            ]
+          : [
+              o.trangThai==="Đang chờ" && React.createElement("button", { key:"ok", type:"button", className:"btn btnPrimary", style:{padding:"6px 12px",fontSize:12}, onClick:()=>markStatus(o.id,"Đã có hàng - đã báo khách") }, "Đã có hàng — đã báo khách"),
+              o.trangThai==="Đang chờ" && React.createElement("button", { key:"cancel", type:"button", className:"btn btnGhost", style:{padding:"6px 12px",fontSize:12}, onClick:()=>markStatus(o.id,"Khách không lấy nữa") }, "Khách không lấy nữa"),
+              o.trangThai!=="Đang chờ" && React.createElement("button", { key:"reopen", type:"button", className:"btn btnGhost", style:{padding:"6px 12px",fontSize:12}, onClick:()=>markStatus(o.id,"Đang chờ") }, "Mở lại"),
+            ],
         React.createElement("button", { key:"edit", type:"button", className:"btn", style:{padding:"6px 12px",fontSize:12}, onClick:()=>openEdit(o) }, "Sửa"),
         React.createElement("button", { key:"del", type:"button", className:"btn btnDanger", style:{padding:"6px 12px",fontSize:12}, onClick:()=>removeOrder(o.id) }, "Xoá"),
       ]),
@@ -1351,7 +1418,7 @@ function CustomerOrderView({ isAdmin, myStaff }){
 
   const staffSection = !isAdmin && React.createElement(React.Fragment, null, [
     React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:16, justifyContent:"space-between" } }, [
-      React.createElement("button", { key:"add", className:"btn btnPrimary", onClick:openAdd }, "＋ Ghi khách đặt hàng"),
+      React.createElement("button", { key:"add", className:"btn btnPrimary", onClick:openAdd }, "＋ Ghi khách đặt hàng / đặt ship"),
       React.createElement("input", { key:"search", type:"text", value:search, onChange:e=>setSearch(e.target.value), placeholder:"Tìm theo tên khách, SĐT, hoặc tên hàng...", style:{ flex:"1 1 240px", maxWidth:320, padding:"9px 12px", border:"1px solid var(--line)", borderRadius:8, fontSize:13 } }),
       React.createElement("button", { key:"exp", type:"button", className:"btn btnGhost", onClick:()=>exportOrdersExcel(myOrders, `Khach_dat_hang_${myStaff?myStaff.shop:""}_${todayISO()}.xlsx`) }, "Tải thống kê Excel"),
     ]),
@@ -1378,19 +1445,23 @@ function CustomerOrderView({ isAdmin, myStaff }){
   if(adminStatus==="Đang chờ") filteredOrders = filteredOrders.filter(o=>o.trangThai==="Đang chờ");
   else if(adminStatus==="Quá hạn") filteredOrders = filteredOrders.filter(isOverdue);
   else if(adminStatus!=="Tất cả") filteredOrders = filteredOrders.filter(o=>o.trangThai===adminStatus);
-  filteredOrders = [...filteredOrders].sort((a,b)=> a.ngayHen<b.ngayHen?-1:1);
+  filteredOrders = [...filteredOrders].sort((a,b)=> (a.ngayHen||"")<(b.ngayHen||"")?-1:1);
 
-  const pendingCount = orders.filter(o=>o.trangThai==="Đang chờ").length;
+  const pendingCount = orders.filter(o=>o.loaiDon!=="shipHang" && o.trangThai==="Đang chờ").length;
   const overdueCount = orders.filter(isOverdue).length;
   const doneCount = orders.filter(o=>o.trangThai==="Đã có hàng - đã báo khách").length;
   const hetTonCount = orders.filter(o=>o.hangHetTon && o.trangThai==="Đang chờ").length;
   const khongCoHeThongCount = orders.filter(o=>o.hangKhongCoHeThong && o.trangThai==="Đang chờ").length;
   const moTuCount = orders.filter(o=>o.deXuatMoTu).length;
+  const shipDangXuLyCount = orders.filter(o=>o.loaiDon==="shipHang" && (o.trangThai==="Đang chờ" || o.trangThai==="Đang giao hàng")).length;
+  const shipThanhCongCount = orders.filter(o=>o.loaiDon==="shipHang" && o.trangThai==="Đã giao thành công").length;
 
   const adminMetrics = isAdmin && React.createElement("div", { className:"metrics" }, [
     React.createElement("div", { key:"1", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Tổng khách đang chờ"), React.createElement("div",{key:"v",className:"value"}, fmtNum(pendingCount)) ]),
     React.createElement("div", { key:"2", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Quá hạn hẹn"), React.createElement("div",{key:"v",className:"value"}, fmtNum(overdueCount)) ]),
     React.createElement("div", { key:"3", className:"metric good" }, [ React.createElement("div",{key:"l",className:"label"},"Đã báo khách có hàng"), React.createElement("div",{key:"v",className:"value"}, fmtNum(doneCount)) ]),
+    React.createElement("div", { key:"6", className:"metric gold" }, [ React.createElement("div",{key:"l",className:"label"},"Đơn ship đang xử lý"), React.createElement("div",{key:"v",className:"value"}, fmtNum(shipDangXuLyCount)) ]),
+    React.createElement("div", { key:"7", className:"metric good" }, [ React.createElement("div",{key:"l",className:"label"},"Đơn ship đã giao thành công"), React.createElement("div",{key:"v",className:"value"}, fmtNum(shipThanhCongCount)) ]),
     React.createElement("div", { key:"4", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Hàng hết tồn"), React.createElement("div",{key:"v",className:"value"}, fmtNum(hetTonCount)) ]),
     React.createElement("div", { key:"5b", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Hàng hệ thống không có"), React.createElement("div",{key:"v",className:"value"}, fmtNum(khongCoHeThongCount)) ]),
     React.createElement("div", { key:"5", className:"metric gold" }, [ React.createElement("div",{key:"l",className:"label"},"Đề xuất mở tủ"), React.createElement("div",{key:"v",className:"value"}, fmtNum(moTuCount)) ]),
@@ -1447,8 +1518,9 @@ function CustomerOrderView({ isAdmin, myStaff }){
 
   function exportOrdersExcel(rows, filename){
     const data = rows.map(o => ({
-      "Khách hàng":o.customerName, "SĐT":o.customerPhone||"", "Hàng cần":o.productName, "Cửa hàng":o.shop,
+      "Loại đơn":o.loaiDon==="shipHang"?"Ship hàng":"Hàng thiếu", "Khách hàng":o.customerName, "SĐT":o.customerPhone||"", "Hàng cần":o.productName, "Số lượng":o.soLuong||"", "Cửa hàng":o.shop,
       "Ngày dự kiến giao":o.ngayHen||"", "Trạng thái":o.trangThai,
+      "Địa chỉ giao hàng":o.diaChiGiao||"", "Đơn vị vận chuyển":o.donViVanChuyen||"", "Phí ship":o.phiShip!=null?o.phiShip:"", "Hình thức thanh toán":o.hinhThucTT||"",
       "Hàng hết tồn":o.hangHetTon?"Có":"", "Hàng hệ thống không có":o.hangKhongCoHeThong?"Có":"", "Đề xuất mở tủ":o.deXuatMoTu?"Có":"",
       "Cách báo khi có hàng":o.cachBao||"", "Ghi chú":o.ghiChu||"", "Người ghi":o.nguoiTao||"", "Ngày ghi":o.ngayTao||"",
     }));
@@ -1463,23 +1535,27 @@ function CustomerOrderView({ isAdmin, myStaff }){
     React.createElement("select", { key:"shop", value:adminShop, onChange:e=>setAdminShop(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } },
       ["Tất cả", ...DEFAULT_SHOPS].map(s => React.createElement("option",{key:s,value:s},s))),
     React.createElement("select", { key:"status", value:adminStatus, onChange:e=>setAdminStatus(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } },
-      ["Đang chờ","Quá hạn","Đã có hàng - đã báo khách","Khách không lấy nữa","Tất cả"].map(s => React.createElement("option",{key:s,value:s},s))),
+      ["Đang chờ","Quá hạn","Đã có hàng - đã báo khách","Khách không lấy nữa","Đang giao hàng","Đã giao thành công","Giao thất bại - hoàn hàng","Khách huỷ đơn","Tất cả"].map(s => React.createElement("option",{key:s,value:s},s))),
     React.createElement("button", { key:"exp", type:"button", className:"btn btnGhost", onClick:()=>exportOrdersExcel(filteredOrders, `Khach_dat_hang_${todayISO()}.xlsx`) }, "Tải thống kê Excel"),
   ]);
 
   const adminTable = isAdmin && (filteredOrders.length===0
     ? React.createElement("div",{className:"emptyState"}, "Không có khách nào trong bộ lọc này.")
     : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
-        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Khách hàng","SĐT","Hàng cần","Cửa hàng","Ngày dự kiến giao","Trạng thái","Người ghi","Ghi chú thêm",""].map((h,i)=>React.createElement("th",{key:i},h)))),
+        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Loại đơn","Khách hàng","SĐT","Hàng cần","Cửa hàng","Ngày dự kiến giao","Trạng thái","Người ghi","Ghi chú thêm",""].map((h,i)=>React.createElement("th",{key:i},h)))),
         React.createElement("tbody",{key:"b"}, filteredOrders.map(o => {
           const overdue = isOverdue(o);
+          const isShip = o.loaiDon==="shipHang";
           return React.createElement("tr",{key:o.id}, [
+            React.createElement("td",{key:"ld"}, isShip ? StatusPill("Ship hàng","gold") : "Hàng thiếu"),
             React.createElement("td",{key:"n"}, o.customerName),
             React.createElement("td",{key:"p"}, o.customerPhone||"—"),
-            React.createElement("td",{key:"pr"}, o.productName),
+            React.createElement("td",{key:"pr"}, isShip ? `${o.productName}${o.diaChiGiao?" · "+o.diaChiGiao:""}` : o.productName),
             React.createElement("td",{key:"sh"}, o.shop),
-            React.createElement("td",{key:"d"}, o.ngayHen || "—"),
-            React.createElement("td",{key:"st"}, o.trangThai==="Đang chờ" ? StatusPill(overdue?"Quá hạn":"Đang chờ", overdue?"warn":"neutral") : StatusPill(o.trangThai, o.trangThai==="Đã có hàng - đã báo khách"?"good":"neutral")),
+            React.createElement("td",{key:"d"}, isShip ? "—" : (o.ngayHen || "—")),
+            React.createElement("td",{key:"st"}, isShip
+              ? StatusPill(o.trangThai==="Đang chờ"?"Chưa gửi hàng":o.trangThai, o.trangThai==="Đã giao thành công"?"good":(o.trangThai==="Giao thất bại - hoàn hàng"?"warn":"neutral"))
+              : (o.trangThai==="Đang chờ" ? StatusPill(overdue?"Quá hạn":"Đang chờ", overdue?"warn":"neutral") : StatusPill(o.trangThai, o.trangThai==="Đã có hàng - đã báo khách"?"good":"neutral"))),
             React.createElement("td",{key:"nt"}, [
               o.nguoiTao||"—",
               (o.lichSuSua && o.lichSuSua.length>0) && React.createElement("div",{key:"h",style:{fontSize:10.5,color:"var(--inkSoft)"}}, `${o.lichSuSua.length} lượt sửa`),
@@ -1492,24 +1568,34 @@ function CustomerOrderView({ isAdmin, myStaff }){
         })),
       ])));
 
+  const isShipForm = form.loaiDon==="shipHang";
   const formModal = showForm && React.createElement("div", { className:"modalOverlay", onClick:()=>setShowForm(false) },
     React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:14 } }, editingId ? "Sửa thông tin khách đặt hàng" : "Ghi thông tin khách đặt hàng"),
       React.createElement("form", { key:"f", onSubmit:submit }, [
+        React.createElement("div", { key:"loai", className:"field", style:{ marginBottom:10 } }, [
+          React.createElement("label",{key:"l"},"Loại đơn"),
+          React.createElement("select", { key:"i", value:form.loaiDon, onChange:e=>setForm({...form,loaiDon:e.target.value}) }, [
+            React.createElement("option",{key:"hangThieu",value:"hangThieu"},"Khách hỏi hàng thiếu (hẹn ngày có hàng)"),
+            React.createElement("option",{key:"shipHang",value:"shipHang"},"Khách đặt ship hàng"),
+          ]),
+        ]),
         React.createElement("div", { key:"a", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Tên khách hàng"), React.createElement("input",{key:"i",value:form.customerName,onChange:e=>setForm({...form,customerName:e.target.value}),required:true}) ]),
-        React.createElement("div", { key:"b", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Số điện thoại (nếu có)"), React.createElement("input",{key:"i",value:form.customerPhone,onChange:e=>setForm({...form,customerPhone:e.target.value})}) ]),
-        React.createElement("div", { key:"c", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Hàng khách hỏi không có"), React.createElement("input",{key:"i",value:form.productName,onChange:e=>setForm({...form,productName:e.target.value}),required:true,placeholder:"Tên thuốc/sản phẩm..."}) ]),
-        React.createElement("label", { key:"ck", style:{ display:"flex", alignItems:"center", gap:8, fontSize:13, cursor:"pointer", marginBottom: form.coHenNgay?8:10 } }, [
+        React.createElement("div", { key:"b", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},isShipForm?"Số điện thoại":"Số điện thoại (nếu có)"), React.createElement("input",{key:"i",value:form.customerPhone,onChange:e=>setForm({...form,customerPhone:e.target.value}),required:isShipForm}) ]),
+        React.createElement("div", { key:"c", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},isShipForm?"Sản phẩm khách đặt":"Hàng khách hỏi không có"), React.createElement("input",{key:"i",value:form.productName,onChange:e=>setForm({...form,productName:e.target.value}),required:true,placeholder:"Tên thuốc/sản phẩm..."}) ]),
+        isShipForm && React.createElement("div", { key:"sl", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Số lượng / quy cách (nếu có)"), React.createElement("input",{key:"i",value:form.soLuong,onChange:e=>setForm({...form,soLuong:e.target.value}),placeholder:"VD: 2 hộp"}) ]),
+
+        !isShipForm && React.createElement("label", { key:"ck", style:{ display:"flex", alignItems:"center", gap:8, fontSize:13, cursor:"pointer", marginBottom: form.coHenNgay?8:10 } }, [
           React.createElement("input", { key:"i", type:"checkbox", checked:form.coHenNgay, onChange:e=>setForm({...form,coHenNgay:e.target.checked}) }),
           "Khách hàng hẹn ngày cụ thể",
         ]),
-        form.coHenNgay && React.createElement("div", { key:"d", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Ngày dự kiến giao cho khách *"), React.createElement("input",{key:"i",type:"date",value:form.ngayHen,onChange:e=>setForm({...form,ngayHen:e.target.value}),required:true}) ]),
-        !form.coHenNgay && React.createElement("div", { key:"cb", className:"field", style:{ marginBottom:10 } }, [
+        !isShipForm && form.coHenNgay && React.createElement("div", { key:"d", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Ngày dự kiến giao cho khách *"), React.createElement("input",{key:"i",type:"date",value:form.ngayHen,onChange:e=>setForm({...form,ngayHen:e.target.value}),required:true}) ]),
+        !isShipForm && !form.coHenNgay && React.createElement("div", { key:"cb", className:"field", style:{ marginBottom:10 } }, [
           React.createElement("label",{key:"l"},"Khách không hẹn ngày — khi có hàng thì báo khách bằng cách nào?"),
           React.createElement("select", { key:"i", value:form.cachBao, onChange:e=>setForm({...form,cachBao:e.target.value}) },
             ["Gọi điện thoại","Nhắn tin (SMS/Zalo)","Khách tự ghé kiểm tra lại"].map(o=>React.createElement("option",{key:o,value:o},o))),
         ]),
-        React.createElement("div", { key:"flags", style:{ display:"flex", flexDirection:"column", gap:8, marginBottom:10, background:"var(--paper)", borderRadius:8, padding:"10px 12px" } }, [
+        !isShipForm && React.createElement("div", { key:"flags", style:{ display:"flex", flexDirection:"column", gap:8, marginBottom:10, background:"var(--paper)", borderRadius:8, padding:"10px 12px" } }, [
           React.createElement("label", { key:"a", style:{ display:"flex", alignItems:"center", gap:8, fontSize:13, cursor:"pointer" } }, [
             React.createElement("input", { key:"i", type:"checkbox", checked:form.hangHetTon, onChange:e=>setForm({...form,hangHetTon:e.target.checked}) }),
             "Hàng hết tồn",
@@ -1523,8 +1609,27 @@ function CustomerOrderView({ isAdmin, myStaff }){
             "Đề xuất mở tủ — nên nhập bán thường xuyên (nhiều khách hỏi)",
           ]),
         ]),
+
+        isShipForm && React.createElement("div", { key:"addr", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Địa chỉ giao hàng *"), React.createElement("textarea",{key:"i",rows:2,value:form.diaChiGiao,onChange:e=>setForm({...form,diaChiGiao:e.target.value}),required:true,placeholder:"Số nhà, đường, phường/xã, quận/huyện..."}) ]),
+        isShipForm && React.createElement("div", { key:"shiprow", className:"fieldRow", style:{ display:"flex", gap:10, marginBottom:10 } }, [
+          React.createElement("div", { key:"dvvc", className:"field", style:{ flex:1 } }, [
+            React.createElement("label",{key:"l"},"Đơn vị vận chuyển"),
+            React.createElement("select", { key:"i", value:form.donViVanChuyen, onChange:e=>setForm({...form,donViVanChuyen:e.target.value}) },
+              ["Tự giao (nhân viên/shop)","Grab","Ahamove","Ninja Van","Viettel Post","Khác"].map(o=>React.createElement("option",{key:o,value:o},o))),
+          ]),
+          React.createElement("div", { key:"phi", className:"field", style:{ flex:1 } }, [
+            React.createElement("label",{key:"l"},"Phí ship (đ, nếu có)"),
+            React.createElement("input",{key:"i",type:"number",min:0,value:form.phiShip,onChange:e=>setForm({...form,phiShip:e.target.value}),placeholder:"0"}),
+          ]),
+        ]),
+        isShipForm && React.createElement("div", { key:"tt", className:"field", style:{ marginBottom:10 } }, [
+          React.createElement("label",{key:"l"},"Hình thức thanh toán"),
+          React.createElement("select", { key:"i", value:form.hinhThucTT, onChange:e=>setForm({...form,hinhThucTT:e.target.value}) },
+            ["COD - thu hộ khi giao","Khách đã chuyển khoản"].map(o=>React.createElement("option",{key:o,value:o},o))),
+        ]),
+
         React.createElement(PhotoUploadField, {
-          key:"photo", label:"Ảnh sản phẩm khách mang ra (nếu có) — giúp thống kê lại đúng mặt hàng",
+          key:"photo", label: isShipForm ? "Ảnh đơn hàng/sản phẩm (nếu có)" : "Ảnh sản phẩm khách mang ra (nếu có) — giúp thống kê lại đúng mặt hàng",
           photos:form.anhSanPham, uploading:uploadingPhoto, requireMobile:false,
           onUpload:addOrderPhoto, onRemove:removeOrderPhoto,
         }),
@@ -2118,7 +2223,7 @@ function TaskAssignView({ isAdmin, myStaff }){
   const [tasks, setTasks] = useState([]);
   const [staffList, setStaffList] = useState([]);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ scope:"one", shop:DEFAULT_SHOPS[0], staffId:"", title:"", mota:"", deadline:addDays(todayISO(),3), hanGio:"17:00" });
+  const [form, setForm] = useState({ scope:"one", shop:DEFAULT_SHOPS[0], staffIds:[], recipientMode:"", title:"", mota:"", deadline:addDays(todayISO(),3), hanGio:"17:00" });
   const [adminShop, setAdminShop] = useState("Tất cả");
   const [adminStatus, setAdminStatus] = useState("Tất cả");
   const [reportingId, setReportingId] = useState(null);
@@ -2138,25 +2243,55 @@ function TaskAssignView({ isAdmin, myStaff }){
   function deadlineLabel(t){ return t.hanGio ? `${t.deadline} ${t.hanGio}` : t.deadline; }
   const staffOptions = staffList.map(s => ({ value:s.id, label:`${s.name} · ${s.shop} · ${s.role}` }));
 
+  // ---- Phân quyền giao việc: Quản lý khu vực giao cho ai cũng được; Cửa hàng trưởng
+  // giao cho nhân viên cùng cửa hàng; nhân viên thường gửi việc lên Cửa hàng trưởng của mình ----
+  const isCHT = !isAdmin && !!myStaff && myStaff.role==="Cửa hàng trưởng";
+  const isPlainStaff = !isAdmin && !!myStaff && myStaff.role!=="Cửa hàng trưởng";
+  const myChtOptions = myStaff ? staffList.filter(s => s.shop===myStaff.shop && s.id!==myStaff.id).map(s => ({ value:s.id, label:`${s.name} · ${s.role}` })) : [];
+  const myCht = myStaff ? staffList.find(s => s.shop===myStaff.shop && s.role==="Cửa hàng trưởng") : null;
+
   async function submitAssign(e){
     e.preventDefault();
     if(!form.title.trim()) return;
-    const base = { title:form.title.trim(), mota:form.mota.trim(), deadline:form.deadline, hanGio:form.hanGio||"", trangThai:"Đang giao", ketQua:"", nguoiBaoCao:"", ngayGiao:today };
-    if(form.scope==="staffOne"){
-      if(!form.staffId) return;
-      const s = staffList.find(x=>x.id===form.staffId);
-      await addDoc("tasks", { ...base, assignType:"staff", staffId:form.staffId, staffName:s?s.name:"", shop:s?s.shop:"" });
-    } else {
-      const shops = form.scope==="all" ? DEFAULT_SHOPS : [form.shop];
-      await Promise.all(shops.map(shop => addDoc("tasks", { ...base, assignType:"shop", shop, staffId:null, staffName:"" })));
+    const base = {
+      title:form.title.trim(), mota:form.mota.trim(), deadline:form.deadline, hanGio:form.hanGio||"", trangThai:"Đang giao", ketQua:"", nguoiBaoCao:"", ngayGiao:today,
+      nguoiGiaoViec: isAdmin ? "Quản lý khu vực" : (myStaff ? myStaff.name : ""),
+      nguoiGiaoViecRole: isAdmin ? "Quản lý khu vực" : (myStaff ? myStaff.role : ""),
+    };
+    if(isAdmin){
+      if(form.scope==="staffOne"){
+        if(!form.staffIds || form.staffIds.length===0) return;
+        const targets = staffList.filter(s => form.staffIds.includes(s.id));
+        await Promise.all(targets.map(s => addDoc("tasks", { ...base, assignType:"staff", staffId:s.id, staffName:s.name, shop:s.shop })));
+      } else {
+        const shops = form.scope==="all" ? DEFAULT_SHOPS : [form.shop];
+        const targets = staffList.filter(s => shops.includes(s.shop));
+        await Promise.all(targets.map(s => addDoc("tasks", { ...base, assignType:"staff", staffId:s.id, staffName:s.name, shop:s.shop })));
+      }
+    } else if(isCHT){
+      const mode = form.recipientMode || "team";
+      if(mode==="admin"){
+        await addDoc("tasks", { ...base, assignType:"admin", staffId:null, staffName:"", shop:myStaff.shop });
+      } else {
+        if(!form.staffIds || form.staffIds.length===0) return;
+        const targets = staffList.filter(s => form.staffIds.includes(s.id));
+        await Promise.all(targets.map(s => addDoc("tasks", { ...base, assignType:"staff", staffId:s.id, staffName:s.name, shop:s.shop })));
+      }
+    } else if(isPlainStaff){
+      const mode = form.recipientMode || (myCht ? "cht" : "admin");
+      if(mode==="admin" || !myCht){
+        await addDoc("tasks", { ...base, assignType:"admin", staffId:null, staffName:"", shop:myStaff.shop });
+      } else {
+        await addDoc("tasks", { ...base, assignType:"staff", staffId:myCht.id, staffName:myCht.name, shop:myStaff.shop });
+      }
     }
-    setForm({ ...form, title:"", mota:"", staffId:"" }); setShowForm(false);
+    setForm({ ...form, title:"", mota:"", staffIds:[] }); setShowForm(false);
   }
   async function submitResult(taskId){
     if(!resultText.trim()) return;
     await updateDoc("tasks", taskId, {
       trangThai:"Đã hoàn thành", ketQua:resultText.trim(), ngayHoanThanh:today,
-      nguoiBaoCao: myStaff ? myStaff.name : "",
+      nguoiBaoCao: isAdmin ? "Quản lý khu vực" : (myStaff ? myStaff.name : ""),
     });
     setReportingId(null); setResultText("");
   }
@@ -2189,14 +2324,16 @@ function TaskAssignView({ isAdmin, myStaff }){
   // Cửa hàng trưởng thấy TẤT CẢ việc của cửa hàng mình, kể cả việc giao riêng cho từng
   // nhân viên khác (để theo dõi/nhắc), nhưng chỉ người được giao riêng mới báo cáo được.
   const isShopManagerView = !isAdmin && !!myStaff && myStaff.role==="Cửa hàng trưởng";
-  const myTasks = myStaff ? tasks.filter(t =>
-    isShopManagerView ? t.shop===myStaff.shop : (t.assignType==="staff" ? t.staffId===myStaff.id : t.shop===myStaff.shop)
-  ) : [];
+  const myTasks = isAdmin
+    ? tasks.filter(t => t.assignType==="admin")
+    : (myStaff ? tasks.filter(t =>
+        isShopManagerView ? t.shop===myStaff.shop : (t.assignType==="staff" ? t.staffId===myStaff.id : t.shop===myStaff.shop)
+      ) : []);
   const myPending = [...myTasks.filter(t=>t.trangThai==="Đang giao")].sort((a,b)=> a.deadline<b.deadline?-1:1);
   const myDone = [...myTasks.filter(t=>t.trangThai==="Đã hoàn thành")].sort((a,b)=> (b.ngayHoanThanh||"")<(a.ngayHoanThanh||"")?-1:1);
 
   const staffPendingCards = myPending.length===0
-    ? React.createElement("div",{className:"emptyState"}, "Hiện chưa có việc nào được giao cho bạn hoặc cửa hàng bạn.")
+    ? React.createElement("div",{className:"emptyState"}, isAdmin ? "Chưa có đề xuất nào từ nhân viên/CHT gửi lên." : "Hiện chưa có việc nào được giao cho bạn hoặc cửa hàng bạn.")
     : React.createElement("div", { style:{ display:"flex", flexDirection:"column", gap:12 } }, myPending.map(t => {
         const overdue = isOverdue(t);
         const isReporting = reportingId===t.id;
@@ -2207,6 +2344,8 @@ function TaskAssignView({ isAdmin, myStaff }){
               React.createElement("div", { key:"n", style:{ fontWeight:700, fontSize:14.5 } }, t.title),
               t.assignType==="staff" && React.createElement("div", { key:"p", style:{ fontSize:11, color:"var(--inkSoft)", marginTop:2 } },
                 isOwnTask ? "Giao riêng cho bạn" : `Giao riêng cho: ${t.staffName}`),
+              t.nguoiGiaoViec && t.nguoiGiaoViecRole!=="Quản lý khu vực" && React.createElement("div", { key:"g", style:{ fontSize:11, color:"var(--inkSoft)", marginTop:2 } },
+                `Giao bởi: ${t.nguoiGiaoViec} (${t.nguoiGiaoViecRole})`),
             ]),
             overdue ? StatusPill("Quá hạn", "warn") : StatusPill(`Hạn ${deadlineLabel(t)}`, "neutral"),
           ]),
@@ -2291,14 +2430,15 @@ function TaskAssignView({ isAdmin, myStaff }){
   const adminTable = isAdmin && (filteredTasks.length===0
     ? React.createElement("div",{className:"emptyState"}, "Không có công việc nào trong bộ lọc này.")
     : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
-        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Công việc","Giao cho","Hạn chót","Trạng thái",""].map((h,i)=>React.createElement("th",{key:i},h)))),
+        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Công việc","Giao cho","Giao bởi","Hạn chót","Trạng thái",""].map((h,i)=>React.createElement("th",{key:i},h)))),
         React.createElement("tbody",{key:"b"}, filteredTasks.map(t => {
           const overdue = isOverdue(t);
           const status = t.trangThai==="Đã hoàn thành" ? { text:"Đã hoàn thành", tone:"good" } : (overdue ? { text:"Quá hạn", tone:"warn" } : { text:"Đang giao", tone:"neutral" });
-          const target = t.assignType==="staff" ? `${t.staffName} (${t.shop})` : t.shop;
+          const target = t.assignType==="staff" ? `${t.staffName} (${t.shop})` : (t.assignType==="admin" ? `Quản lý khu vực (từ ${t.shop})` : t.shop);
           return React.createElement("tr",{key:t.id}, [
             React.createElement("td",{key:"n"}, t.title),
             React.createElement("td",{key:"sh"}, target),
+            React.createElement("td",{key:"gb"}, t.nguoiGiaoViec || "Quản lý khu vực"),
             React.createElement("td",{key:"d"}, deadlineLabel(t)),
             React.createElement("td",{key:"st"}, StatusPill(status.text, status.tone)),
             React.createElement("td",{key:"a", style:{whiteSpace:"nowrap"}}, [
@@ -2315,7 +2455,7 @@ function TaskAssignView({ isAdmin, myStaff }){
     React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:2 } }, viewTask.title),
       React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } },
-        `${viewTask.assignType==="staff" ? `Giao riêng: ${viewTask.staffName} (${viewTask.shop})` : viewTask.shop} · Giao ngày ${viewTask.ngayGiao} · Hạn ${deadlineLabel(viewTask)}`),
+        `${viewTask.assignType==="staff" ? `Giao riêng: ${viewTask.staffName} (${viewTask.shop})` : (viewTask.assignType==="admin" ? `Đề xuất gửi Quản lý khu vực (từ ${viewTask.shop})` : viewTask.shop)} · Giao ngày ${viewTask.ngayGiao} · Hạn ${deadlineLabel(viewTask)}`),
       viewTask.mota && React.createElement("div", { key:"m", style:{ marginBottom:14, fontSize:13 } }, [ React.createElement("b",{key:"b"},"Mô tả: "), viewTask.mota ]),
       viewTask.trangThai==="Đã hoàn thành"
         ? React.createElement("div", { key:"kq", style:{ marginBottom:14 } }, [
@@ -2341,21 +2481,39 @@ function TaskAssignView({ isAdmin, myStaff }){
     React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:14 } }, "Giao việc mới"),
       React.createElement("form", { key:"f", onSubmit:submitAssign }, [
-        React.createElement("div", { key:"scope", className:"field", style:{ marginBottom:10 } }, [
+        isAdmin && React.createElement("div", { key:"scope", className:"field", style:{ marginBottom:10 } }, [
           React.createElement("label",{key:"l"},"Giao cho"),
           React.createElement("select", { key:"i", value:form.scope, onChange:e=>setForm({...form,scope:e.target.value}) }, [
-            React.createElement("option",{key:"one",value:"one"},"1 cửa hàng cụ thể (cả nhóm)"),
-            React.createElement("option",{key:"all",value:"all"},"Tất cả 9 cửa hàng"),
+            React.createElement("option",{key:"one",value:"one"},"1 cửa hàng cụ thể (mỗi người báo cáo riêng)"),
+            React.createElement("option",{key:"all",value:"all"},"Tất cả 9 cửa hàng (mỗi người báo cáo riêng)"),
             React.createElement("option",{key:"staffOne",value:"staffOne"},"1 nhân viên cụ thể"),
           ]),
         ]),
-        form.scope==="one" && React.createElement("div", { key:"shop", className:"field", style:{ marginBottom:10 } }, [
+        isAdmin && form.scope==="one" && React.createElement("div", { key:"shop", className:"field", style:{ marginBottom:10 } }, [
           React.createElement("label",{key:"l"},"Cửa hàng"),
           React.createElement("select",{key:"i",value:form.shop,onChange:e=>setForm({...form,shop:e.target.value})}, DEFAULT_SHOPS.map(s=>React.createElement("option",{key:s,value:s},s))),
         ]),
-        form.scope==="staffOne" && React.createElement("div", { key:"staff", className:"field", style:{ marginBottom:10 } }, [
-          React.createElement("label",{key:"l"},"Nhân viên"),
-          React.createElement(NamePicker, { key:"i", options:staffOptions, value:form.staffId, onChange:v=>setForm({...form,staffId:v}), placeholder:"Gõ tên để tìm..." }),
+        isAdmin && form.scope==="staffOne" && React.createElement("div", { key:"staff", className:"field", style:{ marginBottom:10 } }, [
+          React.createElement("label",{key:"l"},"Nhân viên (chọn 1 hoặc nhiều người)"),
+          React.createElement(NamePickerMulti, { key:"i", options:staffOptions, values:form.staffIds, onChange:v=>setForm({...form,staffIds:v}), placeholder:"Gõ tên để tìm và thêm..." }),
+        ]),
+        isCHT && React.createElement("div", { key:"mode", className:"field", style:{ marginBottom:10 } }, [
+          React.createElement("label",{key:"l"},"Loại việc"),
+          React.createElement("select", { key:"i", value:form.recipientMode||"team", onChange:e=>setForm({...form,recipientMode:e.target.value}) }, [
+            React.createElement("option",{key:"team",value:"team"},"Giao việc cho nhân viên (cùng cửa hàng)"),
+            React.createElement("option",{key:"admin",value:"admin"},"Gửi đề xuất lên Quản lý khu vực"),
+          ]),
+        ]),
+        isCHT && (form.recipientMode||"team")==="team" && React.createElement("div", { key:"staff", className:"field", style:{ marginBottom:10 } }, [
+          React.createElement("label",{key:"l"},"Giao cho nhân viên (chọn 1 hoặc nhiều người)"),
+          React.createElement(NamePickerMulti, { key:"i", options:myChtOptions, values:form.staffIds, onChange:v=>setForm({...form,staffIds:v}), placeholder:"Gõ tên để tìm và thêm..." }),
+        ]),
+        isPlainStaff && React.createElement("div", { key:"mode", className:"field", style:{ marginBottom:10 } }, [
+          React.createElement("label",{key:"l"},"Gửi tới"),
+          React.createElement("select", { key:"i", value:form.recipientMode||(myCht?"cht":"admin"), onChange:e=>setForm({...form,recipientMode:e.target.value}) }, [
+            myCht && React.createElement("option",{key:"cht",value:"cht"},`Cửa hàng trưởng (${myCht.name})`),
+            React.createElement("option",{key:"admin",value:"admin"},"Quản lý khu vực"),
+          ]),
         ]),
         React.createElement("div", { key:"title", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Nội dung công việc"), React.createElement("input",{key:"i",value:form.title,onChange:e=>setForm({...form,title:e.target.value}),required:true,placeholder:"VD: Kiểm kê lại lô hàng khuyến mãi tháng này"}) ]),
         React.createElement("div", { key:"mota", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Mô tả thêm (nếu có)"), React.createElement("textarea",{key:"i",rows:3,value:form.mota,onChange:e=>setForm({...form,mota:e.target.value})}) ]),
@@ -2373,12 +2531,15 @@ function TaskAssignView({ isAdmin, myStaff }){
 
   return React.createElement(React.Fragment, null, [
     React.createElement("h2", { key:"t", className:"pagetitle" }, "Giao việc"),
-    React.createElement("p", { key:"s", className:"pagesub" }, isAdmin ? "Giao việc phát sinh cho cửa hàng, đặt hạn chót và theo dõi kết quả." : "Việc phát sinh quản lý khu vực giao — báo cáo kết quả trước hạn chót."),
-    isAdmin && React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:16 } }, [
+    React.createElement("p", { key:"s", className:"pagesub" },
+      isAdmin ? "Giao việc phát sinh cho cửa hàng, đặt hạn chót, theo dõi kết quả — và xử lý đề xuất nhân viên/CHT gửi lên."
+        : isCHT ? "Giao việc cho nhân viên cùng cửa hàng, gửi đề xuất lên Quản lý khu vực, hoặc theo dõi việc được giao xuống."
+        : "Báo cáo kết quả việc được giao trước hạn chót, hoặc gửi đề xuất lên Cửa hàng trưởng/Quản lý khu vực."),
+    (isAdmin || myStaff) && React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:16 } }, [
       React.createElement("button", { key:"add", className:"btn btnPrimary", onClick:()=>setShowForm(true) }, "＋ Giao việc mới"),
     ]),
-    !isAdmin && staffPendingCards,
-    !isAdmin && staffDoneCard,
+    staffPendingCards,
+    staffDoneCard,
     isAdmin && adminMetrics, isAdmin && adminFilterRow, isAdmin && adminTable,
     formModal, viewModal,
   ]);
