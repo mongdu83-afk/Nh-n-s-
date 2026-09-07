@@ -3755,9 +3755,16 @@ function TrainingView({ isAdmin, myStaff }){
     await db.collection("trainingProgress").doc(ref.id).set({ hireId: ref.id, done:{} });
     setForm({ name:"", shop:DEFAULT_SHOPS[0], joinDate:todayISO(), buddyId:"", staffId:"" }); setShowForm(false);
   }
-  async function toggleTask(hireId, taskId, checked){
+  async function toggleHireTask(hireId, taskId, checked){
     const payload = { hireId };
-    payload[`done.${taskId}`] = checked ? todayISO() : firebase.firestore.FieldValue.delete();
+    payload[`done.${taskId}.hireDate`] = checked ? todayISO() : firebase.firestore.FieldValue.delete();
+    // Bỏ tick "đã học" thì cũng reset luôn xác nhận của buddy (vì buddy xác nhận dựa trên việc đã học)
+    if(!checked) payload[`done.${taskId}.buddyDate`] = firebase.firestore.FieldValue.delete();
+    await mergeDotFields("trainingProgress", hireId, payload);
+  }
+  async function toggleBuddyTask(hireId, taskId, checked){
+    const payload = { hireId };
+    payload[`done.${taskId}.buddyDate`] = checked ? todayISO() : firebase.firestore.FieldValue.delete();
     await mergeDotFields("trainingProgress", hireId, payload);
   }
   async function saveTemplate(items){ await saveConfigDoc("trainingChecklist", { items }); setShowTplEditor(false); }
@@ -3774,12 +3781,14 @@ function TrainingView({ isAdmin, myStaff }){
     const doc = progressDocs[hire.id];
     const done = doc ? doc.done : {};
     const total = checklistTpl.length;
-    const doneCount = Object.keys(done).length;
-    const overdue = checklistTpl.filter(t => !done[t.id] && taskDueDate(hire.joinDate, t.offset) < todayISO()).length;
+    const doneCount = checklistTpl.filter(t => done[t.id] && done[t.id].hireDate).length;
+    const verifiedCount = checklistTpl.filter(t => done[t.id] && done[t.id].buddyDate).length;
+    const pendingVerify = checklistTpl.filter(t => done[t.id] && done[t.id].hireDate && !done[t.id].buddyDate).length;
+    const overdue = checklistTpl.filter(t => !(done[t.id] && done[t.id].hireDate) && taskDueDate(hire.joinDate, t.offset) < todayISO()).length;
     const hireReports = reports.filter(r=>r.hireId===hire.id);
     const weeksSinceJoin = Math.floor(daysBetween(hire.joinDate, todayISO())/7);
     const missingReport = weeksSinceJoin >= hireReports.length && weeksSinceJoin < 4;
-    return { total, doneCount, overdue, pct: total?Math.round(doneCount/total*100):0, reportCount:hireReports.length, missingReport };
+    return { total, doneCount, verifiedCount, pendingVerify, overdue, pct: total?Math.round(doneCount/total*100):0, verifiedPct: total?Math.round(verifiedCount/total*100):0, reportCount:hireReports.length, missingReport };
   }
 
   const visibleHires = isAdmin ? hires : hires.filter(h => (myStaff && h.buddyId===myStaff.id) || (myStaff && h.staffId===myStaff.id));
@@ -3802,16 +3811,30 @@ function TrainingView({ isAdmin, myStaff }){
         const doc = progressDocs[h.id]; const done = doc ? doc.done : {};
         const amIHire = !isAdmin && myStaff && h.staffId===myStaff.id;
         const amIBuddy = !isAdmin && myStaff && h.buddyId===myStaff.id;
-        const canEditChecklist = isAdmin || amIHire;
+        const canEditHireCheck = isAdmin || amIHire;
+        const canEditBuddyCheck = isAdmin || amIBuddy;
         const canReport = isAdmin || amIBuddy;
         const isOpen = isAdmin ? (selectedHireId === h.id) : true;
         const taskItems = checklistTpl.map(t => {
           const dueDate = taskDueDate(h.joinDate, t.offset);
-          const isDone = !!done[t.id];
-          const isOverdue = !isDone && dueDate < todayISO();
-          return React.createElement("label", { key:t.id, style:{ display:"flex", alignItems:"flex-start", gap:8, padding:"6px 0", fontSize:12.5, cursor: canEditChecklist ? "pointer" : "default" } }, [
-            React.createElement("input", { key:"c", type:"checkbox", checked:isDone, disabled:!canEditChecklist, onChange:e=>toggleTask(h.id, t.id, e.target.checked), style:{ marginTop:2 } }),
-            React.createElement("span", { key:"t", style:{ color: isOverdue ? "var(--clay)" : "var(--ink)" } }, [ t.label, React.createElement("span",{key:"d",style:{color:"var(--inkSoft)",fontSize:11}}, ` — hạn ${dueDate}${isOverdue?" (quá hạn)":""}`) ]),
+          const cell = done[t.id] || {};
+          const hireDone = !!cell.hireDate;
+          const buddyDone = !!cell.buddyDate;
+          const isOverdue = !hireDone && dueDate < todayISO();
+          return React.createElement("div", { key:t.id, style:{ padding:"7px 0", borderBottom:"1px solid var(--line)" } }, [
+            React.createElement("div", { key:"lbl", style:{ fontSize:12.5, color: isOverdue ? "var(--clay)" : "var(--ink)", marginBottom:4 } }, [
+              t.label, React.createElement("span",{key:"d",style:{color:"var(--inkSoft)",fontSize:11}}, ` — hạn ${dueDate}${isOverdue?" (quá hạn)":""}`),
+            ]),
+            React.createElement("div", { key:"chks", style:{ display:"flex", gap:16, flexWrap:"wrap" } }, [
+              React.createElement("label", { key:"h", style:{ display:"flex", alignItems:"center", gap:6, fontSize:11.5, color:"var(--inkSoft)", cursor: canEditHireCheck ? "pointer" : "default" } }, [
+                React.createElement("input", { key:"c", type:"checkbox", checked:hireDone, disabled:!canEditHireCheck, onChange:e=>toggleHireTask(h.id, t.id, e.target.checked) }),
+                "Nhân viên mới: đã học" + (hireDone ? ` (${cell.hireDate})` : ""),
+              ]),
+              React.createElement("label", { key:"b", style:{ display:"flex", alignItems:"center", gap:6, fontSize:11.5, color: buddyDone ? "var(--pine)" : "var(--inkSoft)", cursor: (canEditBuddyCheck && hireDone) ? "pointer" : "default" } }, [
+                React.createElement("input", { key:"c", type:"checkbox", checked:buddyDone, disabled:!canEditBuddyCheck || !hireDone, onChange:e=>toggleBuddyTask(h.id, t.id, e.target.checked) }),
+                "Buddy: đã kiểm tra & xác nhận" + (buddyDone ? ` (${cell.buddyDate})` : ""),
+              ]),
+            ]),
           ]);
         });
         const hireReports = reports.filter(r=>r.hireId===h.id);
@@ -3822,7 +3845,9 @@ function TrainingView({ isAdmin, myStaff }){
               React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)" } }, `${h.shop} · Vào làm ${h.joinDate} · Buddy: ${h.buddyName || "chưa gán"}`),
             ]),
             React.createElement("div", { key:"r", style:{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" } }, [
-              StatusPill(`${stats.pct}% đào tạo`, stats.pct>=80?"good":(stats.pct<40?"warn":"neutral")),
+              StatusPill(`${stats.pct}% đã học`, stats.pct>=80?"good":(stats.pct<40?"warn":"neutral")),
+              StatusPill(`${stats.verifiedPct}% buddy xác nhận`, stats.verifiedPct>=80?"good":"neutral"),
+              stats.pendingVerify>0 && StatusPill(`${stats.pendingVerify} việc chờ buddy xác nhận`, "gold"),
               stats.overdue>0 && StatusPill(`${stats.overdue} việc quá hạn`, "warn"),
               stats.missingReport && StatusPill("Thiếu báo cáo tuần", "warn"),
             ]),
@@ -3834,7 +3859,7 @@ function TrainingView({ isAdmin, myStaff }){
           isOpen && React.createElement("div", { key:"detail", style:{ marginTop:12, borderTop:"1px solid var(--line)", paddingTop:12, display:"flex", flexWrap:"wrap", gap:20 } }, [
             React.createElement("div", { key:"cl", style:{ flex:"1 1 260px" } }, [
               React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:12.5, marginBottom:6 } }, "Checklist đào tạo"),
-              !canEditChecklist && !isAdmin && React.createElement("div",{key:"hint",style:{fontSize:11,color:"var(--inkSoft)",marginBottom:6}},"Chỉ xem — checklist do chính nhân viên mới tự tick."),
+              !canEditHireCheck && !canEditBuddyCheck && !isAdmin && React.createElement("div",{key:"hint",style:{fontSize:11,color:"var(--inkSoft)",marginBottom:6}},"Chỉ xem — checklist do nhân viên mới và buddy của họ tick."),
               ...taskItems,
             ]),
             canReport && React.createElement("div", { key:"rep", style:{ flex:"1 1 260px" } }, [
@@ -5006,19 +5031,9 @@ function useUnreadTabs(myStaff){
     return unsub;
   }, [myStaff && myStaff.id]);
 
-  useEffect(()=>{
-    if(!myStaff) return undefined;
-    let hireUnsub = null;
-    const u = db.collection("newHires").where("staffId","==",myStaff.id).onSnapshot(hireSnap => {
-      if(hireUnsub){ hireUnsub(); hireUnsub = null; }
-      const hireIds = hireSnap.docs.map(d=>d.id);
-      if(hireIds.length===0){ updateItems("training", []); return; }
-      hireUnsub = db.collection("buddyReports").where("hireId","in",hireIds.slice(0,10)).onSnapshot(snap => {
-        updateItems("training", snap.docs.map(d=>d.id));
-      }, err => console.error("useUnreadTabs (buddyReports) lỗi:", err));
-    }, err => console.error("useUnreadTabs (newHires) lỗi:", err));
-    return ()=>{ u(); if(hireUnsub) hireUnsub(); };
-  }, [myStaff && myStaff.id]);
+  // Lưu ý: KHÔNG theo dõi tab "Đào tạo & Buddy" ở đây — nhân viên thường không có quyền đọc
+  // trực tiếp collection newHires/buddyReports theo Security Rules hiện tại (chỉ Admin/CHT
+  // được đọc), nên bỏ qua để tránh lỗi "permission-denied".
 
   useEffect(()=>{
     if(!myStaff) return undefined;
