@@ -45,9 +45,15 @@
   .tabs button{
     font-family:inherit; font-size:13px; font-weight:700; color:var(--inkSoft);
     background:none; border:none; border-bottom:3px solid transparent; white-space:nowrap;
-    padding:10px 13px; cursor:pointer; flex:none;
+    padding:10px 13px; cursor:pointer; flex:none; position:relative;
   }
   .tabs button.active{ color:var(--pine); border-bottom-color:var(--pine); }
+  .unreadBadge{
+    display:inline-flex; align-items:center; justify-content:center;
+    min-width:17px; height:17px; padding:0 4px; border-radius:9px;
+    background:var(--clay, #c0392b); color:#fff; font-size:10.5px; font-weight:800;
+    line-height:1; margin-left:6px; vertical-align:middle;
+  }
 
   .wrap{ max-width:1280px; margin:0 auto; padding:20px 24px 90px; }
   .pagetitle{ font-family:'Fraunces', serif; font-size:24px; font-weight:700; margin:0 0 4px; }
@@ -3759,7 +3765,7 @@ function TrainingView({ isAdmin, myStaff }){
     e.preventDefault();
     if(!selectedHireId || !reportForm.noiDung.trim()) return;
     const hire = hires.find(h=>h.id===selectedHireId);
-    await addDoc("buddyReports", { hireId:selectedHireId, hireName:hire?hire.name:"", tuan:Number(reportForm.tuan), noiDung:reportForm.noiDung.trim(), danhGia:Number(reportForm.danhGia), ngay:todayISO() });
+    await addDoc("buddyReports", { hireId:selectedHireId, hireName:hire?hire.name:"", tuan:Number(reportForm.tuan), noiDung:reportForm.noiDung.trim(), danhGia:Number(reportForm.danhGia), ngay:todayISO(), createdAtTs: firebase.firestore.FieldValue.serverTimestamp() });
     setReportForm({ tuan:reportForm.tuan+1, noiDung:"", danhGia:3 });
   }
   async function removeHire(id){ if(window.confirm("Xoá nhân viên mới này khỏi danh sách theo dõi?")){ await deleteDoc("newHires", id); await deleteDoc("trainingProgress", id); } }
@@ -3942,7 +3948,7 @@ function KudosView({ isAdmin, myStaff }){
     if(givenSoFar + stars > MONTHLY_GIVE_CAP){ window.alert(`Vượt giới hạn ${MONTHLY_GIVE_CAP} sao/tháng có thể tặng. Đã tặng ${givenSoFar} sao tháng này.`); return; }
     const fromS = staff.find(s=>s.id===giveForm.fromId), toS = staff.find(s=>s.id===giveForm.toId);
     const message = giveForm.message.trim();
-    await addDoc("kudos", { fromId:giveForm.fromId, fromName:fromS?fromS.name:"", toId:giveForm.toId, toName:toS?toS.name:"", stars, message, ngay:todayISO() });
+    await addDoc("kudos", { fromId:giveForm.fromId, fromName:fromS?fromS.name:"", toId:giveForm.toId, toName:toS?toS.name:"", stars, message, ngay:todayISO(), createdAtTs: firebase.firestore.FieldValue.serverTimestamp() });
     // Thông báo cho cả đội giờ gửi qua push notification (Cloud Function lắng nghe collection
     // "kudos"), không còn gửi email quảng bá tới tất cả nhân viên như trước nữa.
     setGiveForm({ fromId:giveForm.fromId, toId:"", stars:5, message:"" }); setShowGiveForm(false);
@@ -4917,6 +4923,120 @@ function NoStaffLinkedScreen({ user }){
   );
 }
 
+// ================= HOOK: SỐ TIN CHƯA ĐỌC TRÊN TỪNG TAB =================
+// Với mỗi tab, tính danh sách "khoá từng mục" hiện tại (mỗi phần tử đại diện 1 tin/1 thay đổi
+// đáng chú ý). So với danh sách khoá đã lưu lúc nhân viên mở tab đó ra xem lần gần nhất (lưu
+// trong localStorage của máy) — khoá nào hiện có mà chưa từng "seen" thì tính là 1 tin chưa đọc.
+// Cách này vẫn đúng cả khi tin xuất hiện lúc nhân viên đang tắt app, không chỉ lúc đang mở sẵn.
+function useUnreadTabs(myStaff){
+  const itemsRef = useRef({});
+  const seenRef = useRef({});
+  const [, forceRender] = useState(0);
+  const storageKey = myStaff ? "unreadSeen_"+myStaff.id : null;
+
+  useEffect(()=>{
+    if(!storageKey){ seenRef.current = {}; return; }
+    try{ seenRef.current = JSON.parse(localStorage.getItem(storageKey) || "{}"); }catch(e){ seenRef.current = {}; }
+    forceRender(n=>n+1);
+  }, [storageKey]);
+
+  function updateItems(tabId, items){
+    const key = items.slice().sort().join("|");
+    const prevKey = (itemsRef.current[tabId]||[]).slice().sort().join("|");
+    if(key===prevKey) return;
+    itemsRef.current = { ...itemsRef.current, [tabId]:items };
+    forceRender(n=>n+1);
+  }
+  function markSeen(tabId){
+    const items = itemsRef.current[tabId] || [];
+    seenRef.current = { ...seenRef.current, [tabId]:items };
+    if(storageKey){ try{ localStorage.setItem(storageKey, JSON.stringify(seenRef.current)); }catch(e){} }
+    forceRender(n=>n+1);
+  }
+
+  useEffect(()=>{
+    if(!myStaff) return undefined;
+    const unsub = db.collection("tasks").onSnapshot(snap => {
+      const mine = snap.docs.map(d=>({id:d.id, ...d.data()}))
+        .filter(t => t.assignType==="staff" ? t.staffId===myStaff.id : t.shop===myStaff.shop);
+      updateItems("tasks", mine.map(t=>`${t.id}:${t.trangThai}:${t.nhanXetQuanLy||""}`));
+    }, err => console.error("useUnreadTabs (tasks) lỗi:", err));
+    return unsub;
+  }, [myStaff && myStaff.id]);
+
+  useEffect(()=>{
+    if(!myStaff) return undefined;
+    const unsub = db.collection("kudos").where("toId","==",myStaff.id).onSnapshot(snap => {
+      updateItems("kudos", snap.docs.map(d=>d.id));
+    }, err => console.error("useUnreadTabs (kudos) lỗi:", err));
+    return unsub;
+  }, [myStaff && myStaff.id]);
+
+  useEffect(()=>{
+    if(!myStaff) return undefined;
+    const unsub = db.collection("dailyReports").where("staffId","==",myStaff.id).onSnapshot(snap => {
+      updateItems("checklist", snap.docs.map(d=>{ const r=d.data(); return `${d.id}:${r.diemChu}:${r.nhanXetChu||""}`; }));
+    }, err => console.error("useUnreadTabs (dailyReports) lỗi:", err));
+    return unsub;
+  }, [myStaff && myStaff.id]);
+
+  useEffect(()=>{
+    if(!myStaff) return undefined;
+    const unsub = db.collection("weeklyReports").where("shop","==",myStaff.shop).onSnapshot(snap => {
+      const items = [];
+      snap.docs.forEach(d => {
+        const r = d.data();
+        items.push(`review:${d.id}:${r.diemChu}:${r.nhanXetChu||""}`);
+        const tagged = [];
+        Object.keys(r.keHoach||{}).forEach(k=>(r.keHoach[k]||[]).forEach(row=>{
+          if((row.nguoiThucHienIds||[]).includes(myStaff.id)) tagged.push(`${row.id}:${row.deadline||""}`);
+        }));
+        if(tagged.length>0) items.push(`tags:${d.id}:${tagged.sort().join(",")}`);
+      });
+      updateItems("weekly", items);
+    }, err => console.error("useUnreadTabs (weeklyReports) lỗi:", err));
+    return unsub;
+  }, [myStaff && myStaff.id, myStaff && myStaff.shop]);
+
+  useEffect(()=>{
+    if(!myStaff) return undefined;
+    const unsub = db.collection("kpiAssignments").where("staffId","==",myStaff.id).onSnapshot(snap => {
+      updateItems("kpi", snap.docs.map(d=>{ const r=d.data(); return `${d.id}:${r.trangThaiDuyet||""}:${r.nhanXetCHT||""}`; }));
+    }, err => console.error("useUnreadTabs (kpiAssignments) lỗi:", err));
+    return unsub;
+  }, [myStaff && myStaff.id]);
+
+  useEffect(()=>{
+    if(!myStaff) return undefined;
+    let hireUnsub = null;
+    const u = db.collection("newHires").where("staffId","==",myStaff.id).onSnapshot(hireSnap => {
+      if(hireUnsub){ hireUnsub(); hireUnsub = null; }
+      const hireIds = hireSnap.docs.map(d=>d.id);
+      if(hireIds.length===0){ updateItems("training", []); return; }
+      hireUnsub = db.collection("buddyReports").where("hireId","in",hireIds.slice(0,10)).onSnapshot(snap => {
+        updateItems("training", snap.docs.map(d=>d.id));
+      }, err => console.error("useUnreadTabs (buddyReports) lỗi:", err));
+    }, err => console.error("useUnreadTabs (newHires) lỗi:", err));
+    return ()=>{ u(); if(hireUnsub) hireUnsub(); };
+  }, [myStaff && myStaff.id]);
+
+  useEffect(()=>{
+    if(!myStaff) return undefined;
+    const unsub = db.collection("imageReports").where("shop","==",myStaff.shop).onSnapshot(snap => {
+      updateItems("photos", snap.docs.map(d=>{ const r=d.data(); return `${d.id}:${r.trangThaiDuyet||""}:${r.nhanXetDuyet||""}`; }));
+    }, err => console.error("useUnreadTabs (imageReports) lỗi:", err));
+    return unsub;
+  }, [myStaff && myStaff.id, myStaff && myStaff.shop]);
+
+  const unreadCount = {};
+  Object.keys(itemsRef.current).forEach(tabId => {
+    const items = itemsRef.current[tabId] || [];
+    const seenSet = new Set(seenRef.current[tabId] || []);
+    unreadCount[tabId] = items.filter(k => !seenSet.has(k)).length;
+  });
+  return { unreadCount, markSeen };
+}
+
 function TaskLiveNotifier({ myStaff, isAdmin }){
   const [toast, setToast] = useState(null);
   const [notifPerm, setNotifPerm] = useState(typeof Notification !== "undefined" ? Notification.permission : "unsupported");
@@ -4963,10 +5083,8 @@ function TaskLiveNotifier({ myStaff, isAdmin }){
           fireLocalNotif("🔔 Việc mới được giao", `${t.title} — hạn ${t.deadline}${t.hanGio ? " "+t.hanGio : ""}`);
         }
         if(change.type==="modified"){
-          const prevFb = prevTaskFeedback.current[t.id];
-          if(prevFb!==undefined && prevFb!==(t.nhanXetQuanLy||"") && t.nhanXetQuanLy){
-            fireLocalNotif("💬 Quản lý phản hồi việc bạn đã làm", `${t.title}: ${t.nhanXetQuanLy}`);
-          }
+          // Không bắn thông báo cục bộ ở đây nữa — Cloud Function "notifyTaskFeedback" đã lo phần
+          // gửi push thật (hoạt động cả khi tắt app), tránh bị nhận trùng 2 tin cho cùng 1 việc.
           prevTaskFeedback.current[t.id] = t.nhanXetQuanLy || "";
         }
         if(change.type!=="removed") seenIds.current.add(t.id);      });
@@ -4990,8 +5108,8 @@ function TaskLiveNotifier({ myStaff, isAdmin }){
         const k = { id:change.doc.id, ...change.doc.data() };
         if(seenKudos.current.has(k.id)) return;
         seenKudos.current.add(k.id);
-        if(k.toId!==myStaff.id) return;
-        fireLocalNotif("⭐ Bạn vừa được tặng sao", `${k.fromName} tặng bạn ${k.stars}★${k.message ? ": "+k.message : ""}`);
+        // Không bắn thông báo cục bộ ở đây nữa — Cloud Function "notifyKudosGiven" đã lo phần
+        // gửi push thật cho toàn bộ nhân viên, tránh người được tặng sao nhận trùng 2 tin.
       });
     }, err => console.error("TaskLiveNotifier (kudos) lỗi:", err));
     return unsub;
@@ -5007,11 +5125,8 @@ function TaskLiveNotifier({ myStaff, isAdmin }){
       snap.docChanges().forEach(change => {
         if(change.type!=="modified") return;
         const r = change.doc.data();
-        const prev = prevDaily.current[change.doc.id];
-        const changed = prev===undefined || prev.diem!==r.diemChu || prev.nx!==(r.nhanXetChu||"");
-        if(changed && (r.diemChu!=null || r.nhanXetChu)){
-          fireLocalNotif("✅ Quản lý đã chấm checklist ngày", `${r.ngay}: ${r.diemChu?"★".repeat(r.diemChu):""}${r.nhanXetChu ? " — "+r.nhanXetChu : ""}`);
-        }
+        // Không bắn thông báo cục bộ ở đây nữa — Cloud Function "notifyDailyReportReview" đã lo
+        // phần gửi push thật, tránh bị nhận trùng 2 tin cho cùng 1 lượt chấm.
         prevDaily.current[change.doc.id] = { diem:r.diemChu, nx:r.nhanXetChu||"" };
       });
     }, err => console.error("TaskLiveNotifier (dailyReports) lỗi:", err));
@@ -5028,11 +5143,8 @@ function TaskLiveNotifier({ myStaff, isAdmin }){
       snap.docChanges().forEach(change => {
         if(change.type!=="modified") return;
         const r = change.doc.data();
-        const prev = prevWeekly.current[change.doc.id];
-        const changed = prev===undefined || prev.diem!==r.diemChu || prev.nx!==(r.nhanXetChu||"");
-        if(changed && (r.diemChu!=null || r.nhanXetChu)){
-          fireLocalNotif("✅ Quản lý đã chấm báo cáo tuần", `Tuần ${r.tuanNgay}: ${r.diemChu?"★".repeat(r.diemChu):""}${r.nhanXetChu ? " — "+r.nhanXetChu : ""}`);
-        }
+        // Không bắn thông báo cục bộ ở đây nữa — Cloud Function "notifyWeeklyReportReview" đã lo
+        // phần gửi push thật, tránh bị nhận trùng 2 tin cho cùng 1 lượt chấm.
         prevWeekly.current[change.doc.id] = { diem:r.diemChu, nx:r.nhanXetChu||"" };
       });
     }, err => console.error("TaskLiveNotifier (weeklyReports) lỗi:", err));
@@ -5177,7 +5289,12 @@ function TaskReminderBanner({ myStaff, onOpenTasks }){
 
 function Dashboard({ user, isAdmin, myStaff }){
   const visibleTabs = isAdmin ? OPS_TABS : OPS_TABS.filter(t => STAFF_TABS.includes(t.id));
-  const [activeTab, setActiveTab] = useState(visibleTabs[0].id);
+  const [activeTab, setActiveTabRaw] = useState(visibleTabs[0].id);
+  const { unreadCount, markSeen } = useUnreadTabs(myStaff);
+  function setActiveTab(tabId){ setActiveTabRaw(tabId); markSeen(tabId); }
+  // Đang đứng sẵn ở tab nào thì tab đó tự coi như "đã xem" ngay khi có tin mới xuất hiện,
+  // không cần đợi bấm ra rồi bấm lại mới xoá chấm đỏ.
+  useEffect(()=>{ if(unreadCount[activeTab]>0) markSeen(activeTab); });
   const whoLabel = isAdmin ? "Quản lý" : (myStaff ? `${myStaff.name} · ${myStaff.shop}` : "");
   return React.createElement(React.Fragment, null, [
     React.createElement("div", { key:"nav", className:"topnav" }, React.createElement("div", { className:"topnavInner" }, [
@@ -5192,7 +5309,10 @@ function Dashboard({ user, isAdmin, myStaff }){
         React.createElement("button", { key:"logout", className:"logoutBtn", onClick:()=>auth.signOut() }, `${whoLabel} · Đăng xuất`),
       ]),
       React.createElement("div", { key:"tabs", className:"tabs" }, visibleTabs.map(t =>
-        React.createElement("button", { key:t.id, className:activeTab===t.id?"active":"", onClick:()=>setActiveTab(t.id) }, t.label)
+        React.createElement("button", { key:t.id, className:activeTab===t.id?"active":"", onClick:()=>setActiveTab(t.id) }, [
+          t.label,
+          unreadCount[t.id]>0 && React.createElement("span", { key:"badge", className:"unreadBadge" }, unreadCount[t.id]>99 ? "99+" : unreadCount[t.id]),
+        ])
       )),
     ])),
     React.createElement(TaskLiveNotifier, { key:"livenotify", myStaff, isAdmin }),
