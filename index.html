@@ -2048,11 +2048,13 @@ function WeeklyReportView({ isAdmin, myStaff }){
   }, []);
 
   const currentMonday = mondayOf(todayISO());
-  const prevMonday = addDays(currentMonday, -7);
   const thisId = selfShop ? weeklyReportId(selfShop, currentMonday) : null;
-  const prevId = selfShop ? weeklyReportId(selfShop, prevMonday) : null;
   const thisReport = thisId ? reportsMap[thisId] : null;
-  const prevReport = prevId ? reportsMap[prevId] : null;
+  // Lấy báo cáo GẦN NHẤT trước tuần này (thay vì đòi khớp chính xác đúng 7 ngày trước) —
+  // để vẫn tìm được dữ liệu ngay cả khi tuần trước đó lỡ không nộp đúng ngày hoặc bị bỏ lỡ 1 tuần.
+  const prevReport = selfShop
+    ? (Object.values(reportsMap).filter(r => r.shop===selfShop && r.tuanNgay < currentMonday).sort((a,b)=> a.tuanNgay<b.tuanNgay?1:-1)[0] || null)
+    : null;
 
   const allReportsForSeed = Object.values(reportsMap);
   useEffect(()=>{
