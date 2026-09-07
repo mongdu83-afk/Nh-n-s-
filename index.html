@@ -369,7 +369,7 @@ async function uploadTaskAttachmentFile(file, path, onProgress){
   return { url, name:file.name, type: isImage ? "image" : "file" };
 }
 
-const DEFAULT_SHOPS = ["SHOP0058","SHOP0059","SHOP0072","SHOP0074","SHOP0089","SHOP0095","SHOP0121","SHOP0122","SHOP0163"];
+let DEFAULT_SHOPS = ["SHOP0058","SHOP0059","SHOP0072","SHOP0074","SHOP0089","SHOP0095","SHOP0121","SHOP0122","SHOP0163"];
 const STAFF_ROLES = ["Nhân viên học việc","Nhân viên bán hàng","Cửa hàng trưởng"];
 
 function uid(){ return "id" + Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
@@ -4228,6 +4228,39 @@ function CreateAccountModal({ staffMember, onClose }){
   );
 }
 
+// ================= QUẢN LÝ DANH SÁCH CỬA HÀNG (tự thêm/xoá, không cần sửa code) =================
+function ShopListEditor(){
+  const [newCode, setNewCode] = useState("");
+  const [saving, setSaving] = useState(false);
+  async function addShop(){
+    const code = newCode.trim().toUpperCase();
+    if(!code || DEFAULT_SHOPS.includes(code)) { setNewCode(""); return; }
+    setSaving(true);
+    try{ await saveConfigDoc("shopList", { shops:[...DEFAULT_SHOPS, code] }); setNewCode(""); }
+    finally{ setSaving(false); }
+  }
+  async function removeShop(code){
+    if(!window.confirm(`Xoá cửa hàng ${code} khỏi danh sách? (Dữ liệu cũ đã có của cửa hàng này vẫn giữ nguyên, chỉ ẩn khỏi các lựa chọn mới)`)) return;
+    setSaving(true);
+    try{ await saveConfigDoc("shopList", { shops: DEFAULT_SHOPS.filter(s=>s!==code) }); }
+    finally{ setSaving(false); }
+  }
+  return React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15, marginBottom:4 } }, "Quản lý danh sách cửa hàng"),
+    React.createElement("div", { key:"s", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } }, "Thêm hoặc xoá mã cửa hàng — áp dụng ngay cho toàn bộ app (tạo tài khoản, giao việc, báo cáo...), không cần sửa code."),
+    React.createElement("div", { key:"chips", style:{ display:"flex", flexWrap:"wrap", gap:8, marginBottom:14 } },
+      DEFAULT_SHOPS.map(code => React.createElement("span", { key:code, style:{ display:"inline-flex", alignItems:"center", gap:6, padding:"5px 10px", borderRadius:14, background:"var(--paper)", fontSize:12.5, fontWeight:600 } }, [
+        code,
+        React.createElement("button", { key:"x", type:"button", disabled:saving, onClick:()=>removeShop(code), style:{ border:"none", background:"none", cursor:"pointer", color:"var(--clay)", fontSize:13, lineHeight:1 } }, "✕"),
+      ]))
+    ),
+    React.createElement("div", { key:"add", style:{ display:"flex", gap:8, flexWrap:"wrap" } }, [
+      React.createElement("input", { key:"i", value:newCode, onChange:e=>setNewCode(e.target.value), placeholder:"VD: SHOP0200", style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13, flex:"0 1 200px" }, onKeyDown:e=>{ if(e.key==="Enter"){ e.preventDefault(); addShop(); } } }),
+      React.createElement("button", { key:"b", type:"button", className:"btn btnPrimary", disabled:saving, style:{ padding:"8px 14px", fontSize:13 }, onClick:addShop }, "＋ Thêm cửa hàng"),
+    ]),
+  ]);
+}
+
 function StaffView(){
   const [staff, setStaff] = useState([]);
   const [showForm, setShowForm] = useState(false);
@@ -4292,6 +4325,7 @@ function StaffView(){
   return React.createElement(React.Fragment, null, [
     React.createElement("h2", { key:"t", className:"pagetitle" }, "Nhân viên"),
     React.createElement("p", { key:"s", className:"pagesub" }, "Danh sách dùng chung cho Checklist ngày, Báo cáo tuần, Buddy và tặng sao ghi nhận. Tạo tài khoản để nhân viên đăng nhập thẳng vào giao diện riêng của mình."),
+    React.createElement(ShopListEditor, { key:"shoplist" }),
     React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:16 } }, [
       React.createElement("button", { key:"add", className:"btn btnPrimary", onClick:openAdd }, "＋ Thêm nhân viên"),
     ]),
@@ -5095,7 +5129,8 @@ function TaskLiveNotifier({ myStaff, isAdmin }){
         if(!isMine) return;
         if(change.type==="added" && !seenIds.current.has(t.id)){
           seenIds.current.add(t.id);
-          fireLocalNotif("🔔 Việc mới được giao", `${t.title} — hạn ${t.deadline}${t.hanGio ? " "+t.hanGio : ""}`);
+          // Không bắn thông báo cục bộ ở đây nữa — hàm onTaskCreated bên server đã gửi push thật
+          // cho việc mới giao, tránh bị nhận trùng 2 tin cho cùng 1 việc.
         }
         if(change.type==="modified"){
           // Không bắn thông báo cục bộ ở đây nữa — Cloud Function "notifyTaskFeedback" đã lo phần
@@ -5353,10 +5388,24 @@ function App(){
   const [authState, setAuthState] = useState({ status:"loading" }); // loading | out | in
   const [staff, setStaff] = useState([]);
   const [staffLoaded, setStaffLoaded] = useState(false);
+  const [, setShopTick] = useState(0);
 
   useEffect(()=>{
     const unsub = auth.onAuthStateChanged(user => {
       setAuthState(user ? { status:"in", user } : { status:"out" });
+    });
+    return unsub;
+  }, []);
+
+  // Danh sách cửa hàng giờ có thể chỉnh trực tiếp trong app (tab Nhân viên → Quản lý cửa hàng)
+  // thay vì cố định trong code — cập nhật mảng DEFAULT_SHOPS tại chỗ rồi ép toàn app render lại.
+  useEffect(()=>{
+    const unsub = subscribeConfigDoc("shopList", (d) => {
+      if(d && Array.isArray(d.shops) && d.shops.length>0){
+        DEFAULT_SHOPS.length = 0;
+        DEFAULT_SHOPS.push(...d.shops);
+        setShopTick(n=>n+1);
+      }
     });
     return unsub;
   }, []);
