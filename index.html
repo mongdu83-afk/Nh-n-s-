@@ -231,7 +231,7 @@ const db = firebase.firestore();
 const storage = firebase.storage();
 // Khoá "VAPID" dùng cho thông báo đẩy (Web Push) — lấy ở Firebase Console:
 // Project Settings > Cloud Messaging > Web configuration > "Generate key pair", dán vào đây.
-const FCM_VAPID_KEY = "DÁN_VAPID_KEY_CỦA_BẠN_VÀO_ĐÂY";
+const FCM_VAPID_KEY = "BHp0H9G6vblCIpkPRi8yDlXcJ6o4yhVAJGuMpcuNG99J-Ptrx-ZCsOid-EM530rmnIV1MHZYK7j-Wdkq1YeaMAM";
 
 // App Firebase phụ, dùng riêng để TẠO tài khoản nhân viên mà không làm mất
 // phiên đăng nhập hiện tại của quản lý (Firebase sẽ tự đăng nhập vào tài
@@ -4283,7 +4283,7 @@ function TaskLiveNotifier({ myStaff }){
         }
         if(change.type==="modified"){
           const prevFb = prevTaskFeedback.current[t.id];
-          if(prevFb!==undefined && !prevFb && t.nhanXetQuanLy){
+          if(prevFb!==undefined && prevFb!==(t.nhanXetQuanLy||"") && t.nhanXetQuanLy){
             fireLocalNotif("💬 Quản lý phản hồi việc bạn đã làm", `${t.title}: ${t.nhanXetQuanLy}`);
           }
           prevTaskFeedback.current[t.id] = t.nhanXetQuanLy || "";
@@ -4322,15 +4322,16 @@ function TaskLiveNotifier({ myStaff }){
     prevDaily.current = {};
     let first = true;
     const unsub = db.collection("dailyReports").where("staffId","==",myStaff.id).onSnapshot(snap => {
-      if(first){ snap.docs.forEach(d => prevDaily.current[d.id] = d.data().diemChu!=null); first = false; return; }
+      if(first){ snap.docs.forEach(d => prevDaily.current[d.id] = { diem:d.data().diemChu, nx:d.data().nhanXetChu||"" }); first = false; return; }
       snap.docChanges().forEach(change => {
         if(change.type!=="modified") return;
         const r = change.doc.data();
-        const had = prevDaily.current[change.doc.id];
-        if(had===false && r.diemChu!=null){
-          fireLocalNotif("✅ Quản lý đã chấm checklist ngày", `${r.ngay}: ${"★".repeat(r.diemChu)}${r.nhanXetChu ? " — "+r.nhanXetChu : ""}`);
+        const prev = prevDaily.current[change.doc.id];
+        const changed = prev===undefined || prev.diem!==r.diemChu || prev.nx!==(r.nhanXetChu||"");
+        if(changed && (r.diemChu!=null || r.nhanXetChu)){
+          fireLocalNotif("✅ Quản lý đã chấm checklist ngày", `${r.ngay}: ${r.diemChu?"★".repeat(r.diemChu):""}${r.nhanXetChu ? " — "+r.nhanXetChu : ""}`);
         }
-        prevDaily.current[change.doc.id] = r.diemChu!=null;
+        prevDaily.current[change.doc.id] = { diem:r.diemChu, nx:r.nhanXetChu||"" };
       });
     }, err => console.error("TaskLiveNotifier (dailyReports) lỗi:", err));
     return unsub;
@@ -4342,15 +4343,16 @@ function TaskLiveNotifier({ myStaff }){
     prevWeekly.current = {};
     let first = true;
     const unsub = db.collection("weeklyReports").where("shop","==",myStaff.shop).onSnapshot(snap => {
-      if(first){ snap.docs.forEach(d => prevWeekly.current[d.id] = d.data().diemChu!=null); first = false; return; }
+      if(first){ snap.docs.forEach(d => prevWeekly.current[d.id] = { diem:d.data().diemChu, nx:d.data().nhanXetChu||"" }); first = false; return; }
       snap.docChanges().forEach(change => {
         if(change.type!=="modified") return;
         const r = change.doc.data();
-        const had = prevWeekly.current[change.doc.id];
-        if(had===false && r.diemChu!=null){
-          fireLocalNotif("✅ Quản lý đã chấm báo cáo tuần", `Tuần ${r.tuanNgay}: ${"★".repeat(r.diemChu)}${r.nhanXetChu ? " — "+r.nhanXetChu : ""}`);
+        const prev = prevWeekly.current[change.doc.id];
+        const changed = prev===undefined || prev.diem!==r.diemChu || prev.nx!==(r.nhanXetChu||"");
+        if(changed && (r.diemChu!=null || r.nhanXetChu)){
+          fireLocalNotif("✅ Quản lý đã chấm báo cáo tuần", `Tuần ${r.tuanNgay}: ${r.diemChu?"★".repeat(r.diemChu):""}${r.nhanXetChu ? " — "+r.nhanXetChu : ""}`);
         }
-        prevWeekly.current[change.doc.id] = r.diemChu!=null;
+        prevWeekly.current[change.doc.id] = { diem:r.diemChu, nx:r.nhanXetChu||"" };
       });
     }, err => console.error("TaskLiveNotifier (weeklyReports) lỗi:", err));
     return unsub;
