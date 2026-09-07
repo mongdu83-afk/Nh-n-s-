@@ -4229,6 +4229,38 @@ function CreateAccountModal({ staffMember, onClose }){
 }
 
 // ================= QUẢN LÝ DANH SÁCH CỬA HÀNG (tự thêm/xoá, không cần sửa code) =================
+// ================= DỌN TOKEN THÔNG BÁO TRÙNG LẶP (chạy 1 lần khi cần) =================
+function CleanupTokensButton(){
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState(null);
+  async function run(){
+    if(!window.confirm("Dọn token thông báo trùng cho TẤT CẢ tài khoản? Mỗi tài khoản sẽ chỉ giữ lại đúng 1 token mới nhất, các token cũ (nếu có) sẽ bị xoá.")) return;
+    setRunning(true); setResult(null);
+    try{
+      const snap = await db.collection("fcmTokens").get();
+      let cleaned = 0, checked = 0;
+      for(const doc of snap.docs){
+        checked++;
+        const tokens = doc.data().tokens || [];
+        if(tokens.length > 1){
+          await doc.ref.set({ tokens: [tokens[tokens.length-1]] }, { merge:true });
+          cleaned++;
+        }
+      }
+      setResult(`Đã kiểm tra ${checked} tài khoản, dọn ${cleaned} tài khoản có token trùng.`);
+    } catch(err){
+      console.error("Dọn token lỗi:", err);
+      setResult("Có lỗi xảy ra: " + (err && err.message ? err.message : String(err)));
+    } finally{ setRunning(false); }
+  }
+  return React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15, marginBottom:4 } }, "Dọn token thông báo trùng lặp"),
+    React.createElement("div", { key:"s", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } }, "Nếu nhân viên phản ánh nhận thông báo bị lặp 2-3 lần, bấm nút này để dọn — mỗi tài khoản sẽ chỉ giữ lại đúng 1 token mới nhất."),
+    React.createElement("button", { key:"b", type:"button", className:"btn btnAmber", disabled:running, onClick:run }, running ? "Đang dọn..." : "Dọn token trùng cho tất cả"),
+    result && React.createElement("div", { key:"r", style:{ fontSize:12.5, color:"var(--pine)", marginTop:10 } }, result),
+  ]);
+}
+
 function ShopListEditor(){
   const [newCode, setNewCode] = useState("");
   const [saving, setSaving] = useState(false);
@@ -4326,6 +4358,7 @@ function StaffView(){
     React.createElement("h2", { key:"t", className:"pagetitle" }, "Nhân viên"),
     React.createElement("p", { key:"s", className:"pagesub" }, "Danh sách dùng chung cho Checklist ngày, Báo cáo tuần, Buddy và tặng sao ghi nhận. Tạo tài khoản để nhân viên đăng nhập thẳng vào giao diện riêng của mình."),
     React.createElement(ShopListEditor, { key:"shoplist" }),
+    React.createElement(CleanupTokensButton, { key:"cleanuptokens" }),
     React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:16 } }, [
       React.createElement("button", { key:"add", className:"btn btnPrimary", onClick:openAdd }, "＋ Thêm nhân viên"),
     ]),
@@ -5244,8 +5277,11 @@ function TaskLiveNotifier({ myStaff, isAdmin }){
       const messaging = firebase.messaging();
       const token = await messaging.getToken({ vapidKey:FCM_VAPID_KEY, serviceWorkerRegistration:reg });
       if(token){
+        // Chỉ giữ ĐÚNG 1 token cho tài khoản này (ghi đè, không cộng dồn) — tránh tình trạng
+        // token cũ (từ lần bật thông báo trước, ví dụ sau khi xoá cache/cài lại app) vẫn còn
+        // nằm trong danh sách, khiến mỗi thông báo bị gửi lặp lại nhiều lần trên cùng 1 máy.
         await db.collection("fcmTokens").doc(notifKey).set({
-          tokens: firebase.firestore.FieldValue.arrayUnion(token),
+          tokens: [token],
           staffName: notifName, shop: notifShop, isAdmin: !!isAdmin,
           updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
         }, { merge:true });
