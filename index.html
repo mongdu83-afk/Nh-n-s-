@@ -1741,7 +1741,7 @@ const WEEKLY_CATEGORIES = [
   { key:"nhanSu", label:"Nhân sự" },
   { key:"coSoVatChat", label:"Cơ sở vật chất" },
 ];
-function weeklyEmptyRow(extra){ return { id:uid(), noiDung:"", target:"", ketQua:"", ...extra }; }
+function weeklyEmptyRow(extra){ return { id:uid(), noiDung:"", target:"", nguoiThucHien:"", ketQua:"", ...extra }; }
 function weeklyDefaultCategoryData(){
   const o = {};
   WEEKLY_CATEGORIES.forEach(c => { o[c.key] = [weeklyEmptyRow()]; });
@@ -1754,7 +1754,7 @@ function weeklySeedResultFromPlan(prevPlan){
   WEEKLY_CATEGORIES.forEach(c => {
     const rows = (prevPlan && prevPlan[c.key]) || [];
     o[c.key] = rows.length>0
-      ? rows.map(r => weeklyEmptyRow({ noiDung:r.noiDung, target:r.target, fromPlan:true }))
+      ? rows.map(r => weeklyEmptyRow({ noiDung:r.noiDung, target:r.target, nguoiThucHien:r.nguoiThucHien, fromPlan:true }))
       : [weeklyEmptyRow()];
   });
   return o;
@@ -1904,6 +1904,11 @@ function WeeklyCategorySection({ label, rows, mode, onChange, onAdd, onRemove, u
               React.createElement(AutoGrowTextarea,{key:"i", className:"taskResultInput", value:r.noiDung,
                 onChange:e=>onChange(r.id,"noiDung",e.target.value), placeholder:"Việc cần làm / chỉ tiêu tuần này..." }),
             ]),
+            React.createElement("div", { key:"nth", style:{flex:"0 1 150px"} }, [
+              React.createElement("span",{key:"l",className:"weeklyRowLbl"},"Người thực hiện"),
+              React.createElement(AutoGrowTextarea,{key:"i", className:"taskResultInput", value:r.nguoiThucHien,
+                onChange:e=>onChange(r.id,"nguoiThucHien",e.target.value), placeholder:"VD: Ánh, Thảo..." }),
+            ]),
             React.createElement("div", { key:"tg", style:{flex:"0 1 170px"} }, [
               React.createElement("span",{key:"l",className:"weeklyRowLbl"},"Target cam kết"),
               React.createElement(AutoGrowTextarea,{key:"i", className:"taskResultInput", value:r.target,
@@ -1917,6 +1922,13 @@ function WeeklyCategorySection({ label, rows, mode, onChange, onAdd, onRemove, u
                 ? React.createElement("div",{key:"i",className:"weeklyReadonly"}, r.noiDung || "—")
                 : React.createElement(AutoGrowTextarea,{key:"i", className:"taskResultInput", value:r.noiDung,
                     onChange:e=>onChange(r.id,"noiDung",e.target.value), placeholder:"" }),
+            ]),
+            React.createElement("div", { key:"nth", style:{flex:"0 1 140px"} }, [
+              React.createElement("span",{key:"l",className:"weeklyRowLbl"},"Người thực hiện"),
+              r.fromPlan
+                ? React.createElement("div",{key:"i",className:"weeklyReadonly"}, r.nguoiThucHien || "—")
+                : React.createElement(AutoGrowTextarea,{key:"i", className:"taskResultInput", value:r.nguoiThucHien,
+                    onChange:e=>onChange(r.id,"nguoiThucHien",e.target.value), placeholder:"VD: Ánh, Thảo..." }),
             ]),
             React.createElement("div", { key:"tg", style:{flex:"0 1 150px"} }, [
               React.createElement("span",{key:"l",className:"weeklyRowLbl"},"Target cam kết"),
@@ -2061,7 +2073,7 @@ function WeeklyReportView({ isAdmin, myStaff }){
     // Nếu tuần này đã có báo cáo lưu rồi thì dùng đúng dữ liệu đã lưu (kể cả các dòng
     // phát sinh nhân viên tự thêm). Nếu chưa, dựng sẵn phần "kết quả" từ kế hoạch tuần trước.
     setKetQuaData(thisReport && thisReport.ketQua ? thisReport.ketQua : weeklySeedResultFromPlan(prevReport && prevReport.keHoach));
-    setKeHoachData(thisReport && thisReport.keHoach ? thisReport.keHoach : weeklySeedPlanFromPrev(prevReport && prevReport.keHoach));
+    setKeHoachData(thisReport && thisReport.keHoach ? thisReport.keHoach : weeklyDefaultCategoryData());
     setGhiChu(thisReport ? (thisReport.ghiChu || "") : "");
     setNguoiBaoCao(thisReport ? (thisReport.nguoiBaoCao || (myStaff ? myStaff.name : "")) : (myStaff ? myStaff.name : ""));
     // Chỉ tiêu tháng (doanh thu/hàng hệ số) chỉ cần nhập 1 lần đầu tháng — nếu tuần này chưa có
