@@ -3892,14 +3892,8 @@ function KudosView({ isAdmin, myStaff }){
     const fromS = staff.find(s=>s.id===giveForm.fromId), toS = staff.find(s=>s.id===giveForm.toId);
     const message = giveForm.message.trim();
     await addDoc("kudos", { fromId:giveForm.fromId, fromName:fromS?fromS.name:"", toId:giveForm.toId, toName:toS?toS.name:"", stars, message, ngay:todayISO() });
-    // Gửi thông báo tới TOÀN BỘ nhân viên đã có tài khoản (lấy email từ tab Nhân viên) —
-    // để cả đội cùng thấy ai vừa được ghi nhận, cộng thêm danh sách email cố định (HR/quản lý).
-    const staffEmails = staff.map(s => s.email).filter(Boolean);
-    const allEmails = Array.from(new Set([...notifyEmails, ...staffEmails]));
-    sendNotifyEmail(allEmails, {
-      from_name: fromS ? fromS.name : "", to_name: toS ? toS.name : "",
-      shop: (toS && toS.shop) || (fromS && fromS.shop) || "", stars, message, ngay: todayISO(),
-    });
+    // Thông báo cho cả đội giờ gửi qua push notification (Cloud Function lắng nghe collection
+    // "kudos"), không còn gửi email quảng bá tới tất cả nhân viên như trước nữa.
     setGiveForm({ fromId:giveForm.fromId, toId:"", stars:5, message:"" }); setShowGiveForm(false);
   }
   async function saveRewards(items){ await saveConfigDoc("rewards", { items }); setShowRewardsEditor(false); }
@@ -4025,8 +4019,6 @@ function KudosView({ isAdmin, myStaff }){
       React.createElement("button", { key:"give", className:"btn btnAmber", onClick:()=>setShowGiveForm(true) }, "Tặng sao"),
       isAdmin && React.createElement("div", { key:"admin", className:"btnRow" }, [
         React.createElement("button", { key:"rewards", type:"button", className:"btn btnGhost", onClick:()=>setShowRewardsEditor(true) }, "Quản lý quà tặng"),
-        React.createElement("button", { key:"email", type:"button", className:"btn btnGhost", onClick:()=>setShowEmailEditor(true) },
-          `Email nhận thông báo (${notifyEmails.length})`),
       ]),
     ]),
     feed, leaderboardCard, rewardsInfoCard, redemptionsCard, giveModal, emailEditor, rewardsEditor,
