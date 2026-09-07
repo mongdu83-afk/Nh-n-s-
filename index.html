@@ -1741,7 +1741,7 @@ const WEEKLY_CATEGORIES = [
   { key:"nhanSu", label:"Nhân sự" },
   { key:"coSoVatChat", label:"Cơ sở vật chất" },
 ];
-function weeklyEmptyRow(extra){ return { id:uid(), noiDung:"", target:"", nguoiThucHien:"", ketQua:"", ...extra }; }
+function weeklyEmptyRow(extra){ return { id:uid(), noiDung:"", target:"", nguoiThucHienIds:[], deadline:"", ketQua:"", ...extra }; }
 function weeklyDefaultCategoryData(){
   const o = {};
   WEEKLY_CATEGORIES.forEach(c => { o[c.key] = [weeklyEmptyRow()]; });
@@ -1754,7 +1754,7 @@ function weeklySeedResultFromPlan(prevPlan){
   WEEKLY_CATEGORIES.forEach(c => {
     const rows = (prevPlan && prevPlan[c.key]) || [];
     o[c.key] = rows.length>0
-      ? rows.map(r => weeklyEmptyRow({ noiDung:r.noiDung, target:r.target, nguoiThucHien:r.nguoiThucHien, fromPlan:true }))
+      ? rows.map(r => weeklyEmptyRow({ noiDung:r.noiDung, target:r.target, nguoiThucHienIds:r.nguoiThucHienIds||[], deadline:r.deadline||"", fromPlan:true }))
       : [weeklyEmptyRow()];
   });
   return o;
@@ -1889,7 +1889,11 @@ function AutoGrowTextarea({ className, value, onChange, ...rest }){
 // mode "plan": nhân viên tự nhập nội dung kế hoạch + target cam kết cho tuần này, thêm/xoá dòng tự do.
 // mode "result": dòng kế thừa từ kế hoạch tuần trước hiển thị nội dung + target (chỉ đọc), chỉ điền "Kết quả
 // thực hiện"; nhân viên vẫn có thể bấm "+ Thêm dòng" để báo cáo thêm việc phát sinh.
-function WeeklyCategorySection({ label, rows, mode, onChange, onAdd, onRemove, uploadingRow, onUploadFiles, onRemoveFile, onLinkChange }){
+function WeeklyCategorySection({ label, rows, mode, staffOptions, staffNameMap, onChange, onAdd, onRemove, uploadingRow, onUploadFiles, onRemoveFile, onLinkChange }){
+  function resolveNames(ids){
+    if(!ids || ids.length===0) return "—";
+    return ids.map(id => (staffNameMap && staffNameMap[id]) || id).join(", ");
+  }
   return React.createElement("div", { className:"weeklyCatBlock" }, [
     React.createElement("div", { key:"t", className:"weeklyCatTitle" }, [
       React.createElement("span",{key:"d", className:"dot"}),
@@ -1904,10 +1908,15 @@ function WeeklyCategorySection({ label, rows, mode, onChange, onAdd, onRemove, u
               React.createElement(AutoGrowTextarea,{key:"i", className:"taskResultInput", value:r.noiDung,
                 onChange:e=>onChange(r.id,"noiDung",e.target.value), placeholder:"Việc cần làm / chỉ tiêu tuần này..." }),
             ]),
-            React.createElement("div", { key:"nth", style:{flex:"0 1 150px"} }, [
+            React.createElement("div", { key:"nth", style:{flex:"0 1 190px"} }, [
               React.createElement("span",{key:"l",className:"weeklyRowLbl"},"Người thực hiện"),
-              React.createElement(AutoGrowTextarea,{key:"i", className:"taskResultInput", value:r.nguoiThucHien,
-                onChange:e=>onChange(r.id,"nguoiThucHien",e.target.value), placeholder:"VD: Ánh, Thảo..." }),
+              React.createElement(NamePickerMulti, { key:"i", options:staffOptions||[], values:r.nguoiThucHienIds||[],
+                onChange:v=>onChange(r.id,"nguoiThucHienIds",v), placeholder:"Gõ tên để tag..." }),
+            ]),
+            React.createElement("div", { key:"dl", style:{flex:"0 1 150px"} }, [
+              React.createElement("span",{key:"l",className:"weeklyRowLbl"},"Deadline"),
+              React.createElement("input",{key:"i", type:"date", className:"taskResultInput", value:r.deadline||"",
+                onChange:e=>onChange(r.id,"deadline",e.target.value) }),
             ]),
             React.createElement("div", { key:"tg", style:{flex:"0 1 170px"} }, [
               React.createElement("span",{key:"l",className:"weeklyRowLbl"},"Target cam kết"),
@@ -1923,12 +1932,19 @@ function WeeklyCategorySection({ label, rows, mode, onChange, onAdd, onRemove, u
                 : React.createElement(AutoGrowTextarea,{key:"i", className:"taskResultInput", value:r.noiDung,
                     onChange:e=>onChange(r.id,"noiDung",e.target.value), placeholder:"" }),
             ]),
-            React.createElement("div", { key:"nth", style:{flex:"0 1 140px"} }, [
+            React.createElement("div", { key:"nth", style:{flex:"0 1 170px"} }, [
               React.createElement("span",{key:"l",className:"weeklyRowLbl"},"Người thực hiện"),
               r.fromPlan
-                ? React.createElement("div",{key:"i",className:"weeklyReadonly"}, r.nguoiThucHien || "—")
-                : React.createElement(AutoGrowTextarea,{key:"i", className:"taskResultInput", value:r.nguoiThucHien,
-                    onChange:e=>onChange(r.id,"nguoiThucHien",e.target.value), placeholder:"VD: Ánh, Thảo..." }),
+                ? React.createElement("div",{key:"i",className:"weeklyReadonly"}, resolveNames(r.nguoiThucHienIds))
+                : React.createElement(NamePickerMulti, { key:"i", options:staffOptions||[], values:r.nguoiThucHienIds||[],
+                    onChange:v=>onChange(r.id,"nguoiThucHienIds",v), placeholder:"Gõ tên để tag..." }),
+            ]),
+            React.createElement("div", { key:"dl", style:{flex:"0 1 130px"} }, [
+              React.createElement("span",{key:"l",className:"weeklyRowLbl"},"Deadline"),
+              r.fromPlan
+                ? React.createElement("div",{key:"i",className:"weeklyReadonly"}, r.deadline || "—")
+                : React.createElement("input",{key:"i", type:"date", className:"taskResultInput", value:r.deadline||"",
+                    onChange:e=>onChange(r.id,"deadline",e.target.value) }),
             ]),
             React.createElement("div", { key:"tg", style:{flex:"0 1 150px"} }, [
               React.createElement("span",{key:"l",className:"weeklyRowLbl"},"Target cam kết"),
@@ -2042,6 +2058,7 @@ function WeeklyReviewModal({ report, prevReport, onSave, onClose }){
 
 function WeeklyReportView({ isAdmin, myStaff }){
   const [reportsMap, setReportsMap] = useState({});
+  const [staffList, setStaffList] = useState([]);
   const [selfShop] = useState(myStaff ? myStaff.shop : "");
   const [nguoiBaoCao, setNguoiBaoCao] = useState(myStaff ? myStaff.name : "");
   const [ketQuaData, setKetQuaData] = useState(weeklyDefaultCategoryData());
@@ -2056,8 +2073,13 @@ function WeeklyReportView({ isAdmin, myStaff }){
 
   useEffect(()=>{
     const u2 = subscribeCol("weeklyReports", rows => { const map = {}; rows.forEach(r => map[r.id] = r); setReportsMap(map); });
-    return ()=>{ u2(); };
+    const u3 = subscribeCol("staff", setStaffList);
+    return ()=>{ u2(); u3(); };
   }, []);
+
+  const myShopStaffOptions = selfShop ? staffList.filter(s=>s.shop===selfShop).map(s=>({ value:s.id, label:s.name })) : [];
+  const staffNameMap = {};
+  staffList.forEach(s => { staffNameMap[s.id] = s.name; });
 
   const currentMonday = mondayOf(todayISO());
   const thisId = selfShop ? weeklyReportId(selfShop, currentMonday) : null;
@@ -2176,6 +2198,7 @@ function WeeklyReportView({ isAdmin, myStaff }){
       React.createElement("div", { key:"hintR", className:"weeklySectionHint" }, "Đối chiếu với kế hoạch & target đã cam kết tuần trước, điền kết quả thực tế."),
       WEEKLY_CATEGORIES.map(c => React.createElement(WeeklyCategorySection, {
         key:"r"+c.key, label:c.label, rows:ketQuaData[c.key]||[], mode:"result",
+        staffOptions:myShopStaffOptions, staffNameMap,
         onChange:(rowId,field,value)=>changeRow("ketQua",c.key,rowId,field,value),
         onAdd:()=>addRow("ketQua",c.key), onRemove:rowId=>removeRow("ketQua",c.key,rowId),
         uploadingRow, onUploadFiles:(rowId,files)=>uploadRowFiles(c.key,rowId,files),
@@ -2185,6 +2208,7 @@ function WeeklyReportView({ isAdmin, myStaff }){
       React.createElement("div", { key:"hintP", className:"weeklySectionHint" }, "Liệt kê từng đầu việc/chỉ tiêu dự kiến cho tuần này kèm target cam kết — đây sẽ là căn cứ để báo cáo kết quả vào tuần sau."),
       WEEKLY_CATEGORIES.map(c => React.createElement(WeeklyCategorySection, {
         key:"p"+c.key, label:c.label, rows:keHoachData[c.key]||[], mode:"plan",
+        staffOptions:myShopStaffOptions, staffNameMap,
         onChange:(rowId,field,value)=>changeRow("keHoach",c.key,rowId,field,value),
         onAdd:()=>addRow("keHoach",c.key), onRemove:rowId=>removeRow("keHoach",c.key,rowId),
       })),
