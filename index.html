@@ -4259,6 +4259,60 @@ function CreateAccountModal({ staffMember, onClose }){
 
 // ================= QUẢN LÝ DANH SÁCH CỬA HÀNG (tự thêm/xoá, không cần sửa code) =================
 // ================= DỌN TOKEN THÔNG BÁO TRÙNG LẶP (chạy 1 lần khi cần) =================
+// ================= LẤY ĐƠN HÀNG BÁN TỪ HỆ THỐNG upharma.com.vn (thủ công) =================
+function SyncSalesOrdersButton(){
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState(null);
+  async function run(){
+    setRunning(true); setResult(null);
+    try{
+      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncSalesOrdersNow");
+      const data = await resp.json();
+      if(data.ok){
+        setResult(`Đã lấy ${data.totalOrders} đơn hàng từ ${data.shopCount} cửa hàng.`);
+      } else {
+        setResult("Lỗi: " + (data.error || "không rõ nguyên nhân"));
+      }
+    } catch(err){
+      console.error("Lấy đơn hàng bán lỗi:", err);
+      setResult("Có lỗi xảy ra: " + (err && err.message ? err.message : String(err)));
+    } finally{ setRunning(false); }
+  }
+  return React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15, marginBottom:4 } }, "Lấy đơn hàng bán từ hệ thống upharma.com.vn"),
+    React.createElement("div", { key:"s", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } }, "Tự động chạy mỗi ngày lúc 23:30 — bấm nút này nếu muốn lấy ngay dữ liệu của hôm nay, không cần đợi."),
+    React.createElement("button", { key:"b", type:"button", className:"btn btnAmber", disabled:running, onClick:run }, running ? "Đang lấy dữ liệu..." : "Lấy dữ liệu ngay"),
+    result && React.createElement("div", { key:"r", style:{ fontSize:12.5, color:"var(--pine)", marginTop:10 } }, result),
+  ]);
+}
+
+// ================= LẤY ĐĂNG KÝ LÀM VIỆC TỪ HỆ THỐNG upharma.com.vn (thủ công) =================
+function SyncWorkRegistrationsButton(){
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState(null);
+  async function run(){
+    setRunning(true); setResult(null);
+    try{
+      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncWorkRegistrationsNow");
+      const data = await resp.json();
+      if(data.ok){
+        setResult(`Đã lấy ${data.totalRecords} bản ghi ca làm việc/tăng ca từ ${data.shopCount} cửa hàng.`);
+      } else {
+        setResult("Lỗi: " + (data.error || "không rõ nguyên nhân"));
+      }
+    } catch(err){
+      console.error("Lấy đăng ký làm việc lỗi:", err);
+      setResult("Có lỗi xảy ra: " + (err && err.message ? err.message : String(err)));
+    } finally{ setRunning(false); }
+  }
+  return React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15, marginBottom:4 } }, "Lấy đăng ký ca làm việc / tăng ca từ hệ thống upharma.com.vn"),
+    React.createElement("div", { key:"s", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } }, "Tự động chạy mỗi ngày lúc 23:45 — lấy dữ liệu của tháng hiện tại. Bấm nút này nếu muốn lấy ngay, không cần đợi."),
+    React.createElement("button", { key:"b", type:"button", className:"btn btnAmber", disabled:running, onClick:run }, running ? "Đang lấy dữ liệu..." : "Lấy dữ liệu ngay"),
+    result && React.createElement("div", { key:"r", style:{ fontSize:12.5, color:"var(--pine)", marginTop:10 } }, result),
+  ]);
+}
+
 function CleanupTokensButton(){
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState(null);
@@ -4387,6 +4441,8 @@ function StaffView(){
     React.createElement("h2", { key:"t", className:"pagetitle" }, "Nhân viên"),
     React.createElement("p", { key:"s", className:"pagesub" }, "Danh sách dùng chung cho Checklist ngày, Báo cáo tuần, Buddy và tặng sao ghi nhận. Tạo tài khoản để nhân viên đăng nhập thẳng vào giao diện riêng của mình."),
     React.createElement(ShopListEditor, { key:"shoplist" }),
+    React.createElement(SyncSalesOrdersButton, { key:"syncsales" }),
+    React.createElement(SyncWorkRegistrationsButton, { key:"syncwork" }),
     React.createElement(CleanupTokensButton, { key:"cleanuptokens" }),
     React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:16 } }, [
       React.createElement("button", { key:"add", className:"btn btnPrimary", onClick:openAdd }, "＋ Thêm nhân viên"),
