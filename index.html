@@ -48,6 +48,25 @@
     padding:10px 13px; cursor:pointer; flex:none; position:relative;
   }
   .tabs button.active{ color:var(--pine); border-bottom-color:var(--pine); }
+
+  .mobileHomeGrid{ display:none; } /* chỉ hiện trên mobile, bật lại trong @media bên dưới */
+  .mobileTile{ display:flex; flex-direction:column; align-items:center; gap:7px; background:none; border:none; cursor:pointer; padding:4px 2px; font-family:inherit; }
+  .mobileTileIcon{
+    width:56px; height:56px; border-radius:17px; display:flex; align-items:center; justify-content:center;
+    font-size:24px; color:#fff; box-shadow:0 2px 7px rgba(0,0,0,0.16); position:relative;
+  }
+  .mobileTileBadge{
+    position:absolute; top:-5px; right:-5px; min-width:18px; height:18px; padding:0 4px; border-radius:9px;
+    background:#fff; color:var(--clay,#c0392b); font-size:10.5px; font-weight:800; display:flex; align-items:center; justify-content:center;
+    border:2px solid currentColor; line-height:1;
+  }
+  .mobileTileLabel{ font-size:11px; font-weight:700; color:var(--ink); text-align:center; line-height:1.25; }
+  .mobileBackBar{
+    display:none; align-items:center; gap:8px; margin:-14px -12px 14px; padding:13px 12px;
+    border-bottom:1px solid var(--line); font-weight:700; font-size:14.5px; color:var(--pine);
+    background:#fff; cursor:pointer; position:sticky; top:0; z-index:5;
+  }
+  .mobileBackBar .arrow{ font-size:17px; line-height:1; }
   .unreadBadge{
     display:inline-flex; align-items:center; justify-content:center;
     min-width:17px; height:17px; padding:0 4px; border-radius:9px;
@@ -213,7 +232,10 @@
     input, select, textarea, .btn, .uploadBtn{ font-size:16px !important; }
     .field input, .field select, .field textarea{ padding:11px 12px; }
     .btn{ padding:11px 16px; }
-    .tabs button{ padding:12px 14px; }
+    .tabs{ display:none; }
+    .mobileHomeGrid.isShown{ display:grid; grid-template-columns:repeat(4,1fr); gap:16px 10px; padding:18px 10px 6px; }
+    .mobileBackBar.isShown{ display:flex; }
+    .mobileContentArea.isHiddenMobile{ display:none; }
     .whoBar{ flex-direction:column; align-items:stretch; }
     .whoBar .field{ min-width:0 !important; width:100%; }
     .fieldRow{ flex-direction:column; gap:12px !important; }
@@ -397,12 +419,19 @@ function fmtVND(n){ return fmtNum(n) + "đ"; }
 // Ghi lại 1 lỗi hệ thống (Firestore listener lỗi, JS lỗi không bắt được, promise bị reject...) vào
 // collection "systemErrors" để Quản lý nhận được thông báo đẩy (qua SystemError listener trong
 // TaskLiveNotifier) ngay cả khi không đang mở đúng màn hình xảy ra lỗi.
+// Các lỗi vô hại/đã biết, không đáng để làm phiền Quản lý bằng thông báo — chỉ log ra console
+// để debug khi cần, không ghi vào systemErrors.
+const IGNORED_ERROR_PATTERNS = [
+  "Attempt to get records from database without an in-progress transaction", // Firestore mở nhiều tab cùng lúc
+];
 async function logSystemError(source, err){
   console.error(source, err);
+  const msg = (err && err.message) ? String(err.message) : String(err || "");
+  if(IGNORED_ERROR_PATTERNS.some(p => msg.includes(p))) return;
   try{
     await db.collection("systemErrors").add({
       source: String(source),
-      message: (err && err.message) ? String(err.message) : String(err || "Lỗi không rõ"),
+      message: msg || "Lỗi không rõ",
       code: (err && err.code) ? String(err.code) : "",
       stack: (err && err.stack) ? String(err.stack).slice(0, 1500) : "",
       url: (typeof location!=="undefined" ? location.href : ""),
@@ -5373,15 +5402,33 @@ function TaskReminderBanner({ myStaff, onOpenTasks }){
   ]);
 }
 
+const TAB_STYLE = {
+  checklist:      { icon:"📋", color:"#2563eb" },
+  photos:         { icon:"📷", color:"#f97316" },
+  customerOrders: { icon:"🛒", color:"#7c3aed" },
+  sales:          { icon:"💰", color:"#0d9488" },
+  weekly:         { icon:"📅", color:"#4f46e5" },
+  tasks:          { icon:"📌", color:"#dc2626" },
+  kpi:            { icon:"🎯", color:"#ca8a04" },
+  performance:    { icon:"📊", color:"#0891b2" },
+  training:       { icon:"🎓", color:"#db2777" },
+  kudos:          { icon:"⭐", color:"#eab308" },
+  staff:          { icon:"👥", color:"#475569" },
+};
+
 function Dashboard({ user, isAdmin, myStaff }){
   const visibleTabs = isAdmin ? OPS_TABS : OPS_TABS.filter(t => STAFF_TABS.includes(t.id));
   const [activeTab, setActiveTabRaw] = useState(visibleTabs[0].id);
+  // Chỉ có ý nghĩa trên điện thoại (theo CSS @media) — trên máy tính thanh tab ngang vẫn luôn
+  // hiện, giá trị này không ảnh hưởng gì tới desktop.
+  const [showMobileHome, setShowMobileHome] = useState(true);
   const { unreadCount, markSeen } = useUnreadTabs(myStaff);
-  function setActiveTab(tabId){ setActiveTabRaw(tabId); markSeen(tabId); }
+  function setActiveTab(tabId){ setActiveTabRaw(tabId); setShowMobileHome(false); markSeen(tabId); }
   // Đang đứng sẵn ở tab nào thì tab đó tự coi như "đã xem" ngay khi có tin mới xuất hiện,
   // không cần đợi bấm ra rồi bấm lại mới xoá chấm đỏ.
   useEffect(()=>{ if(unreadCount[activeTab]>0) markSeen(activeTab); });
   const whoLabel = isAdmin ? "Quản lý" : (myStaff ? `${myStaff.name} · ${myStaff.shop}` : "");
+  const activeTabInfo = visibleTabs.find(t=>t.id===activeTab);
   return React.createElement(React.Fragment, null, [
     React.createElement("div", { key:"nav", className:"topnav" }, React.createElement("div", { className:"topnavInner" }, [
       React.createElement("div", { key:"brand", className:"brandRow" }, [
@@ -5401,10 +5448,28 @@ function Dashboard({ user, isAdmin, myStaff }){
         ])
       )),
     ])),
+    // ===== Trang chủ dạng lưới icon — chỉ hiện trên điện thoại (CSS @media), ẩn hẳn trên máy tính =====
+    React.createElement("div", { key:"mobilehome", className:"mobileHomeGrid" + (showMobileHome ? " isShown" : "") },
+      visibleTabs.map(t => {
+        const style = TAB_STYLE[t.id] || { icon:"•", color:"#64748b" };
+        return React.createElement("button", { key:t.id, type:"button", className:"mobileTile", onClick:()=>setActiveTab(t.id) }, [
+          React.createElement("span", { key:"i", className:"mobileTileIcon", style:{ background:style.color } }, [
+            style.icon,
+            unreadCount[t.id]>0 && React.createElement("span", { key:"badge", className:"mobileTileBadge", style:{ color:style.color } }, unreadCount[t.id]>99 ? "99+" : unreadCount[t.id]),
+          ]),
+          React.createElement("span", { key:"l", className:"mobileTileLabel" }, t.label),
+        ]);
+      })
+    ),
+    // ===== Thanh quay lại Trang chủ — chỉ hiện trên điện thoại khi đang xem 1 tab cụ thể =====
+    React.createElement("div", { key:"backbar", className:"mobileBackBar" + (!showMobileHome ? " isShown" : ""), onClick:()=>setShowMobileHome(true) }, [
+      React.createElement("span", { key:"a", className:"arrow" }, "‹"),
+      React.createElement("span", { key:"l" }, activeTabInfo ? activeTabInfo.label : "Trang chủ"),
+    ]),
     React.createElement(TaskLiveNotifier, { key:"livenotify", myStaff, isAdmin }),
     !isAdmin && React.createElement(TaskReminderBanner, { key:"reminder", myStaff, onOpenTasks:()=>setActiveTab("tasks") }),
     !isAdmin && React.createElement(CustomerOrderReminderBanner, { key:"custreminder", myStaff, onOpen:()=>setActiveTab("customerOrders") }),
-    React.createElement("div", { key:"wrap", className:"wrap" }, [
+    React.createElement("div", { key:"wrap", className:"wrap mobileContentArea" + (showMobileHome ? " isHiddenMobile" : "") }, [
       activeTab==="checklist" && React.createElement(DailyChecklistView, { key:"v", isAdmin, myStaff }),
       activeTab==="photos" && React.createElement(ImageReportView, { key:"v", isAdmin, myStaff }),
       activeTab==="customerOrders" && React.createElement(CustomerOrderView, { key:"v", isAdmin, myStaff }),
