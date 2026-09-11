@@ -555,6 +555,118 @@ function styleExportSheet(ws, rows){
     }
   }
 }
+// Xây bảng Excel có TIÊU ĐỀ 2 DÒNG: dòng trên gộp chung tên chỉ tiêu (ô nối ngang qua các cột
+// con của cùng 1 chỉ tiêu — Mục tiêu giao/Thực tế đạt/% Hoàn thành/Điểm KPI thực tế), dòng dưới
+// là tên từng cột con — dễ nhìn hơn nhiều so với việc lặp lại tên chỉ tiêu dài trong từng cột.
+// Nhận vào các "row" đã tính sẵn (object phẳng như cũ) — chỉ cần đặt tên cột con dạng
+// "Tên chỉ tiêu — Tên cột con" (ngăn cách bởi " — ") thì hàm sẽ tự nhận diện và gộp nhóm; cột nào
+// không có " — " trong tên thì hiểu là cột đơn, tiêu đề được nối dọc qua cả 2 dòng.
+function buildTwoRowHeaderSheet(rows){
+  if(!rows || rows.length===0) return XLSX.utils.aoa_to_sheet([[]]);
+  const keys = Object.keys(rows[0]);
+  const cols = keys.map(k => {
+    const idx = k.indexOf(" — ");
+    return idx===-1 ? { group:null, sub:k } : { group:k.slice(0,idx), sub:k.slice(idx+3) };
+  });
+  const headerRow1 = new Array(cols.length).fill("");
+  const headerRow2 = new Array(cols.length).fill("");
+  const merges = [];
+  let i = 0;
+  while(i < cols.length){
+    const col = cols[i];
+    if(col.group==null){
+      headerRow1[i] = col.sub;
+      merges.push({ s:{ r:0, c:i }, e:{ r:1, c:i } }); // cột đơn: nối dọc qua cả 2 dòng tiêu đề
+      i++;
+    } else {
+      let span = 1;
+      while(i+span < cols.length && cols[i+span].group===col.group) span++;
+      headerRow1[i] = col.group;
+      if(span>1) merges.push({ s:{ r:0, c:i }, e:{ r:0, c:i+span-1 } });
+      for(let j=0;j<span;j++) headerRow2[i+j] = cols[i+j].sub;
+      i += span;
+    }
+  }
+  const dataRows = rows.map(r => keys.map(k => r[k]));
+  const ws = XLSX.utils.aoa_to_sheet([headerRow1, headerRow2, ...dataRows]);
+  ws["!merges"] = merges;
+  ws["!rows"] = [{ hpt:22 }, { hpt:44 }];
+  const thinBorder = { style:"thin", color:{ rgb:"D9D6C8" } };
+  const groupHeaderStyle = {
+    font: { bold:true, sz:10.5, color:{ rgb:"FFFFFF" } },
+    fill: { fgColor:{ rgb:"14503B" } },
+    alignment: { horizontal:"center", vertical:"center", wrapText:true },
+    border: { top:thinBorder, bottom:thinBorder, left:thinBorder, right:thinBorder },
+  };
+  const subHeaderStyle = {
+    font: { bold:true, sz:10.5, color:{ rgb:"FFFFFF" } },
+    fill: { fgColor:{ rgb:"1F6E52" } },
+    alignment: { horizontal:"center", vertical:"center", wrapText:true },
+    border: { top:thinBorder, bottom:thinBorder, left:thinBorder, right:thinBorder },
+  };
+  ws["!cols"] = keys.map((k,ci) => {
+    let maxLen = 8;
+    rows.forEach(r => { const v = r[k]; if(v!=null){ const len=String(v).length; if(len>maxLen) maxLen=len; } });
+    return { wch: Math.max(9, Math.min(20, maxLen + 2)) };
+  });
+  const range = XLSX.utils.decode_range(ws["!ref"]);
+  for(let C = range.s.c; C <= range.e.c; C++){
+    const a1 = XLSX.utils.encode_cell({ r:0, c:C });
+    const a2 = XLSX.utils.encode_cell({ r:1, c:C });
+    if(!ws[a1]) ws[a1] = { t:"s", v:"" };
+    if(!ws[a2]) ws[a2] = { t:"s", v:"" };
+    ws[a1].s = groupHeaderStyle;
+    ws[a2].s = subHeaderStyle;
+    for(let R = 2; R <= range.e.r; R++){
+      const addr = XLSX.utils.encode_cell({ r:R, c:C });
+      const cell = ws[addr];
+      if(!cell) continue;
+      const isNum = typeof cell.v === "number";
+      cell.s = {
+        font: { sz:11 },
+        alignment: { vertical:"center", horizontal: isNum ? "right" : "left", wrapText:false },
+        border: { top:thinBorder, bottom:thinBorder, left:thinBorder, right:thinBorder },
+        fill: (R-2) % 2 === 0 ? { fgColor:{ rgb:"F7F5EE" } } : undefined,
+      };
+    }
+  }
+  return ws;
+}
+// Tự động tách tên "Địa bàn" từ địa chỉ email đăng nhập — quy ước đặt email của Upharma là
+// ten.ho.diaban.vaitro@upharma.com.vn (VD: thao.buiphuong.hanoi.nvbh@... → địa bàn "hanoi").
+// Địa bàn luôn là phần ĐỨNG NGAY TRƯỚC phần vai trò (phần cuối cùng), nên tự nhận diện đúng dù
+// tên người dùng ngắn/dài khác nhau, không phụ thuộc vị trí cố định.
+const VN_REGION_NAMES = {
+  hanoi:"Hà Nội", hn:"Hà Nội",
+  hcm:"TP.HCM", hochiminh:"TP.HCM", tphcm:"TP.HCM", saigon:"TP.HCM",
+  danang:"Đà Nẵng", haiphong:"Hải Phòng", cantho:"Cần Thơ",
+  angiang:"An Giang", bacgiang:"Bắc Giang", backan:"Bắc Kạn", baclieu:"Bạc Liêu", bacninh:"Bắc Ninh",
+  bariavungtau:"Bà Rịa - Vũng Tàu", vungtau:"Bà Rịa - Vũng Tàu", bentre:"Bến Tre",
+  binhdinh:"Bình Định", binhduong:"Bình Dương", binhphuoc:"Bình Phước", binhthuan:"Bình Thuận",
+  camau:"Cà Mau", caobang:"Cao Bằng", daklak:"Đắk Lắk", daknong:"Đắk Nông", dienbien:"Điện Biên",
+  dongnai:"Đồng Nai", dongthap:"Đồng Tháp", gialai:"Gia Lai", hagiang:"Hà Giang", hanam:"Hà Nam",
+  hatinh:"Hà Tĩnh", haiduong:"Hải Dương", haugiang:"Hậu Giang", hoabinh:"Hòa Bình", hungyen:"Hưng Yên",
+  khanhhoa:"Khánh Hòa", kiengiang:"Kiên Giang", kontum:"Kon Tum", laichau:"Lai Châu", lamdong:"Lâm Đồng",
+  langson:"Lạng Sơn", laocai:"Lào Cai", longan:"Long An", namdinh:"Nam Định", nghean:"Nghệ An",
+  ninhbinh:"Ninh Bình", ninhthuan:"Ninh Thuận", phutho:"Phú Thọ", phuyen:"Phú Yên",
+  quangbinh:"Quảng Bình", quangnam:"Quảng Nam", quangngai:"Quảng Ngãi", quangninh:"Quảng Ninh",
+  quangtri:"Quảng Trị", soctrang:"Sóc Trăng", sonla:"Sơn La", tayninh:"Tây Ninh", thaibinh:"Thái Bình",
+  thainguyen:"Thái Nguyên", thanhhoa:"Thanh Hóa", thuathienhue:"Thừa Thiên Huế", hue:"Thừa Thiên Huế",
+  tiengiang:"Tiền Giang", travinh:"Trà Vinh", tuyenquang:"Tuyên Quang", vinhlong:"Vĩnh Long",
+  vinhphuc:"Vĩnh Phúc", yenbai:"Yên Bái",
+};
+function regionFromEmail(email){
+  if(!email || email.indexOf("@")===-1) return "";
+  const local = email.split("@")[0];
+  const parts = local.split(".");
+  if(parts.length < 2) return "";
+  const slug = parts[parts.length-2].toLowerCase().trim();
+  if(!slug) return "";
+  if(VN_REGION_NAMES[slug]) return VN_REGION_NAMES[slug];
+  // Chưa có trong danh sách — vẫn tự hiện tên viết hoa chữ cái đầu thay vì để trống, và có thể
+  // bổ sung thêm vào VN_REGION_NAMES phía trên khi gặp địa bàn mới ngoài danh sách.
+  return slug.charAt(0).toUpperCase() + slug.slice(1);
+}
 function subscribeConfigDoc(docId, cb){
   return db.collection("opsConfig").doc(docId).onSnapshot(doc => cb(doc.exists ? doc.data() : {}));
 }
@@ -3550,7 +3662,7 @@ function KpiView({ isAdmin, myStaff }){
         const targets = a.targets || {}, actuals = a.actuals || {};
         const c = ctahDocs[kpiCtahId(s.id, thang)] || {};
         const ctah = kpiCtahCalc(c);
-        const row = { "STT":i+1, "Tên nhân viên":s.name, "Nhà thuốc":s.shop, "Địa bàn":s.shop, "Vai trò":s.role };
+        const row = { "STT":i+1, "Tên nhân viên":s.name, "Nhà thuốc":s.shop, "Địa bàn":regionFromEmail(s.email) || s.shop, "Vai trò":s.role };
         groups.forEach(g => g.items.forEach(it => {
           if(it.cachCham==="nhi_phan_kep"){
             // Chỉ tiêu "kép" (vd Hàng cận date) không có 1 giá trị "mục tiêu/thực tế" chung —
@@ -3599,8 +3711,7 @@ function KpiView({ isAdmin, myStaff }){
         row["Link minh chứng"] = a.linkKetQua || "";
         return row;
       });
-      const ws = XLSX.utils.json_to_sheet(rows);
-      styleExportSheet(ws, rows);
+      const ws = buildTwoRowHeaderSheet(rows);
       XLSX.utils.book_append_sheet(wb, ws, "Tổng hợp "+roleKey);
     });
     // Sheet riêng cho KPI Quản lý địa bàn — cùng cấu trúc (mục tiêu/thực tế/CTAH/xếp loại) như NVBH/CHT.
@@ -3628,8 +3739,7 @@ function KpiView({ isAdmin, myStaff }){
       row["% KPI đạt"] = totalActual!=null ? `${Math.round(totalActual/totalPlan*100)}%` : "";
       row["Xếp loại"] = totalActual!=null ? kpiXepLoai(totalActual/totalPlan) : "";
       const rows = [row];
-      const ws = XLSX.utils.json_to_sheet(rows);
-      styleExportSheet(ws, rows);
+      const ws = buildTwoRowHeaderSheet(rows);
       XLSX.utils.book_append_sheet(wb, ws, "Tổng hợp QLKV");
     }
     XLSX.writeFile(wb, `Tong_hop_KPI_HR_${thang}.xlsx`);
