@@ -3622,6 +3622,9 @@ function KpiView({ isAdmin, myStaff }){
 
   // ---- Nhập/xuất Excel chỉ tiêu KPI ----
   function exportKpiExcel(){
+    // Đây là MẪU để giao/điền chỉ tiêu (mục tiêu), không phải bảng kết quả — nên chỉ gồm các cột
+    // "[Tên chỉ tiêu] - Mục tiêu", KHÔNG có cột "Thực tế"/tổng điểm thực tế/% đạt (đó là dữ liệu
+    // kết quả, đã có ở bảng "Tổng hợp KPI" và file "Tải tổng hợp đầy đủ" riêng).
     const wb = XLSX.utils.book_new();
     ["NVBH","CHT"].forEach(roleKey => {
       const groups = templates[roleKey];
@@ -3629,24 +3632,19 @@ function KpiView({ isAdmin, myStaff }){
         .sort((a,b)=> a.shop.localeCompare(b.shop, "vi") || a.name.localeCompare(b.name, "vi"))
         .map(s => {
         const a = assignments[kpiAssignmentId(s.id, thang)] || {};
-        const targets = a.targets || {}, actuals = a.actuals || {};
+        const targets = a.targets || {};
         const row = { "Tên nhân viên":s.name, "Nhà thuốc":s.shop, "Vai trò":s.role };
         groups.forEach(g => g.items.forEach(it => {
           row[`${it.label} - Mục tiêu`] = targets[it.id]!=null ? targets[it.id] : "";
-          row[`${it.label} - Thực tế`] = actuals[it.id]!=null ? actuals[it.id] : "";
         }));
-        const totalPlan = kpiTotalPlan(groups);
-        const totalActual = kpiTotalActual(groups, targets, actuals);
-        row["Tổng điểm KH"] = totalPlan;
-        row["Tổng điểm thực tế"] = totalActual!=null ? Math.round(totalActual) : "";
-        row["% KPI đạt"] = totalActual!=null ? `${Math.round(totalActual/totalPlan*100)}%` : "";
+        row["Tổng điểm KH"] = kpiTotalPlan(groups);
         return row;
       });
       const ws = XLSX.utils.json_to_sheet(rows);
       styleExportSheet(ws, rows);
       XLSX.utils.book_append_sheet(wb, ws, roleKey);
     });
-    XLSX.writeFile(wb, `KPI_${thang}.xlsx`);
+    XLSX.writeFile(wb, `Mau_giao_chi_tieu_KPI_${thang}.xlsx`);
   }
   // Xuất bảng TỔNG HỢP đầy đủ (đúng theo cấu trúc "QLKV Chấm KPI" trong file mẫu) để gửi
   // Hành chính nhân sự tính thưởng — gồm cả chi tiết từng chỉ tiêu KPI, cả phần Tiêu chí
