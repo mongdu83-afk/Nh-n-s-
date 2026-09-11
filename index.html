@@ -3256,30 +3256,30 @@ function KpiTemplateEditor({ templates, onSave, onClose }){
   const [data, setData] = useState(JSON.parse(JSON.stringify(templates)));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
-  const groups = data[role];
+  const groups = data[role] || [];
 
   function updateItem(gi, ii, field, value){
-    const next = { ...data, [role]: data[role].map((g,i)=> i!==gi ? g : { ...g, items: g.items.map((it,j)=> j!==ii ? it : { ...it, [field]: field==="label"||field==="cachCham"||field==="donVi" ? value : Number(value) }) }) };
+    const next = { ...data, [role]: (data[role]||[]).map((g,i)=> i!==gi ? g : { ...g, items: g.items.map((it,j)=> j!==ii ? it : { ...it, [field]: field==="label"||field==="cachCham"||field==="donVi" ? value : Number(value) }) }) };
     setData(next);
   }
   function removeItem(gi, ii){
-    const next = { ...data, [role]: data[role].map((g,i)=> i!==gi ? g : { ...g, items:g.items.filter((_,j)=>j!==ii) }) };
+    const next = { ...data, [role]: (data[role]||[]).map((g,i)=> i!==gi ? g : { ...g, items:g.items.filter((_,j)=>j!==ii) }) };
     setData(next);
   }
   function addItem(gi){
-    const next = { ...data, [role]: data[role].map((g,i)=> i!==gi ? g : { ...g, items:[...g.items, { id:"c"+uid(), label:"Chỉ tiêu mới", tyTrong:0.05, diem:50, cachCham:"nguong60", donVi:"" }] }) };
+    const next = { ...data, [role]: (data[role]||[]).map((g,i)=> i!==gi ? g : { ...g, items:[...g.items, { id:"c"+uid(), label:"Chỉ tiêu mới", tyTrong:0.05, diem:50, cachCham:"nguong60", donVi:"" }] }) };
     setData(next);
   }
   function updateGroupLabel(gi, label){
-    const next = { ...data, [role]: data[role].map((g,i)=> i!==gi ? g : { ...g, label }) };
+    const next = { ...data, [role]: (data[role]||[]).map((g,i)=> i!==gi ? g : { ...g, label }) };
     setData(next);
   }
   function addGroup(){
-    const next = { ...data, [role]: [...data[role], { key:"g"+uid(), label:"Nhóm mới", items:[] }] };
+    const next = { ...data, [role]: [...(data[role]||[]), { key:"g"+uid(), label:"Nhóm mới", items:[] }] };
     setData(next);
   }
   function removeGroup(gi){
-    const next = { ...data, [role]: data[role].filter((_,i)=>i!==gi) };
+    const next = { ...data, [role]: (data[role]||[]).filter((_,i)=>i!==gi) };
     setData(next);
   }
   const totalTyTrong = groups.reduce((s,g)=> s + g.items.reduce((s2,it)=>s2+(Number(it.tyTrong)||0),0), 0);
@@ -3304,8 +3304,8 @@ function KpiTemplateEditor({ templates, onSave, onClose }){
     React.createElement("div", { className:"modal modalWide", onClick:e=>e.stopPropagation() }, [
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, "Tuỳ chỉnh tỷ trọng & điểm KPI"),
       React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:12 } }, "Tỷ trọng tính theo phần thập phân (VD: 0.3 = 30%). Tổng tỷ trọng nên bằng 1 (100%), tổng điểm nên bằng 1000 để đúng thang điểm chuẩn."),
-      React.createElement("div", { key:"tabs", className:"btnRow", style:{ marginBottom:12 } }, ["NVBH","CHT"].map(r =>
-        React.createElement("button", { key:r, type:"button", className:"btn"+(r===role?" btnPrimary":""), style:{ padding:"6px 12px", fontSize:12.5 }, onClick:()=>setRole(r) }, r==="NVBH"?"Nhân viên bán hàng":"Cửa hàng trưởng")
+      React.createElement("div", { key:"tabs", className:"btnRow", style:{ marginBottom:12 } }, ["NVBH","CHT","QLKV"].map(r =>
+        React.createElement("button", { key:r, type:"button", className:"btn"+(r===role?" btnPrimary":""), style:{ padding:"6px 12px", fontSize:12.5 }, onClick:()=>setRole(r) }, r==="NVBH"?"Nhân viên bán hàng":(r==="CHT"?"Cửa hàng trưởng":"Quản lý khu vực"))
       )),
       React.createElement("div", { key:"list", style:{ maxHeight:400, overflowY:"auto", marginBottom:12 } }, groups.map((g,gi) =>
         React.createElement("div", { key:g.key, style:{ border:"1px solid var(--line)", borderRadius:8, padding:10, marginBottom:10 } }, [
@@ -3600,9 +3600,10 @@ function KpiView({ isAdmin, myStaff }){
   const pickedTargets = (pickedAssign && pickedAssign.targets) || {};
   const pickedActuals = (pickedAssign && pickedAssign.actuals) || {};
 
-  // Bảng tổng hợp toàn bộ nhân sự trong tháng đang chọn — chỉ tính KPI cho Nhân viên bán hàng,
-  // KHÔNG gồm Cửa hàng trưởng (CHT) và Nhân viên học việc (2 vai trò này không chấm KPI kiểu này).
-  const summaryRows = staff.filter(s => s.role==="Nhân viên bán hàng").map(s => {
+  // Bảng tổng hợp toàn bộ nhân sự trong tháng đang chọn — tách riêng Nhân viên bán hàng và Cửa
+  // hàng trưởng (CHT) thành 2 bảng, vì 2 vai trò có bộ chỉ tiêu KPI khác nhau. KHÔNG gồm Nhân
+  // viên học việc (vai trò này không chấm KPI kiểu này).
+  function buildKpiSummaryRow(s){
     const roleKey = kpiRoleKey(s.role);
     const groups = templates[roleKey];
     const a = assignments[kpiAssignmentId(s.id, thang)];
@@ -3614,7 +3615,9 @@ function KpiView({ isAdmin, myStaff }){
     const totalActual = totalActualBase!=null ? Math.max(0, totalActualBase + ctah.adj) : null;
     const pct = totalActual!=null ? totalActual/totalPlan : null;
     return { staff:s, roleKey, groups, targets, actuals, hasTargets:Object.keys(targets).length>0, totalPlan, totalActual, pct, ctahAdj:ctah.adj, khongXet:ctah.khongXet, trangThaiDuyet:(a&&a.trangThaiDuyet)||"" };
-  }).sort((x,y)=> (y.pct||-1) - (x.pct||-1));
+  }
+  const summaryRows = staff.filter(s => s.role==="Nhân viên bán hàng").map(buildKpiSummaryRow).sort((x,y)=> (y.pct||-1) - (x.pct||-1));
+  const summaryRowsCHT = staff.filter(s => s.role==="Cửa hàng trưởng").map(buildKpiSummaryRow).sort((x,y)=> (y.pct||-1) - (x.pct||-1));
   async function qlkvDuyet(staffMember){ await updateDoc("kpiAssignments", kpiAssignmentId(staffMember.id, thang), { trangThaiDuyet:"QLKV đã duyệt" }); }
 
   // ---- Nhập/xuất Excel chỉ tiêu KPI ----
@@ -3650,12 +3653,11 @@ function KpiView({ isAdmin, myStaff }){
   // ảnh hưởng (đào tạo/tác phong/chuyên cần...), điểm tổng, % đạt và xếp loại cuối cùng.
   function exportKpiFullSummary(){
     const wb = XLSX.utils.book_new();
-    // Chỉ xuất sheet NVBH — bỏ hẳn sheet CHT (Cửa hàng trưởng), và trong sheet NVBH chỉ giữ đúng
-    // "Nhân viên bán hàng" (loại Nhân viên học việc ra) — 2 vai trò này không tính vào bảng
-    // tổng hợp gửi HR, khớp với bảng tổng hợp trong app.
-    ["NVBH"].forEach(roleKey => {
+    // Bỏ Nhân viên học việc ra khỏi sheet NVBH (vai trò này không tính vào bảng tổng hợp gửi HR)
+    // — sheet CHT (Cửa hàng trưởng) giữ nguyên bình thường, không cần lọc thêm.
+    ["NVBH","CHT"].forEach(roleKey => {
       const groups = templates[roleKey];
-      const rows = staff.filter(s=>kpiRoleKey(s.role)===roleKey && s.role==="Nhân viên bán hàng")
+      const rows = staff.filter(s=>kpiRoleKey(s.role)===roleKey && (roleKey!=="NVBH" || s.role==="Nhân viên bán hàng"))
         .sort((a,b)=> a.shop.localeCompare(b.shop, "vi") || a.name.localeCompare(b.name, "vi"))
         .map((s,i) => {
         const a = assignments[kpiAssignmentId(s.id, thang)] || {};
@@ -3752,6 +3754,32 @@ function KpiView({ isAdmin, myStaff }){
       let matched = 0, unmatched = [];
       for(const sheetName of wb.SheetNames){
         const roleKey = sheetName.toUpperCase().includes("CHT") ? "CHT" : "NVBH";
+        if(roleKey==="NVBH"){
+          // Đọc theo ĐÚNG VỊ TRÍ CỘT (không dò theo tên tiêu đề) — để đọc được cả file mẫu form
+          // KPI gốc (A:Tên nhà thuốc, B:Tên nhân viên, C:TBB, D:Tổng khách hàng, E:Đơn hàng,
+          // F:CSKH, G:Hàng thường trực, H:ghi chú Hàng cận date — không cần nhập số) lẫn file do
+          // chính app này xuất ra, kể cả khi tiêu đề cột có thể không khớp chữ 100%.
+          const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header:1, defval:"" });
+          const COL_MAP = [ [2,"dh_tbbill"], [3,"kh_tongkh"], [4,"dh_sodon"], [5,"cs_nangHang"], [6,"hh_thuongtruc"] ];
+          for(let ri=1; ri<aoa.length; ri++){
+            const row = aoa[ri];
+            if(!row) continue;
+            const shop = String(row[0]||"").trim();
+            const ten = String(row[1]||"").trim();
+            if(!ten) continue;
+            const s = staff.find(x => x.name.trim()===ten && (!shop || x.shop===shop));
+            if(!s){ unmatched.push(ten); continue; }
+            const payload = { staffId:s.id, staffName:s.name, shop:s.shop, role:s.role, thang };
+            let any = false;
+            COL_MAP.forEach(([ci, itemId]) => {
+              const v = row[ci];
+              if(v!==""&&v!=null && !isNaN(Number(v))){ payload[`targets.${itemId}`] = Number(v); any = true; }
+            });
+            if(any){ await mergeDotFields("kpiAssignments", kpiAssignmentId(s.id, thang), payload); matched++; }
+          }
+          continue;
+        }
+        // CHT: giữ nguyên cách đọc cũ theo tên tiêu đề "[Tên chỉ tiêu] - Mục tiêu".
         const groups = templates[roleKey];
         const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval:"" });
         for(const row of rows){
@@ -3789,7 +3817,7 @@ function KpiView({ isAdmin, myStaff }){
       ]),
     ]),
     importMsg && React.createElement("div", { key:"msg", style:{ fontSize:12.5, color:"var(--pine)", background:"var(--pineSoft)", borderRadius:8, padding:"8px 10px", marginBottom:12 } }, importMsg),
-    React.createElement("div", { key:"h2", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:12 } }, "File Excel nhập vào cần có cột \"Tên nhân viên\", \"Nhà thuốc\" và các cột \"[Tên chỉ tiêu] - Mục tiêu\" — dễ nhất là tải file xuống trước, điền số vào rồi tải ngược lên."),
+    React.createElement("div", { key:"h2", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:12 } }, "Nhập chỉ tiêu: sheet CHT cần cột \"Tên nhân viên\", \"Nhà thuốc\" và các cột \"[Tên chỉ tiêu] - Mục tiêu\" (dễ nhất là tải file xuống trước, điền số vào rồi tải ngược lên). Riêng sheet NVBH đọc theo đúng thứ tự cột của mẫu form KPI công ty đang dùng: Tên nhà thuốc, Tên nhân viên, TBB, Tổng khách hàng, Đơn hàng, CSKH, Hàng thường trực — có thể tải thẳng file mẫu đó lên."),
     React.createElement("div", { key:"row", className:"btnRow", style:{ marginBottom:16 } }, [
       React.createElement("input", { key:"m", type:"month", value:thang, onChange:e=>setThang(e.target.value), style:{ padding:"8px 10px", border:"1px solid var(--line)", borderRadius:8, fontSize:13 } }),
       React.createElement(NamePicker, { key:"p", options:staffOptions, value:pickedStaffId, onChange:setPickedStaffId, placeholder:"Gõ tên nhân viên để giao KPI..." }),
@@ -3811,17 +3839,12 @@ function KpiView({ isAdmin, myStaff }){
   const ctahDoc = ctahStaff ? (ctahDocs[kpiCtahId(ctahStaff.id, thang)] || {}) : {};
   const ctahInlineForm = ctahStaff && React.createElement(CtahForm, { staffRole:ctahStaff.role, ctahDoc, readOnly:true });
 
-  const adminSummarySection = isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
-    React.createElement("div", { key:"th", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:12 } }, [
-      React.createElement("div", { key:"t", className:"cardTitle", style:{ marginBottom:0 } }, `Tổng hợp KPI toàn bộ nhân sự — tháng ${thang}`),
-      React.createElement("button", { key:"exp", type:"button", className:"btn btnPrimary", onClick:exportKpiFullSummary }, "Tải tổng hợp đầy đủ (gửi HR tính thưởng)"),
-    ]),
-    React.createElement("div", { key:"hint", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:12 } }, "Bấm \"Xem CTAH\" ở đúng dòng nhân viên để xem tiêu chí ảnh hưởng (đào tạo, tác phong, chuyên cần...) họ đã tự chấm — điểm này tự cộng/trừ vào kết quả KPI cuối cùng của người đó."),
-    summaryRows.length===0
-      ? React.createElement("div",{key:"e",className:"emptyState"},"Chưa có nhân sự.")
-      : React.createElement("div", { key:"tb", className:"tableWrap", style:{ marginBottom:0 } }, React.createElement("table",{className:"data"}, [
+  function renderKpiSummaryTable(rows){
+    return rows.length===0
+      ? React.createElement("div",{className:"emptyState"},"Chưa có nhân sự.")
+      : React.createElement("div", { className:"tableWrap", style:{ marginBottom:0 } }, React.createElement("table",{className:"data"}, [
           React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Nhân viên","Nhà thuốc","Vai trò","Điểm KH","Điểm gốc + CTAH","% đạt","Xếp loại","Duyệt",""].map((h,i)=>React.createElement("th",{key:i},h)))),
-          React.createElement("tbody",{key:"b"}, summaryRows.flatMap(r => {
+          React.createElement("tbody",{key:"b"}, rows.flatMap(r => {
             const isOpen = ctahStaffId===r.staff.id;
             const rowEls = [
               React.createElement("tr",{key:r.staff.id}, [
@@ -3856,7 +3879,18 @@ function KpiView({ isAdmin, myStaff }){
             }
             return rowEls;
           })),
-        ])),
+        ]));
+  }
+  const adminSummarySection = isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"th", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:12 } }, [
+      React.createElement("div", { key:"t", className:"cardTitle", style:{ marginBottom:0 } }, `Tổng hợp KPI toàn bộ nhân sự — tháng ${thang}`),
+      React.createElement("button", { key:"exp", type:"button", className:"btn btnPrimary", onClick:exportKpiFullSummary }, "Tải tổng hợp đầy đủ (gửi HR tính thưởng)"),
+    ]),
+    React.createElement("div", { key:"hint", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:12 } }, "Bấm \"Xem CTAH\" ở đúng dòng nhân viên để xem tiêu chí ảnh hưởng (đào tạo, tác phong, chuyên cần...) họ đã tự chấm — điểm này tự cộng/trừ vào kết quả KPI cuối cùng của người đó."),
+    React.createElement("div", { key:"sub1", style:{ fontWeight:700, fontSize:13, margin:"4px 0 8px" } }, "Nhân viên bán hàng"),
+    renderKpiSummaryTable(summaryRows),
+    React.createElement("div", { key:"sub2", style:{ fontWeight:700, fontSize:13, margin:"20px 0 8px" } }, "Cửa hàng trưởng"),
+    renderKpiSummaryTable(summaryRowsCHT),
   ]);
 
   // ---- KPI Quản lý địa bàn (tự đăng ký chỉ tiêu + tự chấm cho chính mình) ----
