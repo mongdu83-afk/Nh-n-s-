@@ -446,7 +446,7 @@ async function uploadTaskAttachmentFile(file, path, onProgress){
 }
 
 let DEFAULT_SHOPS = ["SHOP0058","SHOP0059","SHOP0072","SHOP0074","SHOP0089","SHOP0095","SHOP0121","SHOP0122","SHOP0163"];
-const STAFF_ROLES = ["Nhân viên học việc","Nhân viên bán hàng","Nhà thuốc trưởng"];
+const STAFF_ROLES = ["Nhân viên học việc","Nhân viên bán hàng","Cửa hàng trưởng"];
 
 function uid(){ return "id" + Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
 function todayISO(){ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
@@ -695,7 +695,7 @@ const DEFAULT_DAILY_CHECKLISTS = {
     { id:"bh7", label:"Bàn giao ca cho nhân viên ca sau (hàng hoá, tiền, sự vụ)" },
     { id:"bh8", label:"Vệ sinh, tắt thiết bị, khoá nhà thuốc (nếu là ca cuối)" },
   ],
-  "Nhà thuốc trưởng": [
+  "Cửa hàng trưởng": [
     { id:"ct1", label:"Kiểm tra tổng thể nhà thuốc đầu ngày (nhân sự, hàng hoá, vệ sinh)" },
     { id:"ct2", label:"Phân ca, phân công công việc cho nhân viên trong ngày" },
     { id:"ct3", label:"Kiểm tra checklist & hỗ trợ nhân viên học việc, bán hàng" },
@@ -880,9 +880,9 @@ function DailyChecklistView({ isAdmin, myStaff }){
   const [selfId] = useState(myStaff ? myStaff.id : "");
   const [note, setNote] = useState("");
   const [showTplEditor, setShowTplEditor] = useState(false);
-  // Nhà thuốc trưởng được xem checklist ngày của nhân viên CÙNG nhà thuốc mình
+  // Cửa hàng trưởng được xem checklist ngày của nhân viên CÙNG nhà thuốc mình
   // (không phải toàn hệ thống như quản lý khu vực/admin).
-  const isShopManager = !isAdmin && !!myStaff && myStaff.role==="Nhà thuốc trưởng";
+  const isShopManager = !isAdmin && !!myStaff && myStaff.role==="Cửa hàng trưởng";
   const [adminOpen, setAdminOpen] = useState(isAdmin || isShopManager);
   const [adminShop, setAdminShop] = useState(isShopManager && myStaff ? myStaff.shop : "Tất cả");
   const [adminDate, setAdminDate] = useState(todayISO());
@@ -1146,7 +1146,7 @@ function DailyChecklistView({ isAdmin, myStaff }){
     onSave:saveTemplate, onClose:()=>setShowTplEditor(false),
   });
 
-  // Nhà thuốc trưởng chỉ xem được đúng nhà thuốc của mình, không được chọn "Tất cả" hay nhà thuốc khác.
+  // Cửa hàng trưởng chỉ xem được đúng nhà thuốc của mình, không được chọn "Tất cả" hay nhà thuốc khác.
   const effectiveAdminShop = isShopManager && myStaff ? myStaff.shop : adminShop;
   const shopStaff = effectiveAdminShop==="Tất cả" ? staff : staff.filter(s => s.shop===effectiveAdminShop);
   const adminRows = shopStaff.map(s => {
@@ -2506,12 +2506,12 @@ function TaskAssignView({ isAdmin, myStaff }){
   function deadlineLabel(t){ return t.hanGio ? `${t.deadline} ${t.hanGio}` : t.deadline; }
   const staffOptions = staffList.map(s => ({ value:s.id, label:`${s.name} · ${s.shop} · ${s.role}` }));
 
-  // ---- Phân quyền giao việc: Quản lý khu vực giao cho ai cũng được; Nhà thuốc trưởng
-  // giao cho nhân viên cùng nhà thuốc; nhân viên thường gửi việc lên Nhà thuốc trưởng của mình ----
-  const isCHT = !isAdmin && !!myStaff && myStaff.role==="Nhà thuốc trưởng";
-  const isPlainStaff = !isAdmin && !!myStaff && myStaff.role!=="Nhà thuốc trưởng";
+  // ---- Phân quyền giao việc: Quản lý khu vực giao cho ai cũng được; Cửa hàng trưởng
+  // giao cho nhân viên cùng nhà thuốc; nhân viên thường gửi việc lên Cửa hàng trưởng của mình ----
+  const isCHT = !isAdmin && !!myStaff && myStaff.role==="Cửa hàng trưởng";
+  const isPlainStaff = !isAdmin && !!myStaff && myStaff.role!=="Cửa hàng trưởng";
   const myChtOptions = myStaff ? staffList.filter(s => s.shop===myStaff.shop && s.id!==myStaff.id).map(s => ({ value:s.id, label:`${s.name} · ${s.role}` })) : [];
-  const myCht = myStaff ? staffList.find(s => s.shop===myStaff.shop && s.role==="Nhà thuốc trưởng") : null;
+  const myCht = myStaff ? staffList.find(s => s.shop===myStaff.shop && s.role==="Cửa hàng trưởng") : null;
 
   async function uploadFormAttachments(files){
     setUploadingFormAttachment(true);
@@ -2603,9 +2603,9 @@ function TaskAssignView({ isAdmin, myStaff }){
   async function reopenTask(id){ await updateDoc("tasks", id, { trangThai:"Đang giao", ketQua:"" }); }
 
   // ---- Giao diện nhân viên: việc giao riêng cho mình + việc giao chung cho nhà thuốc ----
-  // Nhà thuốc trưởng thấy TẤT CẢ việc của nhà thuốc mình, kể cả việc giao riêng cho từng
+  // Cửa hàng trưởng thấy TẤT CẢ việc của nhà thuốc mình, kể cả việc giao riêng cho từng
   // nhân viên khác (để theo dõi/nhắc), nhưng chỉ người được giao riêng mới báo cáo được.
-  const isShopManagerView = !isAdmin && !!myStaff && myStaff.role==="Nhà thuốc trưởng";
+  const isShopManagerView = !isAdmin && !!myStaff && myStaff.role==="Cửa hàng trưởng";
   const myTasks = isAdmin
     ? tasks.filter(t => t.assignType==="admin")
     : (myStaff ? tasks.filter(t =>
@@ -2815,7 +2815,7 @@ function TaskAssignView({ isAdmin, myStaff }){
         isPlainStaff && React.createElement("div", { key:"mode", className:"field", style:{ marginBottom:10 } }, [
           React.createElement("label",{key:"l"},"Gửi tới"),
           React.createElement("select", { key:"i", value:form.recipientMode||(myCht?"cht":"admin"), onChange:e=>setForm({...form,recipientMode:e.target.value}) }, [
-            myCht && React.createElement("option",{key:"cht",value:"cht"},`Nhà thuốc trưởng (${myCht.name})`),
+            myCht && React.createElement("option",{key:"cht",value:"cht"},`Cửa hàng trưởng (${myCht.name})`),
             React.createElement("option",{key:"admin",value:"admin"},"Quản lý khu vực"),
           ]),
         ]),
@@ -2846,7 +2846,7 @@ function TaskAssignView({ isAdmin, myStaff }){
     React.createElement("p", { key:"s", className:"pagesub" },
       isAdmin ? "Giao việc phát sinh cho nhà thuốc, đặt hạn chót, theo dõi kết quả — và xử lý đề xuất nhân viên/CHT gửi lên."
         : isCHT ? "Giao việc cho nhân viên cùng nhà thuốc, gửi đề xuất lên Quản lý khu vực, hoặc theo dõi việc được giao xuống."
-        : "Báo cáo kết quả việc được giao trước hạn chót, hoặc gửi đề xuất lên Nhà thuốc trưởng/Quản lý khu vực."),
+        : "Báo cáo kết quả việc được giao trước hạn chót, hoặc gửi đề xuất lên Cửa hàng trưởng/Quản lý khu vực."),
     (isAdmin || myStaff) && React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:16 } }, [
       React.createElement("button", { key:"add", className:"btn btnPrimary", onClick:()=>setShowForm(true) }, "＋ Giao việc mới"),
     ]),
@@ -2919,7 +2919,7 @@ const DEFAULT_KPI_TEMPLATES = {
     ]},
   ],
 };
-function kpiRoleKey(staffRole){ return staffRole==="Nhà thuốc trưởng" ? "CHT" : "NVBH"; }
+function kpiRoleKey(staffRole){ return staffRole==="Cửa hàng trưởng" ? "CHT" : "NVBH"; }
 function kpiAssignmentId(staffId, thang){ return staffId + "_" + thang; }
 // Vá lại đúng 2 mục "Hàng thường trực" / "Hàng cận date" trong nhóm "hanghoa" nếu bộ KPI đang tải
 // (từ Firestore) chưa khớp đúng bảng tiêu chí đánh giá gốc (Đăng ký chỉ tiêu KPIs) — lấy đúng
@@ -3091,11 +3091,6 @@ function KpiItemRow({ item, target, actual, canEditTarget, canEditActual, onTarg
 function KpiDoubleBinaryRow({ item, actuals, canEditActual, onActualChange }){
   const vals = item.subKeys.map(k => actuals[item.id+"__"+k]);
   const score = kpiCalcItemScore(item, null, vals);
-  const thresholds = item.subThresholds || [];
-  const answeredFlags = vals.map(v => v!=null && v!=="" && !isNaN(Number(v)));
-  const allAnswered = answeredFlags.length>0 && answeredFlags.every(Boolean);
-  const passFlags = vals.map((v,i) => answeredFlags[i] ? Number(v) <= thresholds[i] : null);
-  const allPass = allAnswered && passFlags.every(Boolean);
   return React.createElement("div", { style:{ padding:"9px 0", borderBottom:"1px solid #F0EEE2" } }, [
     React.createElement("div", { key:"l", style:{ fontSize:13, marginBottom:6 } }, [
       item.label,
@@ -3103,7 +3098,7 @@ function KpiDoubleBinaryRow({ item, actuals, canEditActual, onActualChange }){
     ]),
     ...item.subKeys.map((k,i) => React.createElement("div", { key:k, style:{ display:"flex", flexWrap:"wrap", alignItems:"center", gap:10, padding:"5px 0", paddingLeft:16 } }, [
       React.createElement("div", { key:"sl", style:{ flex:"1 1 260px", fontSize:12.5, color:"var(--inkSoft)" } }, `— ${item.subLabels[i]}`),
-      React.createElement("div", { key:"tt", style:{ width:130, display:"flex", alignItems:"center", gap:6 } },
+      React.createElement("div", { key:"tt", style:{ width:130 } },
         canEditActual
           ? React.createElement("div", { style:{ position:"relative", width:"100%" } }, [
               React.createElement("input", { key:"i", type:"number", step:0.1, min:0, defaultValue: vals[i]!=null && vals[i]!=="" ? vals[i] : "", placeholder:"VD: 0.9",
@@ -3112,12 +3107,11 @@ function KpiDoubleBinaryRow({ item, actuals, canEditActual, onActualChange }){
             ])
           : React.createElement("div", { style:{ fontSize:13, fontWeight:600 } }, vals[i]!=null && vals[i]!=="" ? `${vals[i]}%` : "—")
       ),
-      answeredFlags[i] && StatusPill(passFlags[i] ? "Đạt" : "Không đạt", passFlags[i] ? "good" : "warn"),
     ])),
-    React.createElement("div", { key:"res", style:{ display:"flex", flexWrap:"wrap", gap:20, marginTop:4, paddingLeft:16 } }, [
-      React.createElement("div", { key:"a", style:{ fontSize:12 } }, [ React.createElement("b",null,"Kết quả chung: "), allAnswered ? (allPass ? "Đạt cả 2 tiêu chí" : "Chưa đạt (thiếu ít nhất 1 tiêu chí)") : "—" ]),
-      React.createElement("div", { key:"b", style:{ fontSize:12 } }, [ React.createElement("b",null,"Điểm KPI: "), score!=null ? Math.round(score) : "—" ]),
-    ]),
+    // Kết quả trả về là ĐIỂM SỐ (đạt cả 2 chỉ tiêu con → full điểm, thiếu 1 → 0 điểm), không hiện
+    // chữ "Đạt/Không đạt" — % thực đạt của từng dòng con ở trên chính là phần "kết quả thực hiện".
+    React.createElement("div", { key:"res", style:{ fontSize:12, marginTop:4, paddingLeft:16 } },
+      [ React.createElement("b",{key:"b"},"Điểm KPI: "), score!=null ? `${Math.round(score)} / ${item.diem}` : "—" ]),
   ]);
 }
 
@@ -3199,7 +3193,7 @@ function KpiTemplateEditor({ templates, onSave, onClose }){
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, "Tuỳ chỉnh tỷ trọng & điểm KPI"),
       React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:12 } }, "Tỷ trọng tính theo phần thập phân (VD: 0.3 = 30%). Tổng tỷ trọng nên bằng 1 (100%), tổng điểm nên bằng 1000 để đúng thang điểm chuẩn."),
       React.createElement("div", { key:"tabs", className:"btnRow", style:{ marginBottom:12 } }, ["NVBH","CHT"].map(r =>
-        React.createElement("button", { key:r, type:"button", className:"btn"+(r===role?" btnPrimary":""), style:{ padding:"6px 12px", fontSize:12.5 }, onClick:()=>setRole(r) }, r==="NVBH"?"Nhân viên bán hàng":"Nhà thuốc trưởng")
+        React.createElement("button", { key:r, type:"button", className:"btn"+(r===role?" btnPrimary":""), style:{ padding:"6px 12px", fontSize:12.5 }, onClick:()=>setRole(r) }, r==="NVBH"?"Nhân viên bán hàng":"Cửa hàng trưởng")
       )),
       React.createElement("div", { key:"list", style:{ maxHeight:400, overflowY:"auto", marginBottom:12 } }, groups.map((g,gi) =>
         React.createElement("div", { key:g.key, style:{ border:"1px solid var(--line)", borderRadius:8, padding:10, marginBottom:10 } }, [
@@ -3239,7 +3233,7 @@ function CtahForm({ staffRole, ctahDoc, onSaveField, readOnly }){
       ["Họp nhóm thiếu (buổi)", ctahDoc.hopNhomThieu!=null && ctahDoc.hopNhomThieu!=="" ? ctahDoc.hopNhomThieu : "—"],
       ["Role play", ctahDoc.rolePlay || "—"],
       ["Tự học lộ trình", ctahDoc.tuHocLoTrinh || "—"],
-      staffRole==="Nhà thuốc trưởng" && ["Coaching thiếu (người)", ctahDoc.coachingThieu!=null && ctahDoc.coachingThieu!=="" ? ctahDoc.coachingThieu : "—"],
+      staffRole==="Cửa hàng trưởng" && ["Coaching thiếu (người)", ctahDoc.coachingThieu!=null && ctahDoc.coachingThieu!=="" ? ctahDoc.coachingThieu : "—"],
       ["Đồng phục, bề ngoài (lần)", ctahDoc.dongPhucLan || 0],
       ["Thái độ làm việc (lần)", ctahDoc.thaiDoLan || 0],
       ["Chuyên cần (lần)", ctahDoc.chuyenCanLan || 0],
@@ -3276,7 +3270,7 @@ function CtahForm({ staffRole, ctahDoc, onSaveField, readOnly }){
       React.createElement("div", { key:"b" }, [ React.createElement("div",{style:{fontSize:11,color:"var(--inkSoft)"}},"Số buổi họp nhóm thiếu (-20/buổi)"), React.createElement("input",{type:"number",defaultValue:ctahDoc.hopNhomThieu!=null?ctahDoc.hopNhomThieu:"",onBlur:e=>onSaveField("hopNhomThieu",e.target.value===""?"":Number(e.target.value)),style:{width:130,padding:"6px 8px",border:"1px solid var(--line)",borderRadius:6}}) ]),
       React.createElement("div", { key:"c" }, [ React.createElement("div",{style:{fontSize:11,color:"var(--inkSoft)"}},"Role play (không đạt: -50)"), React.createElement("select",{defaultValue:ctahDoc.rolePlay||"",onChange:e=>onSaveField("rolePlay",e.target.value),style:{padding:"6px 8px",border:"1px solid var(--line)",borderRadius:6}}, ["","Đạt","Không đạt"].map(o=>React.createElement("option",{key:o,value:o},o||"—"))) ]),
       React.createElement("div", { key:"d" }, [ React.createElement("div",{style:{fontSize:11,color:"var(--inkSoft)"}},"Tự học lộ trình 3/6/9/12 tháng (không đạt: -50)"), React.createElement("select",{defaultValue:ctahDoc.tuHocLoTrinh||"",onChange:e=>onSaveField("tuHocLoTrinh",e.target.value),style:{padding:"6px 8px",border:"1px solid var(--line)",borderRadius:6}}, ["","Đạt","Không đạt"].map(o=>React.createElement("option",{key:o,value:o},o||"—"))) ]),
-      staffRole==="Nhà thuốc trưởng" && React.createElement("div", { key:"e" }, [ React.createElement("div",{style:{fontSize:11,color:"var(--inkSoft)"}},"Coaching thiếu — số nhân viên chưa được coach (-20/người, chỉ áp dụng CHT)"), React.createElement("input",{type:"number",defaultValue:ctahDoc.coachingThieu!=null?ctahDoc.coachingThieu:"",onBlur:e=>onSaveField("coachingThieu",e.target.value===""?"":Number(e.target.value)),style:{width:130,padding:"6px 8px",border:"1px solid var(--line)",borderRadius:6}}) ]),
+      staffRole==="Cửa hàng trưởng" && React.createElement("div", { key:"e" }, [ React.createElement("div",{style:{fontSize:11,color:"var(--inkSoft)"}},"Coaching thiếu — số nhân viên chưa được coach (-20/người, chỉ áp dụng CHT)"), React.createElement("input",{type:"number",defaultValue:ctahDoc.coachingThieu!=null?ctahDoc.coachingThieu:"",onBlur:e=>onSaveField("coachingThieu",e.target.value===""?"":Number(e.target.value)),style:{width:130,padding:"6px 8px",border:"1px solid var(--line)",borderRadius:6}}) ]),
     ]),
     React.createElement("div", { key:"g2", style:{ fontWeight:700, fontSize:13, marginBottom:6 } }, "Tác phong làm việc"),
     React.createElement("div", { key:"g2r", className:"btnRow", style:{ marginBottom:14, alignItems:"flex-end" } }, [
@@ -3320,6 +3314,7 @@ function KpiView({ isAdmin, myStaff }){
   const [showTplEditor, setShowTplEditor] = useState(false);
   const [ctahDocs, setCtahDocs] = useState({});
   const [ctahStaffId, setCtahStaffId] = useState("");
+  const [detailStaffId, setDetailStaffId] = useState("");
   const [uploadingKpiEvidence, setUploadingKpiEvidence] = useState(false);
   const [chtStaffId, setChtStaffId] = useState("");
   const [importing, setImporting] = useState(false);
@@ -3402,8 +3397,8 @@ function KpiView({ isAdmin, myStaff }){
   const myHasTargets = Object.keys(myTargets).length > 0;
 
   const myCtahDoc = myStaff ? (ctahDocs[kpiCtahId(myStaff.id, thang)] || {}) : {};
-  const myIsCHT = myStaff && myStaff.role==="Nhà thuốc trưởng";
-  const myShopHasCHT = myStaff && !myIsCHT && staff.some(s => s.shop===myStaff.shop && s.role==="Nhà thuốc trưởng");
+  const myIsCHT = myStaff && myStaff.role==="Cửa hàng trưởng";
+  const myShopHasCHT = myStaff && !myIsCHT && staff.some(s => s.shop===myStaff.shop && s.role==="Cửa hàng trưởng");
   const myDuyet = (myAssign && myAssign.trangThaiDuyet) || "";
   async function saveMyCtahField(field, value){
     if(!myStaff) return;
@@ -3439,8 +3434,8 @@ function KpiView({ isAdmin, myStaff }){
               background: myDuyet==="QLKV đã duyệt" ? "var(--pineSoft)" : (myDuyet==="CHT đã duyệt" ? "var(--goldSoft)" : "var(--paper)") } }, [
             React.createElement("b",{key:"b"},"Trạng thái duyệt: "),
             myDuyet==="QLKV đã duyệt" ? "Quản lý khu vực đã duyệt"
-              : myDuyet==="CHT đã duyệt" ? "Nhà thuốc trưởng đã duyệt — đang chờ Quản lý khu vực"
-              : (myShopHasCHT ? "Chờ Nhà thuốc trưởng duyệt" : "Chờ Quản lý khu vực duyệt"),
+              : myDuyet==="CHT đã duyệt" ? "Cửa hàng trưởng đã duyệt — đang chờ Quản lý khu vực"
+              : (myShopHasCHT ? "Chờ Cửa hàng trưởng duyệt" : "Chờ Quản lý khu vực duyệt"),
             myAssign && myAssign.nhanXetCHT && React.createElement("div",{key:"n",style:{marginTop:4,color:"var(--inkSoft)"}}, `Nhận xét CHT: ${myAssign.nhanXetCHT}`),
           ]),
         ]),
@@ -3451,8 +3446,8 @@ function KpiView({ isAdmin, myStaff }){
     ]),
   ]);
 
-  // ---- Nhà thuốc trưởng: duyệt KPI của nhân viên cùng nhà thuốc ----
-  const myShopTeam = (myIsCHT && myStaff) ? staff.filter(s => s.shop===myStaff.shop && s.role!=="Nhà thuốc trưởng") : [];
+  // ---- Cửa hàng trưởng: duyệt KPI của nhân viên cùng nhà thuốc ----
+  const myShopTeam = (myIsCHT && myStaff) ? staff.filter(s => s.shop===myStaff.shop && s.role!=="Cửa hàng trưởng") : [];
   const chtTeamOptions = myShopTeam.map(s => ({ value:s.id, label:`${s.name} · ${s.role}` }));
   const chtPickedStaff = myShopTeam.find(s=>s.id===chtStaffId);
   const chtPickedRoleKey = chtPickedStaff ? kpiRoleKey(chtPickedStaff.role) : null;
@@ -3493,8 +3488,9 @@ function KpiView({ isAdmin, myStaff }){
   const pickedTargets = (pickedAssign && pickedAssign.targets) || {};
   const pickedActuals = (pickedAssign && pickedAssign.actuals) || {};
 
-  // Bảng tổng hợp toàn bộ nhân sự trong tháng đang chọn.
-  const summaryRows = staff.map(s => {
+  // Bảng tổng hợp toàn bộ nhân sự trong tháng đang chọn — chỉ tính KPI cho Nhân viên bán hàng,
+  // KHÔNG gồm Cửa hàng trưởng (CHT) và Nhân viên học việc (2 vai trò này không chấm KPI kiểu này).
+  const summaryRows = staff.filter(s => s.role==="Nhân viên bán hàng").map(s => {
     const roleKey = kpiRoleKey(s.role);
     const groups = templates[roleKey];
     const a = assignments[kpiAssignmentId(s.id, thang)];
@@ -3505,7 +3501,7 @@ function KpiView({ isAdmin, myStaff }){
     const ctah = kpiCtahCalc(ctahDocs[kpiCtahId(s.id, thang)]);
     const totalActual = totalActualBase!=null ? Math.max(0, totalActualBase + ctah.adj) : null;
     const pct = totalActual!=null ? totalActual/totalPlan : null;
-    return { staff:s, roleKey, hasTargets:Object.keys(targets).length>0, totalPlan, totalActual, pct, ctahAdj:ctah.adj, khongXet:ctah.khongXet, trangThaiDuyet:(a&&a.trangThaiDuyet)||"" };
+    return { staff:s, roleKey, groups, targets, actuals, hasTargets:Object.keys(targets).length>0, totalPlan, totalActual, pct, ctahAdj:ctah.adj, khongXet:ctah.khongXet, trangThaiDuyet:(a&&a.trangThaiDuyet)||"" };
   }).sort((x,y)=> (y.pct||-1) - (x.pct||-1));
   async function qlkvDuyet(staffMember){ await updateDoc("kpiAssignments", kpiAssignmentId(staffMember.id, thang), { trangThaiDuyet:"QLKV đã duyệt" }); }
 
@@ -3542,9 +3538,12 @@ function KpiView({ isAdmin, myStaff }){
   // ảnh hưởng (đào tạo/tác phong/chuyên cần...), điểm tổng, % đạt và xếp loại cuối cùng.
   function exportKpiFullSummary(){
     const wb = XLSX.utils.book_new();
-    ["NVBH","CHT"].forEach(roleKey => {
+    // Chỉ xuất sheet NVBH — bỏ hẳn sheet CHT (Cửa hàng trưởng), và trong sheet NVBH chỉ giữ đúng
+    // "Nhân viên bán hàng" (loại Nhân viên học việc ra) — 2 vai trò này không tính vào bảng
+    // tổng hợp gửi HR, khớp với bảng tổng hợp trong app.
+    ["NVBH"].forEach(roleKey => {
       const groups = templates[roleKey];
-      const rows = staff.filter(s=>kpiRoleKey(s.role)===roleKey)
+      const rows = staff.filter(s=>kpiRoleKey(s.role)===roleKey && s.role==="Nhân viên bán hàng")
         .sort((a,b)=> a.shop.localeCompare(b.shop, "vi") || a.name.localeCompare(b.name, "vi"))
         .map((s,i) => {
         const a = assignments[kpiAssignmentId(s.id, thang)] || {};
@@ -3553,6 +3552,20 @@ function KpiView({ isAdmin, myStaff }){
         const ctah = kpiCtahCalc(c);
         const row = { "STT":i+1, "Tên nhân viên":s.name, "Nhà thuốc":s.shop, "Địa bàn":s.shop, "Vai trò":s.role };
         groups.forEach(g => g.items.forEach(it => {
+          if(it.cachCham==="nhi_phan_kep"){
+            // Chỉ tiêu "kép" (vd Hàng cận date) không có 1 giá trị "mục tiêu/thực tế" chung —
+            // mỗi tiêu chí con (≤6 tháng, ≤12 tháng...) lưu % thực tế riêng dưới khoá ghép
+            // "hh_candate__6th" — xuất riêng từng cột % thực tế cho từng tiêu chí con, cộng thêm
+            // 1 cột điểm KPI chung cho cả mục (chỉ có điểm khi TẤT CẢ tiêu chí con đều đạt).
+            const subVals = it.subKeys.map(k => actuals[it.id+"__"+k]);
+            it.subKeys.forEach((k,idx) => {
+              const v = subVals[idx];
+              row[`${it.subLabels[idx]} — % thực tế`] = v!=null && v!=="" ? v : "";
+            });
+            const score = kpiCalcItemScore(it, null, subVals);
+            row[`${it.label} — Điểm KPI thực tế`] = score!=null ? Math.round(score) : "";
+            return;
+          }
           const t = targets[it.id], ac = actuals[it.id];
           const score = kpiCalcItemScore(it, t, ac);
           row[`${it.label} — Mục tiêu giao`] = t!=null ? t : "";
@@ -3711,12 +3724,23 @@ function KpiView({ isAdmin, myStaff }){
                 React.createElement("td",{key:"x"}, r.khongXet ? StatusPill("Không xét KPI","warn") : (r.hasTargets ? StatusPill(kpiXepLoai(r.pct), r.pct!=null && r.pct>=0.85 ? "good" : "warn") : StatusPill("Chưa giao KPI","neutral"))),
                 React.createElement("td",{key:"dv"}, r.trangThaiDuyet ? StatusPill(r.trangThaiDuyet, r.trangThaiDuyet==="QLKV đã duyệt"?"good":"neutral") : StatusPill("Chưa duyệt","warn")),
                 React.createElement("td",{key:"btn", style:{whiteSpace:"nowrap"}}, [
+                  React.createElement("button",{key:"detail", className:"btn"+(detailStaffId===r.staff.id?" btnPrimary":" btnGhost"),style:{padding:"5px 10px",fontSize:11.5,marginRight:6},onClick:()=>setDetailStaffId(detailStaffId===r.staff.id?"":r.staff.id)}, detailStaffId===r.staff.id?"Đóng chi tiết":"Xem chi tiết"),
                   React.createElement("button",{key:"ctah", className:"btn"+(isOpen?" btnPrimary":" btnGhost"),style:{padding:"5px 10px",fontSize:11.5,marginRight:6},onClick:()=>setCtahStaffId(isOpen?"":r.staff.id)}, isOpen?"Đóng CTAH":"Xem CTAH"),
                   (r.totalActual!=null && r.trangThaiDuyet!=="QLKV đã duyệt") &&
                     React.createElement("button",{key:"duyet",className:"btn",style:{padding:"5px 10px",fontSize:11.5},onClick:()=>qlkvDuyet(r.staff)}, "Duyệt cuối"),
                 ]),
               ]),
             ];
+            if(detailStaffId===r.staff.id){
+              rowEls.push(React.createElement("tr",{key:r.staff.id+"_detail"}, React.createElement("td",{colSpan:9, style:{background:"var(--paper)",padding:"14px 16px"}}, [
+                React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, `Chi tiết KPI đã chấm — ${r.staff.name}`),
+                React.createElement(KpiGroups, {
+                  key:"g", groups:r.groups, targets:r.targets, actuals:r.actuals,
+                  canEditTarget:false, canEditActual:false,
+                  onTargetChange:()=>{}, onActualChange:()=>{},
+                }),
+              ])));
+            }
             if(isOpen){
               rowEls.push(React.createElement("tr",{key:r.staff.id+"_ctah"}, React.createElement("td",{colSpan:9, style:{background:"var(--paper)",padding:"14px 16px"}}, ctahInlineForm)));
             }
@@ -3860,7 +3884,7 @@ function PerformanceView(){
     const weekSubmitted = weeklyReports.some(r => r.shop===shop && r.tuanNgay===currentMonday);
     const scores = dailyReports.filter(r => r.shop===shop && r.diemChu!=null).map(r => r.diemChu);
     const avgScore = scores.length ? (scores.reduce((a,b)=>a+b,0)/scores.length) : null;
-    return { shop, staffCount:shopStaff.length, todaySubmitted, weekSubmitted, avgScore, hasManager: shopStaff.some(s => s.role==="Nhà thuốc trưởng") };
+    return { shop, staffCount:shopStaff.length, todaySubmitted, weekSubmitted, avgScore, hasManager: shopStaff.some(s => s.role==="Cửa hàng trưởng") };
   });
 
   const noManagerShops = shopStats.filter(s => !s.hasManager && s.staffCount>0);
@@ -3893,7 +3917,7 @@ function PerformanceView(){
   ]);
 
   const table = React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
-    React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Nhà thuốc","Số NV","Nhà thuốc trưởng","Đã nộp hôm nay","Báo cáo tuần này","Điểm TB"].map((h,i)=>React.createElement("th",{key:i},h)))),
+    React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Nhà thuốc","Số NV","Cửa hàng trưởng","Đã nộp hôm nay","Báo cáo tuần này","Điểm TB"].map((h,i)=>React.createElement("th",{key:i},h)))),
     React.createElement("tbody",{key:"b"}, shopStats.map(s => React.createElement("tr",{key:s.shop}, [
       React.createElement("td",{key:"sh"}, s.shop),
       React.createElement("td",{key:"c"}, fmtNum(s.staffCount)),
@@ -5726,7 +5750,7 @@ function TaskReminderBanner({ myStaff, onOpenTasks }){
   function ts(t){ return `${t.deadline}T${t.hanGio || "23:59"}`; }
   function label(t){ return t.hanGio ? `${t.deadline} ${t.hanGio}` : t.deadline; }
 
-  const isShopManager = myStaff.role==="Nhà thuốc trưởng";
+  const isShopManager = myStaff.role==="Cửa hàng trưởng";
   const myPending = tasks.filter(t =>
     (isShopManager ? t.shop===myStaff.shop : (t.assignType==="staff" ? t.staffId===myStaff.id : t.shop===myStaff.shop))
     && t.trangThai==="Đang giao"
