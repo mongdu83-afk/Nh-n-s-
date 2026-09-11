@@ -2875,9 +2875,9 @@ const DEFAULT_KPI_TEMPLATES = {
       { id:"cs_nangHang", label:"Tổng số khách hàng được nâng hạng trong tháng", tyTrong:0.2, diem:200, cachCham:"nguong60_max120", donVi:"khách" },
     ]},
     { key:"hanghoa", label:"Hàng hóa", items:[
-      { id:"hh_thuongtruc", label:"Hàng thường trực (số mã hàng có đủ)", tyTrong:0.1, diem:100, cachCham:"nguong60", donVi:"mã" },
+      { id:"hh_thuongtruc", label:"Hàng thường trực (đăng ký tối thiểu 20% số mã có tại NT)", tyTrong:0.1, diem:100, cachCham:"ty_le_khong_nguong", donVi:"mã" },
       { id:"hh_candate", label:"Hàng cận date (≤6th ≤1,2% · ≤12th ≤8%)", tyTrong:0.1, diem:100, cachCham:"nhi_phan_kep",
-        subKeys:["6th","12th"], subLabels:["Cận date ≤ 6 tháng (mục tiêu ≤ 1,2%)","Cận date ≤ 12 tháng (mục tiêu ≤ 8%)"], donVi:"" },
+        subKeys:["6th","12th"], subLabels:["Cận date ≤ 6 tháng (mục tiêu ≤ 1,2%)","Cận date ≤ 12 tháng (mục tiêu ≤ 8%)"], subThresholds:[1.2,8], donVi:"" },
     ]},
   ],
   "CHT": [
@@ -2892,9 +2892,9 @@ const DEFAULT_KPI_TEMPLATES = {
       { id:"ds_cskh", label:"Chăm sóc khách hàng (nâng hạng)", tyTrong:0.1, diem:100, cachCham:"nguong60_max120", donVi:"khách" },
     ]},
     { key:"hanghoa", label:"Hàng hóa", items:[
-      { id:"hh_thuongtruc", label:"Hàng thường trực (số mã hàng có đủ)", tyTrong:0.1, diem:100, cachCham:"nguong60", donVi:"mã" },
+      { id:"hh_thuongtruc", label:"Hàng thường trực (đăng ký tối thiểu 20% số mã có tại NT)", tyTrong:0.1, diem:100, cachCham:"ty_le_khong_nguong", donVi:"mã" },
       { id:"hh_candate", label:"Hàng cận date (≤6th ≤1,2% · ≤12th ≤8%)", tyTrong:0.1, diem:100, cachCham:"nhi_phan_kep",
-        subKeys:["6th","12th"], subLabels:["Cận date ≤ 6 tháng (mục tiêu ≤ 1,2%)","Cận date ≤ 12 tháng (mục tiêu ≤ 8%)"], donVi:"" },
+        subKeys:["6th","12th"], subLabels:["Cận date ≤ 6 tháng (mục tiêu ≤ 1,2%)","Cận date ≤ 12 tháng (mục tiêu ≤ 8%)"], subThresholds:[1.2,8], donVi:"" },
     ]},
   ],
   "QLKV": [
@@ -2922,9 +2922,9 @@ const DEFAULT_KPI_TEMPLATES = {
 function kpiRoleKey(staffRole){ return staffRole==="Nhà thuốc trưởng" ? "CHT" : "NVBH"; }
 function kpiAssignmentId(staffId, thang){ return staffId + "_" + thang; }
 // Vá lại đúng 2 mục "Hàng thường trực" / "Hàng cận date" trong nhóm "hanghoa" nếu bộ KPI đang tải
-// (từ Firestore) vẫn là bản CŨ (thiếu subKeys cho hàng cận date, hoặc đơn vị hàng thường trực
-// chưa phải "mã") — lấy đúng định nghĩa mới nhất từ DEFAULT_KPI_TEMPLATES cho riêng 2 mục này,
-// KHÔNG đụng tới bất kỳ tỷ trọng/mục nào khác admin đã tự chỉnh trước đó.
+// (từ Firestore) chưa khớp đúng bảng tiêu chí đánh giá gốc (Đăng ký chỉ tiêu KPIs) — lấy đúng
+// định nghĩa mới nhất từ DEFAULT_KPI_TEMPLATES cho riêng 2 mục này, KHÔNG đụng tới bất kỳ tỷ
+// trọng/mục nào khác admin đã tự chỉnh trước đó.
 function migrateHangHoaItems(loaded){
   let changed = false;
   const fixed = {};
@@ -2939,9 +2939,7 @@ function migrateHangHoaItems(loaded){
       const nextItems = g.items.map(it => {
         const defaultIt = defaultHangHoa.items.find(di => di.id===it.id);
         if(!defaultIt) return it;
-        const needsFix =
-          (it.id==="hh_thuongtruc" && it.donVi!==defaultIt.donVi) ||
-          (it.id==="hh_candate" && (!it.subKeys || it.cachCham!==defaultIt.cachCham));
+        const needsFix = it.cachCham !== defaultIt.cachCham || (it.id==="hh_candate" && !it.subThresholds);
         if(!needsFix) return it;
         changed = true;
         return { ...defaultIt, tyTrong: it.tyTrong, diem: it.diem }; // giữ nguyên tỷ trọng/điểm admin đã đặt, chỉ vá cấu trúc chấm điểm
@@ -2959,16 +2957,28 @@ function kpiCalcItemScore(item, target, actual){
     return actual==="Đạt" ? diem : 0;
   }
   if(item.cachCham==="nhi_phan_kep"){
-    // "actual" ở đây là MẢNG kết quả của từng tiêu chí con (vd ["Đạt","Không đạt"]) — phải
-    // ĐỒNG THỜI đạt hết tất cả các tiêu chí con mới được tính điểm; thiếu 1 cũng là 0 điểm.
+    // "actual" ở đây là MẢNG % thực tế đạt được của từng tiêu chí con (vd [0.9, 6.5]) — hệ thống
+    // tự so với ngưỡng cho phép (item.subThresholds, vd [1.2, 8]) để tự suy ra Đạt/Không đạt,
+    // KHÔNG cần người chấm tự chọn Đạt/Không đạt tay nữa. Phải ĐỒNG THỜI đạt hết tất cả tiêu chí
+    // con (% thực tế ≤ ngưỡng) mới được tính điểm; thiếu 1 cũng là 0 điểm.
     const vals = Array.isArray(actual) ? actual : [];
-    const allAnswered = vals.length>0 && vals.every(v => v==="Đạt" || v==="Không đạt");
-    if(!allAnswered) return null; // chưa nhập đủ hết các tiêu chí con
-    return vals.every(v => v==="Đạt") ? diem : 0;
+    const thresholds = item.subThresholds || [];
+    const allAnswered = vals.length>0 && vals.length===thresholds.length && vals.every(v => v!=null && v!=="" && !isNaN(Number(v)));
+    if(!allAnswered) return null; // chưa nhập đủ hết % của các tiêu chí con
+    const allPass = vals.every((v,i) => Number(v) <= thresholds[i]);
+    return allPass ? diem : 0;
   }
   if(item.cachCham==="ty_le_truc_tiep"){
     const pct = Number(actual)||0;
     return Math.max(0, Math.min(1, pct/100)) * diem;
+  }
+  if(item.cachCham==="ty_le_khong_nguong"){
+    // Tỷ lệ thực đạt (thực tế / mục tiêu) × điểm định mức — KHÔNG có ngưỡng tối thiểu 60% như
+    // "nguong60", và KHÔNG giới hạn trần — đúng theo Ghi chú "Tỷ lệ thực đạt x điểm KPI định mức"
+    // trong bảng tiêu chí đánh giá gốc (không nhắc gì tới ngưỡng 60% hay giới hạn trên).
+    const t = Number(target)||0, a = Number(actual);
+    if(!t || actual===""||actual==null||isNaN(a)) return null;
+    return (a/t) * diem;
   }
   // nguong60 / nguong60_max120
   const t = Number(target)||0, a = Number(actual);
@@ -3074,14 +3084,18 @@ function KpiItemRow({ item, target, actual, canEditTarget, canEditActual, onTarg
   ]);
 }
 
-// Dòng chỉ tiêu dạng "kép" — tách thành nhiều dòng con nhỏ (vd ≤6 tháng / ≤12 tháng), mỗi dòng
-// con tự chọn Đạt/Không đạt riêng, nhưng CHỈ tính điểm cho cả dòng lớn khi TẤT CẢ dòng con đều
-// đạt — đúng yêu cầu "đảm bảo đồng thời mới đạt".
+// Dòng chỉ tiêu dạng "kép" — tách thành nhiều dòng con nhỏ (vd ≤6 tháng / ≤12 tháng). Người chấm
+// chỉ cần điền % THỰC TẾ đạt được của từng dòng con; hệ thống tự so với ngưỡng cho phép
+// (item.subThresholds) để tự suy ra Đạt/Không đạt — không cần tự chọn tay. CHỈ tính điểm cho cả
+// dòng lớn khi TẤT CẢ dòng con đều đạt (% thực tế ≤ ngưỡng) — đúng yêu cầu "đồng thời mới đạt".
 function KpiDoubleBinaryRow({ item, actuals, canEditActual, onActualChange }){
   const vals = item.subKeys.map(k => actuals[item.id+"__"+k]);
   const score = kpiCalcItemScore(item, null, vals);
-  const allAnswered = vals.every(v => v==="Đạt" || v==="Không đạt");
-  const allPass = allAnswered && vals.every(v => v==="Đạt");
+  const thresholds = item.subThresholds || [];
+  const answeredFlags = vals.map(v => v!=null && v!=="" && !isNaN(Number(v)));
+  const allAnswered = answeredFlags.length>0 && answeredFlags.every(Boolean);
+  const passFlags = vals.map((v,i) => answeredFlags[i] ? Number(v) <= thresholds[i] : null);
+  const allPass = allAnswered && passFlags.every(Boolean);
   return React.createElement("div", { style:{ padding:"9px 0", borderBottom:"1px solid #F0EEE2" } }, [
     React.createElement("div", { key:"l", style:{ fontSize:13, marginBottom:6 } }, [
       item.label,
@@ -3089,12 +3103,16 @@ function KpiDoubleBinaryRow({ item, actuals, canEditActual, onActualChange }){
     ]),
     ...item.subKeys.map((k,i) => React.createElement("div", { key:k, style:{ display:"flex", flexWrap:"wrap", alignItems:"center", gap:10, padding:"5px 0", paddingLeft:16 } }, [
       React.createElement("div", { key:"sl", style:{ flex:"1 1 260px", fontSize:12.5, color:"var(--inkSoft)" } }, `— ${item.subLabels[i]}`),
-      React.createElement("div", { key:"tt", style:{ width:150 } },
+      React.createElement("div", { key:"tt", style:{ width:130, display:"flex", alignItems:"center", gap:6 } },
         canEditActual
-          ? React.createElement("select", { value:vals[i]||"", onChange:e=>onActualChange(item.id+"__"+k, e.target.value), style:{ width:"100%", padding:"6px 8px", border:"1px solid var(--line)", borderRadius:6, fontSize:12.5 } },
-              ["", "Đạt", "Không đạt"].map(o=>React.createElement("option",{key:o,value:o}, o||"— chọn —")))
-          : React.createElement("div", { style:{ fontSize:13, fontWeight:600 } }, vals[i] || "—")
+          ? React.createElement("div", { style:{ position:"relative", width:"100%" } }, [
+              React.createElement("input", { key:"i", type:"number", step:0.1, min:0, defaultValue: vals[i]!=null && vals[i]!=="" ? vals[i] : "", placeholder:"VD: 0.9",
+                onBlur:e=>onActualChange(item.id+"__"+k, e.target.value), style:{ width:"100%", padding:"6px 26px 6px 8px", border:"1px solid var(--line)", borderRadius:6, fontSize:12.5 } }),
+              React.createElement("span", { key:"pc", style:{ position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", fontSize:12, color:"var(--inkSoft)", pointerEvents:"none" } }, "%"),
+            ])
+          : React.createElement("div", { style:{ fontSize:13, fontWeight:600 } }, vals[i]!=null && vals[i]!=="" ? `${vals[i]}%` : "—")
       ),
+      answeredFlags[i] && StatusPill(passFlags[i] ? "Đạt" : "Không đạt", passFlags[i] ? "good" : "warn"),
     ])),
     React.createElement("div", { key:"res", style:{ display:"flex", flexWrap:"wrap", gap:20, marginTop:4, paddingLeft:16 } }, [
       React.createElement("div", { key:"a", style:{ fontSize:12 } }, [ React.createElement("b",null,"Kết quả chung: "), allAnswered ? (allPass ? "Đạt cả 2 tiêu chí" : "Chưa đạt (thiếu ít nhất 1 tiêu chí)") : "—" ]),
