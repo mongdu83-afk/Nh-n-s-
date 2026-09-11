@@ -833,33 +833,42 @@ function PhotoUploadField({ label, photos, uploading, onUpload, onRemove, requir
   ]);
 }
 
-// Đọc 1 trường trong bản ghi ca làm việc theo NHIỀU tên trường khả dĩ khác nhau — vì chưa xác
-// nhận được chính xác Cloud Function syncWorkRegistrationsDaily đặt tên trường là gì.
-function readWorkRegField(rec, candidates){
-  for(const key of candidates){
-    if(rec && rec[key]!=null && rec[key]!=="") return rec[key];
-  }
-  return null;
+// Bỏ dấu tiếng Việt + viết thường + gọn khoảng trắng — dùng để khớp tên nhân viên giữa app và
+// hệ thống upharma.com.vn, giống HỆT logic normalizeName() phía Cloud Function
+// (runDailyChecklistReminder trong functions/index.js) để đảm bảo khớp nhất quán 2 bên.
+function normalizeStaffName(s){
+  return (s || "")
+    .toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d").replace(/Đ/g, "d")
+    .replace(/\s+/g, " ")
+    .trim();
 }
-// Tìm (các) bản ghi ca làm việc của 1 nhân viên trong 1 ngày cụ thể, dò khớp theo id, tên hoặc
-// mã nhân viên (tuỳ bản ghi thật có trường nào). Trả về mảng rỗng nếu không có ca nào hôm đó.
+// Tìm các bản ghi ca làm việc (collection "externalShiftWork", đồng bộ mỗi ngày 23:45 từ hệ
+// thống upharma.com.vn qua Cloud Function syncWorkRegistrationsDaily) của 1 nhân viên trong 1
+// ngày cụ thể. Khớp theo tên đã chuẩn hoá (EmployeeName) — hệ thống ngoài chưa có mã liên kết
+// trực tiếp với staffId trong app, nên khớp theo tên là đúng theo thiết kế hiện tại (xem cùng
+// cách runDailyChecklistReminder phía Cloud Function đang làm).
 function findWorkRegsForStaffDate(workRegs, staffMember, dateISO){
   if(!staffMember) return [];
+  const key = normalizeStaffName(staffMember.name);
+  if(!key) return [];
   return workRegs.filter(r => {
-    const recDate = readWorkRegField(r, ["ngay","date","ngayLam","workDate"]);
-    if(!recDate) return false;
-    const recDateStr = String(recDate).slice(0,10);
-    if(recDateStr !== dateISO) return false;
-    const recStaffId = readWorkRegField(r, ["staffId","nhanVienId","maNV","employeeId"]);
-    if(recStaffId && String(recStaffId)===String(staffMember.id)) return true;
-    const recStaffName = readWorkRegField(r, ["staffName","tenNhanVien","name","hoTen"]);
-    if(recStaffName && String(recStaffName).trim().toLowerCase()===String(staffMember.name).trim().toLowerCase()) return true;
-    return false;
+    const workDate = String(r.WorkDate || "").slice(0,10);
+    if(workDate !== dateISO) return false;
+    return normalizeStaffName(r.EmployeeName) === key;
   });
+}
+// Định dạng khung giờ ca từ TimeStart/TimeEnd (dạng "YYYY-MM-DD HH:mm:ss") thành "07:00–15:00".
+function formatShiftTimeRange(rec){
+  const start = String(rec.TimeStart || "").slice(11,16);
+  const end = String(rec.TimeEnd || "").slice(11,16);
+  if(start && end) return `${start}–${end}`;
+  return start || end || "";
 }
 function summarizeShiftLabel(regsForDay){
   if(!regsForDay.length) return null;
-  const labels = regsForDay.map(r => readWorkRegField(r, ["ca","caLam","shift","loaiCa","tenCa","gioLam"])).filter(Boolean);
+  const labels = regsForDay.map(formatShiftTimeRange).filter(Boolean);
   return labels.length ? labels.join(", ") : "Có ca (chưa rõ khung giờ)";
 }
 
@@ -889,16 +898,12 @@ function DailyChecklistView({ isAdmin, myStaff }){
     const u1 = subscribeCol("staff", setStaff);
     const u2 = subscribeConfigDoc("dailyChecklist", d => setTemplates(d && d.byRole ? d.byRole : DEFAULT_DAILY_CHECKLISTS));
     const u3 = subscribeCol("dailyReports", rows => { const map = {}; rows.forEach(r => map[r.id] = r); setReports(map); });
-    // Đọc dữ liệu ca làm việc đã đồng bộ từ hệ thống upharma.com.vn (Cloud Function
-    // syncWorkRegistrationsDaily/Now) — GHI CHÚ QUAN TRỌNG: tên collection "workRegistrations"
-    // và tên các trường bên dưới (readWorkRegField) là suy đoán hợp lý theo đúng quy ước đặt tên
-    // các collection đồng bộ khác trong hệ thống này (vd: "inventoryDaily", "salesOrders"...),
-    // CHƯA được xác nhận 100% đúng với Cloud Function thật. Nếu cột "Ca hôm nay" bên dưới luôn
-    // hiện "—" dù nhân viên chắc chắn có đăng ký ca, hãy mở tab Firestore trên Firebase Console,
-    // tìm đúng tên collection ca làm việc, rồi báo lại tên collection + tên trường thật để sửa
-    // đúng 2 chỗ: tên collection trong dòng subscribeCol bên dưới, và các mảng field name trong
-    // hàm readWorkRegField ngay sau component này.
-    const u4 = subscribeCol("workRegistrations", setWorkRegs);
+    // Đọc dữ liệu ca làm việc đã đồng bộ từ hệ thống upharma.com.vn qua Cloud Function
+    // syncWorkRegistrationsDaily/Now — đã XÁC NHẬN đúng tên collection thật từ code
+    // functions/index.js: "externalShiftWork" (mỗi bản ghi có WorkDate, EmployeeName,
+    // TimeStart, TimeEnd — khớp đúng với logic runDailyChecklistReminder cũng đang dùng
+    // để tự động gửi thông báo nhắc checklist lúc 14h/21h30 mỗi ngày).
+    const u4 = subscribeCol("externalShiftWork", setWorkRegs);
     return ()=>{ u1(); u2(); u3(); u4(); };
   }, []);
 
@@ -1176,16 +1181,17 @@ function DailyChecklistView({ isAdmin, myStaff }){
   ]);
 
   // Banner nhắc trong app khi mở tab — chỉ hiện khi có dữ liệu ca làm việc thật và có người
-  // đang có ca hôm nay nhưng chưa nộp checklist. (Đây là nhắc trong app khi quản lý mở tab —
-  // để gửi được PUSH THÔNG BÁO tự động ra ngoài app cho từng nhân viên cần thêm 1 Cloud Function
-  // lịch chạy riêng, phần đó cần triển khai ở phía backend, ngoài phạm vi sửa trong file này.)
+  // đang có ca hôm nay nhưng chưa nộp checklist. Lưu ý: thông báo đẩy (push notification) tự
+  // động ra điện thoại từng nhân viên ĐÃ CÓ SẴN ở phía Cloud Function rồi (remindDailyChecklist2PM
+  // lúc 14h cho ca sáng, remindDailyChecklist930PM lúc 21h30 cho ca tối) — banner này chỉ là lớp
+  // hiển thị bổ sung ngay trong app cho quản lý, không thay thế cơ chế push đã có.
   const shiftReminderBanner = (isAdmin || isShopManager) && hasWorkRegData && needsAttentionRows.length > 0 && adminDate === today &&
     React.createElement("div", { key:"shiftReminder", style:{ background:"var(--claySoft)", border:"1px solid #f0c7c3", borderRadius:10, padding:"10px 14px", marginBottom:14, fontSize:12.5, color:"var(--clay)", fontWeight:600 } },
       `${needsAttentionRows.length} nhân viên có ca hôm nay nhưng chưa nộp checklist: ${needsAttentionRows.map(x=>x.staff.name).join(", ")}`);
 
   const noWorkRegNotice = (isAdmin || isShopManager) && !hasWorkRegData &&
     React.createElement("div", { key:"noWorkReg", style:{ background:"var(--goldSoft)", borderRadius:10, padding:"9px 14px", marginBottom:14, fontSize:12, color:"#7a5108" } },
-      "Chưa đọc được dữ liệu ca làm việc đã đồng bộ (collection \"workRegistrations\") — cột \"Ca hôm nay\" sẽ hiện \"—\" cho tới khi xác nhận đúng tên collection/trường dữ liệu thật.");
+      "Chưa có dữ liệu ca làm việc trong collection \"externalShiftWork\" cho ngày này — cột \"Ca hôm nay\" sẽ hiện \"—\" cho tới khi có dữ liệu đồng bộ.");
 
   const adminFilterRow = React.createElement("div", { className:"btnRow", style:{ marginBottom:14 } }, [
     isAdmin && React.createElement("select", { key:"shop", value:adminShop, onChange:e=>setAdminShop(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } },
