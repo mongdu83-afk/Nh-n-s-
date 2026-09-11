@@ -833,10 +833,41 @@ function PhotoUploadField({ label, photos, uploading, onUpload, onRemove, requir
   ]);
 }
 
+// Đọc 1 trường trong bản ghi ca làm việc theo NHIỀU tên trường khả dĩ khác nhau — vì chưa xác
+// nhận được chính xác Cloud Function syncWorkRegistrationsDaily đặt tên trường là gì.
+function readWorkRegField(rec, candidates){
+  for(const key of candidates){
+    if(rec && rec[key]!=null && rec[key]!=="") return rec[key];
+  }
+  return null;
+}
+// Tìm (các) bản ghi ca làm việc của 1 nhân viên trong 1 ngày cụ thể, dò khớp theo id, tên hoặc
+// mã nhân viên (tuỳ bản ghi thật có trường nào). Trả về mảng rỗng nếu không có ca nào hôm đó.
+function findWorkRegsForStaffDate(workRegs, staffMember, dateISO){
+  if(!staffMember) return [];
+  return workRegs.filter(r => {
+    const recDate = readWorkRegField(r, ["ngay","date","ngayLam","workDate"]);
+    if(!recDate) return false;
+    const recDateStr = String(recDate).slice(0,10);
+    if(recDateStr !== dateISO) return false;
+    const recStaffId = readWorkRegField(r, ["staffId","nhanVienId","maNV","employeeId"]);
+    if(recStaffId && String(recStaffId)===String(staffMember.id)) return true;
+    const recStaffName = readWorkRegField(r, ["staffName","tenNhanVien","name","hoTen"]);
+    if(recStaffName && String(recStaffName).trim().toLowerCase()===String(staffMember.name).trim().toLowerCase()) return true;
+    return false;
+  });
+}
+function summarizeShiftLabel(regsForDay){
+  if(!regsForDay.length) return null;
+  const labels = regsForDay.map(r => readWorkRegField(r, ["ca","caLam","shift","loaiCa","tenCa","gioLam"])).filter(Boolean);
+  return labels.length ? labels.join(", ") : "Có ca (chưa rõ khung giờ)";
+}
+
 function DailyChecklistView({ isAdmin, myStaff }){
   const [staff, setStaff] = useState([]);
   const [templates, setTemplates] = useState(DEFAULT_DAILY_CHECKLISTS);
   const [reports, setReports] = useState({});
+  const [workRegs, setWorkRegs] = useState([]);
   const [selfId] = useState(myStaff ? myStaff.id : "");
   const [note, setNote] = useState("");
   const [showTplEditor, setShowTplEditor] = useState(false);
@@ -858,7 +889,17 @@ function DailyChecklistView({ isAdmin, myStaff }){
     const u1 = subscribeCol("staff", setStaff);
     const u2 = subscribeConfigDoc("dailyChecklist", d => setTemplates(d && d.byRole ? d.byRole : DEFAULT_DAILY_CHECKLISTS));
     const u3 = subscribeCol("dailyReports", rows => { const map = {}; rows.forEach(r => map[r.id] = r); setReports(map); });
-    return ()=>{ u1(); u2(); u3(); };
+    // Đọc dữ liệu ca làm việc đã đồng bộ từ hệ thống upharma.com.vn (Cloud Function
+    // syncWorkRegistrationsDaily/Now) — GHI CHÚ QUAN TRỌNG: tên collection "workRegistrations"
+    // và tên các trường bên dưới (readWorkRegField) là suy đoán hợp lý theo đúng quy ước đặt tên
+    // các collection đồng bộ khác trong hệ thống này (vd: "inventoryDaily", "salesOrders"...),
+    // CHƯA được xác nhận 100% đúng với Cloud Function thật. Nếu cột "Ca hôm nay" bên dưới luôn
+    // hiện "—" dù nhân viên chắc chắn có đăng ký ca, hãy mở tab Firestore trên Firebase Console,
+    // tìm đúng tên collection ca làm việc, rồi báo lại tên collection + tên trường thật để sửa
+    // đúng 2 chỗ: tên collection trong dòng subscribeCol bên dưới, và các mảng field name trong
+    // hàm readWorkRegField ngay sau component này.
+    const u4 = subscribeCol("workRegistrations", setWorkRegs);
+    return ()=>{ u1(); u2(); u3(); u4(); };
   }, []);
 
   const today = todayISO();
@@ -1111,17 +1152,40 @@ function DailyChecklistView({ isAdmin, myStaff }){
     const done = r ? Object.keys(r.doneIds || {}).filter(k => r.doneIds[k]).length : 0;
     const p = total ? Math.round(done/total*100) : 0;
     const status = !r ? { text:"Chưa làm gì", tone:"warn" } : (r.trangThai==="Đã nộp" ? { text:"Đã nộp", tone:"good" } : { text:"Đang làm dở", tone:"neutral" });
-    return { staff:s, r, p, done, total, status };
+    const shiftRegsToday = findWorkRegsForStaffDate(workRegs, s, adminDate);
+    const shiftLabel = summarizeShiftLabel(shiftRegsToday);
+    const hasShiftToday = shiftRegsToday.length > 0;
+    // "Cần theo dõi": có đăng ký ca hôm nay nhưng vẫn chưa nộp/chưa làm gì checklist —
+    // đây là điểm mấu chốt giúp nhìn nhanh ai có đi làm mà quên/bỏ checklist.
+    const needsAttention = hasShiftToday && status.text !== "Đã nộp";
+    return { staff:s, r, p, done, total, status, hasShiftToday, shiftLabel, needsAttention };
   });
   const submittedCount = adminRows.filter(x => x.r && x.r.trangThai==="Đã nộp").length;
   const avgPctAdmin = adminRows.length ? Math.round(adminRows.reduce((s,x)=>s+x.p,0)/adminRows.length) : 0;
+  const hasWorkRegData = workRegs.length > 0;
+  const scheduledTodayCount = adminRows.filter(x => x.hasShiftToday).length;
+  const needsAttentionRows = adminRows.filter(x => x.needsAttention);
 
   const adminMetrics = React.createElement("div", { className:"metrics" }, [
     React.createElement("div", { key:"1", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"NV cần báo cáo"), React.createElement("div",{key:"v",className:"value"}, fmtNum(adminRows.length)) ]),
     React.createElement("div", { key:"2", className:"metric good" }, [ React.createElement("div",{key:"l",className:"label"},"Đã nộp"), React.createElement("div",{key:"v",className:"value"}, fmtNum(submittedCount)) ]),
     React.createElement("div", { key:"3", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Chưa nộp"), React.createElement("div",{key:"v",className:"value"}, fmtNum(adminRows.length-submittedCount)) ]),
     React.createElement("div", { key:"4", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"% hoàn thành TB"), React.createElement("div",{key:"v",className:"value"}, avgPctAdmin+"%") ]),
+    React.createElement("div", { key:"5", className:"metric" }, [ React.createElement("div",{key:"l",className:"label"},"Có ca hôm nay"), React.createElement("div",{key:"v",className:"value"}, hasWorkRegData ? fmtNum(scheduledTodayCount) : "—") ]),
+    React.createElement("div", { key:"6", className:"metric warn" }, [ React.createElement("div",{key:"l",className:"label"},"Có ca nhưng chưa nộp"), React.createElement("div",{key:"v",className:"value"}, hasWorkRegData ? fmtNum(needsAttentionRows.length) : "—") ]),
   ]);
+
+  // Banner nhắc trong app khi mở tab — chỉ hiện khi có dữ liệu ca làm việc thật và có người
+  // đang có ca hôm nay nhưng chưa nộp checklist. (Đây là nhắc trong app khi quản lý mở tab —
+  // để gửi được PUSH THÔNG BÁO tự động ra ngoài app cho từng nhân viên cần thêm 1 Cloud Function
+  // lịch chạy riêng, phần đó cần triển khai ở phía backend, ngoài phạm vi sửa trong file này.)
+  const shiftReminderBanner = (isAdmin || isShopManager) && hasWorkRegData && needsAttentionRows.length > 0 && adminDate === today &&
+    React.createElement("div", { key:"shiftReminder", style:{ background:"var(--claySoft)", border:"1px solid #f0c7c3", borderRadius:10, padding:"10px 14px", marginBottom:14, fontSize:12.5, color:"var(--clay)", fontWeight:600 } },
+      `${needsAttentionRows.length} nhân viên có ca hôm nay nhưng chưa nộp checklist: ${needsAttentionRows.map(x=>x.staff.name).join(", ")}`);
+
+  const noWorkRegNotice = (isAdmin || isShopManager) && !hasWorkRegData &&
+    React.createElement("div", { key:"noWorkReg", style:{ background:"var(--goldSoft)", borderRadius:10, padding:"9px 14px", marginBottom:14, fontSize:12, color:"#7a5108" } },
+      "Chưa đọc được dữ liệu ca làm việc đã đồng bộ (collection \"workRegistrations\") — cột \"Ca hôm nay\" sẽ hiện \"—\" cho tới khi xác nhận đúng tên collection/trường dữ liệu thật.");
 
   const adminFilterRow = React.createElement("div", { className:"btnRow", style:{ marginBottom:14 } }, [
     isAdmin && React.createElement("select", { key:"shop", value:adminShop, onChange:e=>setAdminShop(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } },
@@ -1132,11 +1196,12 @@ function DailyChecklistView({ isAdmin, myStaff }){
   const adminTable = adminRows.length===0
     ? React.createElement("div",{className:"emptyState"}, "Chưa có nhân viên nào trong bộ lọc này.")
     : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
-        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Nhân viên","Nhà thuốc","Vai trò","Hoàn thành","Trạng thái","Điểm chủ chấm",""].map((h,i)=>React.createElement("th",{key:i},h)))),
-        React.createElement("tbody",{key:"b"}, adminRows.map(x => React.createElement("tr",{key:x.staff.id}, [
+        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Nhân viên","Nhà thuốc","Vai trò","Ca hôm nay","Hoàn thành","Trạng thái","Điểm chủ chấm",""].map((h,i)=>React.createElement("th",{key:i},h)))),
+        React.createElement("tbody",{key:"b"}, adminRows.map(x => React.createElement("tr",{key:x.staff.id, style: x.needsAttention ? { background:"var(--claySoft)" } : null}, [
           React.createElement("td",{key:"n"}, x.staff.name),
           React.createElement("td",{key:"sh"}, x.staff.shop),
           React.createElement("td",{key:"r"}, x.staff.role),
+          React.createElement("td",{key:"shift"}, x.hasShiftToday ? x.shiftLabel : (hasWorkRegData ? StatusPill("Không có ca","neutral") : "—")),
           React.createElement("td",{key:"p"}, `${x.done}/${x.total} · ${x.p}%`),
           React.createElement("td",{key:"st"}, StatusPill(x.status.text, x.status.tone)),
           React.createElement("td",{key:"d"}, (x.r && x.r.diemChu!=null) ? "★".repeat(x.r.diemChu) : "—"),
@@ -1155,7 +1220,7 @@ function DailyChecklistView({ isAdmin, myStaff }){
         adminOpen ? "▲ Ẩn checklist nhân viên" : (isAdmin ? "▾ Xem báo cáo tất cả nhà thuốc" : `▾ Xem checklist nhân viên — ${myStaff.shop}`)),
       isAdmin && React.createElement("button", { key:"tpl", type:"button", className:"btn", onClick:()=>setShowTplEditor(true) }, "Chỉnh checklist theo vai trò"),
     ]),
-    adminOpen && React.createElement(React.Fragment, null, [ adminMetrics, adminFilterRow, adminTable ]),
+    adminOpen && React.createElement(React.Fragment, null, [ adminMetrics, shiftReminderBanner, noWorkRegNotice, adminFilterRow, adminTable ]),
   ]);
 
   return React.createElement(React.Fragment, null, [
