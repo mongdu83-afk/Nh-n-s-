@@ -1426,11 +1426,37 @@ function ImageReportView({ isAdmin, myStaff }){
   const [adminShop, setAdminShop] = useState("Tất cả");
   const [adminDate, setAdminDate] = useState(todayISO());
   const [viewReportId, setViewReportId] = useState(null);
+  const [aiCriteria, setAiCriteria] = useState("");
+  const [aiCriteriaLoaded, setAiCriteriaLoaded] = useState(false);
+  const [savingCriteria, setSavingCriteria] = useState(false);
+  const [criteriaOpen, setCriteriaOpen] = useState(false);
 
   useEffect(()=>{
     const u2 = subscribeCol("imageReports", rows => { const map = {}; rows.forEach(r => map[r.id] = r); setReportsMap(map); });
     return ()=>{ u2(); };
   }, []);
+
+  // Tiêu chí đánh giá AI — lưu tại opsConfig/aiImageCriteria, chỉ quản lý mới sửa được.
+  // Cloud Function analyzeImagePhotosWithAI đọc đúng field "criteria" này cho mỗi lần chạy sau.
+  useEffect(()=>{
+    if(!isAdmin) return;
+    db.collection("opsConfig").doc("aiImageCriteria").get().then(snap => {
+      setAiCriteria(snap.exists ? (snap.data().criteria || "") : "");
+      setAiCriteriaLoaded(true);
+    }).catch(err => { console.error("Không tải được tiêu chí AI:", err); setAiCriteriaLoaded(true); });
+  }, [isAdmin]);
+
+  async function saveAiCriteria(){
+    setSavingCriteria(true);
+    try{
+      await db.collection("opsConfig").doc("aiImageCriteria").set({ criteria: aiCriteria.trim(), updatedAtTs: firebase.firestore.FieldValue.serverTimestamp() }, { merge:true });
+      window.alert("Đã lưu tiêu chí — áp dụng cho các ảnh nộp/cập nhật từ giờ trở đi.");
+    } catch(err){
+      console.error("Lưu tiêu chí AI lỗi:", err);
+      window.alert("Lưu thất bại, thử lại.");
+    }
+    setSavingCriteria(false);
+  }
 
   const today = todayISO();
   const thisId = selfShop ? imageReportId(selfShop, today) : null;
@@ -1552,7 +1578,23 @@ function ImageReportView({ isAdmin, myStaff }){
     report: viewingReport, onSave: saveImageReview, onClose: ()=>setViewReportId(null),
   });
 
+  const criteriaCard = isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10, marginBottom: criteriaOpen ? 10 : 0 } }, [
+      React.createElement("div", { key:"t", className:"cardTitle", style:{ marginBottom:0 } }, "🤖 Tiêu chí đánh giá AI (ảnh checklist/CTKM)"),
+      React.createElement("button", { key:"b", type:"button", className:"btn btnGhost", style:{ padding:"6px 12px", fontSize:12 }, onClick:()=>setCriteriaOpen(!criteriaOpen) }, criteriaOpen ? "Thu gọn" : "Chỉnh sửa"),
+    ]),
+    criteriaOpen && React.createElement(React.Fragment, null, [
+      React.createElement("p", { key:"hint", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:8 } },
+        "Mô tả \"đạt yêu cầu\" nghĩa là gì — AI sẽ dựa đúng vào mô tả này để chấm mọi ảnh nộp sau khi lưu. Để trống sẽ dùng tiêu chí mặc định."),
+      React.createElement("textarea", { key:"ta", rows:4, value:aiCriteria, onChange:e=>setAiCriteria(e.target.value),
+        placeholder:"VD: quầy/kệ gọn gàng ngay hàng thẳng lối, có đầy đủ bảng giá/tem giá rõ ràng, không để hàng hoá dưới sàn hoặc lối đi, khu vực CTKM đúng vị trí quy định và nổi bật, không có rác/đồ đạc cá nhân lẫn vào khu trưng bày...",
+        style:{ marginBottom:10 } }),
+      React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", disabled:savingCriteria||!aiCriteriaLoaded, onClick:saveAiCriteria }, savingCriteria ? "Đang lưu..." : "Lưu tiêu chí"),
+    ]),
+  ]);
+
   const adminSection = isAdmin && React.createElement("div", { key:"admin", style:{ marginTop:26 } }, [
+    criteriaCard,
     React.createElement("button", { key:"tgl", type:"button", className:"btn btnGhost", style:{ marginBottom:14 }, onClick:()=>setAdminOpen(!adminOpen) }, adminOpen ? "Ẩn báo cáo tất cả nhà thuốc" : "Xem báo cáo tất cả nhà thuốc"),
     adminOpen && React.createElement(React.Fragment, null, [ adminMetrics, adminFilterRow, adminTable ]),
   ]);
