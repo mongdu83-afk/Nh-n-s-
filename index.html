@@ -2658,9 +2658,11 @@ function TaskAssignView({ isAdmin, myStaff }){
         const targets = staffList.filter(s => form.staffIds.includes(s.id));
         await Promise.all(targets.map(s => addDoc("tasks", { ...base, assignType:"staff", staffId:s.id, staffName:s.name, shop:s.shop })));
       } else {
+        // Giao chung cho CẢ NHÀ THUỐC: tạo ĐÚNG 1 việc cho mỗi nhà thuốc (không tạo riêng cho
+        // từng nhân viên) — bất kỳ ai ở nhà thuốc đó bấm hoàn thành là xong cho cả nhà thuốc,
+        // không cần từng người phải tự bấm hoàn thành riêng lẻ.
         const shops = form.scope==="all" ? DEFAULT_SHOPS : [form.shop];
-        const targets = staffList.filter(s => shops.includes(s.shop));
-        await Promise.all(targets.map(s => addDoc("tasks", { ...base, assignType:"staff", staffId:s.id, staffName:s.name, shop:s.shop })));
+        await Promise.all(shops.map(shop => addDoc("tasks", { ...base, assignType:"shop", staffId:null, staffName:"", shop })));
       }
     } else if(isCHT){
       const mode = form.recipientMode || "team";
@@ -2738,6 +2740,8 @@ function TaskAssignView({ isAdmin, myStaff }){
               React.createElement("div", { key:"n", style:{ fontWeight:700, fontSize:14.5 } }, t.title),
               t.assignType==="staff" && React.createElement("div", { key:"p", style:{ fontSize:11, color:"var(--inkSoft)", marginTop:2 } },
                 isOwnTask ? "Giao riêng cho bạn" : `Giao riêng cho: ${t.staffName}`),
+              t.assignType==="shop" && React.createElement("div", { key:"p", style:{ fontSize:11, color:"var(--inkSoft)", marginTop:2 } },
+                "Việc chung cho cả nhà thuốc — ai làm trước cũng tính là hoàn thành"),
               t.nguoiGiaoViec && t.nguoiGiaoViecRole!=="Quản lý khu vực" && React.createElement("div", { key:"g", style:{ fontSize:11, color:"var(--inkSoft)", marginTop:2 } },
                 `Giao bởi: ${t.nguoiGiaoViec} (${t.nguoiGiaoViecRole})`),
             ]),
@@ -2849,7 +2853,7 @@ function TaskAssignView({ isAdmin, myStaff }){
         React.createElement("tbody",{key:"b"}, filteredTasks.map(t => {
           const overdue = isOverdue(t);
           const status = t.trangThai==="Đã hoàn thành" ? { text:"Đã hoàn thành", tone:"good" } : (overdue ? { text:"Quá hạn", tone:"warn" } : { text:"Đang giao", tone:"neutral" });
-          const target = t.assignType==="staff" ? `${t.staffName} (${t.shop})` : (t.assignType==="admin" ? `Quản lý khu vực (từ ${t.shop})` : t.shop);
+          const target = t.assignType==="staff" ? `${t.staffName} (${t.shop})` : (t.assignType==="admin" ? `Quản lý khu vực (từ ${t.shop})` : `Cả nhà thuốc ${t.shop}`);
           return React.createElement("tr",{key:t.id}, [
             React.createElement("td",{key:"n"}, t.title),
             React.createElement("td",{key:"sh"}, target),
@@ -2870,7 +2874,7 @@ function TaskAssignView({ isAdmin, myStaff }){
     React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:2 } }, viewTask.title),
       React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } },
-        `${viewTask.assignType==="staff" ? `Giao riêng: ${viewTask.staffName} (${viewTask.shop})` : (viewTask.assignType==="admin" ? `Đề xuất gửi Quản lý khu vực (từ ${viewTask.shop})` : viewTask.shop)} · Giao ngày ${viewTask.ngayGiao} · Hạn ${deadlineLabel(viewTask)}`),
+        `${viewTask.assignType==="staff" ? `Giao riêng: ${viewTask.staffName} (${viewTask.shop})` : (viewTask.assignType==="admin" ? `Đề xuất gửi Quản lý khu vực (từ ${viewTask.shop})` : `Giao chung cho cả nhà thuốc ${viewTask.shop}`)} · Giao ngày ${viewTask.ngayGiao} · Hạn ${deadlineLabel(viewTask)}`),
       viewTask.mota && React.createElement("div", { key:"m", style:{ marginBottom:6, fontSize:13 } }, [ React.createElement("b",{key:"b"},"Mô tả: "), viewTask.mota ]),
       taskRefAttachmentsView(viewTask),
       viewTask.trangThai==="Đã hoàn thành"
