@@ -901,7 +901,6 @@ function DailyReviewModal({ report, tasks, onSave, onClose }){
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, `${report.staffName} — ${report.ngay}`),
       React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom: workSpan?4:14 } }, `${report.shop} · ${report.role}`),
       workSpan && React.createElement("div", { key:"ws", style:{ fontSize:12.5, color:"var(--pine)", fontWeight:600, marginBottom:14 } }, `Tổng thời gian làm việc trong ca: ${workSpan}`),
-      React.createElement(AiSummaryBox, { key:"ai", summary:report.aiSummary, flag:report.aiFlag }),
       React.createElement("div", { key:"list", style:{ marginBottom:14, maxHeight:260, overflowY:"auto" } }, allTasks.map(t => {
         const d = details[t.id] || {};
         const hoursLabel = (d.soGio!=null && d.soGio!=="") ? `${d.soGio} giờ` : "";
@@ -1270,8 +1269,6 @@ function DailyChecklistView({ isAdmin, myStaff }){
       React.createElement("div", { key:"btns", className:"btnRow", style:{ marginTop:12 } },
         React.createElement("button", { key:"submit", type:"button", className:"btn btnPrimary", onClick:submitDaily }, (selfReport && selfReport.trangThai==="Đã nộp") ? "Cập nhật & nộp lại" : "Nộp báo cáo hôm nay")
       ),
-      selfReport && selfReport.trangThai==="Đã nộp" && React.createElement("div", { key:"aiwrap", style:{ marginTop:12 } },
-        React.createElement(AiSummaryBox, { summary: selfReport.aiSummary, flag: selfReport.aiFlag })),
       (selfReport && selfReport.diemChu!=null) && React.createElement("div", { key:"review", style:{ marginTop:12, background:"var(--pineSoft)", borderRadius:8, padding:"9px 12px", fontSize:12.5 } }, [
         React.createElement("div",{key:"t",style:{fontWeight:700,marginBottom:2}}, `Quản lý chấm: ${"★".repeat(selfReport.diemChu)}`),
         selfReport.nhanXetChu && React.createElement("div",{key:"n",style:{color:"var(--inkSoft)"}}, selfReport.nhanXetChu),
@@ -1340,14 +1337,13 @@ function DailyChecklistView({ isAdmin, myStaff }){
   const adminTable = adminRows.length===0
     ? React.createElement("div",{className:"emptyState"}, "Chưa có nhân viên nào trong bộ lọc này.")
     : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
-        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Nhân viên","Nhà thuốc","Vai trò","Ca hôm nay","Hoàn thành","AI","Trạng thái","Điểm chủ chấm",""].map((h,i)=>React.createElement("th",{key:i},h)))),
+        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Nhân viên","Nhà thuốc","Vai trò","Ca hôm nay","Hoàn thành","Trạng thái","Điểm chủ chấm",""].map((h,i)=>React.createElement("th",{key:i},h)))),
         React.createElement("tbody",{key:"b"}, adminRows.map(x => React.createElement("tr",{key:x.staff.id, style: x.needsAttention ? { background:"var(--claySoft)" } : null}, [
           React.createElement("td",{key:"n"}, x.staff.name),
           React.createElement("td",{key:"sh"}, x.staff.shop),
           React.createElement("td",{key:"r"}, x.staff.role),
           React.createElement("td",{key:"shift"}, x.hasShiftToday ? x.shiftLabel : (hasWorkRegData ? StatusPill("Không có ca","neutral") : "—")),
           React.createElement("td",{key:"p"}, `${x.done}/${x.total} · ${x.p}%`),
-          React.createElement("td",{key:"ai"}, (x.r && x.r.aiFlag) ? StatusPill(x.r.aiFlag, aiFlagTone(x.r.aiFlag)) : (x.r && x.r.trangThai==="Đã nộp" ? StatusPill("Chưa có","neutral") : "—")),
           React.createElement("td",{key:"st"}, StatusPill(x.status.text, x.status.tone)),
           React.createElement("td",{key:"d"}, (x.r && x.r.diemChu!=null) ? "★".repeat(x.r.diemChu) : "—"),
           React.createElement("td",{key:"a"}, x.r ? React.createElement("button",{className:"btn", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>setReviewReportId(x.r.id)}, "Xem & chấm") : "—"),
@@ -1376,6 +1372,13 @@ function DailyChecklistView({ isAdmin, myStaff }){
 
 // ================= MODULE 2: BÁO CÁO HÌNH ẢNH =================
 function imageReportId(shop, ngay){ return shop + "_" + ngay; }
+// Suy ra đúng loại đơn để HIỂN THỊ, tương thích ngược với dữ liệu cũ (trước khi có loại "henLay"
+// riêng, đơn hẹn ngày cụ thể vẫn lưu loaiDon="hangThieu" kèm coHenNgay/ngayHen).
+function orderKind(o){
+  if(o.loaiDon==="shipHang") return "shipHang";
+  if(o.loaiDon==="henLay" || o.coHenNgay || o.ngayHen) return "henLay";
+  return "hangThieu";
+}
 
 function ImageReviewModal({ report, onSave, onClose }){
   const [trangThai, setTrangThai] = useState(report.trangThaiDuyet || "");
@@ -1570,7 +1573,7 @@ function CustomerOrderView({ isAdmin, myStaff }){
   const [editingId, setEditingId] = useState(null);
   const [pendingId, setPendingId] = useState(null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
-  const [form, setForm] = useState({ loaiDon:"hangThieu", customerName:"", customerPhone:"", productName:"", soLuong:"", coHenNgay:false, ngayHen:addDays(todayISO(),3), cachBao:"Gọi điện thoại", ghiChu:"", hangHetTon:false, hangKhongCoHeThong:false, deXuatMoTu:false, anhSanPham:[], diaChiGiao:"", donViVanChuyen:"Tự giao (nhân viên/shop)", phiShip:"", hinhThucTT:"COD - thu hộ khi giao" });
+  const [form, setForm] = useState({ loaiDon:"hangThieu", customerName:"", customerPhone:"", productName:"", congDung:"", soLuong:"", coHenNgay:false, ngayHen:addDays(todayISO(),3), cachBao:"Gọi điện thoại", ghiChu:"", hangHetTon:false, hangKhongCoHeThong:false, deXuatMoTu:false, anhSanPham:[], diaChiGiao:"" });
   const [adminShop, setAdminShop] = useState("Tất cả");
   const [adminStatus, setAdminStatus] = useState("Đang chờ");
   const [saving, setSaving] = useState(false);
@@ -1580,16 +1583,42 @@ function CustomerOrderView({ isAdmin, myStaff }){
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [orderTrends, setOrderTrends] = useState(null);
+  const [trendInstructions, setTrendInstructions] = useState("");
+  const [trendInstructionsLoaded, setTrendInstructionsLoaded] = useState(false);
+  const [savingTrendInstructions, setSavingTrendInstructions] = useState(false);
+  const [trendConfigOpen, setTrendConfigOpen] = useState(false);
 
   useEffect(()=>{ const u = subscribeCol("customerOrders", setOrders); return u; }, []);
 
   // "🤖 Xu hướng khách hỏi hàng" — Cloud Function analyzeCustomerOrderTrendsWithAI tự chạy mỗi
-  // sáng thứ Hai, tổng hợp 7 ngày gần nhất và ghi kết quả vào opsConfig/aiOrderTrends.
+  // 3 ngày, tổng hợp 3 ngày gần nhất và ghi kết quả vào opsConfig/aiOrderTrends.
   useEffect(()=>{
     if(!isAdmin) return;
     const unsub = db.collection("opsConfig").doc("aiOrderTrends").onSnapshot(snap => setOrderTrends(snap.exists ? snap.data() : null));
     return unsub;
   }, [isAdmin]);
+
+  // Yêu cầu phân tích riêng của quản lý — lưu tại opsConfig/aiOrderTrendConfig, Cloud Function
+  // đọc đúng field "customInstructions" này ở mỗi lần chạy sau để áp dụng thêm vào phân tích.
+  useEffect(()=>{
+    if(!isAdmin) return;
+    db.collection("opsConfig").doc("aiOrderTrendConfig").get().then(snap => {
+      setTrendInstructions(snap.exists ? (snap.data().customInstructions || "") : "");
+      setTrendInstructionsLoaded(true);
+    }).catch(err => { console.error("Không tải được yêu cầu phân tích AI:", err); setTrendInstructionsLoaded(true); });
+  }, [isAdmin]);
+
+  async function saveTrendInstructions(){
+    setSavingTrendInstructions(true);
+    try{
+      await db.collection("opsConfig").doc("aiOrderTrendConfig").set({ customInstructions: trendInstructions.trim(), updatedAtTs: firebase.firestore.FieldValue.serverTimestamp() }, { merge:true });
+      window.alert("Đã lưu — áp dụng từ lần phân tích tiếp theo (mỗi 3 ngày), hoặc chạy tay ngay bằng nút bên dưới.");
+    } catch(err){
+      console.error("Lưu yêu cầu phân tích AI lỗi:", err);
+      window.alert("Lưu thất bại, thử lại.");
+    }
+    setSavingTrendInstructions(false);
+  }
 
   const today = todayISO();
   function isOverdue(o){ return o.trangThai==="Đang chờ" && !!o.ngayHen && o.ngayHen < today; }
@@ -1610,13 +1639,13 @@ function CustomerOrderView({ isAdmin, myStaff }){
   function openAdd(){
     setEditingId(null);
     setPendingId(db.collection("customerOrders").doc().id);
-    setForm({ loaiDon:"hangThieu", customerName:"", customerPhone:"", productName:"", soLuong:"", coHenNgay:false, ngayHen:addDays(today,3), cachBao:"Gọi điện thoại", ghiChu:"", hangHetTon:false, hangKhongCoHeThong:false, deXuatMoTu:false, anhSanPham:[], diaChiGiao:"", donViVanChuyen:"Tự giao (nhân viên/shop)", phiShip:"", hinhThucTT:"COD - thu hộ khi giao" });
+    setForm({ loaiDon:"hangThieu", customerName:"", customerPhone:"", productName:"", congDung:"", soLuong:"", coHenNgay:false, ngayHen:addDays(today,3), cachBao:"Gọi điện thoại", ghiChu:"", hangHetTon:false, hangKhongCoHeThong:false, deXuatMoTu:false, anhSanPham:[], diaChiGiao:"" });
     setError(null); setShowForm(true);
   }
   function openEdit(o){
     setEditingId(o.id);
     setPendingId(o.id);
-    setForm({ loaiDon:o.loaiDon||"hangThieu", customerName:o.customerName||"", customerPhone:o.customerPhone||"", productName:o.productName||"", soLuong:o.soLuong||"", coHenNgay: o.coHenNgay!=null ? !!o.coHenNgay : !!o.ngayHen, ngayHen:o.ngayHen||today, cachBao:o.cachBao||"Gọi điện thoại", ghiChu:o.ghiChu||"", hangHetTon:!!o.hangHetTon, hangKhongCoHeThong:!!o.hangKhongCoHeThong, deXuatMoTu:!!o.deXuatMoTu, anhSanPham:o.anhSanPham||[], diaChiGiao:o.diaChiGiao||"", donViVanChuyen:o.donViVanChuyen||"Tự giao (nhân viên/shop)", phiShip:o.phiShip!=null?String(o.phiShip):"", hinhThucTT:o.hinhThucTT||"COD - thu hộ khi giao" });
+    setForm({ loaiDon:orderKind(o), customerName:o.customerName||"", customerPhone:o.customerPhone||"", productName:o.productName||"", congDung:o.congDung||"", soLuong:o.soLuong||"", coHenNgay: o.coHenNgay!=null ? !!o.coHenNgay : !!o.ngayHen, ngayHen:o.ngayHen||today, cachBao:o.cachBao||"Gọi điện thoại", ghiChu:o.ghiChu||"", hangHetTon:!!o.hangHetTon, hangKhongCoHeThong:!!o.hangKhongCoHeThong, deXuatMoTu:!!o.deXuatMoTu, anhSanPham:o.anhSanPham||[], diaChiGiao:o.diaChiGiao||"" });
     setError(null); setShowForm(true);
   }
   async function addOrderPhoto(files){
@@ -1641,22 +1670,22 @@ function CustomerOrderView({ isAdmin, myStaff }){
     e.preventDefault();
     if(!myStaff || !form.customerName.trim() || !form.productName.trim()) return;
     const isShip = form.loaiDon==="shipHang";
+    const isHenLay = form.loaiDon==="henLay";
     if(isShip && !form.diaChiGiao.trim()) return;
-    if(!isShip && form.coHenNgay && !form.ngayHen) return;
-    const ngayHenVal = (!isShip && form.coHenNgay) ? form.ngayHen : "";
+    if(isHenLay && !form.ngayHen) return;
     setSaving(true); setError(null);
     try{
       const shared = {
         customerName:form.customerName.trim(), customerPhone:form.customerPhone.trim(),
-        productName:form.productName.trim(), soLuong:form.soLuong.trim(), ghiChu:form.ghiChu.trim(), anhSanPham:form.anhSanPham,
+        productName:form.productName.trim(), congDung:form.congDung.trim(), soLuong:form.soLuong.trim(), ghiChu:form.ghiChu.trim(), anhSanPham:form.anhSanPham,
       };
       const shipFields = isShip ? {
-        diaChiGiao:form.diaChiGiao.trim(), donViVanChuyen:form.donViVanChuyen, phiShip:form.phiShip===""?"":Number(form.phiShip), hinhThucTT:form.hinhThucTT,
+        diaChiGiao:form.diaChiGiao.trim(),
         coHenNgay:false, ngayHen:"", cachBao:"", hangHetTon:false, hangKhongCoHeThong:false, deXuatMoTu:false,
       } : {
-        coHenNgay:form.coHenNgay, ngayHen:ngayHenVal, cachBao:form.coHenNgay ? "" : form.cachBao,
+        coHenNgay:isHenLay, ngayHen:isHenLay ? form.ngayHen : "", cachBao:isHenLay ? "" : form.cachBao,
         hangHetTon:form.hangHetTon, hangKhongCoHeThong:form.hangKhongCoHeThong, deXuatMoTu:form.deXuatMoTu,
-        diaChiGiao:"", donViVanChuyen:"", phiShip:"", hinhThucTT:"",
+        diaChiGiao:"",
       };
       if(editingId){
         const o = orders.find(x=>x.id===editingId);
@@ -1707,6 +1736,7 @@ function CustomerOrderView({ isAdmin, myStaff }){
 
   function orderCard(o){
     const isShip = o.loaiDon==="shipHang";
+    const isHenLay = orderKind(o)==="henLay";
     const overdue = isOverdue(o);
     const dueToday = isDueToday(o);
     const tone = overdue ? "warn" : (dueToday ? "warn" : "neutral");
@@ -1714,10 +1744,11 @@ function CustomerOrderView({ isAdmin, myStaff }){
       React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:8, marginBottom:6 } }, [
         React.createElement("div", { key:"l" }, [
           isShip && React.createElement("div", { key:"tag", style:{ marginBottom:4 } }, StatusPill("Đơn ship hàng", "gold")),
+          isHenLay && React.createElement("div", { key:"tag", style:{ marginBottom:4 } }, StatusPill("Khách hẹn đến lấy", "gold")),
           React.createElement("div", { key:"n", style:{ fontWeight:700, fontSize:14.5 } }, `${o.customerName}${o.customerPhone ? " · "+o.customerPhone : ""}`),
           React.createElement("div", { key:"p", style:{ fontSize:13, color:"var(--ink)", marginTop:2 } }, `${isShip?"Sản phẩm đặt":"Hàng cần"}: ${o.productName}${o.soLuong ? " · SL: "+o.soLuong : ""}`),
+          o.congDung && React.createElement("div", { key:"cd", style:{ fontSize:12, color:"var(--inkSoft)", marginTop:2, fontStyle:"italic" } }, `Công dụng: ${o.congDung}`),
           isShip && o.diaChiGiao && React.createElement("div", { key:"addr", style:{ fontSize:12.5, color:"var(--inkSoft)", marginTop:2 } }, `Địa chỉ giao: ${o.diaChiGiao}`),
-          isShip && React.createElement("div", { key:"shipinfo", style:{ fontSize:12, color:"var(--inkSoft)", marginTop:2 } }, `${o.donViVanChuyen||"—"} · ${o.hinhThucTT||"—"}${o.phiShip!=="" && o.phiShip!=null ? " · Phí ship: "+fmtNum(o.phiShip)+"đ" : ""}`),
           isAdmin
             ? React.createElement("div", { key:"s", style:{ fontSize:11, color:"var(--inkSoft)", marginTop:2 } }, `${o.shop} · người ghi: ${o.nguoiTao||"—"}`)
             : React.createElement("div", { key:"s", style:{ fontSize:11, color:"var(--inkSoft)", marginTop:2 } }, `Người ghi: ${o.nguoiTao||"—"} · ${o.ngayTao||""}`),
@@ -1870,9 +1901,9 @@ function CustomerOrderView({ isAdmin, myStaff }){
 
   function exportOrdersExcel(rows, filename){
     const data = rows.map(o => ({
-      "Loại đơn":o.loaiDon==="shipHang"?"Ship hàng":"Hàng thiếu", "Khách hàng":o.customerName, "SĐT":o.customerPhone||"", "Hàng cần":o.productName, "Số lượng":o.soLuong||"", "Nhà thuốc":o.shop,
+      "Loại đơn":orderKind(o)==="shipHang"?"Ship hàng":(orderKind(o)==="henLay"?"Hẹn lấy":"Hàng thiếu"), "Khách hàng":o.customerName, "SĐT":o.customerPhone||"", "Hàng cần":o.productName, "Số lượng":o.soLuong||"", "Nhà thuốc":o.shop,
       "Ngày dự kiến giao":o.ngayHen||"", "Trạng thái":o.trangThai,
-      "Địa chỉ giao hàng":o.diaChiGiao||"", "Đơn vị vận chuyển":o.donViVanChuyen||"", "Phí ship":o.phiShip!=null?o.phiShip:"", "Hình thức thanh toán":o.hinhThucTT||"",
+      "Địa chỉ giao hàng":o.diaChiGiao||"",
       "Hàng hết tồn":o.hangHetTon?"Có":"", "Hàng hệ thống không có":o.hangKhongCoHeThong?"Có":"", "Đề xuất mở tủ":o.deXuatMoTu?"Có":"",
       "Cách báo khi có hàng":o.cachBao||"", "Ghi chú":o.ghiChu||"", "Người ghi":o.nguoiTao||"", "Ngày ghi":o.ngayTao||"",
     }));
@@ -1898,11 +1929,15 @@ function CustomerOrderView({ isAdmin, myStaff }){
         React.createElement("tbody",{key:"b"}, filteredOrders.map(o => {
           const overdue = isOverdue(o);
           const isShip = o.loaiDon==="shipHang";
+          const isHenLay = orderKind(o)==="henLay";
           return React.createElement("tr",{key:o.id}, [
-            React.createElement("td",{key:"ld"}, isShip ? StatusPill("Ship hàng","gold") : "Hàng thiếu"),
+            React.createElement("td",{key:"ld"}, isShip ? StatusPill("Ship hàng","gold") : (isHenLay ? StatusPill("Hẹn lấy","gold") : "Hàng thiếu")),
             React.createElement("td",{key:"n"}, o.customerName),
             React.createElement("td",{key:"p"}, o.customerPhone||"—"),
-            React.createElement("td",{key:"pr"}, isShip ? `${o.productName}${o.diaChiGiao?" · "+o.diaChiGiao:""}` : o.productName),
+            React.createElement("td",{key:"pr"}, [
+              isShip ? `${o.productName}${o.diaChiGiao?" · "+o.diaChiGiao:""}` : o.productName,
+              o.congDung && React.createElement("div",{key:"cd",style:{fontSize:11,color:"var(--inkSoft)",fontStyle:"italic",marginTop:2}}, o.congDung),
+            ]),
             React.createElement("td",{key:"sh"}, o.shop),
             React.createElement("td",{key:"d"}, isShip ? "—" : (o.ngayHen || "—")),
             React.createElement("td",{key:"st"}, isShip
@@ -1921,6 +1956,8 @@ function CustomerOrderView({ isAdmin, myStaff }){
       ])));
 
   const isShipForm = form.loaiDon==="shipHang";
+  const isHenLayForm = form.loaiDon==="henLay";
+  const isHangThieuForm = form.loaiDon==="hangThieu";
   const formModal = showForm && React.createElement("div", { className:"modalOverlay", onClick:()=>setShowForm(false) },
     React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:14 } }, editingId ? "Sửa thông tin khách đặt hàng" : "Ghi thông tin khách đặt hàng"),
@@ -1928,21 +1965,22 @@ function CustomerOrderView({ isAdmin, myStaff }){
         React.createElement("div", { key:"loai", className:"field", style:{ marginBottom:10 } }, [
           React.createElement("label",{key:"l"},"Loại đơn"),
           React.createElement("select", { key:"i", value:form.loaiDon, onChange:e=>setForm({...form,loaiDon:e.target.value}) }, [
-            React.createElement("option",{key:"hangThieu",value:"hangThieu"},"Khách hỏi hàng thiếu (hẹn ngày có hàng)"),
+            React.createElement("option",{key:"hangThieu",value:"hangThieu"},"Khách hỏi hàng thiếu (báo lại khi có hàng)"),
+            React.createElement("option",{key:"henLay",value:"henLay"},"Khách hẹn ngày đến lấy"),
             React.createElement("option",{key:"shipHang",value:"shipHang"},"Khách đặt ship hàng"),
           ]),
         ]),
         React.createElement("div", { key:"a", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Tên khách hàng"), React.createElement("input",{key:"i",value:form.customerName,onChange:e=>setForm({...form,customerName:e.target.value}),required:true}) ]),
         React.createElement("div", { key:"b", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},isShipForm?"Số điện thoại":"Số điện thoại (nếu có)"), React.createElement("input",{key:"i",value:form.customerPhone,onChange:e=>setForm({...form,customerPhone:e.target.value}),required:isShipForm}) ]),
         React.createElement("div", { key:"c", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},isShipForm?"Sản phẩm khách đặt":"Hàng khách hỏi không có"), React.createElement("input",{key:"i",value:form.productName,onChange:e=>setForm({...form,productName:e.target.value}),required:true,placeholder:"Tên thuốc/sản phẩm..."}) ]),
+        React.createElement("div", { key:"cd", className:"field", style:{ marginBottom:10 } }, [
+          React.createElement("label",{key:"l"},"Công dụng cơ bản (nếu biết)"),
+          React.createElement("input",{key:"i",value:form.congDung,onChange:e=>setForm({...form,congDung:e.target.value}),placeholder:"VD: hạ sốt, giảm đau; kem trị nấm phụ khoa; bổ sung canxi..."}),
+        ]),
         isShipForm && React.createElement("div", { key:"sl", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Số lượng / quy cách (nếu có)"), React.createElement("input",{key:"i",value:form.soLuong,onChange:e=>setForm({...form,soLuong:e.target.value}),placeholder:"VD: 2 hộp"}) ]),
 
-        !isShipForm && React.createElement("label", { key:"ck", style:{ display:"flex", alignItems:"center", gap:8, fontSize:13, cursor:"pointer", marginBottom: form.coHenNgay?8:10 } }, [
-          React.createElement("input", { key:"i", type:"checkbox", checked:form.coHenNgay, onChange:e=>setForm({...form,coHenNgay:e.target.checked}) }),
-          "Khách hàng hẹn ngày cụ thể",
-        ]),
-        !isShipForm && form.coHenNgay && React.createElement("div", { key:"d", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Ngày dự kiến giao cho khách *"), React.createElement("input",{key:"i",type:"date",value:form.ngayHen,onChange:e=>setForm({...form,ngayHen:e.target.value}),required:true}) ]),
-        !isShipForm && !form.coHenNgay && React.createElement("div", { key:"cb", className:"field", style:{ marginBottom:10 } }, [
+        isHenLayForm && React.createElement("div", { key:"d", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Ngày khách hẹn đến lấy *"), React.createElement("input",{key:"i",type:"date",value:form.ngayHen,onChange:e=>setForm({...form,ngayHen:e.target.value}),required:true}) ]),
+        isHangThieuForm && React.createElement("div", { key:"cb", className:"field", style:{ marginBottom:10 } }, [
           React.createElement("label",{key:"l"},"Khách không hẹn ngày — khi có hàng thì báo khách bằng cách nào?"),
           React.createElement("select", { key:"i", value:form.cachBao, onChange:e=>setForm({...form,cachBao:e.target.value}) },
             ["Gọi điện thoại","Nhắn tin (SMS/Zalo)","Khách tự ghé kiểm tra lại"].map(o=>React.createElement("option",{key:o,value:o},o))),
@@ -1963,22 +2001,6 @@ function CustomerOrderView({ isAdmin, myStaff }){
         ]),
 
         isShipForm && React.createElement("div", { key:"addr", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Địa chỉ giao hàng *"), React.createElement("textarea",{key:"i",rows:2,value:form.diaChiGiao,onChange:e=>setForm({...form,diaChiGiao:e.target.value}),required:true,placeholder:"Số nhà, đường, phường/xã, quận/huyện..."}) ]),
-        isShipForm && React.createElement("div", { key:"shiprow", className:"fieldRow", style:{ display:"flex", gap:10, marginBottom:10 } }, [
-          React.createElement("div", { key:"dvvc", className:"field", style:{ flex:1 } }, [
-            React.createElement("label",{key:"l"},"Đơn vị vận chuyển"),
-            React.createElement("select", { key:"i", value:form.donViVanChuyen, onChange:e=>setForm({...form,donViVanChuyen:e.target.value}) },
-              ["Tự giao (nhân viên/shop)","Grab","Ahamove","Ninja Van","Viettel Post","Khác"].map(o=>React.createElement("option",{key:o,value:o},o))),
-          ]),
-          React.createElement("div", { key:"phi", className:"field", style:{ flex:1 } }, [
-            React.createElement("label",{key:"l"},"Phí ship (đ, nếu có)"),
-            React.createElement("input",{key:"i",type:"number",min:0,value:form.phiShip,onChange:e=>setForm({...form,phiShip:e.target.value}),placeholder:"0"}),
-          ]),
-        ]),
-        isShipForm && React.createElement("div", { key:"tt", className:"field", style:{ marginBottom:10 } }, [
-          React.createElement("label",{key:"l"},"Hình thức thanh toán"),
-          React.createElement("select", { key:"i", value:form.hinhThucTT, onChange:e=>setForm({...form,hinhThucTT:e.target.value}) },
-            ["COD - thu hộ khi giao","Khách đã chuyển khoản"].map(o=>React.createElement("option",{key:o,value:o},o))),
-        ]),
 
         React.createElement(PhotoUploadField, {
           key:"photo", label: isShipForm ? "Ảnh đơn hàng/sản phẩm (nếu có)" : "Ảnh sản phẩm khách mang ra (nếu có) — giúp thống kê lại đúng mặt hàng",
@@ -2001,9 +2023,24 @@ function CustomerOrderView({ isAdmin, myStaff }){
     React.createElement("div", { key:"s", style:{ fontSize:12.5, whiteSpace:"pre-wrap", lineHeight:1.6 } }, orderTrends.summary),
   ]);
 
+  const trendConfigCard = isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10, marginBottom: trendConfigOpen ? 10 : 0 } }, [
+      React.createElement("div", { key:"t", className:"cardTitle", style:{ marginBottom:0 } }, "🤖 Yêu cầu phân tích AI (xu hướng khách đặt hàng)"),
+      React.createElement("button", { key:"b", type:"button", className:"btn btnGhost", style:{ padding:"6px 12px", fontSize:12 }, onClick:()=>setTrendConfigOpen(!trendConfigOpen) }, trendConfigOpen ? "Thu gọn" : "Chỉnh sửa"),
+    ]),
+    trendConfigOpen && React.createElement(React.Fragment, null, [
+      React.createElement("p", { key:"hint", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:8 } },
+        "Thêm yêu cầu riêng để AI phân tích đúng ý bạn hơn (vd chỉ tập trung nhóm hàng nào, bỏ qua shop nào, muốn đề xuất theo hướng gì...). Để trống sẽ dùng phân tích mặc định."),
+      React.createElement("textarea", { key:"ta", rows:4, value:trendInstructions, onChange:e=>setTrendInstructions(e.target.value),
+        placeholder:"VD: chỉ phân tích nhóm thuốc kê đơn, bỏ qua sản phẩm mỹ phẩm/thực phẩm chức năng; ưu tiên đề xuất theo shop có doanh số cao...",
+        style:{ marginBottom:10 } }),
+      React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", disabled:savingTrendInstructions||!trendInstructionsLoaded, onClick:saveTrendInstructions }, savingTrendInstructions ? "Đang lưu..." : "Lưu yêu cầu"),
+    ]),
+  ]);
+
   return React.createElement(React.Fragment, null, [
     React.createElement("p", { key:"s", className:"pagesub" }, isAdmin ? "Theo dõi khách đặt hàng còn thiếu của tất cả nhà thuốc." : "Ghi lại khi khách hỏi hàng không có — cả nhà thuốc đều thấy và cập nhật được, không riêng người ghi."),
-    trendsCard,
+    trendConfigCard, trendsCard,
     isAdmin && adminMetrics, isAdmin && dateRangeRow, statsCard, moTuCard, isAdmin && adminFilterRow, isAdmin && adminTable,
     staffSection, formModal,
   ]);
@@ -2541,8 +2578,6 @@ function WeeklyReportView({ isAdmin, myStaff }){
       ]),
       React.createElement("button", { key:"s", type:"submit", className:"btn btnPrimary" }, thisReport ? "Cập nhật báo cáo tuần" : "Gửi báo cáo tuần"),
     ]),
-    thisReport && React.createElement("div", { key:"aiwrap", style:{ marginTop:14 } },
-      React.createElement(AiSummaryBox, { summary: thisReport.aiSummary, flag: thisReport.aiFlag })),
     (thisReport && thisReport.diemChu!=null) && React.createElement("div", { key:"review", style:{ marginTop:14, background:"var(--pineSoft)", borderRadius:8, padding:"9px 12px", fontSize:12.5 } }, [
       React.createElement("div",{key:"t",style:{fontWeight:700,marginBottom:2}}, `Quản lý chấm: ${"★".repeat(thisReport.diemChu)}`),
       thisReport.nhanXetChu && React.createElement("div",{key:"n",style:{color:"var(--inkSoft)"}}, thisReport.nhanXetChu),
