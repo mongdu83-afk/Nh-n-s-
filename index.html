@@ -1587,6 +1587,7 @@ function CustomerOrderView({ isAdmin, myStaff }){
   const [trendInstructionsLoaded, setTrendInstructionsLoaded] = useState(false);
   const [savingTrendInstructions, setSavingTrendInstructions] = useState(false);
   const [trendConfigOpen, setTrendConfigOpen] = useState(false);
+  const [showTrendSummary, setShowTrendSummary] = useState(true);
   const [analyzingTrend, setAnalyzingTrend] = useState(false);
   const [analyzeTrendMsg, setAnalyzeTrendMsg] = useState(null);
 
@@ -2060,9 +2061,12 @@ function CustomerOrderView({ isAdmin, myStaff }){
   );
 
   const trendsCard = isAdmin && orderTrends && orderTrends.summary && React.createElement("div", { className:"card", style:{ marginBottom:20, background:"var(--pineSoft)" } }, [
-    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13.5, marginBottom:6 } },
-      `🤖 Xu hướng khách hỏi hàng (AI) — ${orderTrends.periodFrom} → ${orderTrends.periodTo}, ${orderTrends.orderCount} lượt`),
-    React.createElement("div", { key:"s", style:{ fontSize:12.5, whiteSpace:"pre-wrap", lineHeight:1.6 } }, orderTrends.summary),
+    React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:10 } }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13.5 } },
+        `🤖 Xu hướng khách hỏi hàng (AI) — ${orderTrends.periodFrom} → ${orderTrends.periodTo}, ${orderTrends.orderCount} lượt`),
+      React.createElement("button", { key:"toggle", type:"button", className:"btn btnGhost", style:{ padding:"4px 10px", fontSize:11.5 }, onClick:()=>setShowTrendSummary(!showTrendSummary) }, showTrendSummary ? "Ẩn" : "Xem"),
+    ]),
+    showTrendSummary && React.createElement("div", { key:"s", style:{ fontSize:12.5, whiteSpace:"pre-wrap", lineHeight:1.6, marginTop:6 } }, orderTrends.summary),
   ]);
 
   const trendConfigCard = isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
@@ -3589,6 +3593,7 @@ function KpiView({ isAdmin, myStaff }){
   const [pickedStaffId, setPickedStaffId] = useState("");
   const [templates, setTemplates] = useState(DEFAULT_KPI_TEMPLATES);
   const [showTplEditor, setShowTplEditor] = useState(false);
+  const [showAssignHint, setShowAssignHint] = useState(false);
   const [ctahDocs, setCtahDocs] = useState({});
   const [ctahStaffId, setCtahStaffId] = useState("");
   const [detailStaffId, setDetailStaffId] = useState("");
@@ -3602,6 +3607,7 @@ function KpiView({ isAdmin, myStaff }){
   const [aiKpiAnalysis, setAiKpiAnalysis] = useState(null);
   const [analyzingKpi, setAnalyzingKpi] = useState(false);
   const [analyzeKpiMsg, setAnalyzeKpiMsg] = useState(null);
+  const [showKpiSummary, setShowKpiSummary] = useState(true);
 
   useEffect(()=>{
     if(!isAdmin) return;
@@ -3998,19 +4004,23 @@ function KpiView({ isAdmin, myStaff }){
     React.createElement("div", { key:"th", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:10 } }, [
       React.createElement("div", { key:"t", className:"cardTitle", style:{ marginBottom:0 } }, "Giao chỉ tiêu KPI cho nhân viên"),
       React.createElement("div", { key:"btns", className:"btnRow" }, [
-        React.createElement("label", { key:"imp", className:"btn btnGhost", style:{ cursor:importing?"default":"pointer" } }, [
+        React.createElement("label", { key:"imp", className:"btn btnGhost", style:{ cursor:importing?"default":"pointer", padding:"6px 12px", fontSize:12 } }, [
           React.createElement("input", { key:"i", type:"file", accept:".xlsx,.xls", style:{ display:"none" }, disabled:importing, onChange:e=>{ const f=e.target.files[0]; if(f) importKpiExcel(f); e.target.value=""; } }),
-          importing ? "Đang nhập..." : "Tải Excel lên (nhập chỉ tiêu)",
+          importing ? "Đang nhập..." : "Tải Excel lên",
         ]),
-        React.createElement("button", { key:"exp", type:"button", className:"btn btnGhost", onClick:exportKpiExcel }, "Tải Excel xuống"),
-        React.createElement("button", { key:"tpl", type:"button", className:"btn", onClick:()=>setShowTplEditor(true) }, "Tuỳ chỉnh tỷ trọng KPI"),
+        React.createElement("button", { key:"exp", type:"button", className:"btn btnGhost", style:{ padding:"6px 12px", fontSize:12 }, onClick:exportKpiExcel }, "Tải Excel xuống"),
+        React.createElement("button", { key:"tpl", type:"button", className:"btn", style:{ padding:"6px 12px", fontSize:12 }, onClick:()=>setShowTplEditor(true) }, "Tuỳ chỉnh tỷ trọng"),
       ]),
     ]),
-    importMsg && React.createElement("div", { key:"msg", style:{ fontSize:12.5, color:"var(--pine)", background:"var(--pineSoft)", borderRadius:8, padding:"8px 10px", marginBottom:12 } }, importMsg),
-    React.createElement("div", { key:"h2", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:12 } }, "Nhập chỉ tiêu: sheet CHT cần cột \"Tên nhân viên\", \"Nhà thuốc\" và các cột \"[Tên chỉ tiêu] - Mục tiêu\" (dễ nhất là tải file xuống trước, điền số vào rồi tải ngược lên). Riêng sheet NVBH đọc theo đúng thứ tự cột của mẫu form KPI công ty đang dùng: Tên nhà thuốc, Tên nhân viên, TBB, Tổng khách hàng, Đơn hàng, CSKH, Hàng thường trực — có thể tải thẳng file mẫu đó lên."),
-    React.createElement("div", { key:"row", className:"btnRow", style:{ marginBottom:16 } }, [
-      React.createElement("input", { key:"m", type:"month", value:thang, onChange:e=>setThang(e.target.value), style:{ padding:"8px 10px", border:"1px solid var(--line)", borderRadius:8, fontSize:13 } }),
-      React.createElement(NamePicker, { key:"p", options:staffOptions, value:pickedStaffId, onChange:setPickedStaffId, placeholder:"Gõ tên nhân viên để giao KPI..." }),
+    importMsg && React.createElement("div", { key:"msg", style:{ fontSize:12.5, color:"var(--pine)", background:"var(--pineSoft)", borderRadius:8, padding:"8px 10px", marginBottom:10 } }, importMsg),
+    React.createElement("div", { key:"hintToggle", style:{ marginBottom:10 } },
+      React.createElement("button", { type:"button", onClick:()=>setShowAssignHint(!showAssignHint), style:{ background:"none", border:"none", padding:0, cursor:"pointer", fontSize:11.5, color:"var(--pine)", fontWeight:600, textDecoration:"underline" } },
+        showAssignHint ? "Ẩn hướng dẫn nhập file Excel" : "Xem hướng dẫn nhập file Excel")),
+    showAssignHint && React.createElement("div", { key:"h2", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:10, background:"var(--paper)", borderRadius:8, padding:"8px 10px" } }, "Nhập chỉ tiêu: sheet CHT cần cột \"Tên nhân viên\", \"Nhà thuốc\" và các cột \"[Tên chỉ tiêu] - Mục tiêu\" (dễ nhất là tải file xuống trước, điền số vào rồi tải ngược lên). Riêng sheet NVBH đọc theo đúng thứ tự cột của mẫu form KPI công ty đang dùng: Tên nhà thuốc, Tên nhân viên, TBB, Tổng khách hàng, Đơn hàng, CSKH, Hàng thường trực — có thể tải thẳng file mẫu đó lên."),
+    React.createElement("div", { key:"row", className:"btnRow", style:{ marginBottom: pickedStaff ? 12 : 0, alignItems:"center" } }, [
+      React.createElement("input", { key:"m", type:"month", value:thang, onChange:e=>setThang(e.target.value), style:{ padding:"8px 10px", border:"1px solid var(--line)", borderRadius:8, fontSize:13, maxWidth:170 } }),
+      React.createElement("div", { key:"pw", style:{ flex:1, minWidth:200 } },
+        React.createElement(NamePicker, { options:staffOptions, value:pickedStaffId, onChange:setPickedStaffId, placeholder:"Gõ tên nhân viên để giao KPI..." })),
     ]),
     pickedStaff
       ? React.createElement(KpiGroups, {
@@ -4018,7 +4028,7 @@ function KpiView({ isAdmin, myStaff }){
           canEditTarget:true, canEditActual:false,
           onTargetChange:(itemId,v)=>saveTarget(pickedStaff, itemId, v), onActualChange:()=>{},
         })
-      : React.createElement("div", { key:"e", className:"emptyState" }, "Chọn 1 nhân viên ở trên để giao chỉ tiêu KPI tháng này."),
+      : React.createElement("div", { key:"e", className:"emptyState", style:{ padding:"10px 16px 2px" } }, "Chọn 1 nhân viên ở trên để giao chỉ tiêu KPI tháng này."),
     showTplEditor && React.createElement(KpiTemplateEditor, { templates, onSave:saveTemplates, onClose:()=>setShowTplEditor(false) }),
   ]);
 
@@ -4075,10 +4085,18 @@ function KpiView({ isAdmin, myStaff }){
     React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10, marginBottom:6 } }, [
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13.5 } },
         aiKpiAnalysis && aiKpiAnalysis.summary ? `🤖 Phân tích KPI toàn khu vực (AI) — tháng ${aiKpiAnalysis.thang}` : "🤖 Phân tích KPI toàn khu vực (AI)"),
-      React.createElement("button", { key:"b", type:"button", className:"btn btnAmber", disabled:analyzingKpi, onClick:runKpiAiAnalysis }, analyzingKpi ? "Đang phân tích..." : "Phân tích"),
+      React.createElement("div", { key:"btns", className:"btnRow" }, [
+        aiKpiAnalysis && aiKpiAnalysis.summary && React.createElement("button", { key:"toggle", type:"button", className:"btn btnGhost", style:{ padding:"4px 10px", fontSize:11.5 }, onClick:()=>setShowKpiSummary(!showKpiSummary) }, showKpiSummary ? "Ẩn" : "Xem"),
+        React.createElement("button", { key:"b", type:"button", className:"btn btnAmber", disabled:analyzingKpi, onClick:runKpiAiAnalysis }, analyzingKpi ? "Đang phân tích..." : "Phân tích"),
+      ]),
+    ]),
+    aiKpiAnalysis && aiKpiAnalysis.summary && showKpiSummary && React.createElement("div", { key:"meta", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8 } }, [
+      `Dữ liệu luỹ kế đến ngày ${aiKpiAnalysis.dayOfMonth || "?"}/${aiKpiAnalysis.totalDaysInMonth || "?"} (đã qua ~${aiKpiAnalysis.elapsedPct != null ? aiKpiAnalysis.elapsedPct : "?"}% tháng)`,
+      " · Cập nhật lúc ",
+      aiKpiAnalysis.generatedAtTs && aiKpiAnalysis.generatedAtTs.toDate ? aiKpiAnalysis.generatedAtTs.toDate().toLocaleString("vi-VN") : "—",
     ]),
     analyzeKpiMsg && React.createElement("div", { key:"msg", style:{ fontSize:12.5, color:"var(--pine)", marginBottom:6 } }, analyzeKpiMsg),
-    aiKpiAnalysis && aiKpiAnalysis.summary && React.createElement("div", { key:"s", style:{ fontSize:12.5, whiteSpace:"pre-wrap", lineHeight:1.6 } }, aiKpiAnalysis.summary),
+    aiKpiAnalysis && aiKpiAnalysis.summary && showKpiSummary && React.createElement("div", { key:"s", style:{ fontSize:12.5, whiteSpace:"pre-wrap", lineHeight:1.6 } }, aiKpiAnalysis.summary),
   ]);
   const adminSummarySection = isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
     React.createElement("div", { key:"th", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:12 } }, [
