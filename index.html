@@ -1573,7 +1573,7 @@ function CustomerOrderView({ isAdmin, myStaff }){
   const [editingId, setEditingId] = useState(null);
   const [pendingId, setPendingId] = useState(null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
-  const [form, setForm] = useState({ loaiDon:"hangThieu", customerName:"", customerPhone:"", productName:"", congDung:"", soLuong:"", coHenNgay:false, ngayHen:addDays(todayISO(),3), cachBao:"Gọi điện thoại", ghiChu:"", hangHetTon:false, hangKhongCoHeThong:false, deXuatMoTu:false, anhSanPham:[], diaChiGiao:"" });
+  const [form, setForm] = useState({ loaiDon:"hangThieu", customerName:"", customerPhone:"", productName:"", congDung:"", soLuong:"", coHenNgay:false, henLayKieu:"ngay", ngayHen:addDays(todayISO(),3), cachBao:"Gọi điện thoại", ghiChu:"", hangHetTon:false, hangKhongCoHeThong:false, deXuatMoTu:false, anhSanPham:[], diaChiGiao:"" });
   const [adminShop, setAdminShop] = useState("Tất cả");
   const [adminStatus, setAdminStatus] = useState("Đang chờ");
   const [saving, setSaving] = useState(false);
@@ -1639,13 +1639,13 @@ function CustomerOrderView({ isAdmin, myStaff }){
   function openAdd(){
     setEditingId(null);
     setPendingId(db.collection("customerOrders").doc().id);
-    setForm({ loaiDon:"hangThieu", customerName:"", customerPhone:"", productName:"", congDung:"", soLuong:"", coHenNgay:false, ngayHen:addDays(today,3), cachBao:"Gọi điện thoại", ghiChu:"", hangHetTon:false, hangKhongCoHeThong:false, deXuatMoTu:false, anhSanPham:[], diaChiGiao:"" });
+    setForm({ loaiDon:"hangThieu", customerName:"", customerPhone:"", productName:"", congDung:"", soLuong:"", coHenNgay:false, henLayKieu:"ngay", ngayHen:addDays(today,3), cachBao:"Gọi điện thoại", ghiChu:"", hangHetTon:false, hangKhongCoHeThong:false, deXuatMoTu:false, anhSanPham:[], diaChiGiao:"" });
     setError(null); setShowForm(true);
   }
   function openEdit(o){
     setEditingId(o.id);
     setPendingId(o.id);
-    setForm({ loaiDon:orderKind(o), customerName:o.customerName||"", customerPhone:o.customerPhone||"", productName:o.productName||"", congDung:o.congDung||"", soLuong:o.soLuong||"", coHenNgay: o.coHenNgay!=null ? !!o.coHenNgay : !!o.ngayHen, ngayHen:o.ngayHen||today, cachBao:o.cachBao||"Gọi điện thoại", ghiChu:o.ghiChu||"", hangHetTon:!!o.hangHetTon, hangKhongCoHeThong:!!o.hangKhongCoHeThong, deXuatMoTu:!!o.deXuatMoTu, anhSanPham:o.anhSanPham||[], diaChiGiao:o.diaChiGiao||"" });
+    setForm({ loaiDon:orderKind(o), customerName:o.customerName||"", customerPhone:o.customerPhone||"", productName:o.productName||"", congDung:o.congDung||"", soLuong:o.soLuong||"", coHenNgay: o.coHenNgay!=null ? !!o.coHenNgay : !!o.ngayHen, henLayKieu:(o.ngayHen ? "ngay" : "lienHe"), ngayHen:o.ngayHen||today, cachBao:o.cachBao||"Gọi điện thoại", ghiChu:o.ghiChu||"", hangHetTon:!!o.hangHetTon, hangKhongCoHeThong:!!o.hangKhongCoHeThong, deXuatMoTu:!!o.deXuatMoTu, anhSanPham:o.anhSanPham||[], diaChiGiao:o.diaChiGiao||"" });
     setError(null); setShowForm(true);
   }
   async function addOrderPhoto(files){
@@ -1671,8 +1671,9 @@ function CustomerOrderView({ isAdmin, myStaff }){
     if(!myStaff || !form.customerName.trim() || !form.productName.trim()) return;
     const isShip = form.loaiDon==="shipHang";
     const isHenLay = form.loaiDon==="henLay";
+    const henLayCoNgay = isHenLay && form.henLayKieu!=="lienHe";
     if(isShip && !form.diaChiGiao.trim()) return;
-    if(isHenLay && !form.ngayHen) return;
+    if(henLayCoNgay && !form.ngayHen) return;
     setSaving(true); setError(null);
     try{
       const shared = {
@@ -1683,7 +1684,7 @@ function CustomerOrderView({ isAdmin, myStaff }){
         diaChiGiao:form.diaChiGiao.trim(),
         coHenNgay:false, ngayHen:"", cachBao:"", hangHetTon:false, hangKhongCoHeThong:false, deXuatMoTu:false,
       } : {
-        coHenNgay:isHenLay, ngayHen:isHenLay ? form.ngayHen : "", cachBao:isHenLay ? "" : form.cachBao,
+        coHenNgay:henLayCoNgay, ngayHen:henLayCoNgay ? form.ngayHen : "", cachBao:(isHenLay && !henLayCoNgay) ? form.cachBao : "",
         hangHetTon:form.hangHetTon, hangKhongCoHeThong:form.hangKhongCoHeThong, deXuatMoTu:form.deXuatMoTu,
         diaChiGiao:"",
       };
@@ -1957,7 +1958,6 @@ function CustomerOrderView({ isAdmin, myStaff }){
 
   const isShipForm = form.loaiDon==="shipHang";
   const isHenLayForm = form.loaiDon==="henLay";
-  const isHangThieuForm = form.loaiDon==="hangThieu";
   const formModal = showForm && React.createElement("div", { className:"modalOverlay", onClick:()=>setShowForm(false) },
     React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:14 } }, editingId ? "Sửa thông tin khách đặt hàng" : "Ghi thông tin khách đặt hàng"),
@@ -1965,9 +1965,9 @@ function CustomerOrderView({ isAdmin, myStaff }){
         React.createElement("div", { key:"loai", className:"field", style:{ marginBottom:10 } }, [
           React.createElement("label",{key:"l"},"Loại đơn"),
           React.createElement("select", { key:"i", value:form.loaiDon, onChange:e=>setForm({...form,loaiDon:e.target.value}) }, [
-            React.createElement("option",{key:"hangThieu",value:"hangThieu"},"Khách hỏi hàng thiếu (báo lại khi có hàng)"),
-            React.createElement("option",{key:"henLay",value:"henLay"},"Khách hẹn ngày đến lấy"),
-            React.createElement("option",{key:"shipHang",value:"shipHang"},"Khách đặt ship hàng"),
+            React.createElement("option",{key:"hangThieu",value:"hangThieu"},"Khách hỏi không có hàng"),
+            React.createElement("option",{key:"henLay",value:"henLay"},"Khách hẹn lấy"),
+            React.createElement("option",{key:"shipHang",value:"shipHang"},"Khách ship"),
           ]),
         ]),
         React.createElement("div", { key:"a", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Tên khách hàng"), React.createElement("input",{key:"i",value:form.customerName,onChange:e=>setForm({...form,customerName:e.target.value}),required:true}) ]),
@@ -1979,8 +1979,15 @@ function CustomerOrderView({ isAdmin, myStaff }){
         ]),
         isShipForm && React.createElement("div", { key:"sl", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Số lượng / quy cách (nếu có)"), React.createElement("input",{key:"i",value:form.soLuong,onChange:e=>setForm({...form,soLuong:e.target.value}),placeholder:"VD: 2 hộp"}) ]),
 
-        isHenLayForm && React.createElement("div", { key:"d", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Ngày khách hẹn đến lấy *"), React.createElement("input",{key:"i",type:"date",value:form.ngayHen,onChange:e=>setForm({...form,ngayHen:e.target.value}),required:true}) ]),
-        isHangThieuForm && React.createElement("div", { key:"cb", className:"field", style:{ marginBottom:10 } }, [
+        isHenLayForm && React.createElement("div", { key:"hk", className:"field", style:{ marginBottom:10 } }, [
+          React.createElement("label",{key:"l"},"Hình thức hẹn"),
+          React.createElement("select", { key:"i", value:form.henLayKieu, onChange:e=>setForm({...form,henLayKieu:e.target.value}) }, [
+            React.createElement("option",{key:"ngay",value:"ngay"},"Hẹn ngày cụ thể"),
+            React.createElement("option",{key:"lienHe",value:"lienHe"},"Liên hệ khi có hàng"),
+          ]),
+        ]),
+        isHenLayForm && form.henLayKieu==="ngay" && React.createElement("div", { key:"d", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Ngày khách hẹn đến lấy *"), React.createElement("input",{key:"i",type:"date",value:form.ngayHen,onChange:e=>setForm({...form,ngayHen:e.target.value}),required:true}) ]),
+        isHenLayForm && form.henLayKieu==="lienHe" && React.createElement("div", { key:"cb", className:"field", style:{ marginBottom:10 } }, [
           React.createElement("label",{key:"l"},"Khách không hẹn ngày — khi có hàng thì báo khách bằng cách nào?"),
           React.createElement("select", { key:"i", value:form.cachBao, onChange:e=>setForm({...form,cachBao:e.target.value}) },
             ["Gọi điện thoại","Nhắn tin (SMS/Zalo)","Khách tự ghé kiểm tra lại"].map(o=>React.createElement("option",{key:o,value:o},o))),
