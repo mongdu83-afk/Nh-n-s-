@@ -901,6 +901,7 @@ function DailyReviewModal({ report, tasks, onSave, onClose }){
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, `${report.staffName} — ${report.ngay}`),
       React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom: workSpan?4:14 } }, `${report.shop} · ${report.role}`),
       workSpan && React.createElement("div", { key:"ws", style:{ fontSize:12.5, color:"var(--pine)", fontWeight:600, marginBottom:14 } }, `Tổng thời gian làm việc trong ca: ${workSpan}`),
+      React.createElement(AiSummaryBox, { key:"ai", summary:report.aiSummary, flag:report.aiFlag }),
       React.createElement("div", { key:"list", style:{ marginBottom:14, maxHeight:260, overflowY:"auto" } }, allTasks.map(t => {
         const d = details[t.id] || {};
         const hoursLabel = (d.soGio!=null && d.soGio!=="") ? `${d.soGio} giờ` : "";
@@ -1269,6 +1270,8 @@ function DailyChecklistView({ isAdmin, myStaff }){
       React.createElement("div", { key:"btns", className:"btnRow", style:{ marginTop:12 } },
         React.createElement("button", { key:"submit", type:"button", className:"btn btnPrimary", onClick:submitDaily }, (selfReport && selfReport.trangThai==="Đã nộp") ? "Cập nhật & nộp lại" : "Nộp báo cáo hôm nay")
       ),
+      selfReport && selfReport.trangThai==="Đã nộp" && React.createElement("div", { key:"aiwrap", style:{ marginTop:12 } },
+        React.createElement(AiSummaryBox, { summary: selfReport.aiSummary, flag: selfReport.aiFlag })),
       (selfReport && selfReport.diemChu!=null) && React.createElement("div", { key:"review", style:{ marginTop:12, background:"var(--pineSoft)", borderRadius:8, padding:"9px 12px", fontSize:12.5 } }, [
         React.createElement("div",{key:"t",style:{fontWeight:700,marginBottom:2}}, `Quản lý chấm: ${"★".repeat(selfReport.diemChu)}`),
         selfReport.nhanXetChu && React.createElement("div",{key:"n",style:{color:"var(--inkSoft)"}}, selfReport.nhanXetChu),
@@ -1337,13 +1340,14 @@ function DailyChecklistView({ isAdmin, myStaff }){
   const adminTable = adminRows.length===0
     ? React.createElement("div",{className:"emptyState"}, "Chưa có nhân viên nào trong bộ lọc này.")
     : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
-        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Nhân viên","Nhà thuốc","Vai trò","Ca hôm nay","Hoàn thành","Trạng thái","Điểm chủ chấm",""].map((h,i)=>React.createElement("th",{key:i},h)))),
+        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Nhân viên","Nhà thuốc","Vai trò","Ca hôm nay","Hoàn thành","AI","Trạng thái","Điểm chủ chấm",""].map((h,i)=>React.createElement("th",{key:i},h)))),
         React.createElement("tbody",{key:"b"}, adminRows.map(x => React.createElement("tr",{key:x.staff.id, style: x.needsAttention ? { background:"var(--claySoft)" } : null}, [
           React.createElement("td",{key:"n"}, x.staff.name),
           React.createElement("td",{key:"sh"}, x.staff.shop),
           React.createElement("td",{key:"r"}, x.staff.role),
           React.createElement("td",{key:"shift"}, x.hasShiftToday ? x.shiftLabel : (hasWorkRegData ? StatusPill("Không có ca","neutral") : "—")),
           React.createElement("td",{key:"p"}, `${x.done}/${x.total} · ${x.p}%`),
+          React.createElement("td",{key:"ai"}, (x.r && x.r.aiFlag) ? StatusPill(x.r.aiFlag, aiFlagTone(x.r.aiFlag)) : (x.r && x.r.trangThai==="Đã nộp" ? StatusPill("Chưa có","neutral") : "—")),
           React.createElement("td",{key:"st"}, StatusPill(x.status.text, x.status.tone)),
           React.createElement("td",{key:"d"}, (x.r && x.r.diemChu!=null) ? "★".repeat(x.r.diemChu) : "—"),
           React.createElement("td",{key:"a"}, x.r ? React.createElement("button",{className:"btn", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>setReviewReportId(x.r.id)}, "Xem & chấm") : "—"),
@@ -1386,7 +1390,6 @@ function ImageReviewModal({ report, onSave, onClose }){
     React.createElement("div", { className:"modal modalWide", onClick:e=>e.stopPropagation() }, [
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:2 } }, `${report.shop} — ${report.ngay}`),
       report.nguoiUpload && React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } }, `Người nộp: ${report.nguoiUpload}`),
-      React.createElement(AiSummaryBox, { key:"ai", summary:report.aiSummary, flag:report.aiFlag }),
       (report.anhChecklist && report.anhChecklist.length>0) && React.createElement("div", { key:"cl", style:{ marginBottom:14 } }, [
         React.createElement("div",{key:"l",style:{fontWeight:700,fontSize:12.5,marginBottom:4}},"Ảnh checklist hàng ngày"),
         React.createElement("div", { key:"g", className:"photoGrid" }, report.anhChecklist.map((url,i) =>
@@ -1426,37 +1429,11 @@ function ImageReportView({ isAdmin, myStaff }){
   const [adminShop, setAdminShop] = useState("Tất cả");
   const [adminDate, setAdminDate] = useState(todayISO());
   const [viewReportId, setViewReportId] = useState(null);
-  const [aiCriteria, setAiCriteria] = useState("");
-  const [aiCriteriaLoaded, setAiCriteriaLoaded] = useState(false);
-  const [savingCriteria, setSavingCriteria] = useState(false);
-  const [criteriaOpen, setCriteriaOpen] = useState(false);
 
   useEffect(()=>{
     const u2 = subscribeCol("imageReports", rows => { const map = {}; rows.forEach(r => map[r.id] = r); setReportsMap(map); });
     return ()=>{ u2(); };
   }, []);
-
-  // Tiêu chí đánh giá AI — lưu tại opsConfig/aiImageCriteria, chỉ quản lý mới sửa được.
-  // Cloud Function analyzeImagePhotosWithAI đọc đúng field "criteria" này cho mỗi lần chạy sau.
-  useEffect(()=>{
-    if(!isAdmin) return;
-    db.collection("opsConfig").doc("aiImageCriteria").get().then(snap => {
-      setAiCriteria(snap.exists ? (snap.data().criteria || "") : "");
-      setAiCriteriaLoaded(true);
-    }).catch(err => { console.error("Không tải được tiêu chí AI:", err); setAiCriteriaLoaded(true); });
-  }, [isAdmin]);
-
-  async function saveAiCriteria(){
-    setSavingCriteria(true);
-    try{
-      await db.collection("opsConfig").doc("aiImageCriteria").set({ criteria: aiCriteria.trim(), updatedAtTs: firebase.firestore.FieldValue.serverTimestamp() }, { merge:true });
-      window.alert("Đã lưu tiêu chí — áp dụng cho các ảnh nộp/cập nhật từ giờ trở đi.");
-    } catch(err){
-      console.error("Lưu tiêu chí AI lỗi:", err);
-      window.alert("Lưu thất bại, thử lại.");
-    }
-    setSavingCriteria(false);
-  }
 
   const today = todayISO();
   const thisId = selfShop ? imageReportId(selfShop, today) : null;
@@ -1511,8 +1488,6 @@ function ImageReportView({ isAdmin, myStaff }){
       photos: thisReport ? thisReport.anhCTKM : null, uploading:uploadingCTKM,
       onUpload:files=>addPhotos("anhCTKM", files), onRemove:idx=>removePhoto("anhCTKM", idx),
     }),
-    hasAnyPhoto && React.createElement("div", { key:"ai", style:{ marginTop:14 } },
-      React.createElement(AiSummaryBox, { summary: thisReport && thisReport.aiSummary, flag: thisReport && thisReport.aiFlag })),
     thisReport && thisReport.trangThaiDuyet && React.createElement("div", { key:"review", style:{
         marginTop:14, borderRadius:8, padding:"9px 12px", fontSize:12.5,
         background: thisReport.trangThaiDuyet==="Đạt" ? "var(--pineSoft)" : "var(--claySoft)",
@@ -1551,7 +1526,7 @@ function ImageReportView({ isAdmin, myStaff }){
   const adminTable = shopsInFilter.length===0
     ? React.createElement("div",{className:"emptyState"}, "Không có nhà thuốc trong bộ lọc này.")
     : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
-        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Nhà thuốc","Người nộp","Ảnh checklist","Ảnh CTKM","AI","Trạng thái","Kiểm tra",""].map((h,i)=>React.createElement("th",{key:i},h)))),
+        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Nhà thuốc","Người nộp","Ảnh checklist","Ảnh CTKM","Trạng thái","Kiểm tra",""].map((h,i)=>React.createElement("th",{key:i},h)))),
         React.createElement("tbody",{key:"b"}, shopsInFilter.map(shop => {
           const rid = imageReportId(shop, adminDate);
           const r = reportsMap[rid];
@@ -1563,7 +1538,6 @@ function ImageReportView({ isAdmin, myStaff }){
             React.createElement("td",{key:"n"}, (r && r.nguoiUpload) || "—"),
             React.createElement("td",{key:"cl"}, fmtNum(clCount)),
             React.createElement("td",{key:"ck"}, fmtNum(ckCount)),
-            React.createElement("td",{key:"ai"}, (has && r.aiFlag) ? StatusPill(r.aiFlag, aiFlagTone(r.aiFlag)) : (has ? StatusPill("Chưa có","neutral") : "—")),
             React.createElement("td",{key:"st"}, has ? StatusPill("Đã nộp","good") : StatusPill("Chưa nộp","warn")),
             React.createElement("td",{key:"dv"}, has
               ? (r.trangThaiDuyet==="Đạt" ? StatusPill("Đạt","good") : (r.trangThaiDuyet==="Chưa đạt" ? StatusPill("Chưa đạt","warn") : StatusPill("Chưa kiểm tra","neutral")))
@@ -1578,23 +1552,7 @@ function ImageReportView({ isAdmin, myStaff }){
     report: viewingReport, onSave: saveImageReview, onClose: ()=>setViewReportId(null),
   });
 
-  const criteriaCard = isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
-    React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10, marginBottom: criteriaOpen ? 10 : 0 } }, [
-      React.createElement("div", { key:"t", className:"cardTitle", style:{ marginBottom:0 } }, "🤖 Tiêu chí đánh giá AI (ảnh checklist/CTKM)"),
-      React.createElement("button", { key:"b", type:"button", className:"btn btnGhost", style:{ padding:"6px 12px", fontSize:12 }, onClick:()=>setCriteriaOpen(!criteriaOpen) }, criteriaOpen ? "Thu gọn" : "Chỉnh sửa"),
-    ]),
-    criteriaOpen && React.createElement(React.Fragment, null, [
-      React.createElement("p", { key:"hint", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:8 } },
-        "Mô tả \"đạt yêu cầu\" nghĩa là gì — AI sẽ dựa đúng vào mô tả này để chấm mọi ảnh nộp sau khi lưu. Để trống sẽ dùng tiêu chí mặc định."),
-      React.createElement("textarea", { key:"ta", rows:4, value:aiCriteria, onChange:e=>setAiCriteria(e.target.value),
-        placeholder:"VD: quầy/kệ gọn gàng ngay hàng thẳng lối, có đầy đủ bảng giá/tem giá rõ ràng, không để hàng hoá dưới sàn hoặc lối đi, khu vực CTKM đúng vị trí quy định và nổi bật, không có rác/đồ đạc cá nhân lẫn vào khu trưng bày...",
-        style:{ marginBottom:10 } }),
-      React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", disabled:savingCriteria||!aiCriteriaLoaded, onClick:saveAiCriteria }, savingCriteria ? "Đang lưu..." : "Lưu tiêu chí"),
-    ]),
-  ]);
-
   const adminSection = isAdmin && React.createElement("div", { key:"admin", style:{ marginTop:26 } }, [
-    criteriaCard,
     React.createElement("button", { key:"tgl", type:"button", className:"btn btnGhost", style:{ marginBottom:14 }, onClick:()=>setAdminOpen(!adminOpen) }, adminOpen ? "Ẩn báo cáo tất cả nhà thuốc" : "Xem báo cáo tất cả nhà thuốc"),
     adminOpen && React.createElement(React.Fragment, null, [ adminMetrics, adminFilterRow, adminTable ]),
   ]);
@@ -1621,8 +1579,17 @@ function CustomerOrderView({ isAdmin, myStaff }){
   const [showHistoryId, setShowHistoryId] = useState(null);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [orderTrends, setOrderTrends] = useState(null);
 
   useEffect(()=>{ const u = subscribeCol("customerOrders", setOrders); return u; }, []);
+
+  // "🤖 Xu hướng khách hỏi hàng" — Cloud Function analyzeCustomerOrderTrendsWithAI tự chạy mỗi
+  // sáng thứ Hai, tổng hợp 7 ngày gần nhất và ghi kết quả vào opsConfig/aiOrderTrends.
+  useEffect(()=>{
+    if(!isAdmin) return;
+    const unsub = db.collection("opsConfig").doc("aiOrderTrends").onSnapshot(snap => setOrderTrends(snap.exists ? snap.data() : null));
+    return unsub;
+  }, [isAdmin]);
 
   const today = todayISO();
   function isOverdue(o){ return o.trangThai==="Đang chờ" && !!o.ngayHen && o.ngayHen < today; }
@@ -2028,8 +1995,15 @@ function CustomerOrderView({ isAdmin, myStaff }){
     ])
   );
 
+  const trendsCard = isAdmin && orderTrends && orderTrends.summary && React.createElement("div", { className:"card", style:{ marginBottom:20, background:"var(--pineSoft)" } }, [
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13.5, marginBottom:6 } },
+      `🤖 Xu hướng khách hỏi hàng (AI) — ${orderTrends.periodFrom} → ${orderTrends.periodTo}, ${orderTrends.orderCount} lượt`),
+    React.createElement("div", { key:"s", style:{ fontSize:12.5, whiteSpace:"pre-wrap", lineHeight:1.6 } }, orderTrends.summary),
+  ]);
+
   return React.createElement(React.Fragment, null, [
     React.createElement("p", { key:"s", className:"pagesub" }, isAdmin ? "Theo dõi khách đặt hàng còn thiếu của tất cả nhà thuốc." : "Ghi lại khi khách hỏi hàng không có — cả nhà thuốc đều thấy và cập nhật được, không riêng người ghi."),
+    trendsCard,
     isAdmin && adminMetrics, isAdmin && dateRangeRow, statsCard, moTuCard, isAdmin && adminFilterRow, isAdmin && adminTable,
     staffSection, formModal,
   ]);
