@@ -1668,7 +1668,7 @@ function CustomerOrderView({ isAdmin, myStaff }){
   }
   async function submit(e){
     e.preventDefault();
-    if(!myStaff || !form.customerName.trim() || !form.productName.trim()) return;
+    if(!myStaff || !form.customerName.trim() || !form.productName.trim() || !form.congDung.trim()) return;
     const isShip = form.loaiDon==="shipHang";
     const isHenLay = form.loaiDon==="henLay";
     const henLayCoNgay = isHenLay && form.henLayKieu!=="lienHe";
@@ -1878,10 +1878,11 @@ function CustomerOrderView({ isAdmin, myStaff }){
     const map = {};
     orders.filter(inDateRange).forEach(o => {
       const key = o.productName.trim().toLowerCase();
-      if(!map[key]) map[key] = { productName:o.productName, count:0, shops:new Set(), hetTon:0, khongCoHeThong:0 };
+      if(!map[key]) map[key] = { productName:o.productName, congDung:"", count:0, shops:new Set(), hetTon:0, khongCoHeThong:0 };
       map[key].count++; map[key].shops.add(o.shop);
       if(o.hangHetTon) map[key].hetTon++;
       if(o.hangKhongCoHeThong) map[key].khongCoHeThong++;
+      if(!map[key].congDung && o.congDung && o.congDung.trim()) map[key].congDung = o.congDung.trim();
     });
     return Object.values(map).sort((a,b)=> b.count-a.count);
   })();
@@ -1889,9 +1890,10 @@ function CustomerOrderView({ isAdmin, myStaff }){
     React.createElement("div", { key:"t", className:"cardTitle" }, "Thống kê hàng khách hỏi không đáp ứng được (tất cả)"),
     React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } }, "Gộp theo tên hàng, xếp theo số lượt hỏi nhiều nhất — dùng để rà soát mặt hàng hay hết/hay bị hỏi mà không đáp ứng được."),
     React.createElement("div", { className:"tableWrap", style:{ marginBottom:0 } }, React.createElement("table",{className:"data"}, [
-      React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Tên hàng","Số lượt hỏi","Số nhà thuốc","Hết tồn","Hệ thống không có"].map((h,i)=>React.createElement("th",{key:i},h)))),
+      React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Tên hàng","Công dụng","Số lượt hỏi","Số nhà thuốc","Hết tồn","Hệ thống không có"].map((h,i)=>React.createElement("th",{key:i},h)))),
       React.createElement("tbody",{key:"b"}, allProductGroups.slice(0,50).map((g,i) => React.createElement("tr",{key:i}, [
         React.createElement("td",{key:"n"}, g.productName),
+        React.createElement("td",{key:"cd"}, g.congDung || "—"),
         React.createElement("td",{key:"c"}, fmtNum(g.count)),
         React.createElement("td",{key:"s"}, `${g.shops.size} (${[...g.shops].join(", ")})`),
         React.createElement("td",{key:"ht"}, fmtNum(g.hetTon)),
@@ -1974,8 +1976,8 @@ function CustomerOrderView({ isAdmin, myStaff }){
         React.createElement("div", { key:"b", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},isShipForm?"Số điện thoại":"Số điện thoại (nếu có)"), React.createElement("input",{key:"i",value:form.customerPhone,onChange:e=>setForm({...form,customerPhone:e.target.value}),required:isShipForm}) ]),
         React.createElement("div", { key:"c", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},isShipForm?"Sản phẩm khách đặt":"Hàng khách hỏi không có"), React.createElement("input",{key:"i",value:form.productName,onChange:e=>setForm({...form,productName:e.target.value}),required:true,placeholder:"Tên thuốc/sản phẩm..."}) ]),
         React.createElement("div", { key:"cd", className:"field", style:{ marginBottom:10 } }, [
-          React.createElement("label",{key:"l"},"Công dụng cơ bản (nếu biết)"),
-          React.createElement("input",{key:"i",value:form.congDung,onChange:e=>setForm({...form,congDung:e.target.value}),placeholder:"VD: hạ sốt, giảm đau; kem trị nấm phụ khoa; bổ sung canxi..."}),
+          React.createElement("label",{key:"l"},"Công dụng cơ bản *"),
+          React.createElement("input",{key:"i",value:form.congDung,onChange:e=>setForm({...form,congDung:e.target.value}),required:true,placeholder:"VD: hạ sốt, giảm đau; kem trị nấm phụ khoa; bổ sung canxi..."}),
         ]),
         isShipForm && React.createElement("div", { key:"sl", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Số lượng / quy cách (nếu có)"), React.createElement("input",{key:"i",value:form.soLuong,onChange:e=>setForm({...form,soLuong:e.target.value}),placeholder:"VD: 2 hộp"}) ]),
 
