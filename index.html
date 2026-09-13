@@ -3348,6 +3348,47 @@ function kpiCtahQlkvCalc(doc){
   return { adj };
 }
 
+// Thẻ "Chấm KPI tự động" — tự tính lại điểm tổng (mục tiêu/thực tế đã chấm + điểm cộng/trừ
+// Tiêu chí ảnh hưởng CTAH) ngay khi có số liệu mới, KHÔNG cần bấm nút hay chờ ai duyệt. Dữ liệu
+// đến từ các subscription Firestore realtime đã có sẵn ở KpiView (targets/actuals/ctahDocs), nên
+// mỗi lần nhân viên tự chấm 1 mục hoặc dữ liệu tự động đồng bộ (doanh số, hàng cận date...) đổi,
+// thẻ này tự cập nhật ngay lập tức mà không cần thao tác gì thêm.
+function KpiAutoScoreCard({ groups, targets, actuals, ctahDoc, hasTargets }){
+  if(!hasTargets){
+    return React.createElement("div", { className:"card", style:{ marginBottom:16, background:"var(--paper)" } },
+      React.createElement("div", { style:{ fontSize:12.5, color:"var(--inkSoft)" } }, "Chưa có chỉ tiêu KPI được giao trong tháng này — thẻ chấm điểm tự động sẽ hiện ra ngay khi có chỉ tiêu."));
+  }
+  const totalPlan = kpiTotalPlan(groups);
+  const totalActualBase = kpiTotalActual(groups, targets, actuals);
+  const ctah = kpiCtahCalc(ctahDoc);
+  const totalActual = totalActualBase!=null ? Math.max(0, totalActualBase + ctah.adj) : null;
+  const pct = (totalActual!=null && totalPlan>0) ? totalActual/totalPlan : null;
+  const xepLoai = ctah.khongXet ? "Không xét KPI tháng này" : kpiXepLoai(pct);
+  const badgeTone = ctah.khongXet ? "warn" : (pct!=null && pct>=0.85 ? "good" : "warn");
+  return React.createElement("div", { className:"card", style:{ marginBottom:16, border:"1.5px solid var(--pine)", background:"linear-gradient(135deg, var(--pineSoft), #fff)" } }, [
+    React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:12 } }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:800, fontSize:14.5 } }, "⚡ Chấm KPI tự động"),
+      React.createElement("span", { key:"live", style:{ fontSize:10.5, fontWeight:700, color:"var(--pine)", background:"#fff", border:"1px solid var(--pine)", borderRadius:20, padding:"3px 9px" } }, "Tự động cập nhật"),
+    ]),
+    React.createElement("div", { key:"grid", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:10, marginBottom:10 } }, [
+      React.createElement("div", { key:"a" }, [
+        React.createElement("div", { key:"l", style:{ fontSize:10.5, fontWeight:700, color:"var(--inkSoft)", textTransform:"uppercase", letterSpacing:".03em", marginBottom:3 } }, "Điểm thực tế"),
+        React.createElement("div", { key:"v", className:"brandFont", style:{ fontSize:23, fontWeight:700 } }, totalActual!=null ? `${Math.round(totalActual)} / ${totalPlan}` : "—"),
+      ]),
+      React.createElement("div", { key:"b" }, [
+        React.createElement("div", { key:"l", style:{ fontSize:10.5, fontWeight:700, color:"var(--inkSoft)", textTransform:"uppercase", letterSpacing:".03em", marginBottom:3 } }, "% KPI đạt"),
+        React.createElement("div", { key:"v", className:"brandFont", style:{ fontSize:23, fontWeight:700, color:"var(--pine)" } }, pct!=null ? `${Math.round(pct*100)}%` : "—"),
+      ]),
+      React.createElement("div", { key:"c" }, [
+        React.createElement("div", { key:"l", style:{ fontSize:10.5, fontWeight:700, color:"var(--inkSoft)", textTransform:"uppercase", letterSpacing:".03em", marginBottom:3 } }, "Điểm CTAH"),
+        React.createElement("div", { key:"v", className:"brandFont", style:{ fontSize:23, fontWeight:700, color: ctah.adj<0 ? "var(--clay)" : "var(--ink)" } }, `${ctah.adj>0?"+":""}${ctah.adj}`),
+      ]),
+    ]),
+    StatusPill(xepLoai, badgeTone),
+    React.createElement("div", { key:"note", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:10 } }, "Điểm này tự tính lại ngay khi bạn tự chấm mục tiêu/thực tế bên dưới, hoặc khi hệ thống tự động cập nhật số liệu doanh số/hàng cận date — không cần bấm nút."),
+  ]);
+}
+
 function KpiItemRow({ item, target, actual, canEditTarget, canEditActual, onTargetChange, onActualChange }){
   const score = kpiCalcItemScore(item, target, actual);
   const pct = (item.cachCham!=="nhi_phan" && item.cachCham!=="ty_le_truc_tiep" && target) ? (Number(actual)||0)/Number(target) : null;
@@ -3629,12 +3670,65 @@ function KpiView({ isAdmin, myStaff }){
   const [showKpiSummary, setShowKpiSummary] = useState(true);
   const [employeePlans, setEmployeePlans] = useState([]);
   const [inventoryExpiry, setInventoryExpiry] = useState({});
+  // Danh sách khách hàng được nâng hạng trong tháng, đồng bộ từ hệ thống ngoài (xem effect đồng
+  // bộ real-time bên dưới) — dùng để tự động tính chỉ tiêu "nâng hạng khách hàng", không cần
+  // quản lý/nhân viên tự gõ tay số liệu này nữa.
+  const [customerUpgrades, setCustomerUpgrades] = useState([]);
+  // Trạng thái tự động lấy dữ liệu mới nhất khi mở tab KPI (xem effect đồng bộ real-time bên dưới).
+  const [kpiSyncStatus, setKpiSyncStatus] = useState(null); // null | "syncing" | "done" | "error"
+  const [kpiSyncMsg, setKpiSyncMsg] = useState("");
 
   useEffect(()=>{
     if(!isAdmin) return;
     const unsub = db.collection("opsConfig").doc("aiKpiAnalysis").onSnapshot(snap => setAiKpiAnalysis(snap.exists ? snap.data() : null));
     return unsub;
   }, [isAdmin]);
+
+  // ================= TỰ ĐỘNG LẤY DỮ LIỆU MỚI NHẤT MỖI LẦN MỞ TAB KPI (KHÔNG CẦN BẤM NÚT) =================
+  // Mỗi lần component này được mount (tức là mỗi lần nhân viên/quản lý mở tab "KPI"), tự động gọi
+  // các Cloud Function đồng bộ dữ liệu từ hệ thống upharma.com.vn — sau khi đồng bộ xong, dữ liệu
+  // mới sẽ tự động chảy vào qua các listener real-time (subscribeCol) bên dưới và tự tính lại điểm
+  // KPI ngay, không cần bấm nút "Lấy dữ liệu ngay" như trước.
+  // Dùng 1 giao dịch Firestore (transaction) để "xí phần" — nếu nhiều người cùng mở tab KPI trong
+  // cùng 1 khoảng thời gian ngắn, CHỈ ĐÚNG 1 người thực sự gọi API hệ thống ngoài, những người còn
+  // lại chỉ chờ đọc dữ liệu mới đã có sẵn — tránh dội quá nhiều request cùng lúc lên hệ thống ngoài
+  // (đặc biệt là API nâng hạng khách hàng, vốn có thể chạy khá lâu vì phải quét nhiều nhà thuốc).
+  useEffect(()=>{
+    let cancelled = false;
+    const REALTIME_SYNC_ENDPOINTS = [
+      "https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncEmployeePlanNow",       // chỉ tiêu nhân viên
+      "https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncInventoryExpiryNow",     // tồn kho cận date
+      "https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncCustomerLevelUpgradesNow", // nâng hạng khách hàng
+      "https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncWorkRegistrationsNow",   // đăng ký ca / tăng ca
+      "https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncSalesOrdersHeadersOnlyNow", // đơn bán hàng (bản nhanh, chỉ lấy tổng đơn)
+    ];
+    const THROTTLE_MS = 5 * 60 * 1000; // tối thiểu 5 phút giữa 2 lần tự động đồng bộ, dù bao nhiêu người cùng mở tab
+    async function autoSyncOnOpen(){
+      try{
+        const lockRef = db.collection("opsConfig").doc("kpiRealtimeSyncLock");
+        const now = Date.now();
+        const shouldRun = await db.runTransaction(async tx => {
+          const doc = await tx.get(lockRef);
+          const last = (doc.exists && doc.data().lastTriggeredAtMs) || 0;
+          if(now - last < THROTTLE_MS) return false;
+          tx.set(lockRef, { lastTriggeredAtMs: now }, { merge:true });
+          return true;
+        });
+        if(!shouldRun) return; // vừa có người khác đồng bộ gần đây — dữ liệu đã đủ mới, không cần gọi lại
+        if(!cancelled){ setKpiSyncStatus("syncing"); setKpiSyncMsg("Đang tự động lấy dữ liệu mới nhất..."); }
+        for(const url of REALTIME_SYNC_ENDPOINTS){
+          if(cancelled) return;
+          try{ await fetch(url); } catch(err){ console.error("Tự động đồng bộ KPI lỗi:", url, err); }
+        }
+        if(!cancelled){ setKpiSyncStatus("done"); setKpiSyncMsg("Đã cập nhật dữ liệu mới nhất."); }
+      } catch(err){
+        console.error("Tự động đồng bộ KPI lỗi:", err);
+        if(!cancelled){ setKpiSyncStatus("error"); setKpiSyncMsg("Không thể tự động lấy dữ liệu mới — số liệu đang hiển thị có thể chưa phải mới nhất."); }
+      }
+    }
+    autoSyncOnOpen();
+    return ()=>{ cancelled = true; };
+  }, []);
 
   // Bấm nút "Phân tích" để AI phân tích KPI toàn khu vực ngay lúc đó (tháng hiện tại) — không
   // còn chạy tự động theo lịch cố định (trước đây là sáng thứ Hai hàng tuần).
@@ -3679,7 +3773,12 @@ function KpiView({ isAdmin, myStaff }){
     // Cloud Function syncInventoryExpiryDaily (API GetInventoryByShopID) — 1 tài liệu/nhà thuốc,
     // dùng để tự động điền 2 chỉ tiêu con của "Hàng cận date", không cần quản lý gõ tay.
     const u6 = subscribeCol("externalInventoryExpiry", rows => { const map={}; rows.forEach(r=>map[r.shopCode||r.id]=r); setInventoryExpiry(map); });
-    return ()=>{ u1(); u2(); u3(); u4(); u5(); u6(); };
+    // Lượt nâng hạng khách hàng trong tháng, đồng bộ từ Cloud Function syncCustomerLevelUpgradesNow
+    // (API GetBuyerLstWithLevel) — mỗi bản ghi có phone/shopCode/monthKey/salesName (nhân viên bán
+    // đơn gần nhất của khách đó) — dùng để tự động đếm & điền chỉ tiêu "nâng hạng khách hàng"
+    // (cs_nangHang cho NVBH, ds_cskh cho CHT), không cần quản lý/nhân viên gõ tay số liệu này nữa.
+    const u7 = subscribeCol("externalCustomerUpgrades", setCustomerUpgrades);
+    return ()=>{ u1(); u2(); u3(); u4(); u5(); u6(); u7(); };
   }, []);
   async function saveTemplates(next){ await saveConfigDoc("kpiTemplates", next); setShowTplEditor(false); }
 
@@ -3736,6 +3835,37 @@ function KpiView({ isAdmin, myStaff }){
   const myActuals = (myAssign && myAssign.actuals) || {};
   const myHasTargets = Object.keys(myTargets).length > 0;
 
+  // Tự động tính "Thực tế đạt được" cho chính nhân viên đang xem, lấy trực tiếp từ dữ liệu đã
+  // đồng bộ real-time (chỉ tiêu bán hàng, hàng cận date, nâng hạng khách hàng) — không cần tự gõ
+  // tay các chỉ tiêu này nữa. Chạy ngay khi nhân viên mở tab KPI (dữ liệu vừa được làm mới ở effect
+  // đồng bộ real-time phía trên), và tự chạy lại mỗi khi dữ liệu nguồn có bản mới.
+  const myPlan = myStaff ? findEmployeePlanFor(myStaff, thang) : null;
+  const myPlanDerived = myPlan ? {
+    kh_tongkh: { actual: myPlan.QuantityCusR },
+    dh_sodon: { actual: myPlan.QuantityInvoiceR },
+    dh_tbbill: { actual: myPlan.QuantityInvoiceR ? Math.round(myPlan.AmountR / myPlan.QuantityInvoiceR) : "" },
+  } : null;
+  const myInvExpiry = myStaff ? inventoryExpiry[myStaff.shop] : null;
+  const myUpgradeItemId = myStaff && myStaff.role==="Cửa hàng trưởng" ? "ds_cskh" : "cs_nangHang";
+  const myUpgradeCount = (myStaff && thang) ? customerUpgrades.filter(u => u.monthKey===thang && (
+    myStaff.role==="Cửa hàng trưởng" ? u.shopCode===myStaff.shop : normalizeStaffName(u.salesName)===normalizeStaffName(myStaff.name)
+  )).length : 0;
+  useEffect(()=>{
+    if(!myStaff) return;
+    if(myPlanDerived){
+      Object.keys(myPlanDerived).forEach(itemId => {
+        const { actual } = myPlanDerived[itemId];
+        if(actual!=="" && actual!=null && Number(myActuals[itemId])!==Number(actual)) saveActual(myStaff, itemId, actual);
+      });
+    }
+    if(myInvExpiry){
+      if(Number(myActuals["hh_candate__6th"])!==Number(myInvExpiry.pct6)) saveActual(myStaff, "hh_candate__6th", myInvExpiry.pct6);
+      if(Number(myActuals["hh_candate__12th"])!==Number(myInvExpiry.pct12)) saveActual(myStaff, "hh_candate__12th", myInvExpiry.pct12);
+    }
+    if(Number(myActuals[myUpgradeItemId]||0)!==myUpgradeCount) saveActual(myStaff, myUpgradeItemId, myUpgradeCount);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myStaff && myStaff.id, thang, myPlan && myPlan.RowID, myPlan && myPlan.syncedAtTs, myInvExpiry && myInvExpiry.syncedAtTs, myUpgradeCount]);
+
   const myCtahDoc = myStaff ? (ctahDocs[kpiCtahId(myStaff.id, thang)] || {}) : {};
   const myIsCHT = myStaff && myStaff.role==="Cửa hàng trưởng";
   const myShopHasCHT = myStaff && !myIsCHT && staff.some(s => s.shop===myStaff.shop && s.role==="Cửa hàng trưởng");
@@ -3750,6 +3880,7 @@ function KpiView({ isAdmin, myStaff }){
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15 } }, `KPI tháng ${thang} — ${myStaff ? myStaff.name : ""}`),
       React.createElement("input", { key:"m", type:"month", value:thang, onChange:e=>setThang(e.target.value), style:{ padding:"7px 9px", border:"1px solid var(--line)", borderRadius:8, fontSize:13 } }),
     ]),
+    React.createElement(KpiAutoScoreCard, { key:"autoscore", groups:myGroups, targets:myTargets, actuals:myActuals, ctahDoc:myCtahDoc, hasTargets:myHasTargets }),
     !myHasTargets
       ? React.createElement("div", { key:"e", className:"emptyState" }, "Quản lý khu vực chưa giao chỉ tiêu KPI cho bạn trong tháng này.")
       : React.createElement(React.Fragment, { key:"f" }, [
@@ -3876,6 +4007,20 @@ function KpiView({ isAdmin, myStaff }){
     if(Number(pickedActuals["hh_candate__12th"])!==Number(pickedInvExpiry.pct12)) saveActual(pickedStaff, "hh_candate__12th", pickedInvExpiry.pct12);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pickedStaff && pickedStaff.id, thang, pickedInvExpiry && pickedInvExpiry.syncedAtTs]);
+
+  // Tự động đếm & điền chỉ tiêu "nâng hạng khách hàng" (cs_nangHang cho NVBH, ds_cskh cho CHT) từ
+  // dữ liệu đã đồng bộ real-time — CHT tính theo TOÀN NHÀ THUỐC (mọi lượt nâng hạng của khách mua
+  // tại nhà thuốc đó), NVBH tính theo đúng cá nhân (khách mà đơn gần nhất trong tháng do người đó
+  // bán) — khớp đúng quy tắc gán nhân viên đã cài trong Cloud Function syncCustomerLevelUpgradesNow.
+  const pickedUpgradeItemId = pickedStaff && pickedStaff.role==="Cửa hàng trưởng" ? "ds_cskh" : "cs_nangHang";
+  const pickedUpgradeCount = (pickedStaff && thang) ? customerUpgrades.filter(u => u.monthKey===thang && (
+    pickedStaff.role==="Cửa hàng trưởng" ? u.shopCode===pickedStaff.shop : normalizeStaffName(u.salesName)===normalizeStaffName(pickedStaff.name)
+  )).length : 0;
+  useEffect(()=>{
+    if(!pickedStaff) return;
+    if(Number(pickedActuals[pickedUpgradeItemId]||0)!==pickedUpgradeCount) saveActual(pickedStaff, pickedUpgradeItemId, pickedUpgradeCount);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pickedStaff && pickedStaff.id, thang, pickedUpgradeCount]);
 
   // Bảng tổng hợp toàn bộ nhân sự trong tháng đang chọn — tách riêng Nhân viên bán hàng và Cửa
   // hàng trưởng (CHT) thành 2 bảng, vì 2 vai trò có bộ chỉ tiêu KPI khác nhau. KHÔNG gồm Nhân
@@ -4301,8 +4446,15 @@ function KpiView({ isAdmin, myStaff }){
     ]),
   ]);
 
+  const kpiSyncBanner = kpiSyncStatus && React.createElement("div", { key:"syncbanner", style:{
+      fontSize:12, marginBottom:12, padding:"7px 12px", borderRadius:8,
+      background: kpiSyncStatus==="error" ? "var(--claySoft)" : (kpiSyncStatus==="done" ? "var(--pineSoft)" : "var(--paper)"),
+      color: kpiSyncStatus==="error" ? "var(--clay)" : (kpiSyncStatus==="done" ? "var(--pine)" : "var(--inkSoft)"),
+    } }, `${kpiSyncStatus==="syncing" ? "⏳" : kpiSyncStatus==="done" ? "✅" : "⚠️"} ${kpiSyncMsg}`);
+
   return React.createElement(React.Fragment, null, [
     React.createElement("p", { key:"s", className:"pagesub" }, isAdmin ? "Giao chỉ tiêu KPI cho từng nhân viên theo tháng, theo dõi kết quả toàn khu vực." : "Chỉ tiêu KPI được quản lý giao cho bạn — tự cập nhật kết quả thực tế đạt được."),
+    kpiSyncBanner,
     isAdmin ? React.createElement(React.Fragment, null, [ aiKpiCard, adminAssignSection, adminSummarySection, adminPersonalSection, adminQlkvCtahSection ]) : React.createElement(React.Fragment, null, [ staffSection, chtReviewSection ]),
   ]);
 }
@@ -5004,59 +5156,57 @@ function CreateAccountModal({ staffMember, onClose }){
   );
 }
 
-// ================= QUẢN LÝ DANH SÁCH NHÀ THUỐC (tự thêm/xoá, không cần sửa code) =================
-// ================= DỌN TOKEN THÔNG BÁO TRÙNG LẶP (chạy 1 lần khi cần) =================
-// ================= LẤY ĐƠN HÀNG BÁN TỪ HỆ THỐNG upharma.com.vn (thủ công) =================
-function SyncSalesOrdersButton(){
+// ================= ĐỒNG BỘ TẤT CẢ DỮ LIỆU TỪ HỆ THỐNG upharma.com.vn (gộp 1 nút, thủ công) =================
+// Gộp cả 6 việc đồng bộ (đơn hàng bán, ca làm việc/tăng ca, tồn kho, chỉ tiêu nhân viên, hàng cận
+// date, nâng hạng khách hàng) vào ĐÚNG 1 nút bấm — chạy tuần tự từng việc (không chạy song song,
+// tránh làm hệ thống ngoài quá tải), hiện tiến độ + kết quả từng mục ngay bên dưới.
+const SYNC_ALL_TASKS = [
+  { key:"sales", label:"Đơn hàng bán", url:"https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncSalesOrdersNow",
+    format:d => d && d.ok===false ? ("Lỗi: "+(d.error||"không rõ nguyên nhân")) : `Đã lấy ${d.totalOrders ?? 0} đơn hàng từ ${d.shopCount ?? 0} nhà thuốc.` },
+  { key:"work", label:"Ca làm việc / tăng ca", url:"https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncWorkRegistrationsNow",
+    format:d => d && d.ok===false ? ("Lỗi: "+(d.error||"không rõ nguyên nhân")) : `Đã lấy ${d.totalRecords ?? 0} bản ghi từ ${d.shopCount ?? 0} nhà thuốc.` },
+  { key:"inventory", label:"Tồn kho", url:"https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncInventoryNow",
+    format:d => d && d.ok===false ? ("Lỗi: "+(d.error||"không rõ nguyên nhân")) : `Đã lấy ${d.totalItems ?? 0} dòng tồn kho từ ${d.shopCount ?? 0} nhà thuốc.` },
+  { key:"plan", label:"Chỉ tiêu nhân viên (KPI)", url:"https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncEmployeePlanNow",
+    format:d => `Đã lấy ${d.totalRecords ?? 0} bản ghi chỉ tiêu/kết quả nhân viên (tháng ${d.month ?? "—"}/${d.year ?? "—"}).` },
+  { key:"expiry", label:"Hàng cận date (KPI)", url:"https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncInventoryExpiryNow",
+    format:d => `Đã cập nhật tỷ lệ hàng cận date cho ${d.shopCount ?? 0} nhà thuốc.` },
+  { key:"levelup", label:"Nâng hạng khách hàng", url:"https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncCustomerLevelUpgradesNow",
+    format:d => `Đã ghi nhận ${d.totalUpgrades ?? 0} lượt nâng hạng (tháng ${d.monthKey ?? "—"}).` },
+];
+function SyncAllDataButton(){
   const [running, setRunning] = useState(false);
-  const [result, setResult] = useState(null);
-  async function run(){
-    setRunning(true); setResult(null);
-    try{
-      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncSalesOrdersNow");
-      const data = await resp.json();
-      if(data.ok){
-        setResult(`Đã lấy ${data.totalOrders} đơn hàng từ ${data.shopCount} nhà thuốc.`);
-      } else {
-        setResult("Lỗi: " + (data.error || "không rõ nguyên nhân"));
+  const [statuses, setStatuses] = useState({}); // key -> { state: "pending"|"running"|"done"|"error", message }
+  async function runAll(){
+    setRunning(true);
+    const init = {}; SYNC_ALL_TASKS.forEach(t => init[t.key] = { state:"pending", message:"" });
+    setStatuses(init);
+    for(const t of SYNC_ALL_TASKS){
+      setStatuses(prev => ({ ...prev, [t.key]: { state:"running", message:"" } }));
+      try{
+        const resp = await fetch(t.url);
+        const data = await resp.json();
+        setStatuses(prev => ({ ...prev, [t.key]: { state:"done", message:t.format(data) } }));
+      } catch(err){
+        console.error(`Đồng bộ "${t.label}" lỗi:`, err);
+        setStatuses(prev => ({ ...prev, [t.key]: { state:"error", message:"Có lỗi xảy ra: " + (err && err.message ? err.message : String(err)) } }));
       }
-    } catch(err){
-      console.error("Lấy đơn hàng bán lỗi:", err);
-      setResult("Có lỗi xảy ra: " + (err && err.message ? err.message : String(err)));
-    } finally{ setRunning(false); }
+    }
+    setRunning(false);
   }
+  const iconFor = s => s==="done" ? "✅" : s==="error" ? "⚠️" : s==="running" ? "⏳" : "•";
   return React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
-    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15, marginBottom:4 } }, "Lấy đơn hàng bán từ hệ thống upharma.com.vn"),
-    React.createElement("div", { key:"s", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } }, "Tự động chạy mỗi ngày lúc 23:30 — bấm nút này nếu muốn lấy ngay dữ liệu của hôm nay, không cần đợi."),
-    React.createElement("button", { key:"b", type:"button", className:"btn btnAmber", disabled:running, onClick:run }, running ? "Đang lấy dữ liệu..." : "Lấy dữ liệu ngay"),
-    result && React.createElement("div", { key:"r", style:{ fontSize:12.5, color:"var(--pine)", marginTop:10 } }, result),
-  ]);
-}
-
-// ================= LẤY ĐĂNG KÝ LÀM VIỆC TỪ HỆ THỐNG upharma.com.vn (thủ công) =================
-function SyncWorkRegistrationsButton(){
-  const [running, setRunning] = useState(false);
-  const [result, setResult] = useState(null);
-  async function run(){
-    setRunning(true); setResult(null);
-    try{
-      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncWorkRegistrationsNow");
-      const data = await resp.json();
-      if(data.ok){
-        setResult(`Đã lấy ${data.totalRecords} bản ghi ca làm việc/tăng ca từ ${data.shopCount} nhà thuốc.`);
-      } else {
-        setResult("Lỗi: " + (data.error || "không rõ nguyên nhân"));
-      }
-    } catch(err){
-      console.error("Lấy đăng ký làm việc lỗi:", err);
-      setResult("Có lỗi xảy ra: " + (err && err.message ? err.message : String(err)));
-    } finally{ setRunning(false); }
-  }
-  return React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
-    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15, marginBottom:4 } }, "Lấy đăng ký ca làm việc / tăng ca từ hệ thống upharma.com.vn"),
-    React.createElement("div", { key:"s", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } }, "Tự động chạy mỗi ngày lúc 23:45 — lấy dữ liệu của tháng hiện tại. Bấm nút này nếu muốn lấy ngay, không cần đợi."),
-    React.createElement("button", { key:"b", type:"button", className:"btn btnAmber", disabled:running, onClick:run }, running ? "Đang lấy dữ liệu..." : "Lấy dữ liệu ngay"),
-    result && React.createElement("div", { key:"r", style:{ fontSize:12.5, color:"var(--pine)", marginTop:10 } }, result),
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15, marginBottom:4 } }, "Đồng bộ dữ liệu từ hệ thống upharma.com.vn"),
+    React.createElement("div", { key:"s", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } }, "Đã bỏ toàn bộ lịch tự động — bấm 1 nút này để đồng bộ lần lượt cả 6 loại dữ liệu (đơn hàng bán, ca làm việc/tăng ca, tồn kho, chỉ tiêu nhân viên, hàng cận date, nâng hạng khách hàng)."),
+    React.createElement("button", { key:"b", type:"button", className:"btn btnAmber", disabled:running, onClick:runAll }, running ? "Đang đồng bộ..." : "Đồng bộ tất cả ngay"),
+    Object.keys(statuses).length>0 && React.createElement("div", { key:"list", style:{ marginTop:12, display:"flex", flexDirection:"column", gap:6 } },
+      SYNC_ALL_TASKS.map(t => {
+        const st = statuses[t.key];
+        if(!st) return null;
+        return React.createElement("div", { key:t.key, style:{ fontSize:12.5, color: st.state==="error" ? "var(--clay)" : (st.state==="done" ? "var(--pine)" : "var(--inkSoft)") } },
+          `${iconFor(st.state)} ${t.label}${st.message ? " — " + st.message : (st.state==="running" ? " — đang chạy..." : "")}`);
+      })
+    ),
   ]);
 }
 
@@ -5123,6 +5273,11 @@ function ShopListEditor(){
   ]);
 }
 
+// ================= KHU VỰC ĐỒNG BỘ DỮ LIỆU (đã gộp thành 1 nút, không còn lịch tự động) =================
+function DataSyncSection(){
+  return React.createElement(SyncAllDataButton, null);
+}
+
 function StaffView(){
   const [staff, setStaff] = useState([]);
   const [showForm, setShowForm] = useState(false);
@@ -5187,9 +5342,7 @@ function StaffView(){
   return React.createElement(React.Fragment, null, [
     React.createElement("p", { key:"s", className:"pagesub" }, "Danh sách dùng chung cho Checklist ngày, Báo cáo tuần, Buddy và tặng sao ghi nhận. Tạo tài khoản để nhân viên đăng nhập thẳng vào giao diện riêng của mình."),
     React.createElement(ShopListEditor, { key:"shoplist" }),
-    // Ghi chú: SyncSalesOrdersButton và SyncWorkRegistrationsButton không còn hiện ở đây nữa —
-    // 2 việc đồng bộ này giờ chạy ẩn hoàn toàn qua Cloud Function tự động hàng ngày
-    // (syncSalesOrdersDaily 23:30, syncWorkRegistrationsDaily 23:45), không cần thao tác gì trong app.
+    React.createElement(DataSyncSection, { key:"datasync" }),
     React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:16 } }, [
       React.createElement("button", { key:"add", className:"btn btnPrimary", onClick:openAdd }, "＋ Thêm nhân viên"),
     ]),
