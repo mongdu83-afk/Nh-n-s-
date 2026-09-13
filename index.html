@@ -477,6 +477,7 @@ function fmtVND(n){ return fmtNum(n) + "đ"; }
 // để debug khi cần, không ghi vào systemErrors.
 const IGNORED_ERROR_PATTERNS = [
   "Attempt to get records from database without an in-progress transaction", // Firestore mở nhiều tab cùng lúc
+  "internal error was encountered in the Indexed Database server", // Lỗi IndexedDB nội bộ trình duyệt (Chrome) — vô hại, tự hết, thường do mở nhiều tab/bộ nhớ đệm, không phải lỗi app
 ];
 async function logSystemError(source, err){
   console.error(source, err);
@@ -979,27 +980,32 @@ function normalizeStaffName(s){
     .replace(/\s+/g, " ")
     .trim();
 }
-// Tìm các bản ghi ca làm việc (collection "externalShiftWork", đồng bộ mỗi ngày 23:45 từ hệ
-// thống upharma.com.vn qua Cloud Function syncWorkRegistrationsDaily) của 1 nhân viên trong 1
-// ngày cụ thể. Khớp theo tên đã chuẩn hoá (EmployeeName) — hệ thống ngoài chưa có mã liên kết
-// trực tiếp với staffId trong app, nên khớp theo tên là đúng theo thiết kế hiện tại (xem cùng
-// cách runDailyChecklistReminder phía Cloud Function đang làm).
-function findWorkRegsForStaffDate(workRegs, staffMember, dateISO){
+// Tìm các bản ghi ca làm việc CỦA CẢ 2 NGUỒN — ca thường ("externalShiftWork") và tăng ca
+// ("externalOverTime", API /OverTime/GetOverTimeByTime) — của 1 nhân viên trong 1 ngày cụ thể.
+// Khớp theo tên đã chuẩn hoá (EmployeeName) — hệ thống ngoài chưa có mã liên kết trực tiếp với
+// staffId trong app, nên khớp theo tên là đúng theo thiết kế hiện tại (xem cùng cách
+// runDailyChecklistReminder phía Cloud Function đang làm).
+function findWorkRegsForStaffDate(workRegs, overtimeRegs, staffMember, dateISO){
   if(!staffMember) return [];
   const key = normalizeStaffName(staffMember.name);
   if(!key) return [];
-  return workRegs.filter(r => {
+  const matchOne = r => {
     const workDate = String(r.WorkDate || "").slice(0,10);
     if(workDate !== dateISO) return false;
     return normalizeStaffName(r.EmployeeName) === key;
-  });
+  };
+  const shifts = workRegs.filter(matchOne).map(r => ({ ...r, __isOT:false }));
+  const ots = (overtimeRegs||[]).filter(matchOne).map(r => ({ ...r, __isOT:true }));
+  return [...shifts, ...ots];
 }
-// Định dạng khung giờ ca từ TimeStart/TimeEnd (dạng "YYYY-MM-DD HH:mm:ss") thành "07:00–15:00".
+// Định dạng khung giờ ca từ TimeStart/TimeEnd (dạng "YYYY-MM-DD HH:mm:ss") thành "07:00–15:00" —
+// ghi rõ "(tăng ca)" nếu bản ghi đến từ collection externalOverTime.
 function formatShiftTimeRange(rec){
   const start = String(rec.TimeStart || "").slice(11,16);
   const end = String(rec.TimeEnd || "").slice(11,16);
-  if(start && end) return `${start}–${end}`;
-  return start || end || "";
+  const range = start && end ? `${start}–${end}` : (start || end || "");
+  if(!range) return "";
+  return rec.__isOT ? `${range} (tăng ca)` : range;
 }
 function summarizeShiftLabel(regsForDay){
   if(!regsForDay.length) return null;
@@ -1012,6 +1018,7 @@ function DailyChecklistView({ isAdmin, myStaff }){
   const [templates, setTemplates] = useState(DEFAULT_DAILY_CHECKLISTS);
   const [reports, setReports] = useState({});
   const [workRegs, setWorkRegs] = useState([]);
+  const [overtimeRegs, setOvertimeRegs] = useState([]);
   const [selfId] = useState(myStaff ? myStaff.id : "");
   const [note, setNote] = useState("");
   const [showTplEditor, setShowTplEditor] = useState(false);
@@ -1039,7 +1046,12 @@ function DailyChecklistView({ isAdmin, myStaff }){
     // TimeStart, TimeEnd — khớp đúng với logic runDailyChecklistReminder cũng đang dùng
     // để tự động gửi thông báo nhắc checklist lúc 14h/21h30 mỗi ngày).
     const u4 = subscribeCol("externalShiftWork", setWorkRegs);
-    return ()=>{ u1(); u2(); u3(); u4(); };
+    // Ca TĂNG CA được đồng bộ vào MỘT collection RIÊNG "externalOverTime" (từ API
+    // /OverTime/GetOverTimeByTime, cùng cấu trúc bản ghi WorkDate/EmployeeName/TimeStart/TimeEnd
+    // như ca thường) — trước đây app chỉ đọc "externalShiftWork" nên ca tăng ca không được ghi
+    // nhận/hiển thị ở cột "Ca hôm nay". Đọc thêm collection này và gộp chung khi tìm ca trong ngày.
+    const u5 = subscribeCol("externalOverTime", setOvertimeRegs);
+    return ()=>{ u1(); u2(); u3(); u4(); u5(); };
   }, []);
 
   const today = todayISO();
@@ -1291,10 +1303,17 @@ function DailyChecklistView({ isAdmin, myStaff }){
     const total = (templates[s.role] || []).length + customCount;
     const done = r ? Object.keys(r.doneIds || {}).filter(k => r.doneIds[k]).length : 0;
     const p = total ? Math.round(done/total*100) : 0;
-    const status = !r ? { text:"Chưa làm gì", tone:"warn" } : (r.trangThai==="Đã nộp" ? { text:"Đã nộp", tone:"good" } : { text:"Đang làm dở", tone:"neutral" });
-    const shiftRegsToday = findWorkRegsForStaffDate(workRegs, s, adminDate);
+    const shiftRegsToday = findWorkRegsForStaffDate(workRegs, overtimeRegs, s, adminDate);
     const shiftLabel = summarizeShiftLabel(shiftRegsToday);
     const hasShiftToday = shiftRegsToday.length > 0;
+    // Đã có dữ liệu ca làm việc (workRegs.length>0) VÀ xác nhận người này không có ca hôm nay
+    // → không cần làm checklist, không nên gắn nhãn đỏ "Chưa làm gì" (họ không đi làm hôm nay
+    // thì không có gì để chấm). Nếu họ VẪN nộp gì đó dù không có ca thì vẫn hiện đúng trạng thái
+    // đã nộp/đang làm dở như bình thường — chỉ thay nhãn khi hoàn toàn chưa có báo cáo nào.
+    const knowsNoShift = (workRegs.length > 0 || overtimeRegs.length > 0) && !hasShiftToday;
+    const status = !r
+      ? (knowsNoShift ? { text:"Không có ca — miễn checklist", tone:"neutral" } : { text:"Chưa làm gì", tone:"warn" })
+      : (r.trangThai==="Đã nộp" ? { text:"Đã nộp", tone:"good" } : { text:"Đang làm dở", tone:"neutral" });
     // "Cần theo dõi": có đăng ký ca hôm nay nhưng vẫn chưa nộp/chưa làm gì checklist —
     // đây là điểm mấu chốt giúp nhìn nhanh ai có đi làm mà quên/bỏ checklist.
     const needsAttention = hasShiftToday && status.text !== "Đã nộp";
@@ -1302,7 +1321,7 @@ function DailyChecklistView({ isAdmin, myStaff }){
   });
   const submittedCount = adminRows.filter(x => x.r && x.r.trangThai==="Đã nộp").length;
   const avgPctAdmin = adminRows.length ? Math.round(adminRows.reduce((s,x)=>s+x.p,0)/adminRows.length) : 0;
-  const hasWorkRegData = workRegs.length > 0;
+  const hasWorkRegData = workRegs.length > 0 || overtimeRegs.length > 0;
   const scheduledTodayCount = adminRows.filter(x => x.hasShiftToday).length;
   const needsAttentionRows = adminRows.filter(x => x.needsAttention);
 
@@ -1326,7 +1345,7 @@ function DailyChecklistView({ isAdmin, myStaff }){
 
   const noWorkRegNotice = (isAdmin || isShopManager) && !hasWorkRegData &&
     React.createElement("div", { key:"noWorkReg", style:{ background:"var(--goldSoft)", borderRadius:10, padding:"9px 14px", marginBottom:14, fontSize:12, color:"#7a5108" } },
-      "Chưa có dữ liệu ca làm việc trong collection \"externalShiftWork\" cho ngày này — cột \"Ca hôm nay\" sẽ hiện \"—\" cho tới khi có dữ liệu đồng bộ.");
+      "Chưa có dữ liệu ca làm việc (cả ca thường lẫn tăng ca) cho ngày này — cột \"Ca hôm nay\" sẽ hiện \"—\" cho tới khi có dữ liệu đồng bộ.");
 
   const adminFilterRow = React.createElement("div", { className:"btnRow", style:{ marginBottom:14 } }, [
     isAdmin && React.createElement("select", { key:"shop", value:adminShop, onChange:e=>setAdminShop(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } },
@@ -3608,6 +3627,8 @@ function KpiView({ isAdmin, myStaff }){
   const [analyzingKpi, setAnalyzingKpi] = useState(false);
   const [analyzeKpiMsg, setAnalyzeKpiMsg] = useState(null);
   const [showKpiSummary, setShowKpiSummary] = useState(true);
+  const [employeePlans, setEmployeePlans] = useState([]);
+  const [inventoryExpiry, setInventoryExpiry] = useState({});
 
   useEffect(()=>{
     if(!isAdmin) return;
@@ -3649,7 +3670,16 @@ function KpiView({ isAdmin, myStaff }){
       if(changed) saveConfigDoc("kpiTemplates", fixed).catch(err => console.error("Tự vá kpiTemplates lỗi:", err));
     });
     const u4 = subscribeCol("kpiCTAH", rows => { const map={}; rows.forEach(r=>map[r.id]=r); setCtahDocs(map); });
-    return ()=>{ u1(); u2(); u3(); u4(); };
+    // Chỉ tiêu (mục tiêu) VÀ kết quả thực tế bán hàng của từng nhân viên, đồng bộ tự động từ hệ
+    // thống upharma.com.vn (API GetEmployeePlanLst, qua Cloud Function syncEmployeePlanDaily —
+    // chạy 3 lần/ngày lúc 6h/12h/18h) — dùng để tự động điền "Tổng số khách hàng", "Số đơn bán",
+    // và "Giá trị trung bình bill" (tự tính = doanh số/số đơn), không cần quản lý gõ tay.
+    const u5 = subscribeCol("externalEmployeePlan", setEmployeePlans);
+    // Tỷ lệ % giá trị tồn kho cận date (≤6 tháng/≤12 tháng), đồng bộ 1 lần/ngày lúc 6h sáng từ
+    // Cloud Function syncInventoryExpiryDaily (API GetInventoryByShopID) — 1 tài liệu/nhà thuốc,
+    // dùng để tự động điền 2 chỉ tiêu con của "Hàng cận date", không cần quản lý gõ tay.
+    const u6 = subscribeCol("externalInventoryExpiry", rows => { const map={}; rows.forEach(r=>map[r.shopCode||r.id]=r); setInventoryExpiry(map); });
+    return ()=>{ u1(); u2(); u3(); u4(); u5(); u6(); };
   }, []);
   async function saveTemplates(next){ await saveConfigDoc("kpiTemplates", next); setShowTplEditor(false); }
 
@@ -3797,6 +3827,55 @@ function KpiView({ isAdmin, myStaff }){
   const pickedAssign = pickedStaff ? assignments[kpiAssignmentId(pickedStaff.id, thang)] : null;
   const pickedTargets = (pickedAssign && pickedAssign.targets) || {};
   const pickedActuals = (pickedAssign && pickedAssign.actuals) || {};
+
+  // Tìm bản ghi chỉ tiêu/kết quả bán hàng (đồng bộ từ externalEmployeePlan) khớp đúng nhân viên +
+  // nhà thuốc + tháng đang chọn — khớp theo tên đã chuẩn hoá (giống hệt cách khớp ca làm việc),
+  // vì hệ thống ngoài chưa có mã liên kết trực tiếp với staffId trong app.
+  function findEmployeePlanFor(staffMember, thangStr){
+    if(!staffMember || !thangStr) return null;
+    const [y, m] = thangStr.split("-").map(Number);
+    const key = normalizeStaffName(staffMember.name);
+    return employeePlans.find(r =>
+      Number(r.MonthS)===m && Number(r.YearS)===y &&
+      r.ShopCode===staffMember.shop &&
+      normalizeStaffName(r.EmployeeName)===key
+    ) || null;
+  }
+  const pickedPlan = findEmployeePlanFor(pickedStaff, thang);
+  // Tự động tính "Mục tiêu giao"/"Thực tế đạt được" cho 3 chỉ tiêu Tổng khách hàng/Số đơn bán/Giá
+  // trị trung bình bill trực tiếp từ dữ liệu bán hàng thật — Giá trị trung bình bill = doanh số
+  // chia số đơn (không có sẵn trong API, tự tính ở đây theo đúng yêu cầu).
+  const planDerived = pickedPlan ? {
+    kh_tongkh: { target: pickedPlan.QuantityCus, actual: pickedPlan.QuantityCusR },
+    dh_sodon: { target: pickedPlan.QuantityInvoice, actual: pickedPlan.QuantityInvoiceR },
+    dh_tbbill: {
+      target: pickedPlan.QuantityInvoice ? Math.round(pickedPlan.Amount / pickedPlan.QuantityInvoice) : "",
+      actual: pickedPlan.QuantityInvoiceR ? Math.round(pickedPlan.AmountR / pickedPlan.QuantityInvoiceR) : "",
+    },
+  } : null;
+  // Tự động ghi các giá trị trên vào đúng chỉ tiêu — CHỈ ghi khi có thay đổi thật sự so với dữ
+  // liệu đang lưu (tránh ghi lặp lại/vòng lặp mỗi lần re-render). Quản lý vẫn có thể tự sửa tay
+  // sau đó nếu cần, lần đồng bộ tiếp theo sẽ lại cập nhật về đúng số liệu thật từ hệ thống bán hàng.
+  useEffect(()=>{
+    if(!pickedStaff || !planDerived) return;
+    Object.keys(planDerived).forEach(itemId => {
+      const { target, actual } = planDerived[itemId];
+      if(target!=="" && Number(pickedTargets[itemId])!==Number(target)) saveTarget(pickedStaff, itemId, target);
+      if(actual!=="" && Number(pickedActuals[itemId])!==Number(actual)) saveActual(pickedStaff, itemId, actual);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pickedStaff && pickedStaff.id, thang, pickedPlan && pickedPlan.RowID, pickedPlan && pickedPlan.syncedAtTs]);
+
+  // Tự động điền % thực tế cho 2 chỉ tiêu con của "Hàng cận date" (≤6 tháng/≤12 tháng), lấy từ tỷ
+  // lệ % GIÁ TRỊ TỒN KHO cận date của đúng nhà thuốc nhân viên đang thuộc về (đây là chỉ tiêu theo
+  // NHÀ THUỐC, không phải theo cá nhân — mọi nhân viên cùng nhà thuốc dùng chung 1 số liệu).
+  const pickedInvExpiry = pickedStaff ? inventoryExpiry[pickedStaff.shop] : null;
+  useEffect(()=>{
+    if(!pickedStaff || !pickedInvExpiry) return;
+    if(Number(pickedActuals["hh_candate__6th"])!==Number(pickedInvExpiry.pct6)) saveActual(pickedStaff, "hh_candate__6th", pickedInvExpiry.pct6);
+    if(Number(pickedActuals["hh_candate__12th"])!==Number(pickedInvExpiry.pct12)) saveActual(pickedStaff, "hh_candate__12th", pickedInvExpiry.pct12);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pickedStaff && pickedStaff.id, thang, pickedInvExpiry && pickedInvExpiry.syncedAtTs]);
 
   // Bảng tổng hợp toàn bộ nhân sự trong tháng đang chọn — tách riêng Nhân viên bán hàng và Cửa
   // hàng trưởng (CHT) thành 2 bảng, vì 2 vai trò có bộ chỉ tiêu KPI khác nhau. KHÔNG gồm Nhân
@@ -4022,6 +4101,10 @@ function KpiView({ isAdmin, myStaff }){
       React.createElement("div", { key:"pw", style:{ flex:1, minWidth:200 } },
         React.createElement(NamePicker, { options:staffOptions, value:pickedStaffId, onChange:setPickedStaffId, placeholder:"Gõ tên nhân viên để giao KPI..." })),
     ]),
+    pickedStaff && pickedPlan && React.createElement("div", { key:"synced", style:{ fontSize:11.5, color:"var(--pine)", background:"var(--pineSoft)", borderRadius:8, padding:"7px 10px", marginBottom:10 } },
+      `🔄 Đã tự động lấy "Tổng số khách hàng", "Số đơn bán/tháng" và "Giá trị trung bình bill" từ hệ thống bán hàng (đồng bộ lúc ${pickedPlan.syncedAtTs ? new Date(pickedPlan.syncedAtTs).toLocaleString("vi-VN") : "—"}) — không cần nhập tay 3 mục này.`),
+    pickedStaff && pickedInvExpiry && React.createElement("div", { key:"syncedInv", style:{ fontSize:11.5, color:"var(--pine)", background:"var(--pineSoft)", borderRadius:8, padding:"7px 10px", marginBottom:10 } },
+      `🔄 Đã tự động lấy tỷ lệ % hàng cận date (≤6 tháng: ${pickedInvExpiry.pct6}% · ≤12 tháng: ${pickedInvExpiry.pct12}%) từ tồn kho thật của ${pickedStaff.shop} (đồng bộ lúc ${pickedInvExpiry.syncedAtTs ? new Date(pickedInvExpiry.syncedAtTs).toLocaleString("vi-VN") : "—"}).`),
     pickedStaff
       ? React.createElement(KpiGroups, {
           key:"g", groups:pickedGroups, targets:pickedTargets, actuals:pickedActuals,
