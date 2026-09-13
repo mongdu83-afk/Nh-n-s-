@@ -1269,17 +1269,10 @@ function DailyChecklistView({ isAdmin, myStaff }){
     const total = (templates[s.role] || []).length + customCount;
     const done = r ? Object.keys(r.doneIds || {}).filter(k => r.doneIds[k]).length : 0;
     const p = total ? Math.round(done/total*100) : 0;
+    const status = !r ? { text:"Chưa làm gì", tone:"warn" } : (r.trangThai==="Đã nộp" ? { text:"Đã nộp", tone:"good" } : { text:"Đang làm dở", tone:"neutral" });
     const shiftRegsToday = findWorkRegsForStaffDate(workRegs, s, adminDate);
     const shiftLabel = summarizeShiftLabel(shiftRegsToday);
     const hasShiftToday = shiftRegsToday.length > 0;
-    // Đã có dữ liệu ca làm việc (workRegs.length>0) VÀ xác nhận người này không có ca hôm nay
-    // → không cần làm checklist, không nên gắn nhãn đỏ "Chưa làm gì" (họ không đi làm hôm nay
-    // thì không có gì để chấm). Nếu họ VẪN nộp gì đó dù không có ca thì vẫn hiện đúng trạng thái
-    // đã nộp/đang làm dở như bình thường — chỉ thay nhãn khi hoàn toàn chưa có báo cáo nào.
-    const knowsNoShift = workRegs.length > 0 && !hasShiftToday;
-    const status = !r
-      ? (knowsNoShift ? { text:"Không có ca — miễn checklist", tone:"neutral" } : { text:"Chưa làm gì", tone:"warn" })
-      : (r.trangThai==="Đã nộp" ? { text:"Đã nộp", tone:"good" } : { text:"Đang làm dở", tone:"neutral" });
     // "Cần theo dõi": có đăng ký ca hôm nay nhưng vẫn chưa nộp/chưa làm gì checklist —
     // đây là điểm mấu chốt giúp nhìn nhanh ai có đi làm mà quên/bỏ checklist.
     const needsAttention = hasShiftToday && status.text !== "Đã nộp";
