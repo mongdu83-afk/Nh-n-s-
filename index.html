@@ -3645,7 +3645,6 @@ function CtahForm({ staffRole, ctahDoc, onSaveField, readOnly }){
     ]),
   ]);
 }
-
 function KpiView({ isAdmin, myStaff }){
   const [staff, setStaff] = useState([]);
   const [assignments, setAssignments] = useState({});
@@ -3654,6 +3653,7 @@ function KpiView({ isAdmin, myStaff }){
   const [templates, setTemplates] = useState(DEFAULT_KPI_TEMPLATES);
   const [showTplEditor, setShowTplEditor] = useState(false);
   const [showAssignHint, setShowAssignHint] = useState(false);
+  const [requiredSkuLists, setRequiredSkuLists] = useState({});
   const [ctahDocs, setCtahDocs] = useState({});
   const [ctahStaffId, setCtahStaffId] = useState("");
   const [detailStaffId, setDetailStaffId] = useState("");
@@ -3778,7 +3778,8 @@ function KpiView({ isAdmin, myStaff }){
     // đơn gần nhất của khách đó) — dùng để tự động đếm & điền chỉ tiêu "nâng hạng khách hàng"
     // (cs_nangHang cho NVBH, ds_cskh cho CHT), không cần quản lý/nhân viên gõ tay số liệu này nữa.
     const u7 = subscribeCol("externalCustomerUpgrades", setCustomerUpgrades);
-    return ()=>{ u1(); u2(); u3(); u4(); u5(); u6(); u7(); };
+    const u8 = subscribeCol("requiredSkuLists", rows => { const map={}; rows.forEach(r=>map[r.id]=r); setRequiredSkuLists(map); });
+    return ()=>{ u1(); u2(); u3(); u4(); u5(); u6(); u7(); u8(); };
   }, []);
   async function saveTemplates(next){ await saveConfigDoc("kpiTemplates", next); setShowTplEditor(false); }
 
@@ -4172,7 +4173,32 @@ function KpiView({ isAdmin, myStaff }){
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type:"array" });
       let matched = 0, unmatched = [];
+      let skuShopsUpdated = 0, skuTotal = 0;
       for(const sheetName of wb.SheetNames){
+        // Sheet riêng chứa danh sách MÃ HÀNG THƯỜNG TRỰC của TẤT CẢ nhà thuốc gộp chung (cột A =
+        // Nhà thuốc, cột B = Mã hàng) — nhận diện theo tên sheet có chữ "thường trực"/"thuong truc"
+        // (không phân biệt dấu/hoa thường). Cloud Function syncInventoryExpiryDaily/Now sẽ tự đối
+        // chiếu danh sách này với tồn kho thật để tính điểm "Hàng thường trực" mỗi ngày.
+        const sheetNameNoDiacritics = sheetName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/đ/g,"d");
+        if(sheetNameNoDiacritics.includes("thuong truc") || sheetNameNoDiacritics.includes("thuongtruc")){
+          const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header:1, defval:"" });
+          const skusByShop = {};
+          for(let ri=1; ri<aoa.length; ri++){
+            const row = aoa[ri];
+            if(!row) continue;
+            const shopCode = String(row[0]||"").trim();
+            const sku = String(row[1]||"").trim();
+            if(!shopCode || !sku) continue;
+            if(!skusByShop[shopCode]) skusByShop[shopCode] = new Set();
+            skusByShop[shopCode].add(sku);
+          }
+          for(const shopCode of Object.keys(skusByShop)){
+            const productIds = [...skusByShop[shopCode]];
+            await db.collection("requiredSkuLists").doc(shopCode).set({ shopCode, productIds, updatedAtTs:new Date().toISOString() }, { merge:false });
+            skuShopsUpdated++; skuTotal += productIds.length;
+          }
+          continue;
+        }
         const roleKey = sheetName.toUpperCase().includes("CHT") ? "CHT" : "NVBH";
         if(roleKey==="NVBH"){
           // Đọc theo ĐÚNG VỊ TRÍ CỘT (không dò theo tên tiêu đề) — để đọc được cả file mẫu form
@@ -4217,7 +4243,8 @@ function KpiView({ isAdmin, myStaff }){
           if(any){ await mergeDotFields("kpiAssignments", kpiAssignmentId(s.id, thang), payload); matched++; }
         }
       }
-      setImportMsg(`Đã nhập chỉ tiêu cho ${matched} nhân viên.${unmatched.length? " Không khớp tên: "+unmatched.join(", ") : ""}`);
+      const skuMsg = skuShopsUpdated>0 ? ` Đã cập nhật danh sách hàng thường trực cho ${skuShopsUpdated} nhà thuốc (${skuTotal} mã).` : "";
+      setImportMsg(`Đã nhập chỉ tiêu cho ${matched} nhân viên.${unmatched.length? " Không khớp tên: "+unmatched.join(", ") : ""}${skuMsg}`);
     } catch(err){
       console.error("Nhập Excel lỗi:", err);
       setImportMsg("Đọc file lỗi — kiểm tra đúng định dạng file đã tải xuống trước đó.");
@@ -4240,7 +4267,7 @@ function KpiView({ isAdmin, myStaff }){
     React.createElement("div", { key:"hintToggle", style:{ marginBottom:10 } },
       React.createElement("button", { type:"button", onClick:()=>setShowAssignHint(!showAssignHint), style:{ background:"none", border:"none", padding:0, cursor:"pointer", fontSize:11.5, color:"var(--pine)", fontWeight:600, textDecoration:"underline" } },
         showAssignHint ? "Ẩn hướng dẫn nhập file Excel" : "Xem hướng dẫn nhập file Excel")),
-    showAssignHint && React.createElement("div", { key:"h2", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:10, background:"var(--paper)", borderRadius:8, padding:"8px 10px" } }, "Nhập chỉ tiêu: sheet CHT cần cột \"Tên nhân viên\", \"Nhà thuốc\" và các cột \"[Tên chỉ tiêu] - Mục tiêu\" (dễ nhất là tải file xuống trước, điền số vào rồi tải ngược lên). Riêng sheet NVBH đọc theo đúng thứ tự cột của mẫu form KPI công ty đang dùng: Tên nhà thuốc, Tên nhân viên, TBB, Tổng khách hàng, Đơn hàng, CSKH, Hàng thường trực — có thể tải thẳng file mẫu đó lên."),
+    showAssignHint && React.createElement("div", { key:"h2", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:10, background:"var(--paper)", borderRadius:8, padding:"8px 10px" } }, "Nhập chỉ tiêu: sheet CHT cần cột \"Tên nhân viên\", \"Nhà thuốc\" và các cột \"[Tên chỉ tiêu] - Mục tiêu\" (dễ nhất là tải file xuống trước, điền số vào rồi tải ngược lên). Riêng sheet NVBH đọc theo đúng thứ tự cột của mẫu form KPI công ty đang dùng: Tên nhà thuốc, Tên nhân viên, TBB, Tổng khách hàng, Đơn hàng, CSKH, Hàng thường trực — có thể tải thẳng file mẫu đó lên. Muốn cập nhật danh sách mã hàng thường trực (để tự tính điểm theo tồn kho thật), thêm 1 sheet tên có chữ \"Hàng thường trực\" trong CÙNG file này, cột A = Nhà thuốc (VD SHOP0089), cột B = Mã hàng — gộp chung tất cả nhà thuốc trong 1 sheet, không cần tách riêng từng file."),
     React.createElement("div", { key:"row", className:"btnRow", style:{ marginBottom: pickedStaff ? 12 : 0, alignItems:"center" } }, [
       React.createElement("input", { key:"m", type:"month", value:thang, onChange:e=>setThang(e.target.value), style:{ padding:"8px 10px", border:"1px solid var(--line)", borderRadius:8, fontSize:13, maxWidth:170 } }),
       React.createElement("div", { key:"pw", style:{ flex:1, minWidth:200 } },
