@@ -972,13 +972,24 @@ function PhotoUploadField({ label, photos, uploading, onUpload, onRemove, requir
 // Bỏ dấu tiếng Việt + viết thường + gọn khoảng trắng — dùng để khớp tên nhân viên giữa app và
 // hệ thống upharma.com.vn, giống HỆT logic normalizeName() phía Cloud Function
 // (runDailyChecklistReminder trong functions/index.js) để đảm bảo khớp nhất quán 2 bên.
+// Coi "y" và "i" là như nhau sau khi bỏ dấu — tránh khớp sai giữa các cách viết tên khác nhau
+// của cùng 1 người (VD "Quí"/"Quý", "Lý"/"Lí").
 function normalizeStaffName(s){
   return (s || "")
     .toLowerCase()
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .replace(/đ/g, "d").replace(/Đ/g, "d")
+    .replace(/y/g, "i")
     .replace(/\s+/g, " ")
     .trim();
+}
+// So sánh "vai trò" (role) an toàn — chuẩn hoá Unicode NFC + bỏ khoảng trắng thừa trước khi so
+// sánh, thay vì so sánh chuỗi y hệt (===). Có trường hợp thực tế 1 vài bản ghi nhân viên lưu chữ
+// tiếng Việt ở dạng Unicode tổ hợp khác (NFD) dù nhìn trên màn hình giống hệt, khiến so sánh ===
+// âm thầm sai, người đó bị loại khỏi các phần tự động dù không có dấu hiệu lỗi rõ ràng.
+function isRole(s, roleLabel){
+  const norm = x => (x || "").normalize("NFC").replace(/\s+/g, " ").trim();
+  return norm(s) === norm(roleLabel);
 }
 // Tìm các bản ghi ca làm việc CỦA CẢ 2 NGUỒN — ca thường ("externalShiftWork") và tăng ca
 // ("externalOverTime", API /OverTime/GetOverTimeByTime) — của 1 nhân viên trong 1 ngày cụ thể.
@@ -3219,7 +3230,7 @@ const DEFAULT_KPI_TEMPLATES = {
     ]},
   ],
 };
-function kpiRoleKey(staffRole){ return staffRole==="Cửa hàng trưởng" ? "CHT" : "NVBH"; }
+function kpiRoleKey(staffRole){ return isRole(staffRole,"Cửa hàng trưởng") ? "CHT" : "NVBH"; }
 function kpiAssignmentId(staffId, thang){ return staffId + "_" + thang; }
 // Vá lại đúng 2 mục "Hàng thường trực" / "Hàng cận date" trong nhóm "hanghoa" nếu bộ KPI đang tải
 // (từ Firestore) chưa khớp đúng bảng tiêu chí đánh giá gốc (Đăng ký chỉ tiêu KPIs) — lấy đúng
@@ -4066,7 +4077,7 @@ function KpiView({ isAdmin, myStaff }){
     const pct = totalActual!=null ? totalActual/totalPlan : null;
     return { staff:s, roleKey, groups, targets, actuals, hasTargets:Object.keys(targets).length>0, totalPlan, totalActual, pct, ctahAdj:ctah.adj, khongXet:ctah.khongXet, trangThaiDuyet:(a&&a.trangThaiDuyet)||"" };
   }
-  const summaryRows = staff.filter(s => s.role==="Nhân viên bán hàng").map(buildKpiSummaryRow).sort((x,y)=> (y.pct||-1) - (x.pct||-1));
+  const summaryRows = staff.filter(s => isRole(s.role,"Nhân viên bán hàng")).map(buildKpiSummaryRow).sort((x,y)=> (y.pct||-1) - (x.pct||-1));
   const summaryRowsCHT = staff.filter(s => s.role==="Cửa hàng trưởng").map(buildKpiSummaryRow).sort((x,y)=> (y.pct||-1) - (x.pct||-1));
   async function qlkvDuyet(staffMember){ await updateDoc("kpiAssignments", kpiAssignmentId(staffMember.id, thang), { trangThaiDuyet:"QLKV đã duyệt" }); }
 
@@ -4105,7 +4116,7 @@ function KpiView({ isAdmin, myStaff }){
     // — sheet CHT (Cửa hàng trưởng) giữ nguyên bình thường, không cần lọc thêm.
     ["NVBH","CHT"].forEach(roleKey => {
       const groups = templates[roleKey];
-      const rows = staff.filter(s=>kpiRoleKey(s.role)===roleKey && (roleKey!=="NVBH" || s.role==="Nhân viên bán hàng"))
+      const rows = staff.filter(s=>kpiRoleKey(s.role)===roleKey && (roleKey!=="NVBH" || isRole(s.role,"Nhân viên bán hàng")))
         .sort((a,b)=> a.shop.localeCompare(b.shop, "vi") || a.name.localeCompare(b.name, "vi"))
         .map((s,i) => {
         const a = assignments[kpiAssignmentId(s.id, thang)] || {};
