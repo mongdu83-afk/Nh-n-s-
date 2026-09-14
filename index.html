@@ -1689,9 +1689,7 @@ function CustomerOrderView({ isAdmin, myStaff }){
       React.createElement("div", { key:"f", className:"field", style:{ maxWidth:160 } }, [ React.createElement("label",{key:"l"},"Từ ngày"), React.createElement("input",{key:"i",type:"date",value:dateFrom,onChange:e=>setDateFrom(e.target.value)}) ]),
       React.createElement("div", { key:"t", className:"field", style:{ maxWidth:160 } }, [ React.createElement("label",{key:"l"},"Đến ngày"), React.createElement("input",{key:"i",type:"date",value:dateTo,onChange:e=>setDateTo(e.target.value)}) ]),
       (dateFrom || dateTo) && React.createElement("button", { key:"clear", type:"button", className:"btn btnGhost", onClick:()=>{ setDateFrom(""); setDateTo(""); } }, "Xem tất cả"),
-      isAdmin && React.createElement("button", { key:"analyze", type:"button", className:"btn btnAmber", disabled:analyzingTrend, onClick:runOrderTrendAnalysis }, analyzingTrend ? "Đang phân tích..." : "🤖 Phân tích"),
     ]),
-    isAdmin && analyzeTrendMsg && React.createElement("div", { key:"msg", style:{ fontSize:12.5, color:"var(--pine)", marginTop:8 } }, analyzeTrendMsg),
   ]);
 
   function openAdd(){
@@ -4380,7 +4378,6 @@ function KpiView({ isAdmin, myStaff }){
         aiKpiAnalysis && aiKpiAnalysis.summary ? `🤖 Phân tích KPI toàn khu vực (AI) — tháng ${aiKpiAnalysis.thang}` : "🤖 Phân tích KPI toàn khu vực (AI)"),
       React.createElement("div", { key:"btns", className:"btnRow" }, [
         aiKpiAnalysis && aiKpiAnalysis.summary && React.createElement("button", { key:"toggle", type:"button", className:"btn btnGhost", style:{ padding:"4px 10px", fontSize:11.5 }, onClick:()=>setShowKpiSummary(!showKpiSummary) }, showKpiSummary ? "Ẩn" : "Xem"),
-        React.createElement("button", { key:"b", type:"button", className:"btn btnAmber", disabled:analyzingKpi, onClick:runKpiAiAnalysis }, analyzingKpi ? "Đang phân tích..." : "Phân tích"),
       ]),
     ]),
     aiKpiAnalysis && aiKpiAnalysis.summary && showKpiSummary && React.createElement("div", { key:"meta", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8 } }, [
