@@ -3654,6 +3654,33 @@ function KpiView({ isAdmin, myStaff }){
   const [showTplEditor, setShowTplEditor] = useState(false);
   const [showAssignHint, setShowAssignHint] = useState(false);
   const [requiredSkuLists, setRequiredSkuLists] = useState({});
+  const [compScope, setCompScope] = useState("shop");
+  const [compShop, setCompShop] = useState(DEFAULT_SHOPS[0]);
+  const [compStaffName, setCompStaffName] = useState("");
+  const [compFromDate, setCompFromDate] = useState(addDays(todayISO(), -7));
+  const [compToDate, setCompToDate] = useState(todayISO());
+  const [analyzingComp, setAnalyzingComp] = useState(false);
+  const [compResult, setCompResult] = useState(null);
+  const [compError, setCompError] = useState(null);
+
+  // "Phân tích tổng hợp" — gộp cả 5 nguồn dữ liệu (doanh số, KPI, báo cáo tuần, checklist, khách
+  // đặt hàng) qua Cloud Function analyzeComprehensiveNow (AI agent tự chọn nguồn cần tra cứu tuỳ
+  // phạm vi). Chỉ chạy khi bấm nút, không tự động.
+  async function runComprehensiveAnalysis(){
+    setAnalyzingComp(true); setCompError(null); setCompResult(null);
+    try{
+      const params = new URLSearchParams({ scope:compScope, month:thang, from:compFromDate, to:compToDate });
+      if(compScope==="shop") params.set("shop", compShop);
+      if(compScope==="staff"){ params.set("staffName", compStaffName); if(compShop) params.set("shop", compShop); }
+      const resp = await fetch(`https://asia-southeast1-upharma-176d5.cloudfunctions.net/analyzeComprehensiveNow?${params.toString()}`);
+      const data = await resp.json();
+      if(data.ok){ setCompResult(data.result); }
+      else { setCompError(data.reason || data.error || "Không rõ nguyên nhân."); }
+    } catch(err){
+      console.error("Phân tích tổng hợp lỗi:", err);
+      setCompError(err && err.message ? err.message : String(err));
+    } finally { setAnalyzingComp(false); }
+  }
   const [ctahDocs, setCtahDocs] = useState({});
   const [ctahStaffId, setCtahStaffId] = useState("");
   const [detailStaffId, setDetailStaffId] = useState("");
@@ -4353,6 +4380,55 @@ function KpiView({ isAdmin, myStaff }){
     analyzeKpiMsg && React.createElement("div", { key:"msg", style:{ fontSize:12.5, color:"var(--pine)", marginBottom:6 } }, analyzeKpiMsg),
     aiKpiAnalysis && aiKpiAnalysis.summary && showKpiSummary && React.createElement("div", { key:"s", style:{ fontSize:12.5, whiteSpace:"pre-wrap", lineHeight:1.6 } }, aiKpiAnalysis.summary),
   ]);
+  const comprehensiveSection = isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"t", className:"cardTitle" }, "🤖 Phân tích tổng hợp"),
+    React.createElement("div", { key:"d", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } },
+      "Gộp cả doanh số, KPI, báo cáo tuần, checklist ngày và khách đặt hàng — AI tự chọn nguồn cần tra cứu tuỳ theo phạm vi bạn chọn."),
+    React.createElement("div", { key:"row", className:"btnRow", style:{ alignItems:"flex-end", marginBottom:10 } }, [
+      React.createElement("div", { key:"scope", className:"field", style:{ maxWidth:180 } }, [
+        React.createElement("label",{key:"l"},"Phạm vi"),
+        React.createElement("select", { key:"i", value:compScope, onChange:e=>setCompScope(e.target.value) }, [
+          React.createElement("option",{key:"shop",value:"shop"},"1 nhà thuốc"),
+          React.createElement("option",{key:"staff",value:"staff"},"1 nhân viên"),
+          React.createElement("option",{key:"all",value:"all"},"Toàn hệ thống"),
+        ]),
+      ]),
+      compScope==="shop" && React.createElement("div", { key:"shop", className:"field", style:{ maxWidth:160 } }, [
+        React.createElement("label",{key:"l"},"Nhà thuốc"),
+        React.createElement("select", { key:"i", value:compShop, onChange:e=>setCompShop(e.target.value) },
+          DEFAULT_SHOPS.map(s=>React.createElement("option",{key:s,value:s},s))),
+      ]),
+      compScope==="staff" && React.createElement("div", { key:"staff", className:"field", style:{ maxWidth:220 } }, [
+        React.createElement("label",{key:"l"},"Nhân viên"),
+        React.createElement("select", { key:"i", value:compStaffName, onChange:e=>{
+          const name = e.target.value; setCompStaffName(name);
+          const s = staff.find(x=>x.name===name); if(s) setCompShop(s.shop);
+        } }, [
+          React.createElement("option",{key:"",value:""},"— chọn —"),
+          ...staff.map(s=>React.createElement("option",{key:s.id,value:s.name},`${s.name} · ${s.shop}`)),
+        ]),
+      ]),
+      React.createElement("div", { key:"month", className:"field", style:{ maxWidth:130 } }, [
+        React.createElement("label",{key:"l"},"Tháng KPI"),
+        React.createElement("input",{key:"i",type:"month",value:thang,onChange:e=>setThang(e.target.value)}),
+      ]),
+      React.createElement("div", { key:"from", className:"field", style:{ maxWidth:150 } }, [
+        React.createElement("label",{key:"l"},"Từ ngày"),
+        React.createElement("input",{key:"i",type:"date",value:compFromDate,onChange:e=>setCompFromDate(e.target.value)}),
+      ]),
+      React.createElement("div", { key:"to", className:"field", style:{ maxWidth:150 } }, [
+        React.createElement("label",{key:"l"},"Đến ngày"),
+        React.createElement("input",{key:"i",type:"date",value:compToDate,onChange:e=>setCompToDate(e.target.value)}),
+      ]),
+      React.createElement("button", { key:"run", type:"button", className:"btn btnAmber",
+        disabled: analyzingComp || (compScope==="staff" && !compStaffName),
+        onClick: runComprehensiveAnalysis,
+      }, analyzingComp ? "Đang phân tích..." : "🤖 Phân tích tổng hợp"),
+    ]),
+    compError && React.createElement("div", { key:"err", style:{ fontSize:12.5, color:"var(--clay)", background:"var(--claySoft)", borderRadius:8, padding:"8px 10px", marginBottom:10 } }, "Không thể phân tích: " + compError),
+    compResult && React.createElement("div", { key:"res", style:{ fontSize:13, whiteSpace:"pre-wrap", lineHeight:1.6, background:"var(--paper)", borderRadius:10, padding:"14px 16px" } }, compResult),
+  ]);
+
   const adminSummarySection = isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
     React.createElement("div", { key:"th", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:12 } }, [
       React.createElement("div", { key:"t", className:"cardTitle", style:{ marginBottom:0 } }, `Tổng hợp KPI toàn bộ nhân sự — tháng ${thang}`),
@@ -4482,7 +4558,7 @@ function KpiView({ isAdmin, myStaff }){
   return React.createElement(React.Fragment, null, [
     React.createElement("p", { key:"s", className:"pagesub" }, isAdmin ? "Giao chỉ tiêu KPI cho từng nhân viên theo tháng, theo dõi kết quả toàn khu vực." : "Chỉ tiêu KPI được quản lý giao cho bạn — tự cập nhật kết quả thực tế đạt được."),
     kpiSyncBanner,
-    isAdmin ? React.createElement(React.Fragment, null, [ aiKpiCard, adminAssignSection, adminSummarySection, adminPersonalSection, adminQlkvCtahSection ]) : React.createElement(React.Fragment, null, [ staffSection, chtReviewSection ]),
+    isAdmin ? React.createElement(React.Fragment, null, [ aiKpiCard, adminAssignSection, comprehensiveSection, adminSummarySection, adminPersonalSection, adminQlkvCtahSection ]) : React.createElement(React.Fragment, null, [ staffSection, chtReviewSection ]),
   ]);
 }
 
