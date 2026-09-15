@@ -4216,11 +4216,11 @@ function KpiView({ isAdmin, myStaff }){
         // việc đặt đúng tên sheet, lỡ ai đó đặt tên sheet khác đi vẫn nhận ra được. Cloud Function
         // syncInventoryExpiryDaily/Now sẽ tự đối chiếu danh sách này với tồn kho thật để tính điểm
         // "Hàng thường trực" mỗi ngày.
-        const sheetNameNoDiacritics = sheetName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/đ/g,"d").replace(/[_-]+/g," ");
+        const sheetNameNoDiacritics = sheetName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/đ/g,"d");
         const firstRowNoDiacritics = (XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header:1, defval:"" })[0]||[])
           .map(h => String(h||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/đ/g,"d"));
-        const headerLooksLikeSkuList = (firstRowNoDiacritics[0]||"").match(/shop|nha thuoc/) &&
-          (firstRowNoDiacritics[1]||"").match(/ma sp|ma hang|san pham/) &&
+        const headerLooksLikeSkuList = firstRowNoDiacritics.some(h=>h.includes("nha thuoc")) &&
+          firstRowNoDiacritics.some(h=>h.includes("ma hang")) &&
           !firstRowNoDiacritics.some(h=>h.includes("nhan vien"));
         if(sheetNameNoDiacritics.includes("thuong truc") || sheetNameNoDiacritics.includes("thuongtruc") || headerLooksLikeSkuList){
           const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header:1, defval:"" });
