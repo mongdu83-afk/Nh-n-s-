@@ -2088,33 +2088,8 @@ function CustomerOrderView({ isAdmin, myStaff }){
     ])
   );
 
-  const trendsCard = isAdmin && orderTrends && orderTrends.summary && React.createElement("div", { className:"card", style:{ marginBottom:20, background:"var(--pineSoft)" } }, [
-    React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:10 } }, [
-      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13.5 } },
-        `🤖 Xu hướng khách hỏi hàng (AI) — ${orderTrends.periodFrom} → ${orderTrends.periodTo}, ${orderTrends.orderCount} lượt`),
-      React.createElement("button", { key:"toggle", type:"button", className:"btn btnGhost", style:{ padding:"4px 10px", fontSize:11.5 }, onClick:()=>setShowTrendSummary(!showTrendSummary) }, showTrendSummary ? "Ẩn" : "Xem"),
-    ]),
-    showTrendSummary && React.createElement("div", { key:"s", style:{ fontSize:12.5, whiteSpace:"pre-wrap", lineHeight:1.6, marginTop:6 } }, orderTrends.summary),
-  ]);
-
-  const trendConfigCard = isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
-    React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10, marginBottom: trendConfigOpen ? 10 : 0 } }, [
-      React.createElement("div", { key:"t", className:"cardTitle", style:{ marginBottom:0 } }, "🤖 Yêu cầu phân tích AI (xu hướng khách đặt hàng)"),
-      React.createElement("button", { key:"b", type:"button", className:"btn btnGhost", style:{ padding:"6px 12px", fontSize:12 }, onClick:()=>setTrendConfigOpen(!trendConfigOpen) }, trendConfigOpen ? "Thu gọn" : "Chỉnh sửa"),
-    ]),
-    trendConfigOpen && React.createElement(React.Fragment, null, [
-      React.createElement("p", { key:"hint", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:8 } },
-        "Thêm yêu cầu riêng để AI phân tích đúng ý bạn hơn (vd chỉ tập trung nhóm hàng nào, bỏ qua shop nào, muốn đề xuất theo hướng gì...). Để trống sẽ dùng phân tích mặc định."),
-      React.createElement("textarea", { key:"ta", rows:4, value:trendInstructions, onChange:e=>setTrendInstructions(e.target.value),
-        placeholder:"VD: chỉ phân tích nhóm thuốc kê đơn, bỏ qua sản phẩm mỹ phẩm/thực phẩm chức năng; ưu tiên đề xuất theo shop có doanh số cao...",
-        style:{ marginBottom:10 } }),
-      React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", disabled:savingTrendInstructions||!trendInstructionsLoaded, onClick:saveTrendInstructions }, savingTrendInstructions ? "Đang lưu..." : "Lưu yêu cầu"),
-    ]),
-  ]);
-
   return React.createElement(React.Fragment, null, [
     React.createElement("p", { key:"s", className:"pagesub" }, isAdmin ? "Theo dõi khách đặt hàng còn thiếu của tất cả nhà thuốc." : "Ghi lại khi khách hỏi hàng không có — cả nhà thuốc đều thấy và cập nhật được, không riêng người ghi."),
-    trendConfigCard, trendsCard,
     isAdmin && adminMetrics, isAdmin && dateRangeRow, statsCard, moTuCard, isAdmin && adminFilterRow, isAdmin && adminTable,
     staffSection, formModal,
   ]);
@@ -3701,6 +3676,7 @@ function KpiView({ isAdmin, myStaff }){
   const [importingQlkv, setImportingQlkv] = useState(false);
   const [importQlkvMsg, setImportQlkvMsg] = useState(null);
   const [aiKpiAnalysis, setAiKpiAnalysis] = useState(null);
+  const [kpiSyncHealth, setKpiSyncHealth] = useState(null);
   const [analyzingKpi, setAnalyzingKpi] = useState(false);
   const [analyzeKpiMsg, setAnalyzeKpiMsg] = useState(null);
   const [showKpiSummary, setShowKpiSummary] = useState(true);
@@ -3717,6 +3693,16 @@ function KpiView({ isAdmin, myStaff }){
   useEffect(()=>{
     if(!isAdmin) return;
     const unsub = db.collection("opsConfig").doc("aiKpiAnalysis").onSnapshot(snap => setAiKpiAnalysis(snap.exists ? snap.data() : null));
+    return unsub;
+  }, [isAdmin]);
+
+  // Trạng thái lần chạy gần nhất của 3 hàm đồng bộ số liệu KPI ở server (chỉ tiêu nhân viên/hàng
+  // cận date/nâng hạng khách hàng) — đọc từ "opsConfig/kpiSyncHealth" do Cloud Function tự ghi mỗi
+  // lần chạy, để quản lý thấy ngay trên giao diện nếu lần đồng bộ gần nhất bị lỗi, không cần vào
+  // Firebase Console xem log.
+  useEffect(()=>{
+    if(!isAdmin) return;
+    const unsub = db.collection("opsConfig").doc("kpiSyncHealth").onSnapshot(snap => setKpiSyncHealth(snap.exists ? snap.data() : null));
     return unsub;
   }, [isAdmin]);
 
@@ -4372,21 +4358,27 @@ function KpiView({ isAdmin, myStaff }){
           })),
         ]));
   }
-  const aiKpiCard = isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20, background:"var(--pineSoft)" } }, [
-    React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10, marginBottom:6 } }, [
-      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13.5 } },
-        aiKpiAnalysis && aiKpiAnalysis.summary ? `🤖 Phân tích KPI toàn khu vực (AI) — tháng ${aiKpiAnalysis.thang}` : "🤖 Phân tích KPI toàn khu vực (AI)"),
-      React.createElement("div", { key:"btns", className:"btnRow" }, [
-        aiKpiAnalysis && aiKpiAnalysis.summary && React.createElement("button", { key:"toggle", type:"button", className:"btn btnGhost", style:{ padding:"4px 10px", fontSize:11.5 }, onClick:()=>setShowKpiSummary(!showKpiSummary) }, showKpiSummary ? "Ẩn" : "Xem"),
-      ]),
-    ]),
-    aiKpiAnalysis && aiKpiAnalysis.summary && showKpiSummary && React.createElement("div", { key:"meta", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8 } }, [
-      `Dữ liệu luỹ kế đến ngày ${aiKpiAnalysis.dayOfMonth || "?"}/${aiKpiAnalysis.totalDaysInMonth || "?"} (đã qua ~${aiKpiAnalysis.elapsedPct != null ? aiKpiAnalysis.elapsedPct : "?"}% tháng)`,
-      " · Cập nhật lúc ",
-      aiKpiAnalysis.generatedAtTs && aiKpiAnalysis.generatedAtTs.toDate ? aiKpiAnalysis.generatedAtTs.toDate().toLocaleString("vi-VN") : "—",
-    ]),
-    analyzeKpiMsg && React.createElement("div", { key:"msg", style:{ fontSize:12.5, color:"var(--pine)", marginBottom:6 } }, analyzeKpiMsg),
-    aiKpiAnalysis && aiKpiAnalysis.summary && showKpiSummary && React.createElement("div", { key:"s", style:{ fontSize:12.5, whiteSpace:"pre-wrap", lineHeight:1.6 } }, aiKpiAnalysis.summary),
+  // Thẻ hiển thị nhanh tình trạng 3 hàm đồng bộ số liệu KPI tự động ở server — mỗi dòng 1 nguồn,
+  // hiện thời điểm chạy gần nhất, thành công/lỗi, và thông báo lỗi rút gọn nếu có, để quản lý biết
+  // ngay tại sao 1 nhân viên nào đó chưa lên số liệu tự động mà không cần hỏi kỹ thuật/vào Firebase.
+  function syncHealthRow(label, health){
+    if(!health) return React.createElement("div", { key:label, style:{ fontSize:12, color:"var(--inkSoft)", padding:"4px 0" } }, `${label}: chưa có lần chạy nào ghi nhận được.`);
+    const at = health.atTs ? new Date(health.atTs).toLocaleString("vi-VN") : "—";
+    const errMsg = health.fatalError || (health.shopErrors ? Object.entries(health.shopErrors).map(([shop,e])=>`${shop}: ${e}`).join("; ") : "");
+    return React.createElement("div", { key:label, style:{ fontSize:12, padding:"4px 0", borderBottom:"1px solid var(--line)" } }, [
+      React.createElement("span", { key:"l", style:{ fontWeight:600 } }, label + ": "),
+      React.createElement("span", { key:"s", style:{ color: health.ok ? "var(--pine)" : "var(--clay)", fontWeight:600 } }, health.ok ? "OK" : "Lỗi"),
+      React.createElement("span", { key:"t", style:{ color:"var(--inkSoft)" } }, ` · lần chạy gần nhất ${at}`),
+      !health.ok && errMsg && React.createElement("div", { key:"e", style:{ color:"var(--clay)", marginTop:2 } }, errMsg),
+    ]);
+  }
+  const kpiSyncHealthCard = isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+    React.createElement("div", { key:"t", className:"cardTitle" }, "Trạng thái đồng bộ số liệu KPI tự động"),
+    React.createElement("div", { key:"d", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:10 } },
+      "3 nguồn số liệu này chạy tự động theo lịch ở server và ghi thẳng vào KPI cho mọi nhân viên — không cần ai mở tab KPI. Nếu 1 nguồn báo Lỗi, số liệu liên quan sẽ không được cập nhật cho tới lần chạy kế tiếp."),
+    syncHealthRow("Chỉ tiêu nhân viên (khách hàng/đơn bán/TB bill)", kpiSyncHealth && kpiSyncHealth.employeePlan),
+    syncHealthRow("Hàng cận date / hàng thường trực", kpiSyncHealth && kpiSyncHealth.inventoryExpiry),
+    syncHealthRow("Nâng hạng khách hàng", kpiSyncHealth && kpiSyncHealth.customerUpgrades),
   ]);
   const comprehensiveSection = isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
     React.createElement("div", { key:"t", className:"cardTitle" }, "🤖 Phân tích tổng hợp"),
@@ -4566,7 +4558,7 @@ function KpiView({ isAdmin, myStaff }){
   return React.createElement(React.Fragment, null, [
     React.createElement("p", { key:"s", className:"pagesub" }, isAdmin ? "Giao chỉ tiêu KPI cho từng nhân viên theo tháng, theo dõi kết quả toàn khu vực." : "Chỉ tiêu KPI được quản lý giao cho bạn — tự cập nhật kết quả thực tế đạt được."),
     kpiSyncBanner,
-    isAdmin ? React.createElement(React.Fragment, null, [ aiKpiCard, adminAssignSection, comprehensiveSection, adminSummarySection, adminPersonalSection, adminQlkvCtahSection ]) : React.createElement(React.Fragment, null, [ staffSection, chtReviewSection ]),
+    isAdmin ? React.createElement(React.Fragment, null, [ kpiSyncHealthCard, adminAssignSection, comprehensiveSection, adminSummarySection, adminPersonalSection, adminQlkvCtahSection ]) : React.createElement(React.Fragment, null, [ staffSection, chtReviewSection ]),
   ]);
 }
 
