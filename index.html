@@ -4236,11 +4236,35 @@ function KpiView({ isAdmin, myStaff }){
         }
         const roleKey = sheetName.toUpperCase().includes("CHT") ? "CHT" : "NVBH";
         if(roleKey==="NVBH"){
-          // Đọc theo ĐÚNG VỊ TRÍ CỘT (không dò theo tên tiêu đề) — để đọc được cả file mẫu form
-          // KPI gốc (A:Tên nhà thuốc, B:Tên nhân viên, C:TBB, D:Tổng khách hàng, E:Đơn hàng,
-          // F:CSKH, G:Hàng thường trực, H:ghi chú Hàng cận date — không cần nhập số) lẫn file do
-          // chính app này xuất ra, kể cả khi tiêu đề cột có thể không khớp chữ 100%.
           const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header:1, defval:"" });
+          const header = (aoa[0]||[]).map(h => String(h||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/đ/g,"d"));
+          // File do CHÍNH APP xuất ra (nút "Tải Excel xuống") có thêm cột "Vai trò" và thứ tự cột
+          // khác hẳn file mẫu gốc của công ty (Tên nhân viên trước, Nhà thuốc sau, rồi tới Vai trò)
+          // — nhận diện qua header có chữ "vai tro", rồi đọc theo ĐÚNG TÊN TIÊU ĐỀ cột (giống hệt
+          // cách đọc sheet CHT bên dưới) thay vì theo vị trí cố định, để không bị lệch cột.
+          const isOwnExport = header.some(h => h.includes("vai tro"));
+          if(isOwnExport){
+            const groups = templates.NVBH;
+            const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval:"" });
+            for(const row of rows){
+              const ten = (row["Tên nhân viên"]||row["Tên NV"]||"").toString().trim();
+              const shop = (row["Nhà thuốc"]||"").toString().trim();
+              if(!ten) continue;
+              const s = staff.find(x => x.name.trim()===ten && (!shop || x.shop===shop));
+              if(!s){ unmatched.push(ten); continue; }
+              const payload = { staffId:s.id, staffName:s.name, shop:s.shop, role:s.role, thang };
+              let any = false;
+              groups.forEach(g => g.items.forEach(it => {
+                const key = Object.keys(row).find(k => k.startsWith(it.label) && k.includes("Mục tiêu"));
+                if(key && row[key]!==""){ payload[`targets.${it.id}`] = Number(row[key]); any = true; }
+              }));
+              if(any){ await mergeDotFields("kpiAssignments", kpiAssignmentId(s.id, thang), payload); matched++; }
+            }
+            continue;
+          }
+          // File mẫu form KPI gốc của công ty (không phải file app xuất ra) — đọc theo ĐÚNG VỊ TRÍ
+          // CỘT cố định (A:Tên nhà thuốc, B:Tên nhân viên, C:TBB, D:Tổng khách hàng, E:Đơn hàng,
+          // F:CSKH, G:Hàng thường trực, H:ghi chú Hàng cận date — không cần nhập số).
           const COL_MAP = [ [2,"dh_tbbill"], [3,"kh_tongkh"], [4,"dh_sodon"], [5,"cs_nangHang"], [6,"hh_thuongtruc"] ];
           for(let ri=1; ri<aoa.length; ri++){
             const row = aoa[ri];
