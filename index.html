@@ -4211,11 +4211,18 @@ function KpiView({ isAdmin, myStaff }){
       let skuShopsUpdated = 0, skuTotal = 0;
       for(const sheetName of wb.SheetNames){
         // Sheet riêng chứa danh sách MÃ HÀNG THƯỜNG TRỰC của TẤT CẢ nhà thuốc gộp chung (cột A =
-        // Nhà thuốc, cột B = Mã hàng) — nhận diện theo tên sheet có chữ "thường trực"/"thuong truc"
-        // (không phân biệt dấu/hoa thường). Cloud Function syncInventoryExpiryDaily/Now sẽ tự đối
-        // chiếu danh sách này với tồn kho thật để tính điểm "Hàng thường trực" mỗi ngày.
+        // Nhà thuốc, cột B = Mã hàng) — nhận diện qua CẢ tên sheet (có chữ "thường trực") LẪN tiêu
+        // đề cột (có "Nhà thuốc"+"Mã hàng" nhưng KHÔNG có "Tên nhân viên") — để không lệ thuộc vào
+        // việc đặt đúng tên sheet, lỡ ai đó đặt tên sheet khác đi vẫn nhận ra được. Cloud Function
+        // syncInventoryExpiryDaily/Now sẽ tự đối chiếu danh sách này với tồn kho thật để tính điểm
+        // "Hàng thường trực" mỗi ngày.
         const sheetNameNoDiacritics = sheetName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/đ/g,"d");
-        if(sheetNameNoDiacritics.includes("thuong truc") || sheetNameNoDiacritics.includes("thuongtruc")){
+        const firstRowNoDiacritics = (XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header:1, defval:"" })[0]||[])
+          .map(h => String(h||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/đ/g,"d"));
+        const headerLooksLikeSkuList = firstRowNoDiacritics.some(h=>h.includes("nha thuoc")) &&
+          firstRowNoDiacritics.some(h=>h.includes("ma hang")) &&
+          !firstRowNoDiacritics.some(h=>h.includes("nhan vien"));
+        if(sheetNameNoDiacritics.includes("thuong truc") || sheetNameNoDiacritics.includes("thuongtruc") || headerLooksLikeSkuList){
           const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header:1, defval:"" });
           const skusByShop = {};
           for(let ri=1; ri<aoa.length; ri++){
