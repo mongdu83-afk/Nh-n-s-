@@ -4089,6 +4089,19 @@ function KpiView({ isAdmin, myStaff }){
       styleExportSheet(ws, rows);
       XLSX.utils.book_append_sheet(wb, ws, roleKey);
     });
+    // Sheet riêng "Hàng thường trực" — danh sách mã hàng bắt buộc phải có của TỪNG nhà thuốc, dùng
+    // để tự tính điểm "Hàng thường trực" theo tồn kho thật (khác với 2 sheet trên chỉ chứa MỤC
+    // TIÊU số lượng, sheet này là danh sách MÃ HÀNG cụ thể). Điền sẵn tên đúng 2 cột bắt buộc
+    // (Nhà thuốc/Mã hàng) và 1 dòng ví dụ cho mỗi nhà thuốc đang có trong hệ thống, để biết đúng
+    // định dạng cần điền — mỗi nhà thuốc có thể có nhiều dòng (nhiều mã hàng), chỉ cần lặp lại
+    // đúng mã nhà thuốc ở cột A cho từng dòng mã hàng tiếp theo.
+    const skuRows = [];
+    DEFAULT_SHOPS.forEach(shopCode => {
+      skuRows.push({ "Nhà thuốc": shopCode, "Mã hàng": "(điền mã hàng ở đây, mỗi dòng 1 mã — thêm dòng mới bên dưới, lặp lại đúng mã nhà thuốc này ở cột A cho từng mã tiếp theo)" });
+    });
+    const wsSku = XLSX.utils.json_to_sheet(skuRows);
+    styleExportSheet(wsSku, skuRows);
+    XLSX.utils.book_append_sheet(wb, wsSku, "Hang_thuong_truc");
     XLSX.writeFile(wb, `Mau_giao_chi_tieu_KPI_${thang}.xlsx`);
   }
   // Xuất bảng TỔNG HỢP đầy đủ (đúng theo cấu trúc "QLKV Chấm KPI" trong file mẫu) để gửi
