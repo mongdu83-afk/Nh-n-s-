@@ -6679,26 +6679,63 @@ function buildTemGiaHtml(){
     // duyệt. Nhưng vì ở trên mình đã TẮT hẳn việc cuộn riêng bên trong iframe (để bảng dữ liệu
     // không bị 2 thanh cuộn lồng nhau), "khung nhìn" bên trong iframe giờ trải dài hết toàn bộ
     // nội dung (rất cao) thay vì chỉ bằng phần đang hiện trên màn hình — khiến popup "Ánh xạ cột
-    // dữ liệu" bị định vị lệch, không nằm đúng chỗ người dùng đang nhìn thấy (trông như bấm xong
-    // không có gì xảy ra). Đổi sang position:absolute để popup luôn nằm đúng theo dòng chảy trang,
-    // đồng thời thêm script bên dưới để tự cuộn tới popup ngay khi nó được mở.
-    "  .modal-overlay{ position:absolute !important; }\n" +
+    // dữ liệu" bị định vị lệch, không nằm đúng chỗ người dùng đang nhìn thấy.
+    // Không dùng inset:0 nữa: vì iframe đã bị tắt cuộn nội bộ và bị kéo cao bằng cả nội dung,
+    // "khung nhìn" của iframe rất cao -> lớp phủ mờ phủ kín hàng nghìn px (người dùng chỉ thấy
+    // một mảng xám lớn) và hộp thoại bị canh giữa ở đâu đó rất xa vùng đang nhìn. Thay vào đó,
+    // script bên dưới đo phần iframe ĐANG hiện trên màn hình (qua window.frameElement) rồi đặt
+    // lớp phủ đúng dải đó, nên hộp thoại luôn hiện ngay giữa tầm mắt.
+    "  .modal-overlay{ position:absolute !important; inset:auto !important; left:0 !important; right:0 !important; top:0; height:400px; }\n" +
+    "  .modal-overlay .modal{ max-height:calc(100% - 28px) !important; }\n" +
     "<\/style>\n" +
     "<script>\n" +
     "  (function(){\n" +
     "    var modal = document.getElementById('mapModal');\n" +
     "    if(!modal) return;\n" +
+    "    var placing = false;\n" +
+    "    function isOpen(){ return modal.style.display === 'flex'; }\n" +
+    "    function place(){\n" +
+    "      if(!isOpen()) return;\n" +
+    "      var top = 0, h = 0;\n" +
+    "      try{\n" +
+    "        var fe = window.frameElement;\n" +
+    "        if(fe){\n" +
+    "          var r = fe.getBoundingClientRect();\n" +
+    "          var ph = window.parent.innerHeight || 0;\n" +
+    "          top = Math.max(0, -r.top);\n" +
+    "          h = Math.min(r.height, ph - r.top) - top;\n" +
+    "        }\n" +
+    "      }catch(e){ h = 0; }\n" +
+    "      if(!(h > 120)){ top = window.scrollY || 0; h = window.innerHeight || 600; }\n" +
+    "      placing = true;\n" +
+    "      modal.style.top = Math.round(top) + 'px';\n" +
+    "      modal.style.height = Math.round(h) + 'px';\n" +
+    "      setTimeout(function(){ placing = false; }, 0);\n" +
+    "    }\n" +
+    "    var watching = false;\n" +
+    "    function startWatch(){\n" +
+    "      if(watching) return; watching = true;\n" +
+    "      try{ window.parent.addEventListener('scroll', place, true); window.parent.addEventListener('resize', place); }catch(e){}\n" +
+    "      window.addEventListener('resize', place);\n" +
+    "    }\n" +
+    "    function stopWatch(){\n" +
+    "      if(!watching) return; watching = false;\n" +
+    "      try{ window.parent.removeEventListener('scroll', place, true); window.parent.removeEventListener('resize', place); }catch(e){}\n" +
+    "      window.removeEventListener('resize', place);\n" +
+    "    }\n" +
     "    var mo = new MutationObserver(function(){\n" +
-    "      if(modal.style.display === 'flex'){\n" +
-    "        var box = modal.querySelector('.modal') || modal;\n" +
-    "        box.scrollIntoView({behavior:'auto', block:'center'});\n" +
-    "      }\n" +
+    "      if(placing) return;\n" +
+    "      if(isOpen()){ place(); startWatch(); } else { stopWatch(); }\n" +
     "    });\n" +
     "    mo.observe(modal, {attributes:true, attributeFilter:['style']});\n" +
-    "    modal.addEventListener('click', function(e){ if(e.target === modal){ modal.style.display = 'none'; } });\n" +
+    "    modal.addEventListener('click', function(e){ if(e.target === modal){ modal.style.display = 'none'; stopWatch(); } });\n" +
+    "    document.addEventListener('keydown', function(e){ if(e.key === 'Escape' && isOpen()){ modal.style.display = 'none'; stopWatch(); } });\n" +
+    "    ['mapCancel','mapConfirm'].forEach(function(id){\n" +
+    "      var b = document.getElementById(id);\n" +
+    "      if(b) b.addEventListener('click', function(){ setTimeout(stopWatch, 0); });\n" +
+    "    });\n" +
     "  })();\n" +
     "<\/script>\n";
-  return TEMGIA_APP_HTML.replace("</body>\n</html>", injected + "</body>\n</html>");
 }
 // ================= TAB: ĐIỀU CHUYỂN HÀNG HOÁ =================
 // Chỉ hiển thị lại kết quả do Cloud Function "runSyncTransferSuggestions" đã tính sẵn và ghi vào
