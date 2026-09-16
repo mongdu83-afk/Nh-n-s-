@@ -6690,10 +6690,12 @@ function buildTemGiaHtml(){
     "    if(!modal) return;\n" +
     "    var mo = new MutationObserver(function(){\n" +
     "      if(modal.style.display === 'flex'){\n" +
-    "        modal.scrollIntoView({behavior:'auto', block:'center'});\n" +
+    "        var box = modal.querySelector('.modal') || modal;\n" +
+    "        box.scrollIntoView({behavior:'auto', block:'center'});\n" +
     "      }\n" +
     "    });\n" +
     "    mo.observe(modal, {attributes:true, attributeFilter:['style']});\n" +
+    "    modal.addEventListener('click', function(e){ if(e.target === modal){ modal.style.display = 'none'; } });\n" +
     "  })();\n" +
     "<\/script>\n";
   return TEMGIA_APP_HTML.replace("</body>\n</html>", injected + "</body>\n</html>");
