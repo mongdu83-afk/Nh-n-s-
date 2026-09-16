@@ -6675,7 +6675,27 @@ function buildTemGiaHtml(){
     "  .datatable-wrap::-webkit-scrollbar-track{ background:#EDEBE3; border-radius:8px; }\n" +
     "  .datatable-wrap::-webkit-scrollbar-thumb{ background:#0D5C4F; border-radius:8px; border:3px solid #EDEBE3; }\n" +
     "  .datatable-wrap::-webkit-scrollbar-thumb:hover{ background:#0a4a40; }\n" +
-    "<\/style>\n";
+    // .modal-overlay dùng position:fixed — bình thường ăn theo khung nhìn hiện tại của trình
+    // duyệt. Nhưng vì ở trên mình đã TẮT hẳn việc cuộn riêng bên trong iframe (để bảng dữ liệu
+    // không bị 2 thanh cuộn lồng nhau), "khung nhìn" bên trong iframe giờ trải dài hết toàn bộ
+    // nội dung (rất cao) thay vì chỉ bằng phần đang hiện trên màn hình — khiến popup "Ánh xạ cột
+    // dữ liệu" bị định vị lệch, không nằm đúng chỗ người dùng đang nhìn thấy (trông như bấm xong
+    // không có gì xảy ra). Đổi sang position:absolute để popup luôn nằm đúng theo dòng chảy trang,
+    // đồng thời thêm script bên dưới để tự cuộn tới popup ngay khi nó được mở.
+    "  .modal-overlay{ position:absolute !important; }\n" +
+    "<\/style>\n" +
+    "<script>\n" +
+    "  (function(){\n" +
+    "    var modal = document.getElementById('mapModal');\n" +
+    "    if(!modal) return;\n" +
+    "    var mo = new MutationObserver(function(){\n" +
+    "      if(modal.style.display === 'flex'){\n" +
+    "        modal.scrollIntoView({behavior:'auto', block:'center'});\n" +
+    "      }\n" +
+    "    });\n" +
+    "    mo.observe(modal, {attributes:true, attributeFilter:['style']});\n" +
+    "  })();\n" +
+    "<\/script>\n";
   return TEMGIA_APP_HTML.replace("</body>\n</html>", injected + "</body>\n</html>");
 }
 // ================= TAB: ĐIỀU CHUYỂN HÀNG HOÁ =================
