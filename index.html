@@ -6274,6 +6274,7 @@ function TaskLiveNotifier({ myStaff, isAdmin }){
   const prevTaskFeedback = useRef({});
   const seenSysErr = useRef(new Set());
   const isFirstSysErr = useRef(true);
+  const onMessageRegistered = useRef(false);
   // Quản lý không có myStaff — dùng khoá cố định "admin" để vẫn đăng ký được token thông báo đẩy.
   const notifKey = myStaff ? myStaff.id : (isAdmin ? "admin" : null);
   const notifName = myStaff ? myStaff.name : "Quản lý";
@@ -6426,6 +6427,19 @@ function TaskLiveNotifier({ myStaff, isAdmin }){
       if(!("serviceWorker" in navigator)) { if(!silent) setNotifErr("Trình duyệt này không hỗ trợ Service Worker."); return; }
       const reg = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
       const messaging = firebase.messaging();
+      // QUAN TRỌNG: khi tab đang MỞ SẴN (foreground), trình duyệt KHÔNG tự hiện thông báo hệ
+      // thống như lúc tab đã đóng/chạy nền (background dùng firebase-messaging-sw.js) — phải tự
+      // bắt sự kiện onMessage và tự hiển thị, nếu không thông báo coi như "mất tích" dù server
+      // đã báo gửi thành công 100%. Đây chính là lý do trước đây rất nhiều người KHÔNG nhận được
+      // thông báo dù đã bật đúng cách: họ đang mở sẵn app lúc thông báo tới. Chỉ đăng ký 1 lần.
+      if(!onMessageRegistered.current){
+        onMessageRegistered.current = true;
+        messaging.onMessage((payload)=>{
+          const title = (payload.notification && payload.notification.title) || "Upharma Ops";
+          const body = (payload.notification && payload.notification.body) || "";
+          fireLocalNotif(title, body);
+        });
+      }
       const token = await messaging.getToken({ vapidKey:FCM_VAPID_KEY, serviceWorkerRegistration:reg });
       if(token){
         // Chỉ giữ ĐÚNG 1 token cho tài khoản này (ghi đè, không cộng dồn) — tránh tình trạng
