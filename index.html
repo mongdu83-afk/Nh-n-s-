@@ -2457,6 +2457,7 @@ function WeeklyReviewModal({ report, prevReport, onSave, onClose }){
 
 function WeeklyReportView({ isAdmin, myStaff }){
   const [reportsMap, setReportsMap] = useState({});
+  const [reportsLoaded, setReportsLoaded] = useState(false);
   const [staffList, setStaffList] = useState([]);
   const [selfShop] = useState(myStaff ? myStaff.shop : "");
   const [nguoiBaoCao, setNguoiBaoCao] = useState(myStaff ? myStaff.name : "");
@@ -2471,7 +2472,7 @@ function WeeklyReportView({ isAdmin, myStaff }){
   const [uploadingRow, setUploadingRow] = useState({});
 
   useEffect(()=>{
-    const u2 = subscribeCol("weeklyReports", rows => { const map = {}; rows.forEach(r => map[r.id] = r); setReportsMap(map); });
+    const u2 = subscribeCol("weeklyReports", rows => { const map = {}; rows.forEach(r => map[r.id] = r); setReportsMap(map); setReportsLoaded(true); });
     const u3 = subscribeCol("staff", setStaffList);
     return ()=>{ u2(); u3(); };
   }, []);
@@ -2514,7 +2515,7 @@ function WeeklyReportView({ isAdmin, myStaff }){
     } else {
       setProgressData(weeklyDefaultProgressData());
     }
-  }, [thisId, !!thisReport, selfShop]);
+  }, [thisId, !!thisReport, selfShop, reportsLoaded]);
   // Sửa lỗi mất dữ liệu đang gõ dở: TRƯỚC ĐÂY effect này chạy lại mỗi khi "thisReport.updatedAtTs"
   // đổi — mà updatedAtTs là serverTimestamp() nên đổi giá trị SAU MỖI LẦN LƯU BẤT KỲ Ô NÀO (kể cả
   // ô khác). Kết quả: mỗi khi lưu xong 1 ô (chuyển ô/onBlur), toàn bộ các ô khác đang gõ dở (chưa
@@ -2525,6 +2526,11 @@ function WeeklyReportView({ isAdmin, myStaff }){
   // chỉ nạp lại dữ liệu ĐÚNG 1 LẦN khi chuyển sang tuần/nhà thuốc khác (thisId đổi) hoặc lần đầu dữ
   // liệu đã lưu của tuần này tải xong (!!thisReport chuyển từ false sang true) — không còn bị nạp
   // đè lại bởi các lần lưu tiếp theo của chính mình hay của người khác nữa.
+  // "reportsLoaded" (thêm sau) chỉ chuyển 1 lần duy nhất từ false→true khi snapshot "weeklyReports"
+  // ĐẦU TIÊN tải xong — sửa lỗi kế hoạch/target tuần trước bị "mất" khi mở tab lúc chưa có báo cáo
+  // tuần này: trước đây effect chạy ngay lần đầu lúc reportsMap còn rỗng (Firestore chưa kịp trả
+  // dữ liệu) nên prevReport = null và không bao giờ nạp lại nữa vì thisId/!!thisReport không đổi.
+  // Sau khi tải xong, reportsLoaded không đổi nữa nên KHÔNG lặp lại lỗi mất dữ liệu gõ dở ở trên.
 
   function changeRow(section, catKey, rowId, field, value){
     const setter = section==="ketQua" ? setKetQuaData : setKeHoachData;
