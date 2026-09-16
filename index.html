@@ -2457,6 +2457,7 @@ function WeeklyReviewModal({ report, prevReport, onSave, onClose }){
 
 function WeeklyReportView({ isAdmin, myStaff }){
   const [reportsMap, setReportsMap] = useState({});
+  const [reportsLoaded, setReportsLoaded] = useState(false);
   const [staffList, setStaffList] = useState([]);
   const [selfShop] = useState(myStaff ? myStaff.shop : "");
   const [nguoiBaoCao, setNguoiBaoCao] = useState(myStaff ? myStaff.name : "");
@@ -2471,7 +2472,7 @@ function WeeklyReportView({ isAdmin, myStaff }){
   const [uploadingRow, setUploadingRow] = useState({});
 
   useEffect(()=>{
-    const u2 = subscribeCol("weeklyReports", rows => { const map = {}; rows.forEach(r => map[r.id] = r); setReportsMap(map); });
+    const u2 = subscribeCol("weeklyReports", rows => { const map = {}; rows.forEach(r => map[r.id] = r); setReportsMap(map); setReportsLoaded(true); });
     const u3 = subscribeCol("staff", setStaffList);
     return ()=>{ u2(); u3(); };
   }, []);
@@ -2514,7 +2515,7 @@ function WeeklyReportView({ isAdmin, myStaff }){
     } else {
       setProgressData(weeklyDefaultProgressData());
     }
-  }, [thisId, !!thisReport, selfShop]);
+  }, [thisId, !!thisReport, selfShop, reportsLoaded]);
   // Sửa lỗi mất dữ liệu đang gõ dở: TRƯỚC ĐÂY effect này chạy lại mỗi khi "thisReport.updatedAtTs"
   // đổi — mà updatedAtTs là serverTimestamp() nên đổi giá trị SAU MỖI LẦN LƯU BẤT KỲ Ô NÀO (kể cả
   // ô khác). Kết quả: mỗi khi lưu xong 1 ô (chuyển ô/onBlur), toàn bộ các ô khác đang gõ dở (chưa
@@ -2525,6 +2526,11 @@ function WeeklyReportView({ isAdmin, myStaff }){
   // chỉ nạp lại dữ liệu ĐÚNG 1 LẦN khi chuyển sang tuần/nhà thuốc khác (thisId đổi) hoặc lần đầu dữ
   // liệu đã lưu của tuần này tải xong (!!thisReport chuyển từ false sang true) — không còn bị nạp
   // đè lại bởi các lần lưu tiếp theo của chính mình hay của người khác nữa.
+  // "reportsLoaded" (thêm sau) chỉ chuyển 1 lần duy nhất từ false→true khi snapshot "weeklyReports"
+  // ĐẦU TIÊN tải xong — sửa lỗi kế hoạch/target tuần trước bị "mất" khi mở tab lúc chưa có báo cáo
+  // tuần này: trước đây effect chạy ngay lần đầu lúc reportsMap còn rỗng (Firestore chưa kịp trả
+  // dữ liệu) nên prevReport = null và không bao giờ nạp lại nữa vì thisId/!!thisReport không đổi.
+  // Sau khi tải xong, reportsLoaded không đổi nữa nên KHÔNG lặp lại lỗi mất dữ liệu gõ dở ở trên.
 
   function changeRow(section, catKey, rowId, field, value){
     const setter = section==="ketQua" ? setKetQuaData : setKeHoachData;
@@ -4216,11 +4222,11 @@ function KpiView({ isAdmin, myStaff }){
         // việc đặt đúng tên sheet, lỡ ai đó đặt tên sheet khác đi vẫn nhận ra được. Cloud Function
         // syncInventoryExpiryDaily/Now sẽ tự đối chiếu danh sách này với tồn kho thật để tính điểm
         // "Hàng thường trực" mỗi ngày.
-        const sheetNameNoDiacritics = sheetName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/đ/g,"d").replace(/[_-]+/g," ");
+        const sheetNameNoDiacritics = sheetName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/đ/g,"d");
         const firstRowNoDiacritics = (XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header:1, defval:"" })[0]||[])
           .map(h => String(h||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/đ/g,"d"));
-        const headerLooksLikeSkuList = (firstRowNoDiacritics[0]||"").match(/shop|nha thuoc/) &&
-          (firstRowNoDiacritics[1]||"").match(/ma sp|ma hang|san pham/) &&
+        const headerLooksLikeSkuList = firstRowNoDiacritics.some(h=>h.includes("nha thuoc")) &&
+          firstRowNoDiacritics.some(h=>h.includes("ma hang")) &&
           !firstRowNoDiacritics.some(h=>h.includes("nhan vien"));
         if(sheetNameNoDiacritics.includes("thuong truc") || sheetNameNoDiacritics.includes("thuongtruc") || headerLooksLikeSkuList){
           const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header:1, defval:"" });
@@ -5425,254 +5431,7 @@ function DataSyncSection(){
   return React.createElement(SyncAllDataButton, null);
 }
 
-// ================= ĐIỀU CHUYỂN HÀNG HOÁ NỘI BỘ + ĐẶT HÀNG BỔ SUNG =================
-// Đọc kết quả từ Cloud Function runSyncTransferSuggestions (ghi vào opsConfig/transferSuggestions)
-// — so tốc độ bán 30 ngày với tồn kho thật + danh sách hàng thường trực, gợi ý điều chuyển giữa
-// các nhà thuốc và liệt kê phần dư/thiếu không có nơi khớp để tự quyết định.
-function TransferSuggestionsView(){
-  const [data, setData] = useState(null);
-  const [running, setRunning] = useState(false);
-  const [msg, setMsg] = useState(null);
-  const [dispatchLog, setDispatchLog] = useState({});
-  const [selectedTransfers, setSelectedTransfers] = useState({});
-  const [selectedShortage, setSelectedShortage] = useState({});
-  const [dispatching, setDispatching] = useState(false);
-
-  useEffect(()=>{
-    const u1 = db.collection("opsConfig").doc("transferSuggestions").onSnapshot(snap => setData(snap.exists ? snap.data() : null));
-    const u2 = db.collection("opsConfig").doc("transferDispatchLog").onSnapshot(snap => setDispatchLog(snap.exists ? snap.data() : {}));
-    return ()=>{ u1(); u2(); };
-  }, []);
-
-  async function runNow(){
-    setRunning(true); setMsg(null);
-    try{
-      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncTransferSuggestionsNow");
-      const d = await resp.json();
-      if(d && d.ok===false) setMsg("Có lỗi khi phân tích: " + (d.error || "không rõ nguyên nhân"));
-      else setMsg(`Đã phân tích xong — ${d.transferCount ?? 0} cặp điều chuyển, ${d.leftoverSurplusCount ?? 0} mã dư không nơi nhận, ${d.leftoverShortageCount ?? 0} mã thiếu cần đặt bổ sung.`);
-    }catch(err){
-      console.error("Phân tích điều chuyển lỗi:", err);
-      setMsg("Có lỗi xảy ra: " + (err && err.message ? err.message : String(err)));
-    }
-    setRunning(false);
-  }
-
-  function exportSheet(rows, filename, sheetName){
-    if(!rows || !rows.length) return;
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(rows);
-    styleExportSheet(ws, rows);
-    XLSX.utils.book_append_sheet(wb, ws, sheetName);
-    XLSX.writeFile(wb, filename);
-  }
-
-  function fmtDaysBadge(days){
-    if(days>=9999) return "Không bán trong kỳ";
-    return `${days} ngày`;
-  }
-
-  const transferKey = r => `t__${r.productId}__${r.fromShop}__${r.toShop}`;
-  const shortageKey = r => `s__${r.productId}__${r.shopCode}`;
-
-  // ---- Gửi chỉ thị điều chuyển / cảnh báo xử lý — tạo thẳng vào "Giao việc" (module đã có sẵn
-  // thông báo đẩy khi giao việc mới + luồng báo cáo kết quả), thay vì tự làm 1 hệ thống riêng.
-  // Đánh dấu đã gửi vào opsConfig/transferDispatchLog để không gửi trùng nếu chạy phân tích lại.
-  async function dispatchTransfers(){
-    const rows = transfers.filter(r => selectedTransfers[transferKey(r)] && !dispatchLog[transferKey(r)]);
-    if(!rows.length) return;
-    if(!window.confirm(`Gửi chỉ thị điều chuyển cho ${rows.length} mã hàng đã chọn tới các nhà thuốc liên quan?`)) return;
-    setDispatching(true);
-    try{
-      const logUpdate = {};
-      for(const r of rows){
-        const base = {
-          trangThai:"Đang giao", ketQua:"", nguoiBaoCao:"", ngayGiao:todayISO(),
-          nguoiGiaoViec:"Quản lý khu vực", nguoiGiaoViecRole:"Quản lý khu vực",
-          dinhKemFiles:[], dinhKemLink:"",
-        };
-        await addDoc("tasks", {
-          ...base, assignType:"shop", staffId:null, staffName:"", shop:r.fromShop,
-          title:`🔀 Điều chuyển hàng đi: ${r.productName} (${r.productId})`,
-          mota:`Chuyển ${r.qty} ${r.unit||""} sang nhà thuốc ${r.toShop}${r.toIsRequired?" (đây là hàng thường trực bắt buộc phải có ở nơi nhận)":""}. Đóng gói, bàn giao vận chuyển, rồi báo cáo kết quả (số lượng thực tế đã chuyển, ngày chuyển).`,
-          deadline:addDays(todayISO(), 1), hanGio:"17:00",
-        });
-        await addDoc("tasks", {
-          ...base, assignType:"shop", staffId:null, staffName:"", shop:r.toShop,
-          title:`🔀 Điều chuyển hàng đến: ${r.productName} (${r.productId})`,
-          mota:`Dự kiến nhận ${r.qty} ${r.unit||""} từ nhà thuốc ${r.fromShop}. Khi nhận được, kiểm đếm và báo cáo kết quả (đã nhận đủ chưa, số lượng thực nhận).`,
-          deadline:addDays(todayISO(), 3), hanGio:"17:00",
-        });
-        logUpdate[transferKey(r)] = { atTs:new Date().toISOString(), type:"transfer" };
-      }
-      await db.collection("opsConfig").doc("transferDispatchLog").set(logUpdate, { merge:true });
-      setSelectedTransfers({});
-    }catch(err){
-      console.error("Gửi chỉ thị điều chuyển lỗi:", err);
-      window.alert("Gửi chỉ thị thất bại, thử lại.");
-    }
-    setDispatching(false);
-  }
-
-  async function dispatchShortage(){
-    const rows = leftoverShortage.filter(r => selectedShortage[shortageKey(r)] && !dispatchLog[shortageKey(r)]);
-    if(!rows.length) return;
-    if(!window.confirm(`Gửi cảnh báo xử lý cho ${rows.length} mã hàng đã chọn tới các nhà thuốc liên quan?`)) return;
-    setDispatching(true);
-    try{
-      const logUpdate = {};
-      for(const r of rows){
-        await addDoc("tasks", {
-          trangThai:"Đang giao", ketQua:"", nguoiBaoCao:"", ngayGiao:todayISO(),
-          nguoiGiaoViec:"Quản lý khu vực", nguoiGiaoViecRole:"Quản lý khu vực",
-          dinhKemFiles:[], dinhKemLink:"",
-          assignType:"shop", staffId:null, staffName:"", shop:r.shopCode,
-          title:`⚠️ Cảnh báo thiếu hàng cần xử lý: ${r.productName} (${r.productId})`,
-          mota:`${r.isRequired?"Đây là hàng thường trực bắt buộc phải có, hiện đã hết/gần hết. ":""}Tồn hiện tại chỉ đủ bán ~${r.daysOfStock} ngày (mức chuẩn 30 ngày). Không nhà thuốc nào khác đang dư để điều chuyển — cần đặt hàng bổ sung từ nhà cung cấp, rồi báo cáo kết quả xử lý.`,
-          deadline:addDays(todayISO(), r.isRequired ? 1 : 2), hanGio:"17:00",
-        });
-        logUpdate[shortageKey(r)] = { atTs:new Date().toISOString(), type:"shortage" };
-      }
-      await db.collection("opsConfig").doc("transferDispatchLog").set(logUpdate, { merge:true });
-      setSelectedShortage({});
-    }catch(err){
-      console.error("Gửi cảnh báo thiếu hàng lỗi:", err);
-      window.alert("Gửi cảnh báo thất bại, thử lại.");
-    }
-    setDispatching(false);
-  }
-
-  const transfers = (data && data.transfers) || [];
-  const leftoverSurplus = (data && data.leftoverSurplus) || [];
-  const leftoverShortage = (data && data.leftoverShortage) || [];
-  const SHOW_CAP = 200;
-  const selectedTransferCount = Object.values(selectedTransfers).filter(Boolean).length;
-  const selectedShortageCount = Object.values(selectedShortage).filter(Boolean).length;
-
-  const headerCard = React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
-    React.createElement("div", { key:"t", className:"cardTitle" }, "Điều chuyển hàng hoá & đặt hàng bổ sung"),
-    React.createElement("p", { key:"d", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } },
-      "So tốc độ bán 30 ngày gần nhất với tồn kho thật của từng nhà thuốc (tồn kho định mức = 30 ngày bán hàng), đối chiếu thêm danh sách hàng thường trực bắt buộc phải có — tự gợi ý điều chuyển nội bộ giữa các nhà thuốc. Chọn dòng cần xử lý rồi gửi chỉ thị/cảnh báo thẳng vào \"Giao việc\" — nhân viên nhận thông báo đẩy ngay và báo cáo kết quả như công việc bình thường."),
-    data && React.createElement("div", { key:"meta", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:10 } }, [
-      `Dữ liệu doanh số: ${data.periodFrom || "—"} → ${data.periodTo || "—"} · `,
-      `Ngưỡng: dư khi >${data.surplusDays ?? "—"} ngày tồn, thiếu khi <${data.shortageDays ?? "—"} ngày · `,
-      `Cập nhật lúc ${data.generatedAtTs ? new Date(data.generatedAtTs).toLocaleString("vi-VN") : "—"}`,
-    ]),
-    React.createElement("button", { key:"run", type:"button", className:"btn btnPrimary", disabled:running, onClick:runNow }, running ? "Đang phân tích... (có thể mất vài phút)" : "🔀 Phân tích ngay"),
-    msg && React.createElement("div", { key:"msg", style:{ fontSize:12.5, color:"var(--pine)", marginTop:8 } }, msg),
-    !data && !msg && React.createElement("div", { key:"empty", style:{ fontSize:12.5, color:"var(--inkSoft)", marginTop:8 } }, "Chưa có lần phân tích nào — bấm \"Phân tích ngay\" để chạy lần đầu."),
-  ]);
-
-  function tableCard(opts){
-    const { title, sub, rows, columns, filename, sheetName, selectable, keyFn, selected, setSelected, onDispatch, dispatchLabel, selectedCount } = opts;
-    return React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
-      React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:4 } }, [
-        React.createElement("div", { key:"t", className:"cardTitle", style:{ marginBottom:0 } }, `${title} (${rows.length})`),
-        React.createElement("div", { key:"btns", className:"btnRow" }, [
-          selectable && selectedCount>0 && React.createElement("button", { key:"dis", type:"button", className:"btn btnAmber", disabled:dispatching, onClick:onDispatch }, dispatching ? "Đang gửi..." : `${dispatchLabel} (${selectedCount})`),
-          rows.length>0 && React.createElement("button", { key:"exp", type:"button", className:"btn btnGhost", style:{ padding:"6px 12px", fontSize:12 }, onClick:()=>exportSheet(rows.map(columns.toRow), filename, sheetName) }, "Tải Excel"),
-        ]),
-      ]),
-      React.createElement("p", { key:"sub", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } }, sub),
-      rows.length===0
-        ? React.createElement("div", { key:"empty", style:{ fontSize:12.5, color:"var(--inkSoft)" } }, "Không có dòng nào.")
-        : React.createElement("div", { key:"tbl", style:{ overflowX:"auto" } }, React.createElement("table", { className:"table" }, [
-            React.createElement("thead", { key:"h" }, React.createElement("tr", null, [
-              selectable && React.createElement("th", { key:"chk" }, ""),
-              ...columns.headers.map((h,i)=>React.createElement("th", { key:i }, h)),
-              selectable && React.createElement("th", { key:"st" }, "Trạng thái"),
-            ])),
-            React.createElement("tbody", { key:"b" }, rows.slice(0, SHOW_CAP).map((r,i)=>{
-              const key = selectable ? keyFn(r) : null;
-              const sent = selectable && dispatchLog[key];
-              return React.createElement("tr", { key:i }, [
-                selectable && React.createElement("td", { key:"chk" }, sent ? null : React.createElement("input", {
-                  type:"checkbox", checked:!!selected[key],
-                  onChange:e=>setSelected(prev=>({ ...prev, [key]:e.target.checked })),
-                })),
-                ...columns.render(r),
-                selectable && React.createElement("td", { key:"st" }, sent
-                  ? React.createElement("span", { className:"pill", style:{ background:"var(--pineSoft)", color:"var(--pine)" } }, `✓ Đã gửi ${new Date(sent.atTs).toLocaleDateString("vi-VN")}`)
-                  : React.createElement("span", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, "Chưa gửi")),
-              ]);
-            })),
-          ])),
-      rows.length>SHOW_CAP && React.createElement("p", { key:"cap", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:8 } }, `Chỉ hiển thị ${SHOW_CAP}/${rows.length} dòng đầu — tải Excel để xem đầy đủ.`),
-    ]);
-  }
-
-  const transfersCard = tableCard({
-    title:"🔀 Đề xuất điều chuyển nội bộ",
-    sub:"Chuyển từ nhà thuốc đang dư sang nhà thuốc đang thiếu, cùng 1 mã hàng. Chọn dòng rồi bấm \"Gửi chỉ thị\" để giao việc cho cả 2 nhà thuốc (bên chuyển đi + bên nhận), nhân viên báo cáo kết quả trong \"Giao việc\".",
-    rows:transfers,
-    columns:{
-      headers: ["Mã hàng","Tên hàng","Từ nhà thuốc (dư)","Đến nhà thuốc (thiếu)","SL đề xuất chuyển","Ngày tồn nơi gửi","Ngày tồn nơi nhận"],
-      render: r => [
-        React.createElement("td", { key:"c" }, r.productId),
-        React.createElement("td", { key:"n" }, r.productName),
-        React.createElement("td", { key:"f" }, r.fromShop),
-        React.createElement("td", { key:"t" }, [r.toShop, r.toIsRequired && React.createElement("span", { key:"b", className:"pill", style:{ marginLeft:6, background:"var(--amberSoft)", color:"var(--amber)" } }, "Hàng thường trực")]),
-        React.createElement("td", { key:"q" }, `${r.qty} ${r.unit||""}`),
-        React.createElement("td", { key:"fd" }, fmtDaysBadge(r.fromDaysStock)),
-        React.createElement("td", { key:"td" }, r.toDaysStock ? fmtDaysBadge(r.toDaysStock) : "—"),
-      ],
-      toRow: r => ({ "Mã hàng":r.productId, "Tên hàng":r.productName, "Từ nhà thuốc":r.fromShop, "Đến nhà thuốc":r.toShop, "SL đề xuất chuyển":r.qty, "Đơn vị":r.unit||"", "Ngày tồn nơi gửi":r.fromDaysStock, "Ngày tồn nơi nhận":r.toDaysStock, "Hàng thường trực":r.toIsRequired?"Có":"" }),
-    },
-    filename:`De_xuat_dieu_chuyen_${todayStrForFilename()}.xlsx`, sheetName:"Dieu chuyen",
-    selectable:true, keyFn:transferKey, selected:selectedTransfers, setSelected:setSelectedTransfers,
-    onDispatch:dispatchTransfers, dispatchLabel:"🔀 Gửi chỉ thị điều chuyển", selectedCount:selectedTransferCount,
-  });
-
-  const surplusCard = tableCard({
-    title:"📦 Hàng dư, không nơi nào cần",
-    sub:"Tồn vượt xa mức 30 ngày bán, nhưng không nhà thuốc nào khác đang thiếu mã này — cân nhắc giảm nhập tiếp, khuyến mãi đẩy hàng, hoặc trả nhà cung cấp. Mục này chỉ để tham khảo, không gửi chỉ thị.",
-    rows:leftoverSurplus,
-    columns:{
-      headers: ["Mã hàng","Tên hàng","Nhà thuốc","SL dư","Ngày tồn"],
-      render: r => [
-        React.createElement("td", { key:"c" }, r.productId),
-        React.createElement("td", { key:"n" }, r.productName),
-        React.createElement("td", { key:"s" }, r.shopCode),
-        React.createElement("td", { key:"q" }, `${r.qty} ${r.unit||""}`),
-        React.createElement("td", { key:"d" }, fmtDaysBadge(r.daysOfStock)),
-      ],
-      toRow: r => ({ "Mã hàng":r.productId, "Tên hàng":r.productName, "Nhà thuốc":r.shopCode, "SL dư":r.qty, "Đơn vị":r.unit||"", "Ngày tồn":r.daysOfStock }),
-    },
-    filename:`Hang_du_khong_noi_nhan_${todayStrForFilename()}.xlsx`, sheetName:"Hang du",
-    selectable:false,
-  });
-
-  const shortageCard = tableCard({
-    title:"⚠️ Hàng thiếu, cần đặt hàng bổ sung",
-    sub:"Không nhà thuốc nào khác đang dư mã này để điều chuyển — cần đặt thêm từ nhà cung cấp. Ưu tiên các dòng đánh dấu \"Hàng thường trực\". Chọn dòng rồi gửi cảnh báo yêu cầu xử lý cho đúng nhà thuốc.",
-    rows:leftoverShortage,
-    columns:{
-      headers: ["Mã hàng","Tên hàng","Nhà thuốc","SL cần đặt thêm","Ngày tồn","Hàng thường trực"],
-      render: r => [
-        React.createElement("td", { key:"c" }, r.productId),
-        React.createElement("td", { key:"n" }, r.productName),
-        React.createElement("td", { key:"s" }, r.shopCode),
-        React.createElement("td", { key:"q" }, `${r.qty} ${r.unit||""}`),
-        React.createElement("td", { key:"d" }, fmtDaysBadge(r.daysOfStock)),
-        React.createElement("td", { key:"req" }, r.isRequired ? React.createElement("span", { className:"pill", style:{ background:"var(--amberSoft)", color:"var(--amber)" } }, "Có") : "—"),
-      ],
-      toRow: r => ({ "Mã hàng":r.productId, "Tên hàng":r.productName, "Nhà thuốc":r.shopCode, "SL cần đặt thêm":r.qty, "Đơn vị":r.unit||"", "Ngày tồn":r.daysOfStock, "Hàng thường trực":r.isRequired?"Có":"" }),
-    },
-    filename:`Hang_thieu_can_dat_bo_sung_${todayStrForFilename()}.xlsx`, sheetName:"Hang thieu",
-    selectable:true, keyFn:shortageKey, selected:selectedShortage, setSelected:setSelectedShortage,
-    onDispatch:dispatchShortage, dispatchLabel:"⚠️ Gửi cảnh báo xử lý", selectedCount:selectedShortageCount,
-  });
-
-  return React.createElement(React.Fragment, null, [
-    React.createElement("p", { key:"s", className:"pagesub" }, "Cảnh báo hàng dư/thiếu giữa các nhà thuốc, gợi ý điều chuyển nội bộ và đặt hàng bổ sung."),
-    headerCard, transfersCard, shortageCard, surplusCard,
-  ]);
-}
-function todayStrForFilename(){ return new Date().toISOString().slice(0,10); }
-
 function StaffView(){
-
-
   const [staff, setStaff] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -6347,8 +6106,8 @@ const OPS_TABS = [
   { id:"training", label:"Đào tạo & Buddy" },
   { id:"kudos", label:"Ghi nhận & Quà" },
   { id:"inventory", label:"Kiểm kê" },
-  { id:"transfer", label:"Điều chuyển hàng" },
   { id:"temgia", label:"Tem giá" },
+  { id:"transfer", label:"Điều chuyển hàng hoá" },
   { id:"staff", label:"Nhân viên" },
 ];
 
@@ -6919,6 +6678,259 @@ function buildTemGiaHtml(){
     "<\/style>\n";
   return TEMGIA_APP_HTML.replace("</body>\n</html>", injected + "</body>\n</html>");
 }
+// ================= TAB: ĐIỀU CHUYỂN HÀNG HOÁ =================
+// Chỉ hiển thị lại kết quả do Cloud Function "runSyncTransferSuggestions" đã tính sẵn và ghi vào
+// "opsConfig/transferSuggestions" — tab này KHÔNG tự tính toán gì, chỉ đọc (onSnapshot, tự cập
+// nhật real-time) + có nút "Phân tích ngay" để gọi endpoint syncTransferSuggestionsNow theo yêu cầu.
+function TransferSuggestionsView(){
+  const [data, setData] = useState(null);
+  const [loaded, setLoaded] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [errMsg, setErrMsg] = useState(null);
+  const [filterShop, setFilterShop] = useState("Tất cả");
+  const [catalogMeta, setCatalogMeta] = useState(null);
+  const [uploadingCatalog, setUploadingCatalog] = useState(false);
+  const [catalogMsg, setCatalogMsg] = useState(null);
+
+  useEffect(()=>{
+    const unsub = db.collection("opsConfig").doc("productCatalogMeta").onSnapshot(snap => {
+      setCatalogMeta(snap.exists ? snap.data() : null);
+    });
+    return unsub;
+  }, []);
+
+  useEffect(()=>{
+    const unsub = db.collection("opsConfig").doc("transferSuggestions").onSnapshot(snap => {
+      setData(snap.exists ? snap.data() : null); setLoaded(true);
+    });
+    return unsub;
+  }, []);
+
+  async function runAnalyze(){
+    setAnalyzing(true); setErrMsg(null);
+    try{
+      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncTransferSuggestionsNow");
+      const json = await resp.json();
+      if(!json.ok) setErrMsg(json.error || "Lấy tồn kho thất bại ở một số nhà thuốc — xem chi tiết bên dưới.");
+    } catch(err){
+      console.error("Phân tích điều chuyển hàng hoá lỗi:", err);
+      setErrMsg(err && err.message ? err.message : String(err));
+    } finally { setAnalyzing(false); }
+  }
+
+  // Bỏ dấu tiếng Việt + viết thường để nhận diện tên cột trong file DMHH bất kể cách đặt tên
+  // (VD: "Mã hàng", "Mã SP", "Ma san pham" đều nhận ra được).
+  function normHeader(s){
+    return String(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/đ/g,"d").trim();
+  }
+  function findHeaderKey(rowKeys, keywords){
+    const normed = rowKeys.map(k => ({ raw:k, norm:normHeader(k) }));
+    for(const kw of keywords){
+      const hit = normed.find(x => x.norm === kw);
+      if(hit) return hit.raw;
+    }
+    for(const kw of keywords){
+      const hit = normed.find(x => x.norm.includes(kw));
+      if(hit) return hit.raw;
+    }
+    return null;
+  }
+  // Tải file DMHH (Excel/CSV) do quản lý xuất ra từ hệ thống — chỉ cần 2 cột "Mã hàng" và "Tên
+  // hàng" (đơn vị tính nếu có sẽ lưu kèm). Ghi đè toàn bộ danh mục theo lô 450 mã/lần (giới hạn
+  // batch của Firestore là 500) — DMHH dùng làm nguồn tra tên hàng ổn định, không phụ thuộc tồn
+  // kho hay tab Kiểm kê, kể cả khi mã hàng đang hết sạch ở mọi nhà thuốc.
+  async function uploadCatalogFile(file){
+    setUploadingCatalog(true); setCatalogMsg(null);
+    try{
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type:"array" });
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval:"" });
+      if(rows.length===0){ setCatalogMsg("File rỗng — không có dòng dữ liệu nào."); return; }
+      const keys = Object.keys(rows[0]);
+      const codeKey = findHeaderKey(keys, ["ma hang","ma sp","ma san pham","ma"]);
+      const nameKey = findHeaderKey(keys, ["ten hang","ten sp","ten san pham","ten"]);
+      const unitKey = findHeaderKey(keys, ["dvt","don vi tinh","don vi"]);
+      if(!codeKey || !nameKey){
+        setCatalogMsg("Không nhận diện được cột \"Mã hàng\" và \"Tên hàng\" trong file — đổi tên tiêu đề cột cho rõ rồi thử lại.");
+        return;
+      }
+      const list = [];
+      const seen = new Set();
+      rows.forEach(r => {
+        const code = String(r[codeKey]||"").trim();
+        const name = String(r[nameKey]||"").trim();
+        if(!code || !name) return;
+        const docId = code.replace(/\//g,"_");
+        if(seen.has(docId)) return; // trùng mã trong file — chỉ giữ dòng đầu tiên
+        seen.add(docId);
+        list.push({ docId, productId:code, productName:name, unit: unitKey ? String(r[unitKey]||"").trim() : "" });
+      });
+      if(list.length===0){ setCatalogMsg("Không có dòng nào có đủ Mã hàng + Tên hàng."); return; }
+      const CHUNK = 450;
+      for(let i=0; i<list.length; i+=CHUNK){
+        const batch = db.batch();
+        list.slice(i, i+CHUNK).forEach(item => {
+          batch.set(db.collection("productCatalog").doc(item.docId), {
+            productId:item.productId, productName:item.productName, unit:item.unit,
+            updatedAt:new Date().toISOString(),
+          });
+        });
+        await batch.commit();
+      }
+      await db.collection("opsConfig").doc("productCatalogMeta").set({
+        count:list.length, updatedAt:new Date().toISOString(), fileName:file.name,
+      });
+      setCatalogMsg(`Đã cập nhật danh mục: ${list.length} mặt hàng.`);
+    } catch(err){
+      console.error("Tải DMHH lỗi:", err);
+      setCatalogMsg("Đọc file lỗi — kiểm tra đúng định dạng Excel/CSV.");
+    } finally { setUploadingCatalog(false); }
+  }
+
+  const transfers = (data && data.transfers) || [];
+  const leftoverShortage = (data && data.leftoverShortage) || [];
+  const leftoverSurplus = (data && data.leftoverSurplus) || [];
+  const shopErrors = data && data.shopErrors;
+
+  // Sắp xếp theo đúng thứ tự nhà thuốc chuẩn của hệ thống (DEFAULT_SHOPS) thay vì sắp xếp chữ cái
+  // — nhà thuốc nào không nằm trong danh sách chuẩn (hiếm khi xảy ra) bị đẩy xuống cuối.
+  function shopRank(code){ const i = DEFAULT_SHOPS.indexOf(code); return i===-1 ? 999 : i; }
+  function byShop(a, b){ return shopRank(a) - shopRank(b); }
+
+  // Danh sách nhà thuốc để hiển thị thanh lọc — chỉ những nhà thuốc thực sự xuất hiện trong dữ
+  // liệu, xếp theo đúng thứ tự chuẩn.
+  const allShopsSet = new Set([
+    ...transfers.flatMap(t => [t.fromShop, t.toShop]),
+    ...leftoverShortage.map(s => s.shopCode),
+    ...leftoverSurplus.map(s => s.shopCode),
+  ]);
+  const allShops = [...allShopsSet].sort(byShop);
+
+  const sortedTransfers = transfers
+    .filter(t => filterShop==="Tất cả" || t.fromShop===filterShop || t.toShop===filterShop)
+    .slice().sort((a,b) => byShop(a.toShop, b.toShop) || byShop(a.fromShop, b.fromShop));
+  const sortedShortage = leftoverShortage
+    .filter(s => filterShop==="Tất cả" || s.shopCode===filterShop)
+    .slice().sort((a,b) => byShop(a.shopCode, b.shopCode));
+  const sortedSurplus = leftoverSurplus
+    .filter(s => filterShop==="Tất cả" || s.shopCode===filterShop)
+    .slice().sort((a,b) => byShop(a.shopCode, b.shopCode));
+
+  const shopChipsBar = allShops.length>0 && React.createElement("div", { key:"chips", className:"card", style:{ marginBottom:20, padding:"12px 14px" } }, [
+    React.createElement("div", { key:"lbl", style:{ fontSize:12, fontWeight:700, color:"var(--inkSoft)", marginBottom:8 } }, "Lọc theo nhà thuốc"),
+    React.createElement("div", { key:"row", style:{ display:"flex", gap:8, overflowX:"auto", paddingBottom:4 } },
+      ["Tất cả", ...allShops].map(s => React.createElement("button", {
+        key:s, type:"button", onClick:()=>setFilterShop(s),
+        style:{
+          flex:"none", padding:"7px 14px", borderRadius:20, fontSize:12.5, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap",
+          border: filterShop===s ? "1px solid var(--pine)" : "1px solid var(--line)",
+          background: filterShop===s ? "var(--pine)" : "#fff",
+          color: filterShop===s ? "#fff" : "var(--ink)",
+        },
+      }, s))
+    ),
+  ]);
+
+  return React.createElement("div", null, [
+    React.createElement("h2", { key:"t", className:"pagetitle" }, "Điều chuyển hàng hoá"),
+    React.createElement("p", { key:"s", className:"pagesub" }, "Đề xuất chuyển hàng đang dư ở nhà thuốc này sang nhà thuốc đang thiếu — dựa trên tồn kho thật & tốc độ bán 30 ngày gần nhất."),
+
+    React.createElement("div", { key:"top", className:"card", style:{ marginBottom:20 } }, [
+      React.createElement("div", { key:"row", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:12 } }, [
+        React.createElement("div", { key:"info" },
+          (data && data.generatedAtTs)
+            ? [
+                React.createElement("div", { key:"a", style:{ fontSize:13, fontWeight:600 } }, `Lần phân tích gần nhất: ${new Date(data.generatedAtTs).toLocaleString("vi-VN")}`),
+                React.createElement("div", { key:"b", style:{ fontSize:12, color:"var(--inkSoft)", marginTop:2 } },
+                  `Đối chiếu tốc độ bán ${data.periodFrom} → ${data.periodTo} · Dư khi tồn >${data.surplusDays} ngày bán · Thiếu khi tồn <${data.shortageDays} ngày bán`),
+              ]
+            : React.createElement("div", { style:{ fontSize:13, color:"var(--inkSoft)" } }, loaded ? "Chưa có dữ liệu — bấm \"Phân tích ngay\" để chạy lần đầu." : "Đang tải...")
+        ),
+        React.createElement("button", { key:"btn", type:"button", className:"btn btnPrimary", disabled:analyzing, onClick:runAnalyze },
+          analyzing ? "Đang phân tích..." : "🔄 Phân tích ngay"),
+      ]),
+      errMsg && React.createElement("div", { key:"err", style:{ marginTop:10, fontSize:12.5, color:"var(--clay)" } }, `Lỗi: ${errMsg}`),
+      (shopErrors && Object.keys(shopErrors).length>0) && React.createElement("div", { key:"shoperr", style:{ marginTop:10, fontSize:12, color:"var(--clay)" } },
+        `Không lấy được tồn kho của: ${Object.entries(shopErrors).map(([s,m]) => `${s} (${m})`).join(", ")}`),
+    ]),
+
+    React.createElement("div", { key:"catalog", className:"card", style:{ marginBottom:20 } }, [
+      React.createElement("div", { key:"h", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:12 } }, [
+        React.createElement("div", { key:"info" }, [
+          React.createElement("div", { key:"t", className:"cardTitle", style:{ marginBottom:2 } }, "Danh mục hàng hoá (DMHH)"),
+          React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)" } },
+            catalogMeta
+              ? `Hiện có ${fmtNum(catalogMeta.count||0)} mặt hàng · cập nhật lần cuối ${new Date(catalogMeta.updatedAt).toLocaleString("vi-VN")}`
+              : "Chưa có danh mục nào — tải file Excel/CSV có cột \"Mã hàng\" + \"Tên hàng\" lên để dùng làm nguồn tra tên hàng ổn định (không phụ thuộc tồn kho hay tab Kiểm kê)."),
+        ]),
+        React.createElement("label", { key:"btn", className:"btn btnPrimary", style:{ cursor:uploadingCatalog?"default":"pointer" } }, [
+          React.createElement("input", { key:"i", type:"file", accept:".xlsx,.xls,.csv", style:{ display:"none" }, disabled:uploadingCatalog,
+            onChange:e=>{ const f=e.target.files[0]; if(f) uploadCatalogFile(f); e.target.value=""; } }),
+          uploadingCatalog ? "Đang tải lên..." : "📥 Tải DMHH lên",
+        ]),
+      ]),
+      catalogMsg && React.createElement("div", { key:"msg", style:{ marginTop:10, fontSize:12.5, color:"var(--inkSoft)" } }, catalogMsg),
+    ]),
+
+    shopChipsBar,
+
+    React.createElement("div", { key:"secT", className:"card", style:{ marginBottom:20 } }, [
+      React.createElement("div", { key:"t", className:"cardTitle" }, `Đề xuất điều chuyển (${sortedTransfers.length})`),
+      sortedTransfers.length===0
+        ? React.createElement("div", { className:"emptyState" }, loaded ? "Không có đề xuất điều chuyển nào." : "Đang tải...")
+        : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+            React.createElement("thead",{key:"h"}, React.createElement("tr",null,
+              ["Mã hàng","Tên hàng","Từ nhà thuốc","Đến nhà thuốc","Số lượng","Tồn nơi cho","Tồn nơi nhận","Ghi chú"].map((h,i)=>React.createElement("th",{key:i},h)))),
+            React.createElement("tbody",{key:"b"}, sortedTransfers.map((t,i) => React.createElement("tr",{key:i}, [
+              React.createElement("td",{key:"pid"}, t.productId),
+              React.createElement("td",{key:"pn"}, t.productName),
+              React.createElement("td",{key:"f"}, t.fromShop),
+              React.createElement("td",{key:"to"}, t.toShop),
+              React.createElement("td",{key:"q"}, `${fmtNum(t.qty)} ${t.unit||""}`),
+              React.createElement("td",{key:"fd"}, `${fmtNum(t.fromDaysStock)} ngày bán`),
+              React.createElement("td",{key:"td"}, `${fmtNum(t.toDaysStock)} ngày bán`),
+              React.createElement("td",{key:"note"}, t.toIsRequired ? StatusPill("Hàng thường trực","warn") : "—"),
+            ]))),
+          ])),
+    ]),
+
+    React.createElement("div", { key:"secShort", className:"card", style:{ marginBottom:20 } }, [
+      React.createElement("div", { key:"t", className:"cardTitle" }, `Thiếu hàng, không nơi nào dư để chuyển — cần đặt bổ sung (${sortedShortage.length})`),
+      sortedShortage.length===0
+        ? React.createElement("div", { className:"emptyState" }, "Không có mục nào.")
+        : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+            React.createElement("thead",{key:"h"}, React.createElement("tr",null,
+              ["Mã hàng","Tên hàng","Nhà thuốc","Số lượng cần","Tồn hiện tại","Ghi chú"].map((h,i)=>React.createElement("th",{key:i},h)))),
+            React.createElement("tbody",{key:"b"}, sortedShortage.map((s,i) => React.createElement("tr",{key:i}, [
+              React.createElement("td",{key:"pid"}, s.productId),
+              React.createElement("td",{key:"pn"}, s.productName),
+              React.createElement("td",{key:"sh"}, s.shopCode),
+              React.createElement("td",{key:"q"}, `${fmtNum(s.qty)} ${s.unit||""}`),
+              React.createElement("td",{key:"d"}, `${fmtNum(s.daysOfStock)} ngày bán`),
+              React.createElement("td",{key:"note"}, s.isRequired ? StatusPill("Hàng thường trực","warn") : "—"),
+            ]))),
+          ])),
+    ]),
+
+    React.createElement("div", { key:"secSurplus", className:"card" }, [
+      React.createElement("div", { key:"t", className:"cardTitle" }, `Dư hàng, không nơi nào cần — cân nhắc xử lý khác (${sortedSurplus.length})`),
+      sortedSurplus.length===0
+        ? React.createElement("div", { className:"emptyState" }, "Không có mục nào.")
+        : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+            React.createElement("thead",{key:"h"}, React.createElement("tr",null,
+              ["Mã hàng","Tên hàng","Nhà thuốc","Số lượng dư","Tồn hiện tại"].map((h,i)=>React.createElement("th",{key:i},h)))),
+            React.createElement("tbody",{key:"b"}, sortedSurplus.map((s,i) => React.createElement("tr",{key:i}, [
+              React.createElement("td",{key:"pid"}, s.productId),
+              React.createElement("td",{key:"pn"}, s.productName),
+              React.createElement("td",{key:"sh"}, s.shopCode),
+              React.createElement("td",{key:"q"}, `${fmtNum(s.qty)} ${s.unit||""}`),
+              React.createElement("td",{key:"d"}, `${fmtNum(s.daysOfStock)} ngày bán`),
+            ]))),
+          ])),
+    ]),
+  ]);
+}
+
 function TemGiaView(){
   const [height, setHeight] = useState(2200);
   const srcDoc = useMemo(()=> buildTemGiaHtml(), []);
@@ -6979,8 +6991,8 @@ const TAB_STYLE = {
   training:       { icon:"🎓", color:"#db2777" },
   kudos:          { icon:"⭐", color:"#eab308" },
   staff:          { icon:"👥", color:"#475569" },
-  transfer:       { icon:"🔀", color:"#0e7490" },
   temgia:         { icon:"🏷️", color:"#c8503a" },
+  transfer:       { icon:"🔀", color:"#0e7490" },
 };
 
 // SVG nét rõ, thay cho icon emoji (emoji hiển thị mờ/vỡ nét trên nhiều máy — nhất là ở kích
@@ -6999,8 +7011,8 @@ const TAB_ICON_SVG = {
   training: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9l10-5 10 5-10 5-10-5z"/><path d="M6 11.5V17c0 1.2 2.7 3 6 3s6-1.8 6-3v-5.5"/><path d="M22 9v6"/></svg>',
   kudos: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.7 5.8 6.3.6-4.7 4.3 1.3 6.3L12 16.9l-5.6 3.1 1.3-6.3-4.7-4.3 6.3-.6L12 3z"/></svg>',
   staff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><circle cx="18" cy="9" r="2.6"/><path d="M16 14.3c2.7.3 4.9 2.3 4.9 5.2"/></svg>',
-  transfer: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3l4 4-4 4"/><path d="M21 7H9a4 4 0 0 0-4 4v1"/><path d="M7 21l-4-4 4-4"/><path d="M3 17h12a4 4 0 0 0 4-4v-1"/></svg>',
   temgia: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.5 3H20a1 1 0 0 1 1 1v7.5a1 1 0 0 1-.3.7l-8.5 8.5a1 1 0 0 1-1.4 0l-7.5-7.5a1 1 0 0 1 0-1.4l8.5-8.5a1 1 0 0 1 .7-.3z"/><circle cx="16" cy="8" r="1.6" fill="currentColor"/></svg>',
+  transfer: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h13M12 4l4 4-4 4"/><path d="M21 16H8M12 20l-4-4 4-4"/></svg>',
 };
 function renderTabIcon(id, sizePx, extraProps){
   const markup = (TAB_ICON_SVG[id] || TAB_ICON_SVG.staff).replace("<svg ", '<svg width="' + sizePx + '" height="' + sizePx + '" ');
@@ -7121,8 +7133,8 @@ function Dashboard({ user, isAdmin, myStaff }){
         activeTab==="training" && React.createElement(TrainingView, { key:"v", isAdmin, myStaff }),
         activeTab==="kudos" && React.createElement(KudosView, { key:"v", isAdmin, myStaff }),
         activeTab==="staff" && isAdmin && React.createElement(StaffView, { key:"v" }),
-        activeTab==="transfer" && isAdmin && React.createElement(TransferSuggestionsView, { key:"v" }),
         activeTab==="temgia" && React.createElement(TemGiaView, { key:"v" }),
+        activeTab==="transfer" && isAdmin && React.createElement(TransferSuggestionsView, { key:"v" }),
       ]),
     ]),
   ]);
