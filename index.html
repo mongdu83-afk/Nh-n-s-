@@ -6488,8 +6488,9 @@ function TaskLiveNotifier({ myStaff, isAdmin }){
       if(!onMessageRegistered.current){
         onMessageRegistered.current = true;
         messaging.onMessage((payload)=>{
-          const title = (payload.notification && payload.notification.title) || "Upharma Ops";
-          const body = (payload.notification && payload.notification.body) || "";
+          const data = payload.data || {};
+          const title = data.title || "Upharma Ops";
+          const body = data.body || "";
           fireLocalNotif(title, body);
         });
       }
