@@ -2095,6 +2095,48 @@ function CustomerOrderView({ isAdmin, myStaff }){
   ]);
 }
 
+// ===== Ghim chỉ tiêu ngày (Doanh số / Hệ số / KPI tổng) lên đầu màn hình chính — đọc dữ liệu
+// do Cloud Function notifyDailyKpiPaceDaily ghi mỗi sáng vào collection "dailyKpiPace", không
+// phụ thuộc việc thông báo đẩy có thực sự đến được máy hay không (điện thoại có thể chặn ngầm do
+// tối ưu hoá pin). Chỉ hiện nếu có dữ liệu tính cho ĐÚNG HÔM NAY (staff không có ca hôm nay sẽ
+// không có dữ liệu, banner tự ẩn).
+function DailyKpiPaceBanner({ myStaff, onOpen }){
+  const [paceDocs, setPaceDocs] = useState([]);
+  useEffect(()=>{
+    if(!myStaff) return undefined;
+    const u = subscribeCol("dailyKpiPace", setPaceDocs);
+    return u;
+  }, [myStaff && myStaff.id]);
+  if(!myStaff) return null;
+
+  const today = todayISO();
+  const mine = paceDocs.find(p => p.staffId===myStaff.id && p.date===today);
+  if(!mine) return null;
+
+  function fmtMoney(n){ return Math.round(n||0).toLocaleString("vi-VN"); }
+
+  return React.createElement("div", { className:"card", style:{ maxWidth:1280, margin:"16px auto 0", borderColor:"var(--pine)", background:"var(--pineSoft)" } }, [
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13.5, marginBottom:8, color:"var(--pine)" } }, "📊 Tiến độ chỉ tiêu hôm nay"),
+    React.createElement("div", { key:"row", style:{ display:"flex", flexWrap:"wrap", gap:20, fontSize:12.5, marginBottom:10 } }, [
+      React.createElement("div", { key:"ds" }, [
+        React.createElement("div", { key:"l", style:{ color:"var(--inkSoft)" } }, "Doanh số"),
+        React.createElement("div", { key:"v", style:{ fontWeight:700, fontSize:16 } }, `${mine.pctDoanhSo!=null?Math.round(mine.pctDoanhSo*100):"—"}%`),
+        React.createElement("div", { key:"n" }, `Hôm nay cần thêm ${fmtMoney(mine.daySoTarget)}đ`),
+      ]),
+      mine.hesoTarget!=null && React.createElement("div", { key:"hs" }, [
+        React.createElement("div", { key:"l", style:{ color:"var(--inkSoft)" } }, "Hệ số"),
+        React.createElement("div", { key:"v", style:{ fontWeight:700, fontSize:16 } }, `${mine.pctHeSo!=null?Math.round(mine.pctHeSo*100):"—"}%`),
+        React.createElement("div", { key:"n" }, `Cần thêm ${fmtMoney(mine.dayHeSoTarget)}`),
+      ]),
+      React.createElement("div", { key:"kpi" }, [
+        React.createElement("div", { key:"l", style:{ color:"var(--inkSoft)" } }, "KPI tổng"),
+        React.createElement("div", { key:"v", style:{ fontWeight:700, fontSize:16 } }, `${mine.kpiPct!=null?Math.round(mine.kpiPct*100):"—"}%`),
+      ]),
+    ]),
+    React.createElement("button", { key:"b", type:"button", className:"btn btnGhost", style:{padding:"7px 13px",fontSize:12.5}, onClick:onOpen }, "Xem chi tiết KPI"),
+  ]);
+}
+
 function CustomerOrderReminderBanner({ myStaff, onOpen }){
   const [orders, setOrders] = useState([]);
   useEffect(()=>{
@@ -7206,6 +7248,7 @@ function Dashboard({ user, isAdmin, myStaff }){
       React.createElement(TaskLiveNotifier, { key:"livenotify", myStaff, isAdmin }),
       !isAdmin && React.createElement(TaskReminderBanner, { key:"reminder", myStaff, onOpenTasks:()=>setActiveTab("tasks") }),
       !isAdmin && React.createElement(CustomerOrderReminderBanner, { key:"custreminder", myStaff, onOpen:()=>setActiveTab("customerOrders") }),
+      !isAdmin && React.createElement(DailyKpiPaceBanner, { key:"kpipace", myStaff, onOpen:()=>setActiveTab("kpi") }),
       React.createElement("div", { key:"wrap", className:"wrap mobileContentArea" + (showMobileHome ? " isHiddenMobile" : "") }, [
         activeTab==="checklist" && React.createElement(DailyChecklistView, { key:"v", isAdmin, myStaff }),
         activeTab==="photos" && React.createElement(ImageReportView, { key:"v", isAdmin, myStaff }),
