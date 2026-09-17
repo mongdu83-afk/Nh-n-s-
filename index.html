@@ -3709,10 +3709,19 @@ function CrmView({ isAdmin, myStaff }){
   const [noteText, setNoteText] = useState("");
   const [noteFollowUp, setNoteFollowUp] = useState("");
   const [savingNote, setSavingNote] = useState(false);
+  // Tra cứu giá trị mua hàng theo khoảng ngày tự chọn — tính trực tiếp từ customerEvents.
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const ninetyDaysAgoStr = (() => { const d = new Date(); d.setDate(d.getDate() - 90); return d.toISOString().slice(0, 10); })();
+  const [rangeFrom, setRangeFrom] = useState(ninetyDaysAgoStr);
+  const [rangeTo, setRangeTo] = useState(todayStr);
+  const [rangeResult, setRangeResult] = useState(null);
+  const [rangeLoading, setRangeLoading] = useState(false);
+  const [rangeError, setRangeError] = useState(null);
 
   useEffect(()=>{ const u = subscribeCol("crmCustomers", setCustomers); return u; }, []);
   useEffect(()=>{ const u = subscribeCol("staff", setStaffList); return u; }, []);
   useEffect(()=>{ const u = subscribeCol("crmInteractions", setInteractions); return u; }, []);
+  useEffect(()=>{ setRangeResult(null); setRangeError(null); }, [selectedPhone]);
   const [actionCenter, setActionCenter] = useState(null);
   useEffect(()=>{
     const unsub = db.collection("opsConfig").doc("crmActionCenter").onSnapshot(doc => setActionCenter(doc.exists ? doc.data() : null));
@@ -3767,6 +3776,28 @@ function CrmView({ isAdmin, myStaff }){
       }, { merge:true });
       setNoteText(""); setNoteFollowUp("");
     } finally { setSavingNote(false); }
+  }
+
+  // Tra cứu tổng giá trị mua, số đơn, giá trị TB/đơn trong 1 khoảng ngày tự chọn — đọc thẳng từ
+  // "customerEvents" (đã đồng bộ qua syncCustomerPurchaseHistoryNow/Daily), không cần gọi API
+  // ngoài lại. Giống popup "Chi tiết các đơn hàng đã mua" bên POS nhưng ngay trong app Ops.
+  async function computeRangeStats(){
+    if(!selected || !rangeFrom || !rangeTo) return;
+    setRangeLoading(true); setRangeError(null); setRangeResult(null);
+    try{
+      const snap = await db.collection("customerEvents")
+        .where("customerId", "==", selected.phone)
+        .where("type", "==", "purchase")
+        .where("timestamp", ">=", rangeFrom)
+        .where("timestamp", "<=", rangeTo)
+        .get();
+      let total = 0, count = 0;
+      snap.forEach(doc => { total += Number(doc.data().totalAmount) || 0; count++; });
+      setRangeResult({ total, count, avg: count > 0 ? total / count : 0 });
+    } catch(err){
+      console.error("computeRangeStats lỗi:", err);
+      setRangeError(err && err.message ? err.message : String(err));
+    } finally { setRangeLoading(false); }
   }
 
   function levelBadge(levelName){
@@ -3877,6 +3908,23 @@ function CrmView({ isAdmin, myStaff }){
           selected.intelligence.churnRisk && React.createElement("div", { key:"churn" }, [
             "Nguy cơ rời bỏ: ",
             React.createElement("span", { key:"v", style:{ fontWeight:700, color: selected.intelligence.churnRisk==="cao" ? "var(--clay)" : (selected.intelligence.churnRisk==="trung bình" ? "var(--amber)" : "var(--pine)") } }, selected.intelligence.churnRisk),
+          ]),
+        ]),
+
+        // ===== Tra cứu giá trị mua hàng theo khoảng ngày tự chọn (đọc từ customerEvents) =====
+        React.createElement("div", { key:"rangebox", className:"card", style:{ padding:10, marginBottom:12, fontSize:12 } }, [
+          React.createElement("div", { key:"t", style:{ fontWeight:700, marginBottom:6, fontSize:12.5 } }, "Tra cứu theo khoảng ngày"),
+          React.createElement("div", { key:"row", style:{ display:"flex", gap:6, alignItems:"center", marginBottom:8, flexWrap:"wrap" } }, [
+            React.createElement("input", { key:"from", type:"date", value:rangeFrom, onChange:e=>setRangeFrom(e.target.value), style:{ padding:"5px 6px", fontSize:11.5, border:"1px solid var(--line)", borderRadius:6 } }),
+            React.createElement("span", { key:"dash" }, "—"),
+            React.createElement("input", { key:"to", type:"date", value:rangeTo, onChange:e=>setRangeTo(e.target.value), style:{ padding:"5px 6px", fontSize:11.5, border:"1px solid var(--line)", borderRadius:6 } }),
+            React.createElement("button", { key:"btn", type:"button", className:"btn btnPrimary", style:{ padding:"5px 12px", fontSize:11.5 }, disabled:rangeLoading, onClick:computeRangeStats }, rangeLoading ? "Đang tính..." : "Tính"),
+          ]),
+          rangeError && React.createElement("div", { key:"err", style:{ color:"var(--clay)", fontSize:11.5 } }, `Lỗi: ${rangeError}`),
+          rangeResult && React.createElement("div", { key:"res" }, [
+            React.createElement("div", { key:"a" }, `Tổng giá trị mua: ${Math.round(rangeResult.total).toLocaleString("vi-VN")}đ`),
+            React.createElement("div", { key:"b" }, `Số lần mua: ${rangeResult.count}`),
+            React.createElement("div", { key:"c" }, `Giá trị trung bình/đơn: ${Math.round(rangeResult.avg).toLocaleString("vi-VN")}đ`),
           ]),
         ]),
 
