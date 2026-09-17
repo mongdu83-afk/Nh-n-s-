@@ -3717,37 +3717,7 @@ function CrmView({ isAdmin, myStaff }){
   const [rangeLoading, setRangeLoading] = useState(false);
   const [rangeError, setRangeError] = useState(null);
 
-  // ===== SỬA HIỆU NĂNG (9/2026): trước đây LUÔN tải khách hàng của CẢ 9 NHÀ THUỐC cho mọi nhân
-  // viên rồi mới lọc theo nhà thuốc ở trình duyệt (scopedCustomers bên dưới) — nhân viên 1 nhà
-  // thuốc chỉ cần ~1/9 số đó nhưng vẫn phải tải hết. Giờ lọc thẳng theo nhà thuốc ngay từ truy vấn
-  // Firestore cho nhân viên thường; Quản lý khu vực (isAdmin) vẫn tải đủ mọi nhà thuốc vì cần xem
-  // toàn hệ thống (có bộ lọc "adminShop" riêng ở trình duyệt).
-  const [customersLoading, setCustomersLoading] = useState(false);
-  const [customersLoadedAt, setCustomersLoadedAt] = useState(null);
-  // ===== SỬA HIỆU NĂNG (9/2026), tiếp: với ADMIN (xem đủ cả 9 nhà thuốc, không lọc bớt được ở
-  // server), nguyên nhân giật/lag CHÍNH không phải là tải lần đầu — mà là listener REAL-TIME giữ
-  // kết nối tới CẢ collection: bất kỳ lần ghi nào vào BẤT KỲ khách nào (kể cả từ job nền chạy
-  // hàng ngày, hoặc lúc admin tự bấm các nút "chạy ngay" để test) đều khiến TOÀN BỘ danh sách
-  // được tải lại + render lại từ đầu, dù admin chỉ đang xem/lọc, không thao tác gì. Đổi sang tải
-  // 1 lần (.get()) + nút "Làm mới" thủ công — admin vẫn xem đủ mọi nhà thuốc, chỉ là không còn bị
-  // giật mỗi khi có dữ liệu đổi ở đâu đó trong lúc đang xem. Nhân viên thường (không phải admin)
-  // vẫn giữ real-time vì dữ liệu đã lọc theo đúng 1 nhà thuốc, nhỏ, không tốn kém.
-  async function loadCustomersOnce(){
-    setCustomersLoading(true);
-    try{
-      const snap = await db.collection("crmCustomers").get();
-      setCustomers(snap.docs.map(d => ({ id:d.id, ...d.data() })));
-      setCustomersLoadedAt(new Date());
-    } catch(err){ logSystemError("crmCustomers", err); }
-    setCustomersLoading(false);
-  }
-  useEffect(()=>{
-    if(isAdmin){ loadCustomersOnce(); return; }
-    if(!(myStaff && myStaff.shop)) { setCustomers([]); return; } // chưa biết nhà thuốc của nhân viên — đợi myStaff tải xong
-    const unsub = db.collection("crmCustomers").where("shop", "==", myStaff.shop)
-      .onSnapshot(snap => setCustomers(snap.docs.map(d => ({ id:d.id, ...d.data() }))), err => logSystemError("crmCustomers", err));
-    return unsub;
-  }, [isAdmin, myStaff && myStaff.shop]);
+  useEffect(()=>{ const u = subscribeCol("crmCustomers", setCustomers); return u; }, []);
   useEffect(()=>{ const u = subscribeCol("staff", setStaffList); return u; }, []);
   // ===== SỬA HIỆU NĂNG (9/2026): trước đây tải TOÀN BỘ collection "crmInteractions" (mọi ghi chú
   // của MỌI khách, từ trước tới giờ) rồi mới lọc theo khách đang chọn — càng ngày càng chậm vì
@@ -3797,11 +3767,10 @@ function CrmView({ isAdmin, myStaff }){
 
   async function assignStaff(phone, staffId){
     const s = staffList.find(x=>x.id===staffId);
-    const patch = { assignedStaffId: staffId || null, assignedStaffName: s ? s.name : null };
-    await db.collection("crmCustomers").doc(phone).set(patch, { merge:true });
-    // Danh sách của admin không còn real-time (xem loadCustomersOnce ở trên) — cập nhật ngay tại
-    // chỗ để admin thấy đúng lựa chọn vừa thao tác mà không cần bấm "Làm mới".
-    setCustomers(cs => cs.map(c => c.phone===phone ? { ...c, ...patch } : c));
+    await db.collection("crmCustomers").doc(phone).set({
+      assignedStaffId: staffId || null,
+      assignedStaffName: s ? s.name : null,
+    }, { merge:true });
   }
 
   async function addNote(){
@@ -3814,9 +3783,9 @@ function CrmView({ isAdmin, myStaff }){
         note: noteText.trim(), nextFollowUpDate: noteFollowUp || null,
         createdAtTs: new Date().toISOString(),
       });
-      const lastInteractionTs = new Date().toISOString();
-      await db.collection("crmCustomers").doc(selected.phone).set({ lastInteractionTs }, { merge:true });
-      setCustomers(cs => cs.map(c => c.phone===selected.phone ? { ...c, lastInteractionTs } : c));
+      await db.collection("crmCustomers").doc(selected.phone).set({
+        lastInteractionTs: new Date().toISOString(),
+      }, { merge:true });
       setNoteText(""); setNoteFollowUp("");
     } finally { setSavingNote(false); }
   }
@@ -3862,18 +3831,8 @@ function CrmView({ isAdmin, myStaff }){
   }
 
   return React.createElement("div", { style:{ maxWidth:1280, margin:"0 auto", padding:"16px" } }, [
-    React.createElement("div", { key:"title", style:{ fontWeight:700, fontSize:18, marginBottom:4, display:"flex", alignItems:"center", gap:10 } }, [
-      React.createElement("span", { key:"t" }, "CRM khách hàng"),
-      isAdmin && React.createElement("button", {
-        key:"refresh", className:"btn btnGhost", disabled:customersLoading, onClick:loadCustomersOnce,
-        style:{ fontSize:12, padding:"4px 10px" },
-      }, customersLoading ? "Đang tải..." : "↻ Làm mới"),
-    ]),
-    React.createElement("div", { key:"sub", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:16 } },
-      isAdmin
-        ? `${filtered.length} khách hàng · dữ liệu ${customersLoadedAt ? "tải lúc "+customersLoadedAt.toLocaleTimeString("vi-VN") : "đang tải..."} — bấm "Làm mới" để xem cập nhật mới nhất`
-        : `${filtered.length} khách hàng · dữ liệu đồng bộ tự động hàng ngày từ hệ thống bán hàng`
-    ),
+    React.createElement("div", { key:"title", style:{ fontWeight:700, fontSize:18, marginBottom:4 } }, "CRM khách hàng"),
+    React.createElement("div", { key:"sub", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:16 } }, `${filtered.length} khách hàng · dữ liệu đồng bộ tự động hàng ngày từ hệ thống bán hàng`),
 
     // ===== CDP Action Engine — "AI Action Center": tổng số việc CRM tự tạo đang còn mở, theo
     // mức ưu tiên (tính mỗi ngày bởi computeCrmActionCenterDaily). =====
