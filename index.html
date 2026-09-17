@@ -3674,6 +3674,7 @@ function KpiView({ isAdmin, myStaff }){
   const [ctahDocs, setCtahDocs] = useState({});
   const [ctahStaffId, setCtahStaffId] = useState("");
   const [detailStaffId, setDetailStaffId] = useState("");
+  const [kpiShopFilter, setKpiShopFilter] = useState("Tất cả");
   const [uploadingKpiEvidence, setUploadingKpiEvidence] = useState(false);
   const [chtStaffId, setChtStaffId] = useState("");
   const [importing, setImporting] = useState(false);
@@ -4067,8 +4068,8 @@ function KpiView({ isAdmin, myStaff }){
     const pct = totalActual!=null ? totalActual/totalPlan : null;
     return { staff:s, roleKey, groups, targets, actuals, hasTargets:Object.keys(targets).length>0, totalPlan, totalActual, pct, ctahAdj:ctah.adj, khongXet:ctah.khongXet, trangThaiDuyet:(a&&a.trangThaiDuyet)||"" };
   }
-  const summaryRows = staff.filter(s => isRole(s.role,"Nhân viên bán hàng")).map(buildKpiSummaryRow).sort((x,y)=> (y.pct||-1) - (x.pct||-1));
-  const summaryRowsCHT = staff.filter(s => s.role==="Cửa hàng trưởng").map(buildKpiSummaryRow).sort((x,y)=> (y.pct||-1) - (x.pct||-1));
+  const summaryRows = staff.filter(s => isRole(s.role,"Nhân viên bán hàng") && (kpiShopFilter==="Tất cả" || s.shop===kpiShopFilter)).map(buildKpiSummaryRow).sort((x,y)=> x.staff.shop.localeCompare(y.staff.shop, "vi") || (y.pct||-1) - (x.pct||-1));
+  const summaryRowsCHT = staff.filter(s => s.role==="Cửa hàng trưởng" && (kpiShopFilter==="Tất cả" || s.shop===kpiShopFilter)).map(buildKpiSummaryRow).sort((x,y)=> x.staff.shop.localeCompare(y.staff.shop, "vi") || (y.pct||-1) - (x.pct||-1));
   async function qlkvDuyet(staffMember){ await updateDoc("kpiAssignments", kpiAssignmentId(staffMember.id, thang), { trangThaiDuyet:"QLKV đã duyệt" }); }
 
   // ---- Nhập/xuất Excel chỉ tiêu KPI ----
@@ -4422,14 +4423,15 @@ function KpiView({ isAdmin, myStaff }){
       !health.ok && errMsg && React.createElement("div", { key:"e", style:{ color:"var(--clay)", marginTop:2 } }, errMsg),
     ]);
   }
-  const kpiSyncHealthCard = isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
+  const kpiSyncHealthCard = null; // Đã ẩn theo yêu cầu — đổi lại thành đoạn bên dưới nếu cần hiện lại:
+  /* isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
     React.createElement("div", { key:"t", className:"cardTitle" }, "Trạng thái đồng bộ số liệu KPI tự động"),
     React.createElement("div", { key:"d", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:10 } },
       "3 nguồn số liệu này chạy tự động theo lịch ở server và ghi thẳng vào KPI cho mọi nhân viên — không cần ai mở tab KPI. Nếu 1 nguồn báo Lỗi, số liệu liên quan sẽ không được cập nhật cho tới lần chạy kế tiếp."),
     syncHealthRow("Chỉ tiêu nhân viên (khách hàng/đơn bán/TB bill)", kpiSyncHealth && kpiSyncHealth.employeePlan),
     syncHealthRow("Hàng cận date / hàng thường trực", kpiSyncHealth && kpiSyncHealth.inventoryExpiry),
     syncHealthRow("Nâng hạng khách hàng", kpiSyncHealth && kpiSyncHealth.customerUpgrades),
-  ]);
+  ]); */
   const comprehensiveSection = isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
     React.createElement("div", { key:"t", className:"cardTitle" }, "🤖 Phân tích tổng hợp"),
     React.createElement("div", { key:"d", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } },
@@ -4479,11 +4481,20 @@ function KpiView({ isAdmin, myStaff }){
     compResult && React.createElement("div", { key:"res", style:{ fontSize:13, whiteSpace:"pre-wrap", lineHeight:1.6, background:"var(--paper)", borderRadius:10, padding:"14px 16px" } }, compResult),
   ]);
 
+  const kpiShopOptions = ["Tất cả", ...Array.from(new Set(staff.map(s=>s.shop).filter(Boolean))).sort((a,b)=>a.localeCompare(b,"vi"))];
   const adminSummarySection = isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
     React.createElement("div", { key:"th", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:12 } }, [
       React.createElement("div", { key:"t", className:"cardTitle", style:{ marginBottom:0 } }, `Tổng hợp KPI toàn bộ nhân sự — tháng ${thang}`),
       React.createElement("button", { key:"exp", type:"button", className:"btn btnPrimary", onClick:exportKpiFullSummary }, "Tải tổng hợp đầy đủ (gửi HR tính thưởng)"),
     ]),
+    React.createElement("div", { key:"shopFilter", style:{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:12 } },
+      kpiShopOptions.map(sh => React.createElement("button", {
+        key:sh, type:"button",
+        className:"btn"+(kpiShopFilter===sh?" btnPrimary":" btnGhost"),
+        style:{ padding:"5px 12px", fontSize:12 },
+        onClick:()=>setKpiShopFilter(sh),
+      }, sh))
+    ),
     React.createElement("div", { key:"hint", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:12 } }, "Bấm \"Xem CTAH\" ở đúng dòng nhân viên để xem tiêu chí ảnh hưởng (đào tạo, tác phong, chuyên cần...) họ đã tự chấm — điểm này tự cộng/trừ vào kết quả KPI cuối cùng của người đó."),
     React.createElement("div", { key:"sub1", style:{ fontWeight:700, fontSize:13, margin:"4px 0 8px" } }, "Nhân viên bán hàng"),
     renderKpiSummaryTable(summaryRows),
