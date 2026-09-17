@@ -3717,8 +3717,56 @@ function CrmView({ isAdmin, myStaff }){
   const [rangeLoading, setRangeLoading] = useState(false);
   const [rangeError, setRangeError] = useState(null);
 
-  useEffect(()=>{ const u = subscribeCol("crmCustomers", setCustomers); return u; }, []);
+  // ===== SỬA HIỆU NĂNG (9/2026): trước đây LUÔN tải khách hàng của CẢ 9 NHÀ THUỐC cho mọi nhân
+  // viên rồi mới lọc theo nhà thuốc ở trình duyệt (scopedCustomers bên dưới) — nhân viên 1 nhà
+  // thuốc chỉ cần ~1/9 số đó nhưng vẫn phải tải hết. Giờ lọc thẳng theo nhà thuốc ngay từ truy vấn
+  // Firestore cho nhân viên thường; Quản lý khu vực (isAdmin) vẫn tải đủ mọi nhà thuốc vì cần xem
+  // toàn hệ thống (có bộ lọc "adminShop" riêng ở trình duyệt).
+  const [customersLoading, setCustomersLoading] = useState(false);
+  const [customersLoadedAt, setCustomersLoadedAt] = useState(null);
+  // ===== SỬA HIỆU NĂNG (9/2026), tiếp: với ADMIN (xem đủ cả 9 nhà thuốc, không lọc bớt được ở
+  // server), nguyên nhân giật/lag CHÍNH không phải là tải lần đầu — mà là listener REAL-TIME giữ
+  // kết nối tới CẢ collection: bất kỳ lần ghi nào vào BẤT KỲ khách nào (kể cả từ job nền chạy
+  // hàng ngày, hoặc lúc admin tự bấm các nút "chạy ngay" để test) đều khiến TOÀN BỘ danh sách
+  // được tải lại + render lại từ đầu, dù admin chỉ đang xem/lọc, không thao tác gì. Đổi sang tải
+  // 1 lần (.get()) + nút "Làm mới" thủ công — admin vẫn xem đủ mọi nhà thuốc, chỉ là không còn bị
+  // giật mỗi khi có dữ liệu đổi ở đâu đó trong lúc đang xem. Nhân viên thường (không phải admin)
+  // vẫn giữ real-time vì dữ liệu đã lọc theo đúng 1 nhà thuốc, nhỏ, không tốn kém.
+  async function loadCustomersOnce(){
+    setCustomersLoading(true);
+    try{
+      const snap = await db.collection("crmCustomers").get();
+      setCustomers(snap.docs.map(d => ({ id:d.id, ...d.data() })));
+      setCustomersLoadedAt(new Date());
+    } catch(err){ logSystemError("crmCustomers", err); }
+    setCustomersLoading(false);
+  }
+  useEffect(()=>{
+    if(isAdmin){ loadCustomersOnce(); return; }
+    if(!(myStaff && myStaff.shop)) { setCustomers([]); return; } // chưa biết nhà thuốc của nhân viên — đợi myStaff tải xong
+    const unsub = db.collection("crmCustomers").where("shop", "==", myStaff.shop)
+      .onSnapshot(snap => setCustomers(snap.docs.map(d => ({ id:d.id, ...d.data() }))), err => logSystemError("crmCustomers", err));
+    return unsub;
+  }, [isAdmin, myStaff && myStaff.shop]);
   useEffect(()=>{ const u = subscribeCol("staff", setStaffList); return u; }, []);
+  // ===== CDP Action Engine — "Việc CRM đang mở": danh sách các task do Action Engine tự tạo
+  // (crmSourceType) mà CHƯA hoàn thành, hiện ngay trong tab CRM thay vì phải qua tab Giao việc mới
+  // thấy. Chỉ quét task "Đang giao" (tập hợp luôn có giới hạn — đóng lại khi hoàn thành, không
+  // phình to vô hạn như crmInteractions) rồi lọc crmSourceType ở trình duyệt.
+  const [openTasksRaw, setOpenTasksRaw] = useState([]);
+  useEffect(()=>{
+    const unsub = db.collection("tasks").where("trangThai", "==", "Đang giao")
+      .onSnapshot(snap => setOpenTasksRaw(snap.docs.map(d => ({ id:d.id, ...d.data() }))), err => logSystemError("tasks", err));
+    return unsub;
+  }, []);
+  const openCrmTasks = openTasksRaw
+    .filter(t => t.crmSourceType && (isAdmin || t.shop===(myStaff && myStaff.shop)))
+    .sort((a,b) => {
+      const pr = { HIGH:0, MEDIUM:1, LOW:2 };
+      const pa = pr[a.actionPriority]??1, pb = pr[b.actionPriority]??1;
+      if(pa!==pb) return pa-pb;
+      return (a.deadline||"").localeCompare(b.deadline||"");
+    });
   // ===== SỬA HIỆU NĂNG (9/2026): trước đây tải TOÀN BỘ collection "crmInteractions" (mọi ghi chú
   // của MỌI khách, từ trước tới giờ) rồi mới lọc theo khách đang chọn — càng ngày càng chậm vì
   // Customer Action Engine Phase 1 tạo nhiều task hơn hẳn, mỗi task hoàn thành lại tự ghi thêm 1
@@ -3732,11 +3780,22 @@ function CrmView({ isAdmin, myStaff }){
     return unsub;
   }, [selectedPhone]);
   useEffect(()=>{ setRangeResult(null); setRangeError(null); }, [selectedPhone]);
-  const [actionCenter, setActionCenter] = useState(null);
-  useEffect(()=>{
-    const unsub = db.collection("opsConfig").doc("crmActionCenter").onSnapshot(doc => setActionCenter(doc.exists ? doc.data() : null));
-    return unsub;
-  }, []);
+  const [showCrmTasks, setShowCrmTasks] = useState(false);
+  const [autoAssigning, setAutoAssigning] = useState(false);
+  const [autoAssignMsg, setAutoAssignMsg] = useState(null);
+  async function runAutoAssign(){
+    setAutoAssigning(true); setAutoAssignMsg(null);
+    try{
+      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/autoAssignCrmCustomersNow");
+      const d = await resp.json();
+      if(d && d.ok===false){ setAutoAssignMsg("Lỗi: " + (d.error || "không rõ nguyên nhân")); }
+      else{
+        setAutoAssignMsg(`Đã gán ${d.assigned ?? 0} khách theo Cửa hàng trưởng${d.skippedNoCHT ? ` (${d.skippedNoCHT} khách thuộc shop chưa có Cửa hàng trưởng, chưa gán được)` : ""}.`);
+        if(isAdmin) loadCustomersOnce(); // tải lại để thấy ngay kết quả (không còn real-time nữa)
+      }
+    } catch(err){ setAutoAssignMsg("Lỗi kết nối, thử lại."); }
+    setAutoAssigning(false);
+  }
 
   const LEVEL_NAMES = ["Loyal","Silver","Titan","Gold","Platinum","Diamond"];
   // CDP — phân khúc do computeCustomerSegmentsDaily tính mỗi ngày, ghi thẳng vào field "segments"
@@ -3767,10 +3826,11 @@ function CrmView({ isAdmin, myStaff }){
 
   async function assignStaff(phone, staffId){
     const s = staffList.find(x=>x.id===staffId);
-    await db.collection("crmCustomers").doc(phone).set({
-      assignedStaffId: staffId || null,
-      assignedStaffName: s ? s.name : null,
-    }, { merge:true });
+    const patch = { assignedStaffId: staffId || null, assignedStaffName: s ? s.name : null, assignedStaffIsDefault: false };
+    await db.collection("crmCustomers").doc(phone).set(patch, { merge:true });
+    // Danh sách của admin không còn real-time (xem loadCustomersOnce ở trên) — cập nhật ngay tại
+    // chỗ để admin thấy đúng lựa chọn vừa thao tác mà không cần bấm "Làm mới".
+    setCustomers(cs => cs.map(c => c.phone===phone ? { ...c, ...patch } : c));
   }
 
   async function addNote(){
@@ -3783,9 +3843,9 @@ function CrmView({ isAdmin, myStaff }){
         note: noteText.trim(), nextFollowUpDate: noteFollowUp || null,
         createdAtTs: new Date().toISOString(),
       });
-      await db.collection("crmCustomers").doc(selected.phone).set({
-        lastInteractionTs: new Date().toISOString(),
-      }, { merge:true });
+      const lastInteractionTs = new Date().toISOString();
+      await db.collection("crmCustomers").doc(selected.phone).set({ lastInteractionTs }, { merge:true });
+      setCustomers(cs => cs.map(c => c.phone===selected.phone ? { ...c, lastInteractionTs } : c));
       setNoteText(""); setNoteFollowUp("");
     } finally { setSavingNote(false); }
   }
@@ -3831,16 +3891,51 @@ function CrmView({ isAdmin, myStaff }){
   }
 
   return React.createElement("div", { style:{ maxWidth:1280, margin:"0 auto", padding:"16px" } }, [
-    React.createElement("div", { key:"title", style:{ fontWeight:700, fontSize:18, marginBottom:4 } }, "CRM khách hàng"),
-    React.createElement("div", { key:"sub", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:16 } }, `${filtered.length} khách hàng · dữ liệu đồng bộ tự động hàng ngày từ hệ thống bán hàng`),
+    React.createElement("div", { key:"title", style:{ fontWeight:700, fontSize:18, marginBottom:4, display:"flex", alignItems:"center", gap:10 } }, [
+      React.createElement("span", { key:"t" }, "CRM khách hàng"),
+      isAdmin && React.createElement("button", {
+        key:"refresh", className:"btn btnGhost", disabled:customersLoading, onClick:loadCustomersOnce,
+        style:{ fontSize:12, padding:"4px 10px" },
+      }, customersLoading ? "Đang tải..." : "↻ Làm mới"),
+      isAdmin && React.createElement("button", {
+        key:"autoassign", className:"btn btnGhost", disabled:autoAssigning, onClick:runAutoAssign,
+        style:{ fontSize:12, padding:"4px 10px" },
+      }, autoAssigning ? "Đang gán..." : "👤 Gán tự động theo Nhà thuốc"),
+    ]),
+    isAdmin && autoAssignMsg && React.createElement("div", { key:"aamsg", style:{ fontSize:12.5, color:"var(--pine)", marginBottom:8 } }, autoAssignMsg),
+    React.createElement("div", { key:"sub", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:16 } },
+      isAdmin
+        ? `${filtered.length} khách hàng · dữ liệu ${customersLoadedAt ? "tải lúc "+customersLoadedAt.toLocaleTimeString("vi-VN") : "đang tải..."} — bấm "Làm mới" để xem cập nhật mới nhất`
+        : `${filtered.length} khách hàng · dữ liệu đồng bộ tự động hàng ngày từ hệ thống bán hàng`
+    ),
 
-    // ===== CDP Action Engine — "AI Action Center": tổng số việc CRM tự tạo đang còn mở, theo
-    // mức ưu tiên (tính mỗi ngày bởi computeCrmActionCenterDaily). =====
-    actionCenter && actionCenter.total > 0 && React.createElement("div", { key:"ac", className:"card", style:{ marginBottom:16, display:"flex", gap:20, alignItems:"center", fontSize:13 } }, [
-      React.createElement("div", { key:"t", style:{ fontWeight:700 } }, "AI Action Center"),
-      actionCenter.HIGH > 0 && React.createElement("div", { key:"h" }, `🔴 ${actionCenter.HIGH} việc cần làm ngay`),
-      actionCenter.MEDIUM > 0 && React.createElement("div", { key:"m" }, `🟠 ${actionCenter.MEDIUM} việc trong tuần`),
-      actionCenter.LOW > 0 && React.createElement("div", { key:"l" }, `🟡 ${actionCenter.LOW} việc ưu tiên thấp`),
+    // ===== CDP Action Engine — "Việc CRM đang mở": đếm & liệt kê trực tiếp từ openCrmTasks (live,
+    // luôn đúng) thay vì chỉ dựa vào con số tính sẵn mỗi ngày (có thể chưa chạy/chưa cập nhật).
+    openCrmTasks.length > 0 && React.createElement("div", { key:"crmtasks", className:"card", style:{ marginBottom:16 } }, [
+      React.createElement("div", { key:"head", style:{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, flexWrap:"wrap" } }, [
+        React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:14 } }, `🤖 Việc CRM đang mở (${openCrmTasks.length})`),
+        React.createElement("div", { key:"counts", style:{ display:"flex", gap:14, fontSize:12.5 } }, [
+          openCrmTasks.some(t=>t.actionPriority==="HIGH") && React.createElement("span", { key:"h" }, `🔴 ${openCrmTasks.filter(t=>t.actionPriority==="HIGH").length} cần làm ngay`),
+          openCrmTasks.some(t=>t.actionPriority!=="HIGH"&&t.actionPriority!=="LOW") && React.createElement("span", { key:"m" }, `🟠 ${openCrmTasks.filter(t=>t.actionPriority!=="HIGH"&&t.actionPriority!=="LOW").length} bình thường`),
+          openCrmTasks.some(t=>t.actionPriority==="LOW") && React.createElement("span", { key:"l" }, `🟡 ${openCrmTasks.filter(t=>t.actionPriority==="LOW").length} ưu tiên thấp`),
+        ]),
+        React.createElement("button", { key:"toggle", className:"btn btnGhost", style:{ fontSize:12, padding:"4px 10px" }, onClick:()=>setShowCrmTasks(v=>!v) }, showCrmTasks ? "Ẩn danh sách" : "Xem danh sách"),
+      ]),
+      showCrmTasks && React.createElement("div", { key:"list", style:{ marginTop:12, display:"flex", flexDirection:"column", gap:6, maxHeight:360, overflowY:"auto" } },
+        openCrmTasks.slice(0,100).map(t => React.createElement("div", {
+          key:t.id, onClick:()=>setSelectedPhone(t.crmCustomerId), style:{
+            border:"1px solid var(--line)", borderRadius:8, padding:"8px 10px", cursor:"pointer",
+            background: t.crmCustomerId===selectedPhone ? "var(--paper)" : "#fff",
+          },
+        }, [
+          React.createElement("div", { key:"r1", style:{ display:"flex", justifyContent:"space-between", gap:8, fontSize:12.5 } }, [
+            React.createElement("b", { key:"n" }, t.crmCustomerName || t.crmCustomerPhone || "—"),
+            React.createElement("span", { key:"p" }, t.actionPriority==="HIGH" ? "🔴" : t.actionPriority==="LOW" ? "🟡" : "🟠"),
+          ]),
+          React.createElement("div", { key:"r2", style:{ fontSize:11.5, color:"var(--inkSoft)" } }, t.actionStatus || t.title),
+          t.deadline && React.createElement("div", { key:"r3", style:{ fontSize:11, color:"var(--inkSoft)" } }, `Hạn: ${t.deadline}`),
+        ]))
+      ),
     ]),
 
     React.createElement("div", { key:"filters", className:"card", style:{ marginBottom:16, display:"flex", flexWrap:"wrap", gap:8, alignItems:"center" } }, [
@@ -3875,7 +3970,9 @@ function CrmView({ isAdmin, myStaff }){
             ]),
             React.createElement("td", { key:"l", style:{ padding:"8px 10px" } }, levelBadge(c.levelName)),
             React.createElement("td", { key:"sh", style:{ padding:"8px 10px" } }, c.shop),
-            React.createElement("td", { key:"a", style:{ padding:"8px 10px" } }, c.assignedStaffName || React.createElement("span",{style:{color:"var(--inkSoft)"}},"—")),
+            React.createElement("td", { key:"a", style:{ padding:"8px 10px" } }, c.assignedStaffName
+              ? [c.assignedStaffName, c.assignedStaffIsDefault && React.createElement("span", { key:"d", style:{ fontSize:10, color:"var(--inkSoft)", marginLeft:4 } }, "(tự động)")]
+              : React.createElement("span",{style:{color:"var(--inkSoft)"}},"—")),
           ]))),
         ])
       ),
