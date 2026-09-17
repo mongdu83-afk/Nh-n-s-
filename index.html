@@ -3863,8 +3863,17 @@ function CrmView({ isAdmin, myStaff }){
             `Dự đoán mua lại: ${selected.intelligence.predictedNextPurchaseDate}${selected.intelligence.daysUntilPredicted!=null?` (${selected.intelligence.daysUntilPredicted>=0?`còn ${selected.intelligence.daysUntilPredicted} ngày`:`đã trễ ${-selected.intelligence.daysUntilPredicted} ngày`})`:""}`),
           selected.intelligence.estimatedAnnualValue && React.createElement("div", { key:"clv", style:{ marginBottom:3 } },
             `Ước tính giá trị/năm: ${Math.round(selected.intelligence.estimatedAnnualValue).toLocaleString("vi-VN")}đ`),
-          selected.intelligence.rfm && React.createElement("div", { key:"rfm", style:{ marginBottom:3 } },
-            `RFM: Recency ${selected.intelligence.rfm.recency}/3 · Frequency ${selected.intelligence.rfm.frequency}/3 · Monetary ${selected.intelligence.rfm.monetary}/3`),
+          selected.intelligence.avgOrderValue && React.createElement("div", { key:"aov", style:{ marginBottom:3 } },
+            `Giá trị trung bình/đơn: ${Math.round(selected.intelligence.avgOrderValue).toLocaleString("vi-VN")}đ`),
+          selected.intelligence.rfm && React.createElement("div", { key:"rfm", style:{ marginBottom:3 } }, [
+            React.createElement("div", { key:"sc" }, `RFM: Recency ${selected.intelligence.rfm.recency}/3 · Frequency ${selected.intelligence.rfm.frequency}/3 · Monetary ${selected.intelligence.rfm.monetary}/3`),
+            // Lý do chấm điểm — giải thích vì sao ra từng điểm, dùng đúng số liệu thật của khách.
+            selected.intelligence.rfmReason && React.createElement("div", { key:"why", style:{ marginTop:4, paddingLeft:8, borderLeft:"2px solid var(--line)", color:"var(--inkSoft)", fontSize:11 } }, [
+              React.createElement("div", { key:"r", style:{ marginBottom:2 } }, `R: ${selected.intelligence.rfmReason.recency}`),
+              React.createElement("div", { key:"f", style:{ marginBottom:2 } }, `F: ${selected.intelligence.rfmReason.frequency}`),
+              React.createElement("div", { key:"m" }, `M: ${selected.intelligence.rfmReason.monetary}`),
+            ]),
+          ]),
           selected.intelligence.churnRisk && React.createElement("div", { key:"churn" }, [
             "Nguy cơ rời bỏ: ",
             React.createElement("span", { key:"v", style:{ fontWeight:700, color: selected.intelligence.churnRisk==="cao" ? "var(--clay)" : (selected.intelligence.churnRisk==="trung bình" ? "var(--amber)" : "var(--pine)") } }, selected.intelligence.churnRisk),
