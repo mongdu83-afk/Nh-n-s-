@@ -3677,6 +3677,158 @@ function CtahForm({ staffRole, ctahDoc, onSaveField, readOnly }){
     ]),
   ]);
 }
+// ===== CRM khách hàng — Giai đoạn 1: hồ sơ khách hàng tập trung (đọc từ collection
+// "crmCustomers", do Cloud Function syncCrmCustomersNow/Daily đồng bộ mỗi ngày từ hệ thống
+// upharma.com.vn), ghi chú chăm sóc (collection "crmInteractions"), và giao khách cho đúng nhân
+// viên phụ trách.
+function CrmView({ isAdmin, myStaff }){
+  const [customers, setCustomers] = useState([]);
+  const [staffList, setStaffList] = useState([]);
+  const [interactions, setInteractions] = useState([]);
+  const [search, setSearch] = useState("");
+  const [adminShop, setAdminShop] = useState("Tất cả");
+  const [filterLevel, setFilterLevel] = useState("Tất cả");
+  const [filterAssigned, setFilterAssigned] = useState("Tất cả");
+  const [selectedPhone, setSelectedPhone] = useState(null);
+  const [noteText, setNoteText] = useState("");
+  const [noteFollowUp, setNoteFollowUp] = useState("");
+  const [savingNote, setSavingNote] = useState(false);
+
+  useEffect(()=>{ const u = subscribeCol("crmCustomers", setCustomers); return u; }, []);
+  useEffect(()=>{ const u = subscribeCol("staff", setStaffList); return u; }, []);
+  useEffect(()=>{ const u = subscribeCol("crmInteractions", setInteractions); return u; }, []);
+
+  const LEVEL_NAMES = ["Loyal","Silver","Titan","Gold","Platinum","Diamond"];
+
+  const scopedCustomers = customers.filter(c => isAdmin ? true : c.shop===(myStaff && myStaff.shop));
+  const shopOptions = ["Tất cả", ...Array.from(new Set(customers.map(c=>c.shop).filter(Boolean))).sort((a,b)=>a.localeCompare(b,"vi"))];
+  const staffOptions = staffList.filter(s => isAdmin ? true : s.shop===(myStaff && myStaff.shop));
+
+  const filtered = scopedCustomers.filter(c => {
+    if(isAdmin && adminShop!=="Tất cả" && c.shop!==adminShop) return false;
+    if(filterLevel!=="Tất cả" && c.levelName!==filterLevel) return false;
+    if(filterAssigned==="Chưa phân công" && c.assignedStaffId) return false;
+    if(filterAssigned==="Của tôi" && c.assignedStaffId!==(myStaff && myStaff.id)) return false;
+    if(search.trim()){
+      const q = search.trim().toLowerCase();
+      if(!(c.name||"").toLowerCase().includes(q) && !(c.phone||"").includes(q)) return false;
+    }
+    return true;
+  }).sort((a,b)=> (b.level||0)-(a.level||0) || (a.name||"").localeCompare(b.name||"","vi"));
+
+  const selected = customers.find(c=>c.phone===selectedPhone);
+  const selectedInteractions = interactions.filter(i=>i.phone===selectedPhone).sort((a,b)=> (b.createdAtTs||"").localeCompare(a.createdAtTs||""));
+
+  async function assignStaff(phone, staffId){
+    const s = staffList.find(x=>x.id===staffId);
+    await db.collection("crmCustomers").doc(phone).set({
+      assignedStaffId: staffId || null,
+      assignedStaffName: s ? s.name : null,
+    }, { merge:true });
+  }
+
+  async function addNote(){
+    if(!selected || !noteText.trim()) return;
+    setSavingNote(true);
+    try{
+      await db.collection("crmInteractions").add({
+        phone: selected.phone, shop: selected.shop,
+        staffId: myStaff ? myStaff.id : null, staffName: myStaff ? myStaff.name : "Quản lý",
+        note: noteText.trim(), nextFollowUpDate: noteFollowUp || null,
+        createdAtTs: new Date().toISOString(),
+      });
+      await db.collection("crmCustomers").doc(selected.phone).set({
+        lastInteractionTs: new Date().toISOString(),
+      }, { merge:true });
+      setNoteText(""); setNoteFollowUp("");
+    } finally { setSavingNote(false); }
+  }
+
+  function levelBadge(levelName){
+    const colors = { Loyal:"#6b7280", Silver:"#94a3b8", Titan:"#7c3aed", Gold:"#d98a1f", Platinum:"#0891b2", Diamond:"#db2777" };
+    return React.createElement("span", { style:{ background:(colors[levelName]||"#6b7280")+"22", color:colors[levelName]||"#6b7280", fontWeight:700, fontSize:11, padding:"2px 8px", borderRadius:999 } }, levelName||"Loyal");
+  }
+
+  return React.createElement("div", { style:{ maxWidth:1280, margin:"0 auto", padding:"16px" } }, [
+    React.createElement("div", { key:"title", style:{ fontWeight:700, fontSize:18, marginBottom:4 } }, "CRM khách hàng"),
+    React.createElement("div", { key:"sub", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:16 } }, `${filtered.length} khách hàng · dữ liệu đồng bộ tự động hàng ngày từ hệ thống bán hàng`),
+
+    React.createElement("div", { key:"filters", className:"card", style:{ marginBottom:16, display:"flex", flexWrap:"wrap", gap:8, alignItems:"center" } }, [
+      React.createElement("input", { key:"s", placeholder:"Tìm tên hoặc SĐT...", value:search, onChange:e=>setSearch(e.target.value), style:{ flex:"1 1 200px", padding:"7px 10px", fontSize:13, border:"1px solid var(--line)", borderRadius:8 } }),
+      isAdmin && React.createElement("select", { key:"shop", value:adminShop, onChange:e=>setAdminShop(e.target.value), style:{ padding:"7px 10px", fontSize:13, border:"1px solid var(--line)", borderRadius:8 } },
+        shopOptions.map(s=>React.createElement("option", { key:s, value:s }, s))),
+      React.createElement("select", { key:"lvl", value:filterLevel, onChange:e=>setFilterLevel(e.target.value), style:{ padding:"7px 10px", fontSize:13, border:"1px solid var(--line)", borderRadius:8 } },
+        ["Tất cả", ...LEVEL_NAMES].map(l=>React.createElement("option", { key:l, value:l }, l))),
+      React.createElement("select", { key:"asg", value:filterAssigned, onChange:e=>setFilterAssigned(e.target.value), style:{ padding:"7px 10px", fontSize:13, border:"1px solid var(--line)", borderRadius:8 } },
+        ["Tất cả","Chưa phân công","Của tôi"].map(l=>React.createElement("option", { key:l, value:l }, l))),
+    ]),
+
+    React.createElement("div", { key:"body", style:{ display:"flex", gap:16, alignItems:"flex-start", flexWrap:"wrap" } }, [
+      React.createElement("div", { key:"list", className:"card", style:{ flex:"2 1 500px", padding:0, overflow:"hidden" } },
+        React.createElement("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5 } }, [
+          React.createElement("thead", { key:"h" }, React.createElement("tr", { style:{ background:"#f8f8f6" } }, [
+            React.createElement("th", { key:"n", style:{ textAlign:"left", padding:"8px 10px" } }, "Khách hàng"),
+            React.createElement("th", { key:"l", style:{ textAlign:"left", padding:"8px 10px" } }, "Hạng"),
+            React.createElement("th", { key:"sh", style:{ textAlign:"left", padding:"8px 10px" } }, "Shop"),
+            React.createElement("th", { key:"a", style:{ textAlign:"left", padding:"8px 10px" } }, "Phụ trách"),
+          ])),
+          React.createElement("tbody", { key:"b" }, filtered.slice(0,200).map(c => React.createElement("tr", {
+            key:c.phone, onClick:()=>setSelectedPhone(c.phone),
+            style:{ cursor:"pointer", borderTop:"1px solid var(--line)", background: selectedPhone===c.phone ? "var(--pineSoft)" : "transparent" },
+          }, [
+            React.createElement("td", { key:"n", style:{ padding:"8px 10px" } }, [
+              React.createElement("div", { key:"nm", style:{ fontWeight:600 } }, c.name||"(chưa có tên)"),
+              React.createElement("div", { key:"ph", style:{ color:"var(--inkSoft)" } }, c.phone),
+            ]),
+            React.createElement("td", { key:"l", style:{ padding:"8px 10px" } }, levelBadge(c.levelName)),
+            React.createElement("td", { key:"sh", style:{ padding:"8px 10px" } }, c.shop),
+            React.createElement("td", { key:"a", style:{ padding:"8px 10px" } }, c.assignedStaffName || React.createElement("span",{style:{color:"var(--inkSoft)"}},"—")),
+          ]))),
+        ])
+      ),
+
+      selected && React.createElement("div", { key:"detail", className:"card", style:{ flex:"1 1 320px", position:"sticky", top:16 } }, [
+        React.createElement("div", { key:"h", style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" } }, [
+          React.createElement("div", { key:"n" }, [
+            React.createElement("div", { key:"nm", style:{ fontWeight:700, fontSize:15 } }, selected.name||"(chưa có tên)"),
+            React.createElement("div", { key:"ph", style:{ color:"var(--inkSoft)", fontSize:12.5 } }, selected.phone),
+          ]),
+          React.createElement("button", { key:"x", type:"button", className:"btn", style:{ padding:"3px 9px" }, onClick:()=>setSelectedPhone(null) }, "×"),
+        ]),
+        React.createElement("div", { key:"lvl", style:{ margin:"8px 0" } }, levelBadge(selected.levelName)),
+        React.createElement("div", { key:"stats", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } },
+          `Doanh số 6 tháng: ${Math.round(selected.amountRank||0).toLocaleString("vi-VN")}đ · ${selected.invoiceRank||0} lượt mua`),
+
+        React.createElement("div", { key:"asg", style:{ marginBottom:14 } }, [
+          React.createElement("div", { key:"l", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:4 } }, "Người phụ trách"),
+          React.createElement("select", { key:"sel", value:selected.assignedStaffId||"", onChange:e=>assignStaff(selected.phone, e.target.value), style:{ width:"100%", padding:"6px 8px", fontSize:12.5, border:"1px solid var(--line)", borderRadius:8 } }, [
+            React.createElement("option", { key:"none", value:"" }, "— Chưa phân công —"),
+            ...staffOptions.map(s=>React.createElement("option", { key:s.id, value:s.id }, s.name)),
+          ]),
+        ]),
+
+        React.createElement("div", { key:"notes", style:{ fontSize:12.5, fontWeight:700, marginBottom:6 } }, "Lịch sử chăm sóc"),
+        React.createElement("div", { key:"notelist", style:{ maxHeight:220, overflowY:"auto", marginBottom:10 } },
+          selectedInteractions.length===0
+            ? React.createElement("div", { style:{ color:"var(--inkSoft)", fontSize:12 } }, "Chưa có ghi chú nào.")
+            : selectedInteractions.map(n => React.createElement("div", { key:n.id, style:{ borderTop:"1px solid var(--line)", padding:"8px 0", fontSize:12.5 } }, [
+                React.createElement("div", { key:"m" }, n.note),
+                React.createElement("div", { key:"meta", style:{ color:"var(--inkSoft)", fontSize:11 } },
+                  `${n.staffName||""} · ${(n.createdAtTs||"").slice(0,16).replace("T"," ")}${n.nextFollowUpDate?` · Hẹn lại: ${n.nextFollowUpDate}`:""}`),
+              ]))
+        ),
+
+        React.createElement("textarea", { key:"ta", value:noteText, onChange:e=>setNoteText(e.target.value), placeholder:"Ghi chú cuộc gọi/tư vấn...", style:{ width:"100%", minHeight:60, padding:8, fontSize:12.5, border:"1px solid var(--line)", borderRadius:8, marginBottom:6 } }),
+        React.createElement("div", { key:"row", style:{ display:"flex", gap:8, alignItems:"center" } }, [
+          React.createElement("input", { key:"d", type:"date", value:noteFollowUp, onChange:e=>setNoteFollowUp(e.target.value), style:{ padding:"6px 8px", fontSize:12, border:"1px solid var(--line)", borderRadius:8 } }),
+          React.createElement("button", { key:"b", type:"button", className:"btn btnPrimary", disabled:savingNote||!noteText.trim(), onClick:addNote, style:{ padding:"6px 14px", fontSize:12.5 } }, savingNote?"Đang lưu...":"Lưu ghi chú"),
+        ]),
+      ]),
+    ]),
+  ]);
+}
+
+
 function KpiView({ isAdmin, myStaff }){
   const [staff, setStaff] = useState([]);
   const [assignments, setAssignments] = useState({});
@@ -6147,7 +6299,7 @@ function SalesReportView({ isAdmin, myStaff }){
 }
 
 // ================= APP SHELL =================
-const STAFF_TABS = ["checklist","photos","customerOrders","sales","weekly","tasks","kpi","training","kudos","inventory","temgia"];
+const STAFF_TABS = ["checklist","photos","customerOrders","sales","weekly","tasks","kpi","crm","training","kudos","inventory","temgia"];
 const OPS_TABS = [
   { id:"checklist", label:"Checklist ngày" },
   { id:"photos", label:"Báo cáo hình ảnh" },
@@ -6156,6 +6308,7 @@ const OPS_TABS = [
   { id:"weekly", label:"Báo cáo tuần" },
   { id:"tasks", label:"Giao việc" },
   { id:"kpi", label:"KPI" },
+  { id:"crm", label:"CRM khách hàng" },
   { id:"training", label:"Đào tạo & Buddy" },
   { id:"kudos", label:"Ghi nhận & Quà" },
   { id:"inventory", label:"Kiểm kê" },
@@ -7259,6 +7412,7 @@ function Dashboard({ user, isAdmin, myStaff }){
         activeTab==="weekly" && React.createElement(WeeklyReportView, { key:"v", isAdmin, myStaff }),
         activeTab==="tasks" && React.createElement(TaskAssignView, { key:"v", isAdmin, myStaff }),
         activeTab==="kpi" && React.createElement(KpiView, { key:"v", isAdmin, myStaff }),
+        activeTab==="crm" && React.createElement(CrmView, { key:"v", isAdmin, myStaff }),
         activeTab==="training" && React.createElement(TrainingView, { key:"v", isAdmin, myStaff }),
         activeTab==="kudos" && React.createElement(KudosView, { key:"v", isAdmin, myStaff }),
         activeTab==="staff" && isAdmin && React.createElement(StaffView, { key:"v" }),
