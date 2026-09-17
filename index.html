@@ -3071,7 +3071,11 @@ function TaskAssignView({ isAdmin, myStaff }){
           const status = t.trangThai==="Đã hoàn thành" ? { text:"Đã hoàn thành", tone:"good" } : (overdue ? { text:"Quá hạn", tone:"warn" } : { text:"Đang giao", tone:"neutral" });
           const target = t.assignType==="staff" ? `${t.staffName} (${t.shop})` : (t.assignType==="admin" ? `Quản lý khu vực (từ ${t.shop})` : `Cả nhà thuốc ${t.shop}`);
           return React.createElement("tr",{key:t.id}, [
-            React.createElement("td",{key:"n"}, t.title),
+            React.createElement("td",{key:"n"}, [
+              t.actionPriority==="HIGH" && React.createElement("span",{key:"p",title:"Ưu tiên cao — từ CDP Action Engine",style:{marginRight:5}},"🔴"),
+              t.actionPriority==="MEDIUM" && React.createElement("span",{key:"p",title:"Ưu tiên trung bình — từ CDP Action Engine",style:{marginRight:5}},"🟠"),
+              t.title,
+            ]),
             React.createElement("td",{key:"sh"}, target),
             React.createElement("td",{key:"gb"}, t.nguoiGiaoViec || "Quản lý khu vực"),
             React.createElement("td",{key:"d"}, deadlineLabel(t)),
@@ -3092,6 +3096,17 @@ function TaskAssignView({ isAdmin, myStaff }){
       React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:14 } },
         `${viewTask.assignType==="staff" ? `Giao riêng: ${viewTask.staffName} (${viewTask.shop})` : (viewTask.assignType==="admin" ? `Đề xuất gửi Quản lý khu vực (từ ${viewTask.shop})` : `Giao chung cho cả nhà thuốc ${viewTask.shop}`)} · Giao ngày ${viewTask.ngayGiao} · Hạn ${deadlineLabel(viewTask)}`),
       viewTask.mota && React.createElement("div", { key:"m", style:{ marginBottom:6, fontSize:13 } }, [ React.createElement("b",{key:"b"},"Mô tả: "), viewTask.mota ]),
+      // ===== CDP Action Engine — Action Card (chỉ hiện với việc do CRM tự tạo, có crmSourceType) =====
+      viewTask.crmSourceType && React.createElement("div", { key:"actioncard", style:{ border:"1px solid var(--line)", borderRadius:10, padding:12, marginBottom:14, background:"#fbfaf6" } }, [
+        React.createElement("div", { key:"h", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 } }, [
+          React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:12.5 } }, `${viewTask.actionPriority==="HIGH"?"🔴":viewTask.actionPriority==="MEDIUM"?"🟠":"🟡"} Action Card`),
+          viewTask.actionStatus && React.createElement("span", { key:"st", style:{ fontSize:11, fontWeight:700, color:"var(--clay)" } }, viewTask.actionStatus),
+        ]),
+        viewTask.actionInsight && React.createElement("div", { key:"i", style:{ fontSize:12.5, marginBottom:5 } }, [ React.createElement("b",{key:"b"},"Insight: "), viewTask.actionInsight ]),
+        viewTask.actionRisk && React.createElement("div", { key:"r", style:{ fontSize:12.5, marginBottom:5 } }, [ React.createElement("b",{key:"b"},"Rủi ro/Cơ hội: "), viewTask.actionRisk ]),
+        viewTask.actionChannel && React.createElement("div", { key:"c", style:{ fontSize:12.5, marginBottom:5 } }, [ React.createElement("b",{key:"b"},"Kênh: "), viewTask.actionChannel ]),
+        viewTask.actionExpectedResult && React.createElement("div", { key:"e", style:{ fontSize:12.5 } }, [ React.createElement("b",{key:"b"},"Kỳ vọng: "), viewTask.actionExpectedResult ]),
+      ]),
       taskRefAttachmentsView(viewTask),
       viewTask.trangThai==="Đã hoàn thành"
         ? React.createElement("div", { key:"kq", style:{ marginBottom:14 } }, [
@@ -3689,6 +3704,7 @@ function CrmView({ isAdmin, myStaff }){
   const [adminShop, setAdminShop] = useState("Tất cả");
   const [filterLevel, setFilterLevel] = useState("Tất cả");
   const [filterAssigned, setFilterAssigned] = useState("Tất cả");
+  const [filterSegment, setFilterSegment] = useState("Tất cả");
   const [selectedPhone, setSelectedPhone] = useState(null);
   const [noteText, setNoteText] = useState("");
   const [noteFollowUp, setNoteFollowUp] = useState("");
@@ -3697,8 +3713,16 @@ function CrmView({ isAdmin, myStaff }){
   useEffect(()=>{ const u = subscribeCol("crmCustomers", setCustomers); return u; }, []);
   useEffect(()=>{ const u = subscribeCol("staff", setStaffList); return u; }, []);
   useEffect(()=>{ const u = subscribeCol("crmInteractions", setInteractions); return u; }, []);
+  const [actionCenter, setActionCenter] = useState(null);
+  useEffect(()=>{
+    const unsub = db.collection("opsConfig").doc("crmActionCenter").onSnapshot(doc => setActionCenter(doc.exists ? doc.data() : null));
+    return unsub;
+  }, []);
 
   const LEVEL_NAMES = ["Loyal","Silver","Titan","Gold","Platinum","Diamond"];
+  // CDP — phân khúc do computeCustomerSegmentsDaily tính mỗi ngày, ghi thẳng vào field "segments"
+  // của từng khách trong crmCustomers (xem index.js).
+  const SEGMENT_NAMES = ["Khách mới", "Khách VIP", "Sắp đến kỳ mua lại", "Có nguy cơ rời bỏ", "Giá trị cao im lặng", "Chưa phân công"];
 
   const scopedCustomers = customers.filter(c => isAdmin ? true : c.shop===(myStaff && myStaff.shop));
   const shopOptions = ["Tất cả", ...Array.from(new Set(customers.map(c=>c.shop).filter(Boolean))).sort((a,b)=>a.localeCompare(b,"vi"))];
@@ -3709,6 +3733,7 @@ function CrmView({ isAdmin, myStaff }){
     if(filterLevel!=="Tất cả" && c.levelName!==filterLevel) return false;
     if(filterAssigned==="Chưa phân công" && c.assignedStaffId) return false;
     if(filterAssigned==="Của tôi" && c.assignedStaffId!==(myStaff && myStaff.id)) return false;
+    if(filterSegment!=="Tất cả" && !(c.segments||[]).includes(filterSegment)) return false;
     if(search.trim()){
       const q = search.trim().toLowerCase();
       if(!(c.name||"").toLowerCase().includes(q) && !(c.phone||"").includes(q)) return false;
@@ -3749,9 +3774,31 @@ function CrmView({ isAdmin, myStaff }){
     return React.createElement("span", { style:{ background:(colors[levelName]||"#6b7280")+"22", color:colors[levelName]||"#6b7280", fontWeight:700, fontSize:11, padding:"2px 8px", borderRadius:999 } }, levelName||"Loyal");
   }
 
+  // CDP — nhãn phân khúc (tính mỗi ngày bởi computeCustomerSegmentsDaily, xem index.js).
+  function segmentBadge(name){
+    const colors = { "Khách mới":"#16A34A", "Khách VIP":"#C9A227", "Sắp đến kỳ mua lại":"#0891b2", "Có nguy cơ rời bỏ":"#D98A1F", "Giá trị cao im lặng":"#B0483A", "Chưa phân công":"#6b7280" };
+    const c = colors[name] || "#6b7280";
+    return React.createElement("span", { key:name, style:{ background:c+"1A", color:c, fontWeight:600, fontSize:10.5, padding:"2px 7px", borderRadius:999, marginRight:4, display:"inline-block", marginBottom:3 } }, name);
+  }
+
+  function formatLastPurchase(stats){
+    if(!stats || !stats.lastPurchaseAt) return "Chưa có dữ liệu";
+    const days = Math.floor((new Date() - new Date(stats.lastPurchaseAt)) / 86400000);
+    return `${stats.lastPurchaseAt}${stats.lastPurchaseShop ? " · "+stats.lastPurchaseShop : ""} (${days} ngày trước)`;
+  }
+
   return React.createElement("div", { style:{ maxWidth:1280, margin:"0 auto", padding:"16px" } }, [
     React.createElement("div", { key:"title", style:{ fontWeight:700, fontSize:18, marginBottom:4 } }, "CRM khách hàng"),
     React.createElement("div", { key:"sub", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:16 } }, `${filtered.length} khách hàng · dữ liệu đồng bộ tự động hàng ngày từ hệ thống bán hàng`),
+
+    // ===== CDP Action Engine — "AI Action Center": tổng số việc CRM tự tạo đang còn mở, theo
+    // mức ưu tiên (tính mỗi ngày bởi computeCrmActionCenterDaily). =====
+    actionCenter && actionCenter.total > 0 && React.createElement("div", { key:"ac", className:"card", style:{ marginBottom:16, display:"flex", gap:20, alignItems:"center", fontSize:13 } }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700 } }, "AI Action Center"),
+      actionCenter.HIGH > 0 && React.createElement("div", { key:"h" }, `🔴 ${actionCenter.HIGH} việc cần làm ngay`),
+      actionCenter.MEDIUM > 0 && React.createElement("div", { key:"m" }, `🟠 ${actionCenter.MEDIUM} việc trong tuần`),
+      actionCenter.LOW > 0 && React.createElement("div", { key:"l" }, `🟡 ${actionCenter.LOW} việc ưu tiên thấp`),
+    ]),
 
     React.createElement("div", { key:"filters", className:"card", style:{ marginBottom:16, display:"flex", flexWrap:"wrap", gap:8, alignItems:"center" } }, [
       React.createElement("input", { key:"s", placeholder:"Tìm tên hoặc SĐT...", value:search, onChange:e=>setSearch(e.target.value), style:{ flex:"1 1 200px", padding:"7px 10px", fontSize:13, border:"1px solid var(--line)", borderRadius:8 } }),
@@ -3761,6 +3808,8 @@ function CrmView({ isAdmin, myStaff }){
         ["Tất cả", ...LEVEL_NAMES].map(l=>React.createElement("option", { key:l, value:l }, l))),
       React.createElement("select", { key:"asg", value:filterAssigned, onChange:e=>setFilterAssigned(e.target.value), style:{ padding:"7px 10px", fontSize:13, border:"1px solid var(--line)", borderRadius:8 } },
         ["Tất cả","Chưa phân công","Của tôi"].map(l=>React.createElement("option", { key:l, value:l }, l))),
+      React.createElement("select", { key:"seg", value:filterSegment, onChange:e=>setFilterSegment(e.target.value), style:{ padding:"7px 10px", fontSize:13, border:"1px solid var(--line)", borderRadius:8 } },
+        ["Tất cả", ...SEGMENT_NAMES].map(l=>React.createElement("option", { key:l, value:l }, l))),
     ]),
 
     React.createElement("div", { key:"body", style:{ display:"flex", gap:16, alignItems:"flex-start", flexWrap:"wrap" } }, [
@@ -3779,6 +3828,7 @@ function CrmView({ isAdmin, myStaff }){
             React.createElement("td", { key:"n", style:{ padding:"8px 10px" } }, [
               React.createElement("div", { key:"nm", style:{ fontWeight:600 } }, c.name||"(chưa có tên)"),
               React.createElement("div", { key:"ph", style:{ color:"var(--inkSoft)" } }, c.phone),
+              (c.segments||[]).length>0 && React.createElement("div", { key:"seg", style:{ marginTop:3 } }, (c.segments||[]).map(segmentBadge)),
             ]),
             React.createElement("td", { key:"l", style:{ padding:"8px 10px" } }, levelBadge(c.levelName)),
             React.createElement("td", { key:"sh", style:{ padding:"8px 10px" } }, c.shop),
@@ -3796,8 +3846,30 @@ function CrmView({ isAdmin, myStaff }){
           React.createElement("button", { key:"x", type:"button", className:"btn", style:{ padding:"3px 9px" }, onClick:()=>setSelectedPhone(null) }, "×"),
         ]),
         React.createElement("div", { key:"lvl", style:{ margin:"8px 0" } }, levelBadge(selected.levelName)),
-        React.createElement("div", { key:"stats", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } },
+        (selected.segments||[]).length>0 && React.createElement("div", { key:"segs", style:{ marginBottom:8 } }, (selected.segments||[]).map(segmentBadge)),
+        React.createElement("div", { key:"stats", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:4 } },
           `Doanh số 6 tháng: ${Math.round(selected.amountRank||0).toLocaleString("vi-VN")}đ · ${selected.invoiceRank||0} lượt mua`),
+        React.createElement("div", { key:"lastp", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } },
+          `Lần mua gần nhất: ${formatLastPurchase(selected.stats)}`),
+
+        // CDP — Lớp Intelligence (tính bởi computeCustomerSegmentsDaily): RFM, chu kỳ mua trung
+        // bình, dự đoán ngày mua lại, nguy cơ rời bỏ, ước tính giá trị/năm. Chỉ hiện khi đã có
+        // dữ liệu tính toán (customerEvents cần vài lần mua mới đủ để suy ra chu kỳ).
+        selected.intelligence && React.createElement("div", { key:"intel", className:"card", style:{ background:"#f8f8f6", padding:10, marginBottom:12, fontSize:12 } }, [
+          React.createElement("div", { key:"t", style:{ fontWeight:700, marginBottom:6, fontSize:12.5 } }, "Customer 360 — Intelligence"),
+          selected.intelligence.avgCycleDays && React.createElement("div", { key:"cyc", style:{ marginBottom:3 } },
+            `Chu kỳ mua trung bình: ~${selected.intelligence.avgCycleDays} ngày`),
+          selected.intelligence.predictedNextPurchaseDate && React.createElement("div", { key:"pred", style:{ marginBottom:3 } },
+            `Dự đoán mua lại: ${selected.intelligence.predictedNextPurchaseDate}${selected.intelligence.daysUntilPredicted!=null?` (${selected.intelligence.daysUntilPredicted>=0?`còn ${selected.intelligence.daysUntilPredicted} ngày`:`đã trễ ${-selected.intelligence.daysUntilPredicted} ngày`})`:""}`),
+          selected.intelligence.estimatedAnnualValue && React.createElement("div", { key:"clv", style:{ marginBottom:3 } },
+            `Ước tính giá trị/năm: ${Math.round(selected.intelligence.estimatedAnnualValue).toLocaleString("vi-VN")}đ`),
+          selected.intelligence.rfm && React.createElement("div", { key:"rfm", style:{ marginBottom:3 } },
+            `RFM: Recency ${selected.intelligence.rfm.recency}/3 · Frequency ${selected.intelligence.rfm.frequency}/3 · Monetary ${selected.intelligence.rfm.monetary}/3`),
+          selected.intelligence.churnRisk && React.createElement("div", { key:"churn" }, [
+            "Nguy cơ rời bỏ: ",
+            React.createElement("span", { key:"v", style:{ fontWeight:700, color: selected.intelligence.churnRisk==="cao" ? "var(--clay)" : (selected.intelligence.churnRisk==="trung bình" ? "var(--amber)" : "var(--pine)") } }, selected.intelligence.churnRisk),
+          ]),
+        ]),
 
         React.createElement("div", { key:"asg", style:{ marginBottom:14 } }, [
           React.createElement("div", { key:"l", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:4 } }, "Người phụ trách"),
@@ -3814,7 +3886,7 @@ function CrmView({ isAdmin, myStaff }){
             : selectedInteractions.map(n => React.createElement("div", { key:n.id, style:{ borderTop:"1px solid var(--line)", padding:"8px 0", fontSize:12.5 } }, [
                 React.createElement("div", { key:"m" }, n.note),
                 React.createElement("div", { key:"meta", style:{ color:"var(--inkSoft)", fontSize:11 } },
-                  `${n.staffName||""} · ${(n.createdAtTs||"").slice(0,16).replace("T"," ")}${n.nextFollowUpDate?` · Hẹn lại: ${n.nextFollowUpDate}`:""}`),
+                  `${n.staffName||""} · ${(n.createdAtTs||"").slice(0,16).replace("T"," ")}${n.nextFollowUpDate?` · Hẹn lại: ${n.nextFollowUpDate}`:""}${n.followUpTaskId?" · ✓ Đã tạo việc nhắc":""}`),
               ]))
         ),
 
