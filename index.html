@@ -7160,6 +7160,10 @@ function TransferSuggestionsView(){
       const codeKey = findHeaderKey(keys, ["ma hang","ma sp","ma san pham","ma"]);
       const nameKey = findHeaderKey(keys, ["ten hang","ten sp","ten san pham","ten"]);
       const unitKey = findHeaderKey(keys, ["dvt","don vi tinh","don vi"]);
+      // Cột "Nhóm hàng" — không bắt buộc, dùng cho Customer Action Engine (C07: khách VIP chỉ
+      // mua 1 nhóm hàng). Nếu file không có cột này, danh mục vẫn tải lên bình thường, chỉ là
+      // C07 sẽ không xét được các mã hàng thiếu nhóm.
+      const categoryKey = findHeaderKey(keys, ["nhom hang","nhom san pham","nhom sp","category","phan nhom","nhom"]);
       if(!codeKey || !nameKey){
         setCatalogMsg("Không nhận diện được cột \"Mã hàng\" và \"Tên hàng\" trong file — đổi tên tiêu đề cột cho rõ rồi thử lại.");
         return;
@@ -7173,7 +7177,7 @@ function TransferSuggestionsView(){
         const docId = code.replace(/\//g,"_");
         if(seen.has(docId)) return; // trùng mã trong file — chỉ giữ dòng đầu tiên
         seen.add(docId);
-        list.push({ docId, productId:code, productName:name, unit: unitKey ? String(r[unitKey]||"").trim() : "" });
+        list.push({ docId, productId:code, productName:name, unit: unitKey ? String(r[unitKey]||"").trim() : "", category: categoryKey ? String(r[categoryKey]||"").trim() : "" });
       });
       if(list.length===0){ setCatalogMsg("Không có dòng nào có đủ Mã hàng + Tên hàng."); return; }
       const CHUNK = 450;
@@ -7181,7 +7185,7 @@ function TransferSuggestionsView(){
         const batch = db.batch();
         list.slice(i, i+CHUNK).forEach(item => {
           batch.set(db.collection("productCatalog").doc(item.docId), {
-            productId:item.productId, productName:item.productName, unit:item.unit,
+            productId:item.productId, productName:item.productName, unit:item.unit, category:item.category,
             updatedAt:new Date().toISOString(),
           });
         });
@@ -7189,8 +7193,9 @@ function TransferSuggestionsView(){
       }
       await db.collection("opsConfig").doc("productCatalogMeta").set({
         count:list.length, updatedAt:new Date().toISOString(), fileName:file.name,
+        hasCategoryColumn: !!categoryKey,
       });
-      setCatalogMsg(`Đã cập nhật danh mục: ${list.length} mặt hàng.`);
+      setCatalogMsg(categoryKey ? `Đã cập nhật danh mục: ${list.length} mặt hàng (kèm Nhóm hàng).` : `Đã cập nhật danh mục: ${list.length} mặt hàng. (File không có cột "Nhóm hàng" — Rule C07 sẽ không xét được cho tới khi bổ sung.)`);
     } catch(err){
       console.error("Tải DMHH lỗi:", err);
       setCatalogMsg("Đọc file lỗi — kiểm tra đúng định dạng Excel/CSV.");
