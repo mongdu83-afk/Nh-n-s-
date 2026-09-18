@@ -4235,7 +4235,11 @@ function CrmView({ isAdmin, myStaff }){
         React.createElement("div", { key:"lvl", style:{ margin:"8px 0" } }, levelBadge(selected.levelName)),
         (selected.segments||[]).length>0 && React.createElement("div", { key:"segs", style:{ marginBottom:8 } }, (selected.segments||[]).map(segmentBadge)),
         React.createElement("div", { key:"stats", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:4 } },
-          `Doanh số 6 tháng: ${Math.round(selected.amountRank||0).toLocaleString("vi-VN")}đ · ${selected.invoiceRank||0} lượt mua`),
+          // "invoiceRank" đến từ đồng bộ hồ sơ 6 tháng (chạy hàng ngày) — khách VỪA mua lần đầu có
+          // thể đã có sự kiện mua hàng (real-time) nhưng invoiceRank CHƯA kịp cập nhật, gây hiện
+          // tượng "0 lượt mua" dù đã thấy "lần mua gần nhất". Lấy số LỚN HƠN giữa 2 nguồn để không
+          // bao giờ hiện số ít hơn thực tế đã biết.
+          `Doanh số 6 tháng: ${Math.round(selected.amountRank||0).toLocaleString("vi-VN")}đ · ${Math.max(selected.invoiceRank||0, selected.eventPurchaseCount||0)} lượt mua`),
         React.createElement("div", { key:"lastp", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } },
           `Lần mua gần nhất: ${formatLastPurchase(selected.stats)}`),
         // Nhóm hàng hay mua — tính bởi checkVipCategoryConcentrationWeekly (C07), hiện chỉ có với
