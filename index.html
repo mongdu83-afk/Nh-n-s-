@@ -2101,16 +2101,20 @@ function CustomerOrderView({ isAdmin, myStaff }){
 // tối ưu hoá pin). Chỉ hiện nếu có dữ liệu tính cho ĐÚNG HÔM NAY (staff không có ca hôm nay sẽ
 // không có dữ liệu, banner tự ẩn).
 function DailyKpiPaceBanner({ myStaff, onOpen }){
-  const [paceDocs, setPaceDocs] = useState([]);
+  // ===== SỬA HIỆU NĂNG (9/2026): trước đây tải TOÀN BỘ collection "dailyKpiPace" (1 dòng/nhân
+  // viên/ngày, tích luỹ mãi mãi không giới hạn) rồi mới lọc ra đúng người + đúng hôm nay — giống
+  // hệt lỗi đã sửa ở TaskReminderBanner. Giờ lọc thẳng ở truy vấn: chỉ 1 dòng duy nhất (của đúng
+  // nhân viên này, đúng ngày hôm nay) — nhẹ và không phụ thuộc tổng số nhân viên/số ngày đã qua.
+  const [mine, setMine] = useState(null);
   useEffect(()=>{
-    if(!myStaff) return undefined;
-    const u = subscribeCol("dailyKpiPace", setPaceDocs);
+    if(!myStaff) { setMine(null); return undefined; }
+    const today = todayISO();
+    const u = db.collection("dailyKpiPace")
+      .where("staffId", "==", myStaff.id).where("date", "==", today)
+      .onSnapshot(snap => setMine(snap.empty ? null : snap.docs[0].data()), err => console.error("DailyKpiPaceBanner lỗi:", err));
     return u;
   }, [myStaff && myStaff.id]);
   if(!myStaff) return null;
-
-  const today = todayISO();
-  const mine = paceDocs.find(p => p.staffId===myStaff.id && p.date===today);
   if(!mine) return null;
 
   function fmtMoney(n){ return Math.round(n||0).toLocaleString("vi-VN"); }
@@ -2138,17 +2142,21 @@ function DailyKpiPaceBanner({ myStaff, onOpen }){
 }
 
 function CustomerOrderReminderBanner({ myStaff, onOpen }){
+  // ===== SỬA HIỆU NĂNG (9/2026): trước đây tải TOÀN BỘ collection "customerOrders" (mọi shop,
+  // mọi trạng thái, từ trước tới giờ) rồi mới lọc theo shop + "Đang chờ" — cùng lỗi với
+  // TaskReminderBanner/DailyKpiPaceBanner. Giờ lọc thẳng theo shop + trạng thái ngay ở truy vấn.
   const [orders, setOrders] = useState([]);
   useEffect(()=>{
-    if(!myStaff) return undefined;
-    const u = subscribeCol("customerOrders", setOrders);
+    if(!myStaff || !myStaff.shop) { setOrders([]); return undefined; }
+    const u = db.collection("customerOrders")
+      .where("shop", "==", myStaff.shop).where("trangThai", "==", "Đang chờ")
+      .onSnapshot(snap => setOrders(snap.docs.map(d => ({ id:d.id, ...d.data() }))), err => console.error("CustomerOrderReminderBanner lỗi:", err));
     return u;
-  }, [myStaff && myStaff.id]);
+  }, [myStaff && myStaff.id, myStaff && myStaff.shop]);
   if(!myStaff) return null;
 
   const today = todayISO();
-  const myPending = orders.filter(o => o.shop===myStaff.shop && o.trangThai==="Đang chờ");
-  const alertOrders = [...myPending.filter(o => o.ngayHen && o.ngayHen<=today)].sort((a,b)=> a.ngayHen<b.ngayHen?-1:1);
+  const alertOrders = [...orders.filter(o => o.ngayHen && o.ngayHen<=today)].sort((a,b)=> a.ngayHen<b.ngayHen?-1:1);
   if(alertOrders.length===0) return null;
 
   return React.createElement("div", { className:"card", style:{ maxWidth:1280, margin:"16px auto 0", borderColor:"var(--claySoft)", background:"var(--claySoft)" } }, [
