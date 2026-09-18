@@ -3021,7 +3021,7 @@ function TaskAssignView({ isAdmin, myStaff }){
   if(adminStatus==="Đang giao") filteredTasks = filteredTasks.filter(t=>t.trangThai==="Đang giao" && !isOverdue(t));
   else if(adminStatus==="Quá hạn") filteredTasks = filteredTasks.filter(isOverdue);
   else if(adminStatus==="Đã hoàn thành") filteredTasks = filteredTasks.filter(t=>t.trangThai==="Đã hoàn thành");
-  filteredTasks = [...filteredTasks].sort((a,b)=> a.deadline<b.deadline?-1:1);
+  filteredTasks = [...filteredTasks].sort((a,b)=> (a.shop||"").localeCompare(b.shop||"") || (a.deadline<b.deadline?-1:1));
 
   const tasksInRange = tasks.filter(inTaskDateRange);
   const pendingCount = tasksInRange.filter(t=>t.trangThai==="Đang giao" && !isOverdue(t)).length;
@@ -3078,8 +3078,8 @@ function TaskAssignView({ isAdmin, myStaff }){
           const target = t.assignType==="staff" ? `${t.staffName} (${t.shop})` : (t.assignType==="admin" ? `Quản lý khu vực (từ ${t.shop})` : `Cả nhà thuốc ${t.shop}`);
           return React.createElement("tr",{key:t.id}, [
             React.createElement("td",{key:"n"}, [
-              t.actionPriority==="HIGH" && React.createElement("span",{key:"p",title:"Ưu tiên cao — từ CDP Action Engine",style:{marginRight:5}},"🔴"),
-              t.actionPriority==="MEDIUM" && React.createElement("span",{key:"p",title:"Ưu tiên trung bình — từ CDP Action Engine",style:{marginRight:5}},"🟠"),
+              t.actionPriority==="HIGH" && React.createElement("span",{key:"p",title:"Ưu tiên cao — do hệ thống chăm sóc khách hàng tự động tạo",style:{marginRight:5}},"🔴"),
+              t.actionPriority==="MEDIUM" && React.createElement("span",{key:"p",title:"Ưu tiên trung bình — do hệ thống chăm sóc khách hàng tự động tạo",style:{marginRight:5}},"🟠"),
               t.title,
             ]),
             React.createElement("td",{key:"sh"}, target),
@@ -3771,7 +3771,7 @@ function CrmView({ isAdmin, myStaff }){
       const pr = { HIGH:0, MEDIUM:1, LOW:2 };
       const pa = pr[a.actionPriority]??1, pb = pr[b.actionPriority]??1;
       if(pa!==pb) return pa-pb;
-      return (a.deadline||"").localeCompare(b.deadline||"");
+      return (a.shop||"").localeCompare(b.shop||"") || (a.deadline||"").localeCompare(b.deadline||"");
     });
   // ===== SỬA HIỆU NĂNG (9/2026): trước đây tải TOÀN BỘ collection "crmInteractions" (mọi ghi chú
   // của MỌI khách, từ trước tới giờ) rồi mới lọc theo khách đang chọn — càng ngày càng chậm vì
@@ -3813,6 +3813,9 @@ function CrmView({ isAdmin, myStaff }){
     C07: "VIP — Chỉ mua 1 nhóm hàng",
     C09: "Thân thiết — Chăm sóc định kỳ (gợi ý CSKH)", C10: "Thân thiết — Sinh nhật",
     C12: "Thân thiết — Giảm tần suất (gợi ý voucher)", C14: "Thân thiết — Tăng trưởng (gợi ý tri ân)",
+    followUp: "Lịch hẹn chăm sóc (nhân viên tự đặt ngày gọi lại)",
+    high_value_silent: "Giá trị cao lâu ngày im lặng",
+    upcoming_repurchase: "Sắp đến kỳ mua lại",
   };
   const [behaviorStats, setBehaviorStats] = useState(null);
   const [behaviorRefreshing, setBehaviorRefreshing] = useState(false);
@@ -3906,7 +3909,7 @@ function CrmView({ isAdmin, myStaff }){
       React.createElement("div", { key:"byrule", className:"card", style:{ marginBottom:16, padding:0, overflow:"hidden" } },
         React.createElement("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5 } }, [
           React.createElement("thead", { key:"h" }, React.createElement("tr", { style:{ background:"#f8f8f6" } }, [
-            React.createElement("th", { key:"r", style:{ textAlign:"left", padding:"8px 10px" } }, "Chiến dịch (rule)"),
+            React.createElement("th", { key:"r", style:{ textAlign:"left", padding:"8px 10px" } }, "Chiến dịch"),
             React.createElement("th", { key:"t", style:{ textAlign:"right", padding:"8px 10px" } }, "Tổng số"),
             React.createElement("th", { key:"c", style:{ textAlign:"right", padding:"8px 10px" } }, "Đã hoàn thành"),
             React.createElement("th", { key:"o", style:{ textAlign:"right", padding:"8px 10px" } }, "Đang mở"),
@@ -3980,7 +3983,8 @@ function CrmView({ isAdmin, myStaff }){
   const LEVEL_NAMES = ["Loyal","Silver","Titan","Gold","Platinum","Diamond"];
   // CDP — phân khúc do computeCustomerSegmentsDaily tính mỗi ngày, ghi thẳng vào field "segments"
   // của từng khách trong crmCustomers (xem index.js).
-  const SEGMENT_NAMES = ["Khách mới", "Khách VIP", "Sắp đến kỳ mua lại", "Có nguy cơ rời bỏ", "Giá trị cao im lặng", "Chưa phân công"];
+  const SEGMENT_NAMES = ["Khách mới", "Khách VIP", "Sắp đến kỳ mua lại", "Có nguy cơ rời bỏ", "Giá trị cao im lặng", "Chưa phân công",
+    "VIP (chăm sóc tự động)", "Thân thiết (chăm sóc tự động)", "Thân thiết tăng trưởng — tiềm năng lên VIP", "🎂 Sinh nhật hôm nay"];
 
   const scopedCustomers = customers.filter(c => isAdmin ? true : c.shop===(myStaff && myStaff.shop));
   const shopOptions = ["Tất cả", ...Array.from(new Set(customers.map(c=>c.shop).filter(Boolean))).sort((a,b)=>a.localeCompare(b,"vi"))];
@@ -3997,7 +4001,7 @@ function CrmView({ isAdmin, myStaff }){
       if(!(c.name||"").toLowerCase().includes(q) && !(c.phone||"").includes(q)) return false;
     }
     return true;
-  }).sort((a,b)=> (b.level||0)-(a.level||0) || (a.name||"").localeCompare(b.name||"","vi"));
+  }).sort((a,b)=> (a.shop||"").localeCompare(b.shop||"") || (b.level||0)-(a.level||0) || (a.name||"").localeCompare(b.name||"","vi"));
 
   const selected = customers.find(c=>c.phone===selectedPhone);
   // "interactions" giờ đã được query đúng theo selectedPhone rồi (xem useEffect ở trên) —
@@ -4059,7 +4063,8 @@ function CrmView({ isAdmin, myStaff }){
 
   // CDP — nhãn phân khúc (tính mỗi ngày bởi computeCustomerSegmentsDaily, xem index.js).
   function segmentBadge(name){
-    const colors = { "Khách mới":"#16A34A", "Khách VIP":"#C9A227", "Sắp đến kỳ mua lại":"#0891b2", "Có nguy cơ rời bỏ":"#D98A1F", "Giá trị cao im lặng":"#B0483A", "Chưa phân công":"#6b7280" };
+    const colors = { "Khách mới":"#16A34A", "Khách VIP":"#C9A227", "Sắp đến kỳ mua lại":"#0891b2", "Có nguy cơ rời bỏ":"#D98A1F", "Giá trị cao im lặng":"#B0483A", "Chưa phân công":"#6b7280",
+      "VIP (chăm sóc tự động)":"#C9A227", "Thân thiết (chăm sóc tự động)":"#0891b2", "Thân thiết tăng trưởng — tiềm năng lên VIP":"#16A34A", "🎂 Sinh nhật hôm nay":"#B0483A" };
     const c = colors[name] || "#6b7280";
     return React.createElement("span", { key:name, style:{ background:c+"1A", color:c, fontWeight:600, fontSize:10.5, padding:"2px 7px", borderRadius:999, marginRight:4, display:"inline-block", marginBottom:3 } }, name);
   }
@@ -7482,7 +7487,7 @@ function TransferSuggestionsView(){
     if(invSubTab!=="tocdo") return;
     setFlaggedLoading(true);
     db.collection("inventoryMetrics").where("stockStatus","==",flaggedStatus).limit(200).get()
-      .then(snap => setFlaggedItems(snap.docs.map(d=>d.data())))
+      .then(snap => setFlaggedItems(snap.docs.map(d=>d.data()).sort((a,b)=>(a.shopCode||"").localeCompare(b.shopCode||""))))
       .catch(err => { console.error("Lỗi tải danh sách SKU theo trạng thái:", err); setFlaggedItems([]); })
       .finally(() => setFlaggedLoading(false));
   }, [invSubTab, flaggedStatus]);
@@ -7702,7 +7707,7 @@ function TransferSuggestionsView(){
             ? React.createElement("div", { className:"emptyState" }, "Không có SKU nào ở trạng thái này.")
             : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
                 React.createElement("thead",{key:"h"}, React.createElement("tr",null,
-                  ["Mã hàng","Tên hàng","Nhà thuốc","Tồn","ADS 7 ngày","ADS 30 ngày","DOI (ngày)"].map((h,i)=>React.createElement("th",{key:i},h)))),
+                  ["Mã hàng","Tên hàng","Nhà thuốc","Tồn","Bán TB/ngày (7 ngày)","Bán TB/ngày (30 ngày)","Đủ bán (ngày)"].map((h,i)=>React.createElement("th",{key:i},h)))),
                 React.createElement("tbody",{key:"b"}, flaggedItems.map((it,i) => React.createElement("tr",{key:i}, [
                   React.createElement("td",{key:"pid"}, it.productId),
                   React.createElement("td",{key:"pn"}, it.productName),
@@ -7782,7 +7787,7 @@ function TransferSuggestionsView(){
               React.createElement("td",{key:"fd"}, `${fmtNum(t.fromDaysStock)} ngày bán`),
               React.createElement("td",{key:"td"}, `${fmtNum(t.toDaysStock)} ngày bán`),
               React.createElement("td",{key:"note"}, [
-                t.priority==="P1" && StatusPill("🔥 P1 — nơi nhận bán nhanh","warn"),
+                t.priority==="P1" && StatusPill("🔥 Ưu tiên — nơi nhận bán nhanh","warn"),
                 t.toIsRequired && StatusPill("Hàng thường trực","warn"),
                 !t.priority && !t.toIsRequired && "—",
               ]),
