@@ -2781,10 +2781,16 @@ function TaskAssignView({ isAdmin, myStaff }){
   const [viewTask, setViewTask] = useState(null);
 
   useEffect(()=>{
-    const u1 = subscribeCol("tasks", setTasks);
+    // ===== SỬA HIỆU NĂNG (9/2026): nhân viên/CHT trước đây cũng tải TOÀN BỘ "tasks" (mọi shop,
+    // mọi lúc) rồi mới lọc theo shop mình ở trình duyệt (adminShop mặc định "Tất cả" nhưng CHT
+    // chỉ quan tâm shop mình) — giờ lọc thẳng theo shop ngay từ truy vấn cho non-admin. Admin vẫn
+    // cần xem toàn bộ (đúng mục đích module này), giữ nguyên không lọc.
+    if(!isAdmin && !(myStaff && myStaff.shop)){ setTasks([]); return undefined; }
+    const q = isAdmin ? db.collection("tasks") : db.collection("tasks").where("shop","==",myStaff.shop);
+    const u1 = q.onSnapshot(snap => setTasks(snap.docs.map(d=>({ id:d.id, ...d.data() }))), err => console.error("TaskAssignView tasks lỗi:", err));
     const u2 = subscribeCol("staff", setStaffList);
     return ()=>{ u1(); u2(); };
-  }, []);
+  }, [isAdmin, myStaff && myStaff.shop]);
 
   const today = todayISO();
   function deadlineTs(t){ return `${t.deadline}T${t.hanGio || "23:59"}`; }
@@ -3781,6 +3787,180 @@ function CrmView({ isAdmin, myStaff }){
   }, [selectedPhone]);
   useEffect(()=>{ setRangeResult(null); setRangeError(null); }, [selectedPhone]);
   const [showCrmTasks, setShowCrmTasks] = useState(false);
+  const [crmTaskPriorityFilter, setCrmTaskPriorityFilter] = useState("all");
+  const [selectedPhones, setSelectedPhones] = useState(new Set());
+  const [bulkAssignStaffId, setBulkAssignStaffId] = useState("");
+  const [bulkAssigning, setBulkAssigning] = useState(false);
+  const [crmSubTab, setCrmSubTab] = useState("khach");
+  // "Chiến dịch CRM" — đọc doc nhỏ đã tổng hợp sẵn (computeCrmCampaignStatsDaily), không quét
+  // trực tiếp collection "tasks" trên trình duyệt (bài học từ vụ crmInteractions chậm dần).
+  const [campaignStats, setCampaignStats] = useState(null);
+  const [campaignRefreshing, setCampaignRefreshing] = useState(false);
+  useEffect(()=>{
+    const unsub = db.collection("opsConfig").doc("crmCampaignStats").onSnapshot(snap => setCampaignStats(snap.exists ? snap.data() : null));
+    return unsub;
+  }, []);
+  async function refreshCampaignStats(){
+    setCampaignRefreshing(true);
+    try{ await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeCrmCampaignStatsNow"); }
+    catch(err){ /* im lặng — doc sẽ tự cập nhật qua onSnapshot nếu thành công */ }
+    setCampaignRefreshing(false);
+  }
+  // Tên rule dễ đọc cho trang Chiến dịch — khớp với sourceId trong index.js (createCrmTask).
+  const CRM_RULE_LABELS = {
+    C01: "VIP — Chăm sóc định kỳ", C02: "VIP — Sinh nhật",
+    C05: "VIP — Giảm tần suất mua", C06: "VIP — Giảm giá trị đơn",
+    C07: "VIP — Chỉ mua 1 nhóm hàng",
+    C09: "Thân thiết — Chăm sóc định kỳ (gợi ý CSKH)", C10: "Thân thiết — Sinh nhật",
+    C12: "Thân thiết — Giảm tần suất (gợi ý voucher)", C14: "Thân thiết — Tăng trưởng (gợi ý tri ân)",
+  };
+  const [behaviorStats, setBehaviorStats] = useState(null);
+  const [behaviorRefreshing, setBehaviorRefreshing] = useState(false);
+  useEffect(()=>{
+    const unsub = db.collection("opsConfig").doc("behaviorAnalytics").onSnapshot(snap => setBehaviorStats(snap.exists ? snap.data() : null));
+    return unsub;
+  }, []);
+  async function refreshBehaviorStats(){
+    setBehaviorRefreshing(true);
+    try{ await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeBehaviorAnalyticsNow"); }
+    catch(err){ /* im lặng — doc sẽ tự cập nhật qua onSnapshot nếu thành công */ }
+    setBehaviorRefreshing(false);
+  }
+  const DOW_NAMES = ["CN","T2","T3","T4","T5","T6","T7"];
+  function renderBehaviorAnalyticsTab(){
+    if(!behaviorStats){
+      return React.createElement("div", { key:"bvempty", className:"card", style:{ fontSize:13, color:"var(--inkSoft)" } },
+        "Chưa có dữ liệu — bấm \"Tính lại\" bên dưới hoặc đợi job tự chạy 5:55 sáng mai.");
+    }
+    const maxHour = Math.max(...(behaviorStats.hourCounts||[0]), 1);
+    const maxDow = Math.max(...(behaviorStats.dowCounts||[0]), 1);
+    const categories = Object.entries(behaviorStats.categoryQty||{}).sort((a,b)=>b[1]-a[1]).slice(0,10);
+    const maxCat = categories.length ? categories[0][1] : 1;
+    const multiShopPct = behaviorStats.customersTotal ? Math.round((behaviorStats.customersWithMultiShop/behaviorStats.customersTotal)*100) : 0;
+    return React.createElement("div", { key:"behavior" }, [
+      React.createElement("div", { key:"head", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 } }, [
+        React.createElement("div", { key:"t", style:{ fontSize:12.5, color:"var(--inkSoft)" } },
+          `Tính lúc ${behaviorStats.computedAt ? new Date(behaviorStats.computedAt).toLocaleString("vi-VN") : "—"} · ${behaviorStats.totalWithHour||0}/${behaviorStats.totalEvents||0} đơn (90 ngày) có dữ liệu giờ`),
+        React.createElement("button", { key:"refresh", className:"btn btnGhost", disabled:behaviorRefreshing, onClick:refreshBehaviorStats, style:{ fontSize:12, padding:"4px 10px" } }, behaviorRefreshing ? "Đang tính..." : "↻ Tính lại"),
+      ]),
+
+      behaviorStats.totalWithHour===0 && React.createElement("div", { key:"nohour", className:"card", style:{ marginBottom:16, fontSize:12.5, color:"var(--inkSoft)" } },
+        "Chưa có đơn nào ghi nhận được giờ mua — dữ liệu này chỉ có từ các đơn đồng bộ SAU khi tính năng này được bật, cần đợi vài ngày để tích luỹ đủ."),
+
+      React.createElement("div", { key:"hourcard", className:"card", style:{ marginBottom:16 } }, [
+        React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, "Khung giờ mua hàng (90 ngày gần nhất)"),
+        React.createElement("div", { key:"bars", style:{ display:"flex", alignItems:"flex-end", gap:2, height:90 } },
+          (behaviorStats.hourCounts||[]).map((v,h) => React.createElement("div", { key:h, title:`${h}h: ${v} đơn`, style:{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:2 } }, [
+            React.createElement("div", { key:"bar", style:{ width:"100%", height:`${Math.max((v/maxHour)*70,1)}px`, background:"var(--pine)", borderRadius:2 } }),
+            h%3===0 && React.createElement("div", { key:"lbl", style:{ fontSize:8.5, color:"var(--inkSoft)" } }, h),
+          ]))
+        ),
+      ]),
+
+      React.createElement("div", { key:"dowcard", className:"card", style:{ marginBottom:16 } }, [
+        React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, "Ngày trong tuần"),
+        React.createElement("div", { key:"bars", style:{ display:"flex", alignItems:"flex-end", gap:6, height:90 } },
+          (behaviorStats.dowCounts||[]).map((v,i) => React.createElement("div", { key:i, title:`${DOW_NAMES[i]}: ${v} đơn`, style:{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:3 } }, [
+            React.createElement("div", { key:"bar", style:{ width:"100%", height:`${Math.max((v/maxDow)*70,1)}px`, background:"var(--clay)", borderRadius:3 } }),
+            React.createElement("div", { key:"lbl", style:{ fontSize:10, color:"var(--inkSoft)" } }, DOW_NAMES[i]),
+          ]))
+        ),
+      ]),
+
+      React.createElement("div", { key:"shopcard", className:"card", style:{ marginBottom:16 } }, [
+        React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:6 } }, "Mua ở nhiều nhà thuốc (90 ngày)"),
+        React.createElement("div", { key:"v", style:{ fontSize:12.5, color:"var(--inkSoft)" } },
+          `${behaviorStats.customersWithMultiShop||0}/${behaviorStats.customersTotal||0} khách (${multiShopPct}%) từng mua ở từ 2 nhà thuốc trở lên — hệ thống là POS tại quầy nên không có khái niệm "kênh online/offline".`),
+      ]),
+
+      React.createElement("div", { key:"catcard", className:"card" }, [
+        React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, "Top 10 nhóm hàng bán chạy theo số lượng (30 ngày)"),
+        categories.length===0
+          ? React.createElement("div", { key:"e", style:{ fontSize:12.5, color:"var(--inkSoft)" } }, "Chưa có dữ liệu — cần upload file DMHH có cột \"Nhóm hàng\" (xem tab Điều chuyển hàng hoá).")
+          : React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:6 } },
+              categories.map(([cat,qty]) => React.createElement("div", { key:cat }, [
+                React.createElement("div", { key:"lbl", style:{ display:"flex", justifyContent:"space-between", fontSize:12, marginBottom:2 } }, [
+                  React.createElement("span", { key:"n" }, cat),
+                  React.createElement("span", { key:"q", style:{ color:"var(--inkSoft)" } }, qty),
+                ]),
+                React.createElement("div", { key:"bar", style:{ height:6, borderRadius:3, background:"var(--pineSoft)" } },
+                  React.createElement("div", { style:{ height:"100%", width:`${(qty/maxCat)*100}%`, background:"var(--pine)", borderRadius:3 } })),
+              ]))
+            ),
+      ]),
+    ]);
+  }
+  function renderCrmCampaignTab(){
+    if(!campaignStats){
+      return React.createElement("div", { key:"cdempty", className:"card", style:{ fontSize:13, color:"var(--inkSoft)" } },
+        "Chưa có dữ liệu tổng hợp — bấm \"Tính lại\" bên dưới hoặc đợi job tự chạy 5:50 sáng mai.");
+    }
+    const rules = Object.keys(campaignStats.byRule||{}).sort();
+    const days = Object.keys(campaignStats.byDay||{}).sort().slice(-14); // 14 ngày gần nhất cho gọn
+    return React.createElement("div", { key:"campaign" }, [
+      React.createElement("div", { key:"head", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 } }, [
+        React.createElement("div", { key:"t", style:{ fontSize:12.5, color:"var(--inkSoft)" } },
+          `Tổng ${campaignStats.totalActions||0} action (mọi thời điểm) · tính lúc ${campaignStats.computedAt ? new Date(campaignStats.computedAt).toLocaleString("vi-VN") : "—"}`),
+        React.createElement("button", { key:"refresh", className:"btn btnGhost", disabled:campaignRefreshing, onClick:refreshCampaignStats, style:{ fontSize:12, padding:"4px 10px" } }, campaignRefreshing ? "Đang tính..." : "↻ Tính lại"),
+      ]),
+      React.createElement("div", { key:"byrule", className:"card", style:{ marginBottom:16, padding:0, overflow:"hidden" } },
+        React.createElement("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5 } }, [
+          React.createElement("thead", { key:"h" }, React.createElement("tr", { style:{ background:"#f8f8f6" } }, [
+            React.createElement("th", { key:"r", style:{ textAlign:"left", padding:"8px 10px" } }, "Chiến dịch (rule)"),
+            React.createElement("th", { key:"t", style:{ textAlign:"right", padding:"8px 10px" } }, "Tổng số"),
+            React.createElement("th", { key:"c", style:{ textAlign:"right", padding:"8px 10px" } }, "Đã hoàn thành"),
+            React.createElement("th", { key:"o", style:{ textAlign:"right", padding:"8px 10px" } }, "Đang mở"),
+            React.createElement("th", { key:"p", style:{ textAlign:"right", padding:"8px 10px" } }, "Tỉ lệ hoàn thành"),
+          ])),
+          React.createElement("tbody", { key:"b" }, rules.map(r => {
+            const s = campaignStats.byRule[r];
+            const open = s.total - s.completed;
+            const rate = s.total ? Math.round((s.completed/s.total)*100) : 0;
+            return React.createElement("tr", { key:r, style:{ borderTop:"1px solid var(--line)" } }, [
+              React.createElement("td", { key:"r", style:{ padding:"8px 10px" } }, [
+                React.createElement("div", { key:"n", style:{ fontWeight:600 } }, CRM_RULE_LABELS[r] || r),
+                React.createElement("div", { key:"id", style:{ fontSize:10.5, color:"var(--inkSoft)" } }, r),
+              ]),
+              React.createElement("td", { key:"t", style:{ padding:"8px 10px", textAlign:"right" } }, s.total),
+              React.createElement("td", { key:"c", style:{ padding:"8px 10px", textAlign:"right" } }, s.completed),
+              React.createElement("td", { key:"o", style:{ padding:"8px 10px", textAlign:"right" } }, open),
+              React.createElement("td", { key:"p", style:{ padding:"8px 10px", textAlign:"right", fontWeight:600, color: rate>=50 ? "var(--pine)" : "var(--clay)" } }, `${rate}%`),
+            ]);
+          })),
+        ])
+      ),
+      days.length>0 && React.createElement("div", { key:"byday", className:"card" }, [
+        React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, "Số action tạo ra theo ngày (14 ngày gần nhất)"),
+        React.createElement("div", { key:"bars", style:{ display:"flex", alignItems:"flex-end", gap:4, height:100 } },
+          days.map(d => {
+            const s = campaignStats.byDay[d];
+            const max = Math.max(...days.map(dd=>campaignStats.byDay[dd].total), 1);
+            return React.createElement("div", { key:d, title:`${d}: ${s.total} action`, style:{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:3 } }, [
+              React.createElement("div", { key:"bar", style:{ width:"100%", height:`${Math.max((s.total/max)*80,2)}px`, background:"var(--pine)", borderRadius:3 } }),
+              React.createElement("div", { key:"lbl", style:{ fontSize:9, color:"var(--inkSoft)" } }, d.slice(5)),
+            ]);
+          })
+        ),
+      ]),
+    ]);
+  }
+  async function applyBulkAssign(){
+    if(!bulkAssignStaffId || selectedPhones.size===0) return;
+    setBulkAssigning(true);
+    try{
+      const s = staffOptions.find(x=>x.id===bulkAssignStaffId);
+      const patch = { assignedStaffId: bulkAssignStaffId, assignedStaffName: s ? s.name : null, assignedStaffIsDefault: false };
+      const phones = [...selectedPhones];
+      const CHUNK = 450; // giới hạn batch write của Firestore
+      for(let i=0; i<phones.length; i+=CHUNK){
+        const batch = db.batch();
+        phones.slice(i, i+CHUNK).forEach(phone => batch.set(db.collection("crmCustomers").doc(phone), patch, { merge:true }));
+        await batch.commit();
+      }
+      setCustomers(cs => cs.map(c => selectedPhones.has(c.phone) ? { ...c, ...patch } : c));
+      setSelectedPhones(new Set()); setBulkAssignStaffId("");
+    } finally { setBulkAssigning(false); }
+  }
   const [autoAssigning, setAutoAssigning] = useState(false);
   const [autoAssignMsg, setAutoAssignMsg] = useState(null);
   async function runAutoAssign(){
@@ -3790,7 +3970,7 @@ function CrmView({ isAdmin, myStaff }){
       const d = await resp.json();
       if(d && d.ok===false){ setAutoAssignMsg("Lỗi: " + (d.error || "không rõ nguyên nhân")); }
       else{
-        setAutoAssignMsg(`Đã gán ${d.assigned ?? 0} khách theo Cửa hàng trưởng${d.skippedNoCHT ? ` (${d.skippedNoCHT} khách thuộc shop chưa có Cửa hàng trưởng, chưa gán được)` : ""}.`);
+        setAutoAssignMsg(`Đã gán ${d.assigned ?? 0} khách (${d.assignedViaCHT ?? 0} theo Cửa hàng trưởng, ${d.assignedViaFallback ?? 0} theo nhân viên tạm thời ở shop chưa có CHT)${d.skippedNoStaffAtAll ? ` — ${d.skippedNoStaffAtAll} khách thuộc shop chưa có NHÂN VIÊN nào trong hệ thống, chưa gán được` : ""}.`);
         if(isAdmin) loadCustomersOnce(); // tải lại để thấy ngay kết quả (không còn real-time nữa)
       }
     } catch(err){ setAutoAssignMsg("Lỗi kết nối, thử lại."); }
@@ -3902,6 +4082,15 @@ function CrmView({ isAdmin, myStaff }){
         style:{ fontSize:12, padding:"4px 10px" },
       }, autoAssigning ? "Đang gán..." : "👤 Gán tự động theo Nhà thuốc"),
     ]),
+    React.createElement("div", { key:"subtabs", style:{ display:"flex", gap:6, marginBottom:14, borderBottom:"1px solid var(--line)" } }, [
+      React.createElement("button", { key:"kh", onClick:()=>setCrmSubTab("khach"), style:{ padding:"8px 4px", fontSize:13, fontWeight:600, border:"none", background:"transparent", cursor:"pointer", color: crmSubTab==="khach" ? "var(--pine)" : "var(--inkSoft)", borderBottom: crmSubTab==="khach" ? "2px solid var(--pine)" : "2px solid transparent", marginRight:16 } }, "Khách hàng"),
+      React.createElement("button", { key:"cd", onClick:()=>setCrmSubTab("chiendich"), style:{ padding:"8px 4px", fontSize:13, fontWeight:600, border:"none", background:"transparent", cursor:"pointer", color: crmSubTab==="chiendich" ? "var(--pine)" : "var(--inkSoft)", borderBottom: crmSubTab==="chiendich" ? "2px solid var(--pine)" : "2px solid transparent", marginRight:16 } }, "📊 Chiến dịch"),
+      React.createElement("button", { key:"hv", onClick:()=>setCrmSubTab("hanhvi"), style:{ padding:"8px 4px", fontSize:13, fontWeight:600, border:"none", background:"transparent", cursor:"pointer", color: crmSubTab==="hanhvi" ? "var(--pine)" : "var(--inkSoft)", borderBottom: crmSubTab==="hanhvi" ? "2px solid var(--pine)" : "2px solid transparent" } }, "📈 Phân tích hành vi"),
+    ]),
+
+    crmSubTab === "chiendich" ? renderCrmCampaignTab() :
+    crmSubTab === "hanhvi" ? renderBehaviorAnalyticsTab() :
+    React.createElement(React.Fragment, { key:"khachtab" }, [
     isAdmin && autoAssignMsg && React.createElement("div", { key:"aamsg", style:{ fontSize:12.5, color:"var(--pine)", marginBottom:8 } }, autoAssignMsg),
     React.createElement("div", { key:"sub", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:16 } },
       isAdmin
@@ -3919,10 +4108,18 @@ function CrmView({ isAdmin, myStaff }){
           openCrmTasks.some(t=>t.actionPriority!=="HIGH"&&t.actionPriority!=="LOW") && React.createElement("span", { key:"m" }, `🟠 ${openCrmTasks.filter(t=>t.actionPriority!=="HIGH"&&t.actionPriority!=="LOW").length} bình thường`),
           openCrmTasks.some(t=>t.actionPriority==="LOW") && React.createElement("span", { key:"l" }, `🟡 ${openCrmTasks.filter(t=>t.actionPriority==="LOW").length} ưu tiên thấp`),
         ]),
+        React.createElement("select", { key:"priofilter", value:crmTaskPriorityFilter, onChange:e=>setCrmTaskPriorityFilter(e.target.value), style:{ fontSize:12, padding:"4px 8px", border:"1px solid var(--line)", borderRadius:8 } }, [
+          React.createElement("option", { key:"all", value:"all" }, "Tất cả mức ưu tiên"),
+          React.createElement("option", { key:"HIGH", value:"HIGH" }, "🔴 Cần làm ngay"),
+          React.createElement("option", { key:"MEDIUM", value:"MEDIUM" }, "🟠 Bình thường"),
+          React.createElement("option", { key:"LOW", value:"LOW" }, "🟡 Ưu tiên thấp"),
+        ]),
         React.createElement("button", { key:"toggle", className:"btn btnGhost", style:{ fontSize:12, padding:"4px 10px" }, onClick:()=>setShowCrmTasks(v=>!v) }, showCrmTasks ? "Ẩn danh sách" : "Xem danh sách"),
       ]),
       showCrmTasks && React.createElement("div", { key:"list", style:{ marginTop:12, display:"flex", flexDirection:"column", gap:6, maxHeight:360, overflowY:"auto" } },
-        openCrmTasks.slice(0,100).map(t => React.createElement("div", {
+        openCrmTasks
+          .filter(t => crmTaskPriorityFilter==="all" ? true : crmTaskPriorityFilter==="MEDIUM" ? (t.actionPriority!=="HIGH"&&t.actionPriority!=="LOW") : t.actionPriority===crmTaskPriorityFilter)
+          .slice(0,100).map(t => React.createElement("div", {
           key:t.id, onClick:()=>setSelectedPhone(t.crmCustomerId), style:{
             border:"1px solid var(--line)", borderRadius:8, padding:"8px 10px", cursor:"pointer",
             background: t.crmCustomerId===selectedPhone ? "var(--paper)" : "#fff",
@@ -3950,10 +4147,35 @@ function CrmView({ isAdmin, myStaff }){
         ["Tất cả", ...SEGMENT_NAMES].map(l=>React.createElement("option", { key:l, value:l }, l))),
     ]),
 
+    // ===== Gán hàng loạt: CHT có nhiều khách "Chưa phân công" trong shop mình (do admin gán tự
+    // động về cho CHT trước đó) cần chia lại cho từng nhân viên — chọn tay từng khách một không
+    // khả thi với số lượng lớn. Chọn nhiều dòng rồi gán 1 lần cho ai đó (staffOptions đã tự lọc
+    // đúng nhân viên cùng shop cho CHT, admin thấy toàn bộ).
+    selectedPhones.size > 0 && React.createElement("div", { key:"bulkbar", className:"card", style:{ marginBottom:12, display:"flex", alignItems:"center", gap:10, flexWrap:"wrap", background:"var(--pineSoft)" } }, [
+      React.createElement("div", { key:"cnt", style:{ fontSize:12.5, fontWeight:600 } }, `Đã chọn ${selectedPhones.size} khách`),
+      React.createElement("select", { key:"pick", value:bulkAssignStaffId, onChange:e=>setBulkAssignStaffId(e.target.value), style:{ fontSize:12.5, padding:"5px 8px", border:"1px solid var(--line)", borderRadius:8 } }, [
+        React.createElement("option", { key:"none", value:"" }, "— Gán cho —"),
+        ...staffOptions.map(s=>React.createElement("option", { key:s.id, value:s.id }, s.name)),
+      ]),
+      React.createElement("button", { key:"apply", className:"btn btnPrimary", disabled:!bulkAssignStaffId || bulkAssigning, style:{ fontSize:12.5, padding:"5px 12px" }, onClick:applyBulkAssign }, bulkAssigning ? "Đang gán..." : "Áp dụng"),
+      React.createElement("button", { key:"clear", className:"btn btnGhost", style:{ fontSize:12.5, padding:"5px 12px" }, onClick:()=>setSelectedPhones(new Set()) }, "Bỏ chọn"),
+    ]),
+
     React.createElement("div", { key:"body", style:{ display:"flex", gap:16, alignItems:"flex-start", flexWrap:"wrap" } }, [
       React.createElement("div", { key:"list", className:"card", style:{ flex:"2 1 500px", padding:0, overflow:"hidden" } },
         React.createElement("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5 } }, [
           React.createElement("thead", { key:"h" }, React.createElement("tr", { style:{ background:"#f8f8f6" } }, [
+            React.createElement("th", { key:"chk", style:{ padding:"8px 6px" } },
+              React.createElement("input", { type:"checkbox",
+                checked: filtered.slice(0,200).length>0 && filtered.slice(0,200).every(c=>selectedPhones.has(c.phone)),
+                onChange:e=>{
+                  const page = filtered.slice(0,200).map(c=>c.phone);
+                  setSelectedPhones(prev=>{
+                    const next = new Set(prev);
+                    if(e.target.checked) page.forEach(p=>next.add(p)); else page.forEach(p=>next.delete(p));
+                    return next;
+                  });
+                } })),
             React.createElement("th", { key:"n", style:{ textAlign:"left", padding:"8px 10px" } }, "Khách hàng"),
             React.createElement("th", { key:"l", style:{ textAlign:"left", padding:"8px 10px" } }, "Hạng"),
             React.createElement("th", { key:"sh", style:{ textAlign:"left", padding:"8px 10px" } }, "Shop"),
@@ -3963,6 +4185,10 @@ function CrmView({ isAdmin, myStaff }){
             key:c.phone, onClick:()=>setSelectedPhone(c.phone),
             style:{ cursor:"pointer", borderTop:"1px solid var(--line)", background: selectedPhone===c.phone ? "var(--pineSoft)" : "transparent" },
           }, [
+            React.createElement("td", { key:"chk", style:{ padding:"8px 6px" }, onClick:e=>e.stopPropagation() },
+              React.createElement("input", { type:"checkbox", checked:selectedPhones.has(c.phone), onChange:()=>{
+                setSelectedPhones(prev=>{ const next=new Set(prev); if(next.has(c.phone)) next.delete(c.phone); else next.add(c.phone); return next; });
+              } })),
             React.createElement("td", { key:"n", style:{ padding:"8px 10px" } }, [
               React.createElement("div", { key:"nm", style:{ fontWeight:600 } }, c.name||"(chưa có tên)"),
               React.createElement("div", { key:"ph", style:{ color:"var(--inkSoft)" } }, c.phone),
@@ -3991,6 +4217,10 @@ function CrmView({ isAdmin, myStaff }){
           `Doanh số 6 tháng: ${Math.round(selected.amountRank||0).toLocaleString("vi-VN")}đ · ${selected.invoiceRank||0} lượt mua`),
         React.createElement("div", { key:"lastp", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } },
           `Lần mua gần nhất: ${formatLastPurchase(selected.stats)}`),
+        // Nhóm hàng hay mua — tính bởi checkVipCategoryConcentrationWeekly (C07), hiện chỉ có với
+        // khách VIP đã được job này quét tới (xoay vòng mỗi tuần, xem ghi chú trong index.js).
+        selected.topCategories && selected.topCategories.length>0 && React.createElement("div", { key:"topcat", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } },
+          `Nhóm hàng hay mua: ${selected.topCategories.join(", ")}`),
 
         // CDP — Lớp Intelligence (tính bởi computeCustomerSegmentsDaily): RFM, chu kỳ mua trung
         // bình, dự đoán ngày mua lại, nguy cơ rời bỏ, ước tính giá trị/năm. Chỉ hiện khi đã có
@@ -4062,6 +4292,7 @@ function CrmView({ isAdmin, myStaff }){
           React.createElement("button", { key:"b", type:"button", className:"btn btnPrimary", disabled:savingNote||!noteText.trim(), onClick:addNote, style:{ padding:"6px 14px", fontSize:12.5 } }, savingNote?"Đang lưu...":"Lưu ghi chú"),
         ]),
       ]),
+    ]),
     ]),
   ]);
 }
@@ -6946,12 +7177,29 @@ function TaskLiveNotifier({ myStaff, isAdmin }){
 }
 
 function TaskReminderBanner({ myStaff, onOpenTasks }){
-  const [tasks, setTasks] = useState([]);
+  // ===== SỬA HIỆU NĂNG (9/2026): trước đây tải TOÀN BỘ collection "tasks" (đang phình to nhanh vì
+  // Customer Action Engine tạo ra nhiều task hơn hẳn trước) — component này lại được gắn Ở MỌI
+  // TRANG cho MỌI nhân viên (không chỉ khi mở tab Giao việc), nên đây là nơi ảnh hưởng NẶNG NHẤT
+  // trong tất cả các chỗ tải "tasks" — mọi nhân viên, mọi lần mở app, dù không đụng gì tới tab
+  // Giao việc. Giờ chỉ tải 2 phần đã lọc sẵn ở server: (a) task giao thẳng cho ĐÚNG nhân viên này,
+  // (b) task của ĐÚNG nhà thuốc họ (cần cho Cửa hàng trưởng xem việc cả shop) — gộp lại ở trình
+  // duyệt, tập hợp này luôn nhỏ và không phình to theo thời gian như trước.
+  const [myTasksRaw, setMyTasksRaw] = useState([]);
+  const [shopTasksRaw, setShopTasksRaw] = useState([]);
   useEffect(()=>{
-    if(!myStaff) return undefined;
-    const u = subscribeCol("tasks", setTasks);
-    return u;
-  }, [myStaff && myStaff.id]);
+    if(!myStaff) { setMyTasksRaw([]); setShopTasksRaw([]); return undefined; }
+    const u1 = db.collection("tasks").where("trangThai","==","Đang giao").where("staffId","==",myStaff.id)
+      .onSnapshot(snap => setMyTasksRaw(snap.docs.map(d=>({ id:d.id, ...d.data() }))), err => console.error("TaskReminderBanner (staffId) lỗi:", err));
+    const u2 = db.collection("tasks").where("trangThai","==","Đang giao").where("shop","==",myStaff.shop)
+      .onSnapshot(snap => setShopTasksRaw(snap.docs.map(d=>({ id:d.id, ...d.data() }))), err => console.error("TaskReminderBanner (shop) lỗi:", err));
+    return ()=>{ u1(); u2(); };
+  }, [myStaff && myStaff.id, myStaff && myStaff.shop]);
+  const tasks = useMemo(()=>{
+    const map = new Map();
+    myTasksRaw.forEach(t=>map.set(t.id,t));
+    shopTasksRaw.forEach(t=>map.set(t.id,t));
+    return [...map.values()];
+  }, [myTasksRaw, shopTasksRaw]);
   if(!myStaff) return null;
 
   const today = todayISO();
@@ -6961,8 +7209,7 @@ function TaskReminderBanner({ myStaff, onOpenTasks }){
 
   const isShopManager = myStaff.role==="Cửa hàng trưởng";
   const myPending = tasks.filter(t =>
-    (isShopManager ? t.shop===myStaff.shop : (t.assignType==="staff" ? t.staffId===myStaff.id : t.shop===myStaff.shop))
-    && t.trangThai==="Đang giao"
+    isShopManager ? t.shop===myStaff.shop : (t.assignType==="staff" ? t.staffId===myStaff.id : t.shop===myStaff.shop)
   );
   // Nhắc việc đã quá hạn, hoặc sắp đến hạn trong vòng 24 giờ tới —
   // hiện ngay khi mở app, không cần bấm vào tab "Giao việc" mới thấy.
@@ -7210,6 +7457,37 @@ function TransferSuggestionsView(){
   const [catalogMeta, setCatalogMeta] = useState(null);
   const [uploadingCatalog, setUploadingCatalog] = useState(false);
   const [catalogMsg, setCatalogMsg] = useState(null);
+  // ===== Group A/B (Consumption Engine) — sub-tab riêng trong cùng trang Điều chuyển hàng hoá vì
+  // dùng chung nguồn dữ liệu (tồn kho + doanh số). Đọc "opsConfig/inventoryConsumptionSummary"
+  // (doc nhỏ tính sẵn) thay vì quét "inventoryMetrics" (có thể tới hàng nghìn dòng shop×SKU).
+  const [invSubTab, setInvSubTab] = useState("dieuchuyen");
+  const [consumptionSummary, setConsumptionSummary] = useState(null);
+  const [consumptionAnalyzing, setConsumptionAnalyzing] = useState(false);
+  useEffect(()=>{
+    const unsub = db.collection("opsConfig").doc("inventoryConsumptionSummary").onSnapshot(snap => setConsumptionSummary(snap.exists ? snap.data() : null));
+    return unsub;
+  }, []);
+  async function runConsumptionAnalyze(){
+    setConsumptionAnalyzing(true);
+    try{ await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeInventoryConsumptionNow"); }
+    catch(err){ /* im lặng — doc sẽ tự cập nhật qua onSnapshot nếu thành công */ }
+    setConsumptionAnalyzing(false);
+  }
+  // Danh sách SKU đang bị flag (H06/H09/H10) — chỉ tải khi mở sub-tab này, lọc thẳng theo trạng
+  // thái ở query (không phải quét toàn bộ inventoryMetrics rồi lọc ở trình duyệt).
+  const [flaggedItems, setFlaggedItems] = useState([]);
+  const [flaggedLoading, setFlaggedLoading] = useState(false);
+  const [flaggedStatus, setFlaggedStatus] = useState("URGENT_REPLENISH");
+  useEffect(()=>{
+    if(invSubTab!=="tocdo") return;
+    setFlaggedLoading(true);
+    db.collection("inventoryMetrics").where("stockStatus","==",flaggedStatus).limit(200).get()
+      .then(snap => setFlaggedItems(snap.docs.map(d=>d.data())))
+      .catch(err => { console.error("Lỗi tải danh sách SKU theo trạng thái:", err); setFlaggedItems([]); })
+      .finally(() => setFlaggedLoading(false));
+  }, [invSubTab, flaggedStatus]);
+  const SPEED_TREND_LABELS = { SURGE:"🔥 Tăng tốc mạnh", UP:"↑ Tăng", STABLE:"→ Ổn định", DOWN:"↓ Giảm", SHARP_DOWN:"🔻 Giảm mạnh", NO_SALE:"⚪ Không bán" };
+  const STOCK_STATUS_LABELS = { URGENT_REPLENISH:"🔴 Cần nhập gấp (H06)", REPLENISH_SOON:"🟠 Nên nhập sớm", OVERSTOCK:"🔴 Dư hàng (H09)", MONITOR_HIGH_STOCK:"🟠 Tồn cao, theo dõi", DEAD_STOCK:"⚫ Không bán 60 ngày (H10)" };
 
   useEffect(()=>{
     const unsub = db.collection("opsConfig").doc("productCatalogMeta").onSnapshot(snap => {
@@ -7314,6 +7592,7 @@ function TransferSuggestionsView(){
   const transfers = (data && data.transfers) || [];
   const leftoverShortage = (data && data.leftoverShortage) || [];
   const leftoverSurplus = (data && data.leftoverSurplus) || [];
+  const expiryTransfers = (data && data.expiryTransfers) || [];
   const shopErrors = data && data.shopErrors;
 
   // Sắp xếp theo đúng thứ tự nhà thuốc chuẩn của hệ thống (DEFAULT_SHOPS) thay vì sắp xếp chữ cái
@@ -7332,13 +7611,16 @@ function TransferSuggestionsView(){
 
   const sortedTransfers = transfers
     .filter(t => filterShop==="Tất cả" || t.fromShop===filterShop || t.toShop===filterShop)
-    .slice().sort((a,b) => byShop(a.toShop, b.toShop) || byShop(a.fromShop, b.fromShop));
+    .slice().sort((a,b) => ((a.priority==="P1"?0:1) - (b.priority==="P1"?0:1)) || byShop(a.toShop, b.toShop) || byShop(a.fromShop, b.fromShop));
   const sortedShortage = leftoverShortage
     .filter(s => filterShop==="Tất cả" || s.shopCode===filterShop)
     .slice().sort((a,b) => byShop(a.shopCode, b.shopCode));
   const sortedSurplus = leftoverSurplus
     .filter(s => filterShop==="Tất cả" || s.shopCode===filterShop)
     .slice().sort((a,b) => byShop(a.shopCode, b.shopCode));
+  const sortedExpiryTransfers = expiryTransfers
+    .filter(e => filterShop==="Tất cả" || e.fromShop===filterShop || (e.candidateDestinations||[]).some(d=>d.shopCode===filterShop))
+    .slice().sort((a,b) => a.daysToExpiry - b.daysToExpiry);
 
   const shopChipsBar = allShops.length>0 && React.createElement("div", { key:"chips", className:"card", style:{ marginBottom:20, padding:"12px 14px" } }, [
     React.createElement("div", { key:"lbl", style:{ fontSize:12, fontWeight:700, color:"var(--inkSoft)", marginBottom:8 } }, "Lọc theo nhà thuốc"),
@@ -7355,10 +7637,96 @@ function TransferSuggestionsView(){
     ),
   ]);
 
+  function renderConsumptionTab(){
+    if(!consumptionSummary){
+      return React.createElement("div", { key:"empty", className:"card" }, [
+        React.createElement("div", { key:"t", style:{ fontSize:13, color:"var(--inkSoft)", marginBottom:10 } }, "Chưa có dữ liệu tốc độ tiêu thụ — bấm nút bên dưới để tính lần đầu (có thể mất 1-2 phút)."),
+        React.createElement("button", { key:"btn", className:"btn btnPrimary", disabled:consumptionAnalyzing, onClick:runConsumptionAnalyze }, consumptionAnalyzing ? "Đang tính..." : "🔄 Tính ngay"),
+      ]);
+    }
+    const s = consumptionSummary;
+    const matrixRows = [["nhanh","Tốc độ nhanh"],["tb","Tốc độ trung bình"],["cham","Tốc độ chậm"]];
+    const matrixCols = [["thap","Tồn thấp"],["vua","Tồn vừa"],["cao","Tồn cao"]];
+    function matrixTone(tocKey, tonKey){
+      if(tocKey==="nhanh" && tonKey==="thap") return "🔴 Khẩn cấp";
+      if(tocKey==="tb" && tonKey==="thap") return "🟠 Bổ sung";
+      if(tocKey==="cham" && tonKey==="thap") return "🟡 Theo dõi";
+      if(tonKey==="vua") return tocKey==="cham" ? "🟠 Cảnh báo" : "🟢 Tốt";
+      if(tonKey==="cao") return tocKey==="cham" ? "🔴 Dư nghiêm trọng" : tocKey==="tb" ? "🔴 Dư" : "🟠 Theo dõi";
+      return "—";
+    }
+    return React.createElement("div", { key:"consumption" }, [
+      React.createElement("div", { key:"head", className:"card", style:{ marginBottom:16, display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10 } }, [
+        React.createElement("div", { key:"info", style:{ fontSize:12.5, color:"var(--inkSoft)" } },
+          `${fmtNum(s.totalSKU||0)} SKU×nhà thuốc đang theo dõi · tính lúc ${s.computedAt ? new Date(s.computedAt).toLocaleString("vi-VN") : "—"}`),
+        React.createElement("button", { key:"btn", className:"btn btnGhost", disabled:consumptionAnalyzing, onClick:runConsumptionAnalyze, style:{ fontSize:12, padding:"5px 12px" } }, consumptionAnalyzing ? "Đang tính..." : "↻ Tính lại"),
+      ]),
+
+      // Mục XV — Consumption Dashboard
+      React.createElement("div", { key:"dash", className:"card", style:{ marginBottom:16 } }, [
+        React.createElement("div", { key:"t", className:"cardTitle", style:{ marginBottom:10 } }, "Dashboard tốc độ tiêu thụ"),
+        React.createElement("div", { key:"row", style:{ display:"flex", flexWrap:"wrap", gap:20 } },
+          Object.keys(SPEED_TREND_LABELS).map(k => React.createElement("div", { key:k, style:{ minWidth:110 } }, [
+            React.createElement("div", { key:"n", style:{ fontSize:20, fontWeight:700 } }, fmtNum((s.bySpeedTrend||{})[k]||0)),
+            React.createElement("div", { key:"l", style:{ fontSize:11.5, color:"var(--inkSoft)" } }, SPEED_TREND_LABELS[k]),
+          ]))
+        ),
+      ]),
+
+      // Mục XVI — Consumption Matrix
+      React.createElement("div", { key:"matrix", className:"card", style:{ marginBottom:16 } }, [
+        React.createElement("div", { key:"t", className:"cardTitle", style:{ marginBottom:10 } }, "Ma trận Tồn kho × Tốc độ bán"),
+        React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+          React.createElement("thead",{key:"h"}, React.createElement("tr",null,
+            ["", ...matrixCols.map(c=>c[1])].map((h,i)=>React.createElement("th",{key:i},h)))),
+          React.createElement("tbody",{key:"b"}, matrixRows.map(([tocKey,tocLabel]) => React.createElement("tr",{key:tocKey}, [
+            React.createElement("td",{key:"row", style:{fontWeight:600}}, tocLabel),
+            ...matrixCols.map(([tonKey]) => {
+              const count = (s.matrix||{})[`${tocKey}|${tonKey}`] || 0;
+              return React.createElement("td",{key:tonKey}, `${matrixTone(tocKey,tonKey)} (${fmtNum(count)})`);
+            }),
+          ]))),
+        ])),
+      ]),
+
+      // Danh sách SKU bị flag theo trạng thái (H06/H09/H10) — chọn trạng thái để tải danh sách.
+      React.createElement("div", { key:"flagged", className:"card" }, [
+        React.createElement("div", { key:"h", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10, marginBottom:10 } }, [
+          React.createElement("div", { key:"t", className:"cardTitle" }, "Danh sách SKU theo trạng thái"),
+          React.createElement("select", { key:"sel", value:flaggedStatus, onChange:e=>setFlaggedStatus(e.target.value), style:{ fontSize:12.5, padding:"5px 8px", border:"1px solid var(--line)", borderRadius:8 } },
+            Object.keys(STOCK_STATUS_LABELS).map(k => React.createElement("option",{key:k,value:k}, `${STOCK_STATUS_LABELS[k]} (${(s.byStatus||{})[k]||0})`))),
+        ]),
+        flaggedLoading
+          ? React.createElement("div", { className:"emptyState" }, "Đang tải...")
+          : flaggedItems.length===0
+            ? React.createElement("div", { className:"emptyState" }, "Không có SKU nào ở trạng thái này.")
+            : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+                React.createElement("thead",{key:"h"}, React.createElement("tr",null,
+                  ["Mã hàng","Tên hàng","Nhà thuốc","Tồn","ADS 7 ngày","ADS 30 ngày","DOI (ngày)"].map((h,i)=>React.createElement("th",{key:i},h)))),
+                React.createElement("tbody",{key:"b"}, flaggedItems.map((it,i) => React.createElement("tr",{key:i}, [
+                  React.createElement("td",{key:"pid"}, it.productId),
+                  React.createElement("td",{key:"pn"}, it.productName),
+                  React.createElement("td",{key:"sh"}, it.shopCode),
+                  React.createElement("td",{key:"q"}, `${fmtNum(it.stockQty)} ${it.unit||""}`),
+                  React.createElement("td",{key:"a7"}, it.ads7),
+                  React.createElement("td",{key:"a30"}, it.ads30),
+                  React.createElement("td",{key:"doi"}, it.doi),
+                ]))),
+              ])),
+      ]),
+    ]);
+  }
+
   return React.createElement("div", null, [
     React.createElement("h2", { key:"t", className:"pagetitle" }, "Điều chuyển hàng hoá"),
     React.createElement("p", { key:"s", className:"pagesub" }, "Đề xuất chuyển hàng đang dư ở nhà thuốc này sang nhà thuốc đang thiếu — dựa trên tồn kho thật & tốc độ bán 30 ngày gần nhất."),
 
+    React.createElement("div", { key:"subtabs", style:{ display:"flex", gap:6, marginBottom:16, borderBottom:"1px solid var(--line)" } }, [
+      React.createElement("button", { key:"dc", onClick:()=>setInvSubTab("dieuchuyen"), style:{ padding:"8px 4px", fontSize:13, fontWeight:600, border:"none", background:"transparent", cursor:"pointer", color: invSubTab==="dieuchuyen" ? "var(--pine)" : "var(--inkSoft)", borderBottom: invSubTab==="dieuchuyen" ? "2px solid var(--pine)" : "2px solid transparent", marginRight:16 } }, "Điều chuyển"),
+      React.createElement("button", { key:"td", onClick:()=>setInvSubTab("tocdo"), style:{ padding:"8px 4px", fontSize:13, fontWeight:600, border:"none", background:"transparent", cursor:"pointer", color: invSubTab==="tocdo" ? "var(--pine)" : "var(--inkSoft)", borderBottom: invSubTab==="tocdo" ? "2px solid var(--pine)" : "2px solid transparent" } }, "📉 Tốc độ tiêu thụ"),
+    ]),
+
+    invSubTab !== "dieuchuyen" ? renderConsumptionTab() : React.createElement(React.Fragment, { key:"dctab" }, [
     React.createElement("div", { key:"top", className:"card", style:{ marginBottom:20 } }, [
       React.createElement("div", { key:"row", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:12 } }, [
         React.createElement("div", { key:"info" },
@@ -7413,9 +7781,31 @@ function TransferSuggestionsView(){
               React.createElement("td",{key:"q"}, `${fmtNum(t.qty)} ${t.unit||""}`),
               React.createElement("td",{key:"fd"}, `${fmtNum(t.fromDaysStock)} ngày bán`),
               React.createElement("td",{key:"td"}, `${fmtNum(t.toDaysStock)} ngày bán`),
-              React.createElement("td",{key:"note"}, t.toIsRequired ? StatusPill("Hàng thường trực","warn") : "—"),
+              React.createElement("td",{key:"note"}, [
+                t.priority==="P1" && StatusPill("🔥 P1 — nơi nhận bán nhanh","warn"),
+                t.toIsRequired && StatusPill("Hàng thường trực","warn"),
+                !t.priority && !t.toIsRequired && "—",
+              ]),
             ]))),
           ])),
+    ]),
+
+    sortedExpiryTransfers.length > 0 && React.createElement("div", { key:"secExpiry", className:"card", style:{ marginBottom:20, borderColor:"var(--clay)" } }, [
+      React.createElement("div", { key:"t", className:"cardTitle" }, `⏰ Hàng sắp hết hạn — nơi khác đang bán nhanh (${sortedExpiryTransfers.length})`),
+      React.createElement("div", { key:"sub", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } },
+        "Chỉ là GỢI Ý để xem xét — tự kiểm tra điều kiện bảo quản/quy định trước khi chuyển thật, hệ thống không tự ghép số lượng như bảng điều chuyển ở trên."),
+      React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+        React.createElement("thead",{key:"h"}, React.createElement("tr",null,
+          ["Mã hàng","Tên hàng","Đang ở","Tồn","Còn hạn","Gợi ý chuyển tới (bán nhanh nhất)"].map((h,i)=>React.createElement("th",{key:i},h)))),
+        React.createElement("tbody",{key:"b"}, sortedExpiryTransfers.map((e,i) => React.createElement("tr",{key:i}, [
+          React.createElement("td",{key:"pid"}, e.productId),
+          React.createElement("td",{key:"pn"}, e.productName),
+          React.createElement("td",{key:"sh"}, e.fromShop),
+          React.createElement("td",{key:"q"}, `${fmtNum(e.qty)} ${e.unit||""}`),
+          React.createElement("td",{key:"exp"}, StatusPill(`${e.daysToExpiry} ngày`, "warn")),
+          React.createElement("td",{key:"dest"}, (e.candidateDestinations||[]).map(d=>`${d.shopCode} (~${d.ads7}/ngày)`).join(", ")),
+        ]))),
+      ])),
     ]),
 
     React.createElement("div", { key:"secShort", className:"card", style:{ marginBottom:20 } }, [
@@ -7451,6 +7841,7 @@ function TransferSuggestionsView(){
               React.createElement("td",{key:"d"}, `${fmtNum(s.daysOfStock)} ngày bán`),
             ]))),
           ])),
+    ]),
     ]),
   ]);
 }
