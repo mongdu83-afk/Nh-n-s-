@@ -3810,8 +3810,10 @@ function CrmView({ isAdmin, myStaff }){
   }, []);
   async function refreshCampaignStats(){
     setCampaignRefreshing(true);
-    try{ await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeCrmCampaignStatsNow"); }
-    catch(err){ /* im lặng — doc sẽ tự cập nhật qua onSnapshot nếu thành công */ }
+    try{
+      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeCrmCampaignStatsNow");
+      if(!resp.ok){ const t = await resp.text().catch(()=> ""); alert(`Tính lại thất bại (mã lỗi ${resp.status}). ${t.slice(0,300)}`); }
+    } catch(err){ alert(`Lỗi kết nối khi tính lại: ${err && err.message ? err.message : err}`); }
     setCampaignRefreshing(false);
   }
   // Tên rule dễ đọc cho trang Chiến dịch — khớp với sourceId trong index.js (createCrmTask).
@@ -3833,8 +3835,10 @@ function CrmView({ isAdmin, myStaff }){
   }, []);
   async function refreshBehaviorStats(){
     setBehaviorRefreshing(true);
-    try{ await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeBehaviorAnalyticsNow"); }
-    catch(err){ /* im lặng — doc sẽ tự cập nhật qua onSnapshot nếu thành công */ }
+    try{
+      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeBehaviorAnalyticsNow");
+      if(!resp.ok){ const t = await resp.text().catch(()=> ""); alert(`Tính lại thất bại (mã lỗi ${resp.status}). ${t.slice(0,300)}`); }
+    } catch(err){ alert(`Lỗi kết nối khi tính lại: ${err && err.message ? err.message : err}`); }
     setBehaviorRefreshing(false);
   }
   const DOW_NAMES = ["CN","T2","T3","T4","T5","T6","T7"];
@@ -7514,8 +7518,10 @@ function TransferSuggestionsView(){
   }, []);
   async function runConsumptionAnalyze(){
     setConsumptionAnalyzing(true);
-    try{ await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeInventoryConsumptionNow"); }
-    catch(err){ /* im lặng — doc sẽ tự cập nhật qua onSnapshot nếu thành công */ }
+    try{
+      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeInventoryConsumptionNow");
+      if(!resp.ok){ const t = await resp.text().catch(()=> ""); alert(`Tính lại thất bại (mã lỗi ${resp.status}). ${t.slice(0,300)}`); }
+    } catch(err){ alert(`Lỗi kết nối khi tính lại: ${err && err.message ? err.message : err}`); }
     setConsumptionAnalyzing(false);
   }
   // Danh sách SKU đang bị flag (H06/H09/H10) — chỉ tải khi mở sub-tab này, lọc thẳng theo trạng
