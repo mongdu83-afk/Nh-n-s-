@@ -7234,45 +7234,70 @@ function MetricTile({ label, block, fmt, tint, showProjected }){
     sub: `Target ${fmt(block.target||0)} · ${fmtPct(block.pct)}` + (showProjected ? ` · Dự kiến ${fmtPct(block.projectedPct)}` : ""),
   });
 }
+function PercentTile({ label, pct, sub, tint }){
+  return React.createElement(StatTile, { label, tint, value: fmtPct(pct), sub });
+}
+// 3 thẻ "hero" theo đúng bố cục app Dashboard cũ: giá trị thực tế — tỷ lệ hoàn thành — tỷ lệ dự kiến.
+function TargetHeroTiles({ label, block, fmt, tint, unitLabel }){
+  fmt = fmt || fmtVND;
+  return React.createElement("div", { style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:10, marginBottom:14 } }, [
+    React.createElement(StatTile, { key:"actual", label, value: fmt(block.actual||0), sub: unitLabel, tint }),
+    React.createElement(PercentTile, { key:"pct", label:"Tỷ lệ hoàn thành", pct: block.pct, sub:`Target ${fmt(block.target||0)}`, tint }),
+    React.createElement(PercentTile, { key:"proj", label:"Tỷ lệ dự kiến hoàn thành", pct: block.projectedPct, sub:`Dự kiến ${fmt(block.projected||0)}`, tint }),
+  ]);
+}
 function MonthTargetTiles({ row }){
+  const hhsPctOfRevenue = row.revenue.actual ? Math.round((row.hangHeSo.actual||0)/row.revenue.actual*1000)/10 : 0;
   return React.createElement("div", {}, [
-    React.createElement("div", { key:"g1", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:10, marginBottom:14 } }, [
-      React.createElement(MetricTile, { key:"rev", label:"Tổng doanh thu", block:row.revenue, showProjected:true }),
-      React.createElement(MetricTile, { key:"hhs", label:"Doanh thu hàng hệ số (HHS)", block:row.hangHeSo, showProjected:true, tint:"var(--amberSoft)" }),
-      React.createElement(StatTile, { key:"qhhs", label:"Số lượng SP hàng hệ số", value: fmtNum(row.quantityHHS||0), tint:"var(--amberSoft)" }),
-    ]),
-    React.createElement("div", { key:"g2", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:10 } }, [
-      React.createElement(MetricTile, { key:"cus", label:"Tổng khách hàng", block:row.customers, fmt:fmtNum }),
-      React.createElement(MetricTile, { key:"cusn", label:"Khách hàng mới", block:row.customersNew, fmt:fmtNum }),
-      React.createElement(MetricTile, { key:"cuso", label:"Khách hàng cũ", block:row.customersOld, fmt:fmtNum }),
-      React.createElement(MetricTile, { key:"inv", label:"Số đơn (Bill)", block:row.invoice, fmt:fmtNum },),
-      React.createElement(MetricTile, { key:"tbb", label:"Trung bình Bill (TBB)", block:row.tbb }),
+    React.createElement(TargetHeroTiles, { key:"rev", label:"Tổng doanh thu", block:row.revenue, tint:"var(--pineSoft)", unitLabel: `${fmtNum(row.customers.actual||0)} khách hàng` }),
+    React.createElement("div", { key:"hhsTitle", style:{ fontWeight:700, fontSize:13, margin:"4px 0 10px" } }, "Doanh thu & điểm thưởng hàng hệ số"),
+    React.createElement(TargetHeroTiles, { key:"hhs", label:"Doanh thu hàng hệ số (HHS)", block:row.hangHeSo, tint:"var(--amberSoft)", unitLabel: `${hhsPctOfRevenue}% tổng doanh thu` }),
+    React.createElement("div", { key:"g3", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:10 } }, [
+      React.createElement(StatTile, { key:"cus", label:"Tổng khách hàng", value: fmtNum(row.customers.actual||0), sub:`Mới ${fmtNum(row.customersNew.actual||0)} · Cũ ${fmtNum(row.customersOld.actual||0)}` }),
+      React.createElement(StatTile, { key:"inv", label:"Số đơn (Bill)", value: fmtNum(row.invoice.actual||0), sub:`Target ${fmtNum(row.invoice.target||0)}` }),
+      React.createElement(StatTile, { key:"tbb", label:"Trung bình Bill (TBB)", value: fmtVND(row.tbb.actual||0) }),
+      React.createElement(StatTile, { key:"qhhs", label:"Số lượng SP hàng hệ số", value: fmtNum(row.quantityHHS||0) }),
     ]),
   ]);
 }
+// Bố cục bảng theo đúng app Dashboard cũ: 4 nhóm cột màu riêng (Doanh thu/Hàng hệ số/TBB/Bill),
+// mỗi nhóm 5 cột con Thực tế/Target/TL đạt/Dự kiến/TL dự kiến.
+const TARGET_TABLE_GROUPS = {
+  revenue:  { label:"Doanh thu",   tint:"var(--pineSoft)", head:"#15803D", fmt:null },
+  hangHeSo: { label:"Hàng hệ số",  tint:"var(--amberSoft)", head:"#B45309", fmt:null },
+  tbb:      { label:"TBB",         tint:"#EDE7F9",          head:"#6D28D9", fmt:null },
+  invoice:  { label:"Bill",        tint:"#DCEEFB",          head:"#1D4ED8", fmt:"num" },
+};
 function TargetCompletionTable({ mt, shops }){
+  const groupKeys = ["revenue","hangHeSo","tbb","invoice"];
+  const subLabels = ["Thực tế","Target","TL đạt","Dự kiến","TL dự kiến"];
+  const fmtFor = key => TARGET_TABLE_GROUPS[key].fmt==="num" ? fmtNum : fmtVND;
   const cell = (v, style) => React.createElement("td", { style:{ padding:"6px 8px", fontSize:11.5, textAlign:"right", ...style } }, v);
-  const th = (v, span) => React.createElement("th", { colSpan:span, style:{ padding:"6px 8px", fontSize:11, textTransform:"uppercase", color:"var(--inkSoft)", borderBottom:"1px solid var(--line)" } }, v);
-  const rows = [{ label:"TOÀN CHUỖI", ...mt.chain, strong:true }, ...shops.map(s=>({ label:s, ...(mt.byShop[s]||{ revenue:{}, hangHeSo:{}, customers:{}, invoice:{}, tbb:{} }) }))];
+  const groupHead = key => React.createElement("th", { key, colSpan:5, style:{ padding:"7px 8px", fontSize:11, textTransform:"uppercase", fontWeight:700, letterSpacing:.03, color: TARGET_TABLE_GROUPS[key].head, background: TARGET_TABLE_GROUPS[key].tint, borderBottom:"1px solid var(--line)" } }, TARGET_TABLE_GROUPS[key].label);
+  const subHead = (label, key, i) => React.createElement("th", { key:key+i, style:{ padding:"5px 8px", fontSize:10, color: TARGET_TABLE_GROUPS[key].head, fontWeight:600, background:"var(--card)", borderBottom:"1px solid var(--line)" } }, label);
+  const rows = [{ label:"TỔNG TOÀN KHU VỰC", ...mt.chain, strong:true }, ...shops.map(s=>({ label:s, ...(mt.byShop[s]||{ revenue:{}, hangHeSo:{}, customers:{}, invoice:{}, tbb:{} }) }))];
   return React.createElement("div", { style:{ overflowX:"auto" } },
-    React.createElement("table", { style:{ borderCollapse:"collapse", width:"100%", minWidth:960 } }, [
+    React.createElement("table", { style:{ borderCollapse:"collapse", width:"100%", minWidth:1180 } }, [
       React.createElement("thead", { key:"h" }, [
         React.createElement("tr", { key:"r1" }, [
-          React.createElement("th", { rowSpan:2, style:{ padding:"6px 8px", fontSize:11, textAlign:"left", borderBottom:"1px solid var(--line)" } }, "Nhà thuốc"),
-          th("Doanh thu", 3), th("Hàng hệ số", 3), th("Khách hàng", 3), th("Số đơn", 3), th("TBB", 2),
+          React.createElement("th", { key:"lbl", rowSpan:2, style:{ padding:"6px 8px", fontSize:11, textAlign:"left", verticalAlign:"bottom", borderBottom:"1px solid var(--line)" } }, "Cửa hàng"),
+          ...groupKeys.map(groupHead),
         ]),
-        React.createElement("tr", { key:"r2" }, [
-          "Thực tế","Target","TL đạt","Thực tế","Target","TL đạt","Thực tế","Target","TL đạt","Thực tế","Target","TL đạt","Thực tế","Target",
-        ].map((h,i)=>React.createElement("th", { key:i, style:{ padding:"4px 8px", fontSize:10.5, color:"var(--inkSoft)", fontWeight:600, borderBottom:"1px solid var(--line)" } }, h))),
+        React.createElement("tr", { key:"r2" }, groupKeys.flatMap(key => subLabels.map((l,i)=>subHead(l,key,i)))),
       ]),
       React.createElement("tbody", { key:"b" },
         rows.map(r => React.createElement("tr", { key:r.label, style:{ fontWeight: r.strong?700:400, background: r.strong?"var(--paper)":"transparent" } }, [
           React.createElement("td", { key:"lbl", style:{ padding:"6px 8px", fontSize:12 } }, r.label),
-          cell(fmtVND(r.revenue.actual||0)), cell(fmtVND(r.revenue.target||0)), cell(fmtPct(r.revenue.pct), { color:pctColor(r.revenue.pct), fontWeight:700 }),
-          cell(fmtVND(r.hangHeSo.actual||0)), cell(fmtVND(r.hangHeSo.target||0)), cell(fmtPct(r.hangHeSo.pct), { color:pctColor(r.hangHeSo.pct), fontWeight:700 }),
-          cell(fmtNum(r.customers.actual||0)), cell(fmtNum(r.customers.target||0)), cell(fmtPct(r.customers.pct), { color:pctColor(r.customers.pct), fontWeight:700 }),
-          cell(fmtNum(r.invoice.actual||0)), cell(fmtNum(r.invoice.target||0)), cell(fmtPct(r.invoice.pct), { color:pctColor(r.invoice.pct), fontWeight:700 }),
-          cell(fmtVND(r.tbb.actual||0)), cell(fmtVND(r.tbb.target||0)),
+          ...groupKeys.flatMap(key => {
+            const b = r[key] || {}, fmt = fmtFor(key);
+            return [
+              cell(fmt(b.actual||0)),
+              cell(fmt(b.target||0)),
+              cell(fmtPct(b.pct), { color:pctColor(b.pct), fontWeight:700 }),
+              cell(fmt(b.projected||0)),
+              cell(fmtPct(b.projectedPct), { color:pctColor(b.projectedPct), fontWeight:700 }),
+            ];
+          }),
         ]))
       ),
     ])
