@@ -7263,67 +7263,53 @@ function MonthTargetTiles({ row }){
 // Bố cục bảng theo đúng app Dashboard cũ: 4 nhóm cột màu riêng (Doanh thu/Hàng hệ số/TBB/Bill),
 // mỗi nhóm 5 cột con Thực tế/Target/TL đạt/Dự kiến/TL dự kiến. Màu nền đậm (không phải tint nhạt)
 // ở hàng tiêu đề nhóm để tương phản rõ, viền dày phân cách giữa các nhóm.
+// TBB và Bill chỉ có 2 cột (Thực tế/Target) như đúng bản gốc app Dashboard — Doanh thu/Hàng hệ số
+// mới có đủ 5 cột (Thực tế/Target/TL đạt/Dự kiến/TL dự kiến). Trước đó để cả 4 nhóm 5 cột làm
+// bảng quá rộng (20 cột dữ liệu), phải cuộn ngang mới thấy TBB/Bill — thu gọn lại để hiện đủ luôn
+// không cần cuộn, đúng góp ý của quản lý.
 const TARGET_TABLE_GROUPS = {
-  revenue:  { label:"Doanh thu",  solid:"#16A34A", tint:"#DCF5E3", head:"#0F5C2C", fmt:null },
-  hangHeSo: { label:"Hàng hệ số", solid:"#D97706", tint:"#FBE9CC", head:"#8A4B06", fmt:null },
-  tbb:      { label:"TBB",        solid:"#7C3AED", tint:"#EDE3FB", head:"#4C1D95", fmt:null },
-  invoice:  { label:"Bill",       solid:"#2563EB", tint:"#DCEAFB", head:"#1E3A8A", fmt:"num" },
+  revenue:  { label:"Doanh thu",  solid:"#16A34A", tint:"#DCF5E3", head:"#0F5C2C", fmt:null, cols:5 },
+  hangHeSo: { label:"Hàng hệ số", solid:"#D97706", tint:"#FBE9CC", head:"#8A4B06", fmt:null, cols:5 },
+  tbb:      { label:"TBB",        solid:"#7C3AED", tint:"#EDE3FB", head:"#4C1D95", fmt:null, cols:2 },
+  invoice:  { label:"Bill",       solid:"#2563EB", tint:"#DCEAFB", head:"#1E3A8A", fmt:"num", cols:2 },
 };
 function TargetCompletionTable({ mt, shops }){
   const groupKeys = ["revenue","hangHeSo","tbb","invoice"];
-  const subLabels = ["Thực tế","Target","TL đạt","Dự kiến","TL dự kiến"];
+  const subLabelsFull = ["Thực tế","Target","TL đạt","Dự kiến","TL dự kiến"];
+  const subLabelsFor = key => subLabelsFull.slice(0, TARGET_TABLE_GROUPS[key].cols);
   const fmtFor = key => TARGET_TABLE_GROUPS[key].fmt==="num" ? fmtNum : fmtVND;
   const groupBorder = key => ({ borderRight:`2px solid ${TARGET_TABLE_GROUPS[key].solid}` });
   const cell = (v, style) => React.createElement("td", { style:{ padding:"7px 9px", fontSize:12, textAlign:"right", borderBottom:"1px solid var(--line)", ...style } }, v);
-  const groupHead = key => React.createElement("th", { key, colSpan:5, style:{ padding:"8px 8px", fontSize:11.5, textTransform:"uppercase", fontWeight:800, letterSpacing:.04, color:"#fff", background: TARGET_TABLE_GROUPS[key].solid, ...groupBorder(key) } }, TARGET_TABLE_GROUPS[key].label);
-  const subHead = (label, key, i) => React.createElement("th", { key:key+i, style:{ padding:"6px 9px", fontSize:10.5, color: TARGET_TABLE_GROUPS[key].head, fontWeight:700, background: TARGET_TABLE_GROUPS[key].tint, borderBottom:"2px solid var(--line)", ...(i===4?groupBorder(key):{}) } }, label);
+  const groupHead = key => React.createElement("th", { key, colSpan:TARGET_TABLE_GROUPS[key].cols, style:{ padding:"8px 8px", fontSize:11.5, textTransform:"uppercase", fontWeight:800, letterSpacing:.04, color:"#fff", background: TARGET_TABLE_GROUPS[key].solid, ...groupBorder(key) } }, TARGET_TABLE_GROUPS[key].label);
+  const subHead = (label, key, i, n) => React.createElement("th", { key:key+i, style:{ padding:"6px 9px", fontSize:10.5, color: TARGET_TABLE_GROUPS[key].head, fontWeight:700, background: TARGET_TABLE_GROUPS[key].tint, borderBottom:"2px solid var(--line)", ...(i===n-1?groupBorder(key):{}) } }, label);
   const rows = [{ label:"TỔNG TOÀN KHU VỰC", ...mt.chain, strong:true }, ...shops.map(s=>({ label:s, ...(mt.byShop[s]||{ revenue:{}, hangHeSo:{}, customers:{}, invoice:{}, tbb:{} }) }))];
-  return React.createElement("div", { className:"card", style:{ overflowX:"auto", padding:0 } },
-    React.createElement("table", { style:{ borderCollapse:"collapse", width:"100%", minWidth:1760 } }, [
+  return React.createElement("div", { className:"card", style:{ overflowX:"auto", maxWidth:"100%", padding:0 } },
+    React.createElement("table", { style:{ borderCollapse:"collapse", minWidth:"100%", width:"max-content" } }, [
       React.createElement("thead", { key:"h" }, [
         React.createElement("tr", { key:"r1" }, [
           React.createElement("th", { key:"lbl", rowSpan:2, style:{ padding:"8px 10px", fontSize:11.5, textAlign:"left", verticalAlign:"bottom", background:"var(--paper)", borderBottom:"2px solid var(--line)" } }, "Cửa hàng"),
           ...groupKeys.map(groupHead),
         ]),
-        React.createElement("tr", { key:"r2" }, groupKeys.flatMap(key => subLabels.map((l,i)=>subHead(l,key,i)))),
+        React.createElement("tr", { key:"r2" }, groupKeys.flatMap(key => subLabelsFor(key).map((l,i,arr)=>subHead(l,key,i,arr.length)))),
       ]),
       React.createElement("tbody", { key:"b" },
         rows.map((r,ri) => React.createElement("tr", { key:r.label, style:{ fontWeight: r.strong?700:400, background: r.strong?"#F0FBF3":(ri%2===0?"var(--card)":"var(--paper)") } }, [
           React.createElement("td", { key:"lbl", style:{ padding:"7px 10px", fontSize:12.5, borderBottom:"1px solid var(--line)" } }, r.label),
           ...groupKeys.flatMap(key => {
-            const b = r[key] || {}, fmt = fmtFor(key);
-            return [
+            const b = r[key] || {}, fmt = fmtFor(key), n = TARGET_TABLE_GROUPS[key].cols;
+            const full = [
               cell(fmt(b.actual||0)),
               cell(fmt(b.target||0)),
               cell(fmtPct(b.pct), { color:pctColor(b.pct), fontWeight:800 }),
               cell(fmt(b.projected||0)),
-              cell(fmtPct(b.projectedPct), { color:pctColor(b.projectedPct), fontWeight:800, ...groupBorder(key) }),
-            ];
+              cell(fmtPct(b.projectedPct), { color:pctColor(b.projectedPct), fontWeight:800 }),
+            ].slice(0, n);
+            full[n-1] = React.cloneElement(full[n-1], { style:{ ...full[n-1].props.style, ...groupBorder(key) } });
+            return full;
           }),
         ]))
       ),
     ])
-  );
-}
-// Danh sách "hàng hệ số" theo từng sản phẩm — nối từ API danh mục (Ratio hệ số, Policy/
-// GetPointSalesMore) với chi tiết đơn bán trong tháng (externalSalesLines), tính THẲNG từ server
-// (xem buildHhsBreakdown ở index.js) — KHÔNG nhập tay danh mục sản phẩm như trước.
-function HhsBreakdownList({ list }){
-  if(!list || list.length===0) return React.createElement("div", { className:"card", style:{ fontSize:12.5, color:"var(--inkSoft)" } }, "Chưa có dữ liệu sản phẩm hàng hệ số tháng này — cần chạy đồng bộ danh mục (\"syncPointSalesProductsNow\") ít nhất 1 lần.");
-  const max = Math.max(...list.map(p=>p.revenue), 1);
-  return React.createElement("div", { className:"card" },
-    list.map((p,i) => React.createElement("div", { key:p.productID, style:{ marginBottom: i===list.length-1?0:10 } }, [
-      React.createElement("div", { key:"lbl", style:{ display:"flex", justifyContent:"space-between", fontSize:12, marginBottom:2, gap:8 } }, [
-        React.createElement("span", { key:"n" }, [
-          p.productName || p.productID,
-          " ",
-          React.createElement("span", { key:"r", style:{ color:"var(--amber)", fontWeight:700 } }, `×${p.ratio}`),
-        ]),
-        React.createElement("span", { key:"q", style:{ color:"var(--inkSoft)", whiteSpace:"nowrap" } }, `${fmtVND(p.revenue)} · SL ${fmtNum(p.quantity)}`),
-      ]),
-      React.createElement("div", { key:"bar", style:{ height:6, borderRadius:3, background:"var(--amberSoft)" } },
-        React.createElement("div", { style:{ height:"100%", width:`${(p.revenue/max)*100}%`, background:"var(--amber)", borderRadius:3 } })),
-    ]))
   );
 }
 function RevenueMucTieu({ stats, isAdmin, shopFilter, isAll }){
@@ -7342,10 +7328,6 @@ function RevenueMucTieu({ stats, isAdmin, shopFilter, isAll }){
     isAll && React.createElement("div", { key:"table", style:{ marginTop:16 } }, [
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, "Tỷ lệ hoàn thành target theo cửa hàng"),
       React.createElement(TargetCompletionTable, { key:"tbl", mt, shops: DEFAULT_SHOPS }),
-    ]),
-    React.createElement("div", { key:"hhs", style:{ marginTop:16 } }, [
-      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, `Danh sách hàng hệ số${!isAll?` — ${shopFilter}`:" (toàn chuỗi)"}`),
-      React.createElement(HhsBreakdownList, { key:"list", list: row.hhsBreakdown }),
     ]),
   ]);
 }
@@ -7407,7 +7389,7 @@ function RevenueAnalyticsView({ isAdmin, myStaff }){
   const shopFilter = isAdmin ? adminShop : (myStaff && myStaff.shop);
   const isAll = !shopFilter || shopFilter==="Tất cả";
   const subTabs = [ { id:"theoky", label:"Theo kỳ" }, { id:"sosanh", label:"So sánh theo kỳ" }, { id:"nganh", label:"Theo ngành" } ];
-  return React.createElement("div", { style:{ maxWidth:1100, margin:"0 auto", padding:16 } }, [
+  return React.createElement("div", { style:{ maxWidth:1100, margin:"0 auto", padding:16, overflowX:"hidden" } }, [
     React.createElement("h2", { key:"title", className:"pagetitle" }, "Doanh thu"),
     React.createElement(RevenueRefreshButton, { key:"rb", refreshing, onRefresh:refresh, computedAt: stats && stats.computedAt }),
     !stats ? React.createElement("div", { key:"empty", className:"card", style:{ fontSize:13, color:"var(--inkSoft)" } }, "Chưa có dữ liệu — bấm \"Tính lại\" ở trên.")
