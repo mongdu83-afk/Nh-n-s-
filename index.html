@@ -7201,47 +7201,141 @@ function StatTile({ label, value, sub, tint }){
     sub && React.createElement("div", { key:"s", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:4 } }, sub),
   ]);
 }
-function RevenuePeriodPicker({ period, setPeriod }){
-  const opts = [ { id:"today", label:"Hôm nay" }, { id:"7", label:"7 ngày qua" }, { id:"30", label:"30 ngày qua" } ];
-  return React.createElement("div", { style:{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap" } },
-    opts.map(o => React.createElement("button", {
-      key:o.id, type:"button", onClick:()=>setPeriod(o.id),
-      style:{ padding:"6px 14px", borderRadius:20, border:"1px solid var(--line)", fontSize:12.5, fontWeight:600, cursor:"pointer",
-        background: period===o.id ? "var(--ink)" : "#fff", color: period===o.id ? "#fff" : "var(--ink)" },
-    }, o.label))
+function RevenueDateRangePicker({ from, to, setFrom, setTo }){
+  return React.createElement("div", { style:{ display:"flex", gap:10, alignItems:"center", marginBottom:6, flexWrap:"wrap" } }, [
+    React.createElement("label", { key:"lf", style:{ fontSize:12, color:"var(--inkSoft)" } }, "Từ ngày"),
+    React.createElement("input", { key:"f", type:"date", value:from, max:to, onChange:e=>e.target.value && setFrom(e.target.value), style:{ padding:"5px 8px", border:"1px solid var(--line)", borderRadius:8, fontSize:12.5 } }),
+    React.createElement("label", { key:"lt", style:{ fontSize:12, color:"var(--inkSoft)" } }, "Đến ngày"),
+    React.createElement("input", { key:"t", type:"date", value:to, min:from, max:todayISO(), onChange:e=>e.target.value && setTo(e.target.value), style:{ padding:"5px 8px", border:"1px solid var(--line)", borderRadius:8, fontSize:12.5 } }),
+  ]);
+}
+function sumDayRange(map, from, to){
+  let sum = 0, d = from, guard = 0;
+  while(d<=to && guard<400){ sum += (map && map[d]) || 0; d = addDays(d,1); guard++; }
+  return sum;
+}
+// ===== Chỉ tiêu tháng vs thực tế (19/9/2026) — port lại đúng nội dung/bố cục tab "Doanh thu" của
+// app Dashboard cũ (thẻ số liệu, "hàng hệ số", tỷ lệ hoàn thành/dự kiến hoàn thành, bảng theo cửa
+// hàng), NHƯNG số liệu thực tế lấy từ dữ liệu API đã đồng bộ (opsConfig/revenueAnalytics.monthTracking,
+// backend tự tính) thay vì phải tải file Excel. Chỉ tiêu (target) và danh mục "hàng hệ số" là số
+// liệu KẾ HOẠCH do quản lý tự đặt (không có nguồn API nào cung cấp) nên vẫn cần nhập tay — thay
+// bằng 1 form nhập số đơn giản ngay trong app thay vì phải soạn file Excel đúng mẫu như trước.
+function fmtMonthLabel(ym){ if(!ym) return "—"; const [y,m] = ym.split("-"); return `Tháng ${Number(m)}/${y}`; }
+function pctColor(pct){ if(pct==null) return "var(--inkSoft)"; return pct>=100 ? "var(--pine)" : pct>=70 ? "var(--amber)" : "#b3261e"; }
+function fmtPct(pct){ return pct==null ? "—" : `${pct}%`; }
+// row.<metric> có dạng { target, actual, pct, projected, projectedPct } (metricBlock ở backend),
+// lấy THẲNG từ API "GetShopPlanByTime" (Amount/AmountR, PointSales01/PointSales01R...) — không
+// còn tự tính hay phải nhập tay nữa.
+function MetricTile({ label, block, fmt, tint, showProjected }){
+  fmt = fmt || fmtVND;
+  return React.createElement(StatTile, {
+    label, tint,
+    value: fmt(block.actual||0),
+    sub: `Target ${fmt(block.target||0)} · ${fmtPct(block.pct)}` + (showProjected ? ` · Dự kiến ${fmtPct(block.projectedPct)}` : ""),
+  });
+}
+function MonthTargetTiles({ row }){
+  return React.createElement("div", {}, [
+    React.createElement("div", { key:"g1", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:10, marginBottom:14 } }, [
+      React.createElement(MetricTile, { key:"rev", label:"Tổng doanh thu", block:row.revenue, showProjected:true }),
+      React.createElement(MetricTile, { key:"hhs", label:"Doanh thu hàng hệ số (HHS)", block:row.hangHeSo, showProjected:true, tint:"var(--amberSoft)" }),
+      React.createElement(StatTile, { key:"qhhs", label:"Số lượng SP hàng hệ số", value: fmtNum(row.quantityHHS||0), tint:"var(--amberSoft)" }),
+    ]),
+    React.createElement("div", { key:"g2", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:10 } }, [
+      React.createElement(MetricTile, { key:"cus", label:"Tổng khách hàng", block:row.customers, fmt:fmtNum }),
+      React.createElement(MetricTile, { key:"cusn", label:"Khách hàng mới", block:row.customersNew, fmt:fmtNum }),
+      React.createElement(MetricTile, { key:"cuso", label:"Khách hàng cũ", block:row.customersOld, fmt:fmtNum }),
+      React.createElement(MetricTile, { key:"inv", label:"Số đơn (Bill)", block:row.invoice, fmt:fmtNum },),
+      React.createElement(MetricTile, { key:"tbb", label:"Trung bình Bill (TBB)", block:row.tbb }),
+    ]),
+  ]);
+}
+function TargetCompletionTable({ mt, shops }){
+  const cell = (v, style) => React.createElement("td", { style:{ padding:"6px 8px", fontSize:11.5, textAlign:"right", ...style } }, v);
+  const th = (v, span) => React.createElement("th", { colSpan:span, style:{ padding:"6px 8px", fontSize:11, textTransform:"uppercase", color:"var(--inkSoft)", borderBottom:"1px solid var(--line)" } }, v);
+  const rows = [{ label:"TOÀN CHUỖI", ...mt.chain, strong:true }, ...shops.map(s=>({ label:s, ...(mt.byShop[s]||{ revenue:{}, hangHeSo:{}, customers:{}, invoice:{}, tbb:{} }) }))];
+  return React.createElement("div", { style:{ overflowX:"auto" } },
+    React.createElement("table", { style:{ borderCollapse:"collapse", width:"100%", minWidth:960 } }, [
+      React.createElement("thead", { key:"h" }, [
+        React.createElement("tr", { key:"r1" }, [
+          React.createElement("th", { rowSpan:2, style:{ padding:"6px 8px", fontSize:11, textAlign:"left", borderBottom:"1px solid var(--line)" } }, "Nhà thuốc"),
+          th("Doanh thu", 3), th("Hàng hệ số", 3), th("Khách hàng", 3), th("Số đơn", 3), th("TBB", 2),
+        ]),
+        React.createElement("tr", { key:"r2" }, [
+          "Thực tế","Target","TL đạt","Thực tế","Target","TL đạt","Thực tế","Target","TL đạt","Thực tế","Target","TL đạt","Thực tế","Target",
+        ].map((h,i)=>React.createElement("th", { key:i, style:{ padding:"4px 8px", fontSize:10.5, color:"var(--inkSoft)", fontWeight:600, borderBottom:"1px solid var(--line)" } }, h))),
+      ]),
+      React.createElement("tbody", { key:"b" },
+        rows.map(r => React.createElement("tr", { key:r.label, style:{ fontWeight: r.strong?700:400, background: r.strong?"var(--paper)":"transparent" } }, [
+          React.createElement("td", { key:"lbl", style:{ padding:"6px 8px", fontSize:12 } }, r.label),
+          cell(fmtVND(r.revenue.actual||0)), cell(fmtVND(r.revenue.target||0)), cell(fmtPct(r.revenue.pct), { color:pctColor(r.revenue.pct), fontWeight:700 }),
+          cell(fmtVND(r.hangHeSo.actual||0)), cell(fmtVND(r.hangHeSo.target||0)), cell(fmtPct(r.hangHeSo.pct), { color:pctColor(r.hangHeSo.pct), fontWeight:700 }),
+          cell(fmtNum(r.customers.actual||0)), cell(fmtNum(r.customers.target||0)), cell(fmtPct(r.customers.pct), { color:pctColor(r.customers.pct), fontWeight:700 }),
+          cell(fmtNum(r.invoice.actual||0)), cell(fmtNum(r.invoice.target||0)), cell(fmtPct(r.invoice.pct), { color:pctColor(r.invoice.pct), fontWeight:700 }),
+          cell(fmtVND(r.tbb.actual||0)), cell(fmtVND(r.tbb.target||0)),
+        ]))
+      ),
+    ])
   );
 }
-function RevenueTheoKy({ stats, totals, shopFilter, isAll }){
-  const [period, setPeriod] = useState("30");
-  const revLabel = { today:"Hôm nay", "7":"7 ngày qua", "30":"30 ngày qua" }[period];
-  const revVal = { today: totals.todayRevenue, "7": totals.last7Revenue, "30": totals.last30Revenue }[period];
-  const orderVal = { today: totals.orderCountToday, "7": totals.orderCount7, "30": totals.orderCount30 }[period];
-  const revenueByDay = shopFilter && !isAll && stats.byShop && stats.byShop[shopFilter] ? stats.byShop[shopFilter].revenueByDay : stats.chainRevenueByDay;
-  const days = []; for(let i=29;i>=0;i--) days.push(addDays(todayISO(), -i));
+function RevenueMucTieu({ stats, isAdmin, shopFilter, isAll }){
+  const mt = stats.monthTracking;
+  if(!mt) return React.createElement("div", { className:"card", style:{ fontSize:13, color:"var(--inkSoft)" } }, "Chưa có dữ liệu chỉ tiêu tháng — bấm \"Tính lại\" ở trên.");
+  const row = (!isAll && mt.byShop[shopFilter]) ? mt.byShop[shopFilter] : mt.chain;
+  const shopHasNoData = !isAll && mt.byShop[shopFilter] && mt.byShop[shopFilter].hasData===false;
+  return React.createElement("div", { style:{ marginBottom:24 } }, [
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:14, marginBottom:4 } }, `Chỉ tiêu ${fmtMonthLabel(mt.month)}${!isAll?` — ${shopFilter}`:""}`),
+    React.createElement("div", { key:"sub", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:12 } },
+      "Target & thực tế lấy trực tiếp từ hệ thống upharma.com.vn (mục \"Chỉ tiêu nhà thuốc\") — " +
+      (mt.paceRatio!=null ? `đã qua ${mt.daysElapsed}/${mt.daysInMonth} ngày, "Dự kiến" = ngoại suy theo tốc độ trung bình/ngày tới hết tháng.` : "chưa đủ dữ liệu để ước tính dự kiến hoàn thành.")),
+    shopHasNoData && React.createElement("div", { key:"warn", className:"card", style:{ marginBottom:12, fontSize:12, color:"#b3261e" } }, "Chưa có chỉ tiêu tháng này cho nhà thuốc — kiểm tra lại trên hệ thống upharma.com.vn."),
+    mt.shopPlanErrors && React.createElement("div", { key:"err", className:"card", style:{ marginBottom:12, fontSize:11.5, color:"#b3261e" } }, `Một số cửa hàng lấy chỉ tiêu bị lỗi: ${Object.keys(mt.shopPlanErrors).join(", ")}`),
+    React.createElement(MonthTargetTiles, { key:"tiles", row }),
+    isAll && React.createElement("div", { key:"table", className:"card", style:{ marginTop:16 } }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, "Tỷ lệ hoàn thành target theo cửa hàng"),
+      React.createElement(TargetCompletionTable, { key:"tbl", mt, shops: DEFAULT_SHOPS }),
+    ]),
+  ]);
+}
+function RevenueTheoKy({ stats, shopFilter, isAll }){
+  const [from, setFrom] = useState(addDays(todayISO(), -29));
+  const [to, setTo] = useState(todayISO());
+  const shopData = !isAll && stats.byShop && stats.byShop[shopFilter] ? stats.byShop[shopFilter] : null;
+  const revenueByDay = shopData ? shopData.revenueByDay : stats.chainRevenueByDay;
+  const orderCountByDay = shopData ? shopData.orderCountByDay : stats.chainOrderCountByDay;
+  const totals = shopData || stats.chainTotals || {};
+  const revVal = sumDayRange(revenueByDay, from, to);
+  const orderVal = sumDayRange(orderCountByDay, from, to);
+  const avgBillRange = orderVal ? Math.round(revVal/orderVal) : 0;
+  const days = []; { let d=from, guard=0; while(d<=to && guard<180){ days.push(d); d=addDays(d,1); guard++; } }
   const chartVals = days.map(d => (revenueByDay && revenueByDay[d]) || 0);
   return React.createElement("div", {}, [
-    React.createElement(RevenuePeriodPicker, { key:"pp", period, setPeriod }),
+    React.createElement(RevenueDateRangePicker, { key:"dp", from, to, setFrom, setTo }),
+    React.createElement("div", { key:"note", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:14 } }, "Chỉ có dữ liệu trong 90 ngày gần nhất — chọn khoảng xa hơn sẽ bị thiếu."),
     React.createElement("div", { key:"grid", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:10, marginBottom:16 } }, [
-      React.createElement(StatTile, { key:"rev", label:`Tổng doanh thu (${revLabel})`, value: fmtVND(revVal||0), sub: `${totals.orderCount30||0} đơn / 30 ngày` }),
-      React.createElement(StatTile, { key:"orders", label:"Tổng giao dịch", value: fmtNum(orderVal||0), sub: revLabel }),
-      React.createElement(StatTile, { key:"avg", label:"Trung bình bill (30 ngày)", value: fmtVND(totals.avgBillValue30||0), tint:"var(--amberSoft)" }),
+      React.createElement(StatTile, { key:"rev", label:"Tổng doanh thu (khoảng đã chọn)", value: fmtVND(revVal||0) }),
+      React.createElement(StatTile, { key:"orders", label:"Tổng giao dịch (khoảng đã chọn)", value: fmtNum(orderVal||0) }),
+      React.createElement(StatTile, { key:"avg", label:"Trung bình bill (khoảng đã chọn)", value: fmtVND(avgBillRange), tint:"var(--amberSoft)" }),
       React.createElement(StatTile, { key:"sku", label:"SKU trung bình/bill (30 ngày)", value: (totals.skuPerBill30||0).toFixed(1), sub:"Ước tính = số dòng hàng / số đơn", tint:"var(--amberSoft)" }),
     ]),
     React.createElement(RevenueDayChart, { key:"chart", days, vals: chartVals }),
     isAll && stats.byShop && React.createElement("div", { key:"byshop", className:"card" }, [
-      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, "Doanh thu 30 ngày theo nhà thuốc"),
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, "Doanh thu theo nhà thuốc (khoảng đã chọn)"),
       React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:6 } },
-        Object.entries(stats.byShop).sort((a,b)=>(b[1].last30Revenue||0)-(a[1].last30Revenue||0)).map(([shop,v]) => {
-          const max = Math.max(...Object.values(stats.byShop).map(x=>x.last30Revenue||0), 1);
-          return React.createElement("div", { key:shop }, [
+        (() => {
+          const rows = Object.entries(stats.byShop).map(([shop,v]) => ({
+            shop, revenue: sumDayRange(v.revenueByDay, from, to), orders: sumDayRange(v.orderCountByDay, from, to),
+          })).sort((a,b)=>b.revenue-a.revenue);
+          const max = Math.max(...rows.map(r=>r.revenue), 1);
+          return rows.map(r => React.createElement("div", { key:r.shop }, [
             React.createElement("div", { key:"lbl", style:{ display:"flex", justifyContent:"space-between", fontSize:12, marginBottom:2 } }, [
-              React.createElement("span", { key:"n" }, shop),
-              React.createElement("span", { key:"q", style:{ color:"var(--inkSoft)" } }, `${fmtVND(v.last30Revenue||0)} · ${v.orderCount30||0} đơn`),
+              React.createElement("span", { key:"n" }, r.shop),
+              React.createElement("span", { key:"q", style:{ color:"var(--inkSoft)" } }, `${fmtVND(r.revenue)} · ${r.orders} đơn`),
             ]),
             React.createElement("div", { key:"bar", style:{ height:6, borderRadius:3, background:"var(--pineSoft)" } },
-              React.createElement("div", { style:{ height:"100%", width:`${((v.last30Revenue||0)/max)*100}%`, background:"var(--pine)", borderRadius:3 } })),
-          ]);
-        })
+              React.createElement("div", { style:{ height:"100%", width:`${(r.revenue/max)*100}%`, background:"var(--pine)", borderRadius:3 } })),
+          ]));
+        })()
       ),
     ]),
   ]);
@@ -7309,6 +7403,10 @@ function RevenueAnalyticsView({ isAdmin, myStaff }){
     : React.createElement(React.Fragment, { key:"body" }, [
         React.createElement(ShopFilterBar, { key:"filter", isAdmin, adminShop, setAdminShop, shopFilter }),
         React.createElement(SubTabBar, { key:"sub", tabs:subTabs, active:sub, onChange:setSub }),
+        sub==="theoky" && React.createElement(RevenueMucTieu, { key:"mt", stats, isAdmin, shopFilter, isAll }),
+        sub==="theoky" && React.createElement("div", { key:"divider", style:{ borderTop:"1px solid var(--line)", margin:"20px 0", paddingTop:16 } }, [
+          React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, "Doanh thu theo khoảng ngày tuỳ chọn"),
+        ]),
         sub==="theoky" && React.createElement(RevenueTheoKy, { key:"v", stats, totals, shopFilter, isAll }),
         sub==="sosanh" && React.createElement(RevenueSoSanhKy, { key:"v", stats, shopFilter, isAll }),
         sub==="nganh" && React.createElement(RevenueTheoNganh, { key:"v", shopFilter, isAll }),
