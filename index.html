@@ -468,6 +468,17 @@ function addDays(iso, n){ const d = new Date(iso + "T00:00:00"); d.setDate(d.get
 function daysBetween(a, b){ return Math.round((new Date(b+"T00:00:00") - new Date(a+"T00:00:00")) / 86400000); }
 function fmtNum(n){ if(n==null||isNaN(n)) return "0"; return Math.round(n).toLocaleString("vi-VN"); }
 function fmtVND(n){ return fmtNum(n) + "đ"; }
+// Định dạng rút gọn (VD "1,68tỷ", "175tr") — dùng cho bảng nhiều cột để bảng đủ hẹp hiện hết
+// không cần cuộn ngang, thay vì số đầy đủ dài như "1.680.000.000đ".
+function fmtVNDCompact(n){
+  if(n==null||isNaN(n)) return "0đ";
+  const v = Math.round(n);
+  const abs = Math.abs(v);
+  if(abs >= 1e9) return (v/1e9).toLocaleString("vi-VN",{maximumFractionDigits:2}) + "tỷ";
+  if(abs >= 1e6) return Math.round(v/1e6).toLocaleString("vi-VN") + "tr";
+  if(abs >= 1e3) return Math.round(v/1e3).toLocaleString("vi-VN") + "k";
+  return fmtNum(v) + "đ";
+}
 
 // ================= FIRESTORE HELPERS =================
 // Ghi lại 1 lỗi hệ thống (Firestore listener lỗi, JS lỗi không bắt được, promise bị reject...) vào
@@ -7277,24 +7288,24 @@ function TargetCompletionTable({ mt, shops }){
   const groupKeys = ["revenue","hangHeSo","tbb","invoice"];
   const subLabelsFull = ["Thực tế","Target","TL đạt","Dự kiến","TL dự kiến"];
   const subLabelsFor = key => subLabelsFull.slice(0, TARGET_TABLE_GROUPS[key].cols);
-  const fmtFor = key => TARGET_TABLE_GROUPS[key].fmt==="num" ? fmtNum : fmtVND;
+  const fmtFor = key => TARGET_TABLE_GROUPS[key].fmt==="num" ? fmtNum : fmtVNDCompact;
   const groupBorder = key => ({ borderRight:`2px solid ${TARGET_TABLE_GROUPS[key].solid}` });
-  const cell = (v, style) => React.createElement("td", { style:{ padding:"7px 9px", fontSize:12, textAlign:"right", borderBottom:"1px solid var(--line)", ...style } }, v);
-  const groupHead = key => React.createElement("th", { key, colSpan:TARGET_TABLE_GROUPS[key].cols, style:{ padding:"8px 8px", fontSize:11.5, textTransform:"uppercase", fontWeight:800, letterSpacing:.04, color:"#fff", background: TARGET_TABLE_GROUPS[key].solid, ...groupBorder(key) } }, TARGET_TABLE_GROUPS[key].label);
-  const subHead = (label, key, i, n) => React.createElement("th", { key:key+i, style:{ padding:"6px 9px", fontSize:10.5, color: TARGET_TABLE_GROUPS[key].head, fontWeight:700, background: TARGET_TABLE_GROUPS[key].tint, borderBottom:"2px solid var(--line)", ...(i===n-1?groupBorder(key):{}) } }, label);
+  const cell = (v, style) => React.createElement("td", { style:{ padding:"5px 5px", fontSize:11, textAlign:"right", borderBottom:"1px solid var(--line)", whiteSpace:"nowrap", ...style } }, v);
+  const groupHead = key => React.createElement("th", { key, colSpan:TARGET_TABLE_GROUPS[key].cols, style:{ padding:"6px 5px", fontSize:10.5, textTransform:"uppercase", fontWeight:800, letterSpacing:.03, color:"#fff", background: TARGET_TABLE_GROUPS[key].solid, ...groupBorder(key) } }, TARGET_TABLE_GROUPS[key].label);
+  const subHead = (label, key, i, n) => React.createElement("th", { key:key+i, style:{ padding:"4px 5px", fontSize:9.5, color: TARGET_TABLE_GROUPS[key].head, fontWeight:700, background: TARGET_TABLE_GROUPS[key].tint, borderBottom:"2px solid var(--line)", whiteSpace:"nowrap", ...(i===n-1?groupBorder(key):{}) } }, label);
   const rows = [{ label:"TỔNG TOÀN KHU VỰC", ...mt.chain, strong:true }, ...shops.map(s=>({ label:s, ...(mt.byShop[s]||{ revenue:{}, hangHeSo:{}, customers:{}, invoice:{}, tbb:{} }) }))];
   return React.createElement("div", { className:"card", style:{ overflowX:"auto", maxWidth:"100%", padding:0 } },
-    React.createElement("table", { style:{ borderCollapse:"collapse", minWidth:"100%", width:"max-content" } }, [
+    React.createElement("table", { style:{ borderCollapse:"collapse", width:"100%", tableLayout:"auto", fontVariantNumeric:"tabular-nums" } }, [
       React.createElement("thead", { key:"h" }, [
         React.createElement("tr", { key:"r1" }, [
-          React.createElement("th", { key:"lbl", rowSpan:2, style:{ padding:"8px 10px", fontSize:11.5, textAlign:"left", verticalAlign:"bottom", background:"var(--paper)", borderBottom:"2px solid var(--line)" } }, "Cửa hàng"),
+          React.createElement("th", { key:"lbl", rowSpan:2, style:{ padding:"6px 8px", fontSize:11, textAlign:"left", verticalAlign:"bottom", background:"var(--paper)", borderBottom:"2px solid var(--line)", whiteSpace:"nowrap" } }, "Cửa hàng"),
           ...groupKeys.map(groupHead),
         ]),
         React.createElement("tr", { key:"r2" }, groupKeys.flatMap(key => subLabelsFor(key).map((l,i,arr)=>subHead(l,key,i,arr.length)))),
       ]),
       React.createElement("tbody", { key:"b" },
         rows.map((r,ri) => React.createElement("tr", { key:r.label, style:{ fontWeight: r.strong?700:400, background: r.strong?"#F0FBF3":(ri%2===0?"var(--card)":"var(--paper)") } }, [
-          React.createElement("td", { key:"lbl", style:{ padding:"7px 10px", fontSize:12.5, borderBottom:"1px solid var(--line)" } }, r.label),
+          React.createElement("td", { key:"lbl", style:{ padding:"5px 8px", fontSize:11.5, borderBottom:"1px solid var(--line)", whiteSpace:"nowrap" } }, r.label),
           ...groupKeys.flatMap(key => {
             const b = r[key] || {}, fmt = fmtFor(key), n = TARGET_TABLE_GROUPS[key].cols;
             const full = [
