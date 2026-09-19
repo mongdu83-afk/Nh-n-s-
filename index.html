@@ -6941,22 +6941,473 @@ function SalesReportView({ isAdmin, myStaff }){
   ]);
 }
 
+// ================================================================================
+// KẾ HOẠCH TUẦN (QUẢN LÝ) — đọc/ghi collection "weeklyPlans" (CÙNG Firebase project với app
+// Dashboard doanh thu — 2 app đã dùng chung dữ liệu sẵn, không cần API riêng). Đây là kế hoạch
+// Ở CẤP TOÀN CHUỖI theo tuần, khác với "Báo cáo tuần" ở trên vốn theo TỪNG NHÀ THUỐC.
+// Tự động lấy "Kết quả thực hiện" nhân viên đã báo cáo (collection "weeklyReports", theo đúng
+// tuanNgay) làm tham chiếu bên dưới từng mục tương ứng (Nhân sự/Hàng hoá/Cơ sở vật chất) + tự
+// cộng dồn doanh thu thực hiện của cả 9 shop cho mục Doanh thu — quản lý không phải tổng hợp tay.
+function wpFmtDMY(iso){ const [y,m,d] = iso.split("-"); return `${d}/${m}`; }
+function wpWeekLabel(mondayISO){ const sunday = addDays(mondayISO, 6); return `${wpFmtDMY(mondayISO)} — ${wpFmtDMY(sunday)}`; }
+function wpEmptyRow(extra){ return { id: uid(), noiDung:"", target:"", nguoiThucHien:"", deadline:"", ketQua:"", ...extra }; }
+// "staffCategoryKey" khớp với đúng key trong WEEKLY_CATEGORIES (Báo cáo tuần từng shop) để tự
+// động lấy rollup — "doanhThu" xử lý riêng (isRevenue), "matBang" không có bên "Báo cáo tuần" nên
+// để trống (staffCategoryKey: null), quản lý tự ghi tay như bình thường.
+const WEEKPLAN_SECTIONS = [
+  { key:"doanhThu", label:"💰 Doanh thu", color:"#d98a1f", staffCategoryKey:null, isRevenue:true },
+  { key:"nhanSu", label:"👥 Nhân sự", color:"#0f6b5c", staffCategoryKey:"nhanSu" },
+  { key:"hangHoa", label:"📦 Hàng hoá", color:"#d98a1f", staffCategoryKey:"hangHoa" },
+  { key:"coSoVatChat", label:"🏬 Cơ sở vật chất", color:"#B0483A", staffCategoryKey:"coSoVatChat" },
+  { key:"matBang", label:"🏢 Mặt bằng", color:"#0f6b5c", staffCategoryKey:null },
+];
+function wpNormalizeRows(sectionData){
+  if(Array.isArray(sectionData)) return sectionData;
+  if(sectionData && (sectionData.ghiChu || sectionData.chiTieu)){
+    return [wpEmptyRow({ noiDung: sectionData.ghiChu||"", target: sectionData.chiTieu||"" })];
+  }
+  return [];
+}
+
+function WeeklyPlanManagerView(){
+  const [weekStart, setWeekStart] = useState(mondayOf(todayISO()));
+  const [plan, setPlan] = useState(null);
+  const [prevPlan, setPrevPlan] = useState(null);
+  const [allPlanIds, setAllPlanIds] = useState([]);
+  const [draft, setDraft] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState(null);
+  const [showHistory, setShowHistory] = useState(false);
+  const [staffReports, setStaffReports] = useState([]);
+  const [staffReportsLoading, setStaffReportsLoading] = useState(false);
+
+  useEffect(()=>{
+    const unsub = db.collection("weeklyPlans").doc(weekStart).onSnapshot(doc => setPlan(doc.exists ? doc.data() : null));
+    return unsub;
+  }, [weekStart]);
+  useEffect(()=>{
+    const prevWeek = addDays(weekStart, -7);
+    const unsub = db.collection("weeklyPlans").doc(prevWeek).onSnapshot(doc => setPrevPlan(doc.exists ? doc.data() : null));
+    return unsub;
+  }, [weekStart]);
+  useEffect(()=>{
+    const unsub = db.collection("weeklyPlans").orderBy(firebase.firestore.FieldPath.documentId(), "desc").onSnapshot(snap => {
+      setAllPlanIds(snap.docs.map(d=>d.id));
+    });
+    return unsub;
+  }, []);
+  // Kết quả thực hiện của TỪNG nhà thuốc trong tuần đang xem — tự đổ lên làm tham chiếu, không
+  // cần quản lý copy tay. Lọc bằng đúng 1 trường ("tuanNgay") để không cần chỉ mục kép.
+  useEffect(()=>{
+    setStaffReportsLoading(true);
+    db.collection("weeklyReports").where("tuanNgay","==",weekStart).get()
+      .then(snap => setStaffReports(snap.docs.map(d=>d.data())))
+      .catch(err => { console.error("Lỗi tải báo cáo tuần các shop:", err); setStaffReports([]); })
+      .finally(()=> setStaffReportsLoading(false));
+  }, [weekStart]);
+
+  useEffect(()=>{
+    const base = {};
+    WEEKPLAN_SECTIONS.forEach(s => {
+      const rows = wpNormalizeRows(plan && plan[s.key]);
+      base[s.key] = rows.length>0 ? rows : [wpEmptyRow()];
+    });
+    setDraft(base);
+    setSavedAt(null);
+  }, [plan, weekStart]);
+
+  function updateRow(sectionKey, rowId, field, value){
+    setDraft(d => ({ ...d, [sectionKey]: (d[sectionKey]||[]).map(r => r.id===rowId ? { ...r, [field]:value } : r) }));
+  }
+  function addRow(sectionKey){ setDraft(d => ({ ...d, [sectionKey]: [...(d[sectionKey]||[]), wpEmptyRow()] })); }
+  function removeRow(sectionKey, rowId){ setDraft(d => ({ ...d, [sectionKey]: (d[sectionKey]||[]).filter(r=>r.id!==rowId) })); }
+  async function handleSave(){
+    setSaving(true);
+    try{ await db.collection("weeklyPlans").doc(weekStart).set(draft, { merge:true }); setSavedAt(new Date()); }
+    catch(err){ alert("Lưu thất bại: " + (err && err.message ? err.message : err)); }
+    setSaving(false);
+  }
+  function goToWeek(iso){ setWeekStart(mondayOf(iso)); setShowHistory(false); }
+
+  // ----- Tổng hợp tự động từ báo cáo tuần các nhà thuốc -----
+  const revenueRollup = useMemo(()=>{
+    let total = 0, targetTotal = 0, shopsReported = 0;
+    staffReports.forEach(r => {
+      const rp = r.revenueProgress;
+      if(rp && Number(rp.actualWeek)){ total += Number(rp.actualWeek); shopsReported++; }
+      if(rp && Number(rp.target)) targetTotal += Number(rp.target);
+    });
+    return { total, targetTotal, shopsReported };
+  }, [staffReports]);
+  function staffRollupFor(staffCategoryKey){
+    if(!staffCategoryKey) return [];
+    const out = [];
+    staffReports.forEach(r => {
+      const rows = (r.ketQua && r.ketQua[staffCategoryKey]) || [];
+      rows.forEach(row => { if(row.ketQua && row.ketQua.trim()) out.push({ shop:r.shop, text:row.ketQua.trim() }); });
+    });
+    return out;
+  }
+
+  const weekNav = React.createElement("div", { key:"nav", style:{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap", marginBottom:12 } }, [
+    React.createElement("button", { key:"prev", type:"button", className:"btn btnGhost", onClick:()=>setWeekStart(addDays(weekStart,-7)) }, "← Tuần trước"),
+    React.createElement("div", { key:"label", style:{ fontWeight:700, fontSize:16 } }, `Tuần ${wpWeekLabel(weekStart)}`),
+    React.createElement("button", { key:"next", type:"button", className:"btn btnGhost", onClick:()=>setWeekStart(addDays(weekStart,7)) }, "Tuần sau →"),
+    React.createElement("button", { key:"today", type:"button", className:"btn btnGhost", onClick:()=>setWeekStart(mondayOf(todayISO())) }, "Về tuần này"),
+    React.createElement("button", { key:"history", type:"button", className:"btn btnGhost", onClick:()=>setShowHistory(v=>!v) }, `🔎 Tuần đã lưu (${allPlanIds.length})`),
+  ]);
+
+  const historyPanel = showHistory && React.createElement("div", { key:"hist", className:"card", style:{ marginBottom:16 } }, [
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, "Các tuần đã có kế hoạch lưu"),
+    allPlanIds.length===0
+      ? React.createElement("div", { key:"e", style:{ fontSize:12.5, color:"var(--inkSoft)" } }, "Chưa có tuần nào được lưu.")
+      : React.createElement("div", { key:"list", style:{ display:"flex", flexWrap:"wrap", gap:8 } },
+          allPlanIds.map(id => React.createElement("button", { key:id, type:"button", onClick:()=>goToWeek(id), style:{
+            padding:"7px 12px", borderRadius:8, cursor:"pointer", fontSize:12.5,
+            border: id===weekStart ? "1px solid var(--pine)" : "1px solid var(--line)",
+            background: id===weekStart ? "var(--pineSoft)" : "#fff", color: id===weekStart ? "var(--pine)" : "var(--ink)",
+          } }, `Tuần ${wpWeekLabel(id)}`))
+        ),
+  ]);
+
+  function prevRowsSummary(sectionKey){
+    const rows = wpNormalizeRows(prevPlan && prevPlan[sectionKey]).filter(r => r.noiDung || r.target);
+    if(rows.length===0) return "(không có ghi chú)";
+    return rows.map(r => r.target ? `${r.noiDung||"—"} (chỉ tiêu: ${r.target})` : (r.noiDung||"—")).join("; ");
+  }
+
+  const sectionCards = WEEKPLAN_SECTIONS.map(s => {
+    const rows = draft[s.key] || [];
+    const rollupRows = staffRollupFor(s.staffCategoryKey);
+    return React.createElement("div", { key:s.key, className:"card", style:{ marginBottom:16, borderLeft:`4px solid ${s.color}` } }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:14, marginBottom:10 } }, s.label),
+      s.isRevenue && React.createElement("div", { key:"rollup", style:{ fontSize:12.5, background:"var(--pineSoft)", borderRadius:8, padding:"8px 10px", marginBottom:10 } },
+        revenueRollup.shopsReported>0
+          ? `📊 Tự động từ báo cáo tuần các shop: ${fmtVND(revenueRollup.total)} thực hiện${revenueRollup.targetTotal ? ` / ${fmtVND(revenueRollup.targetTotal)} chỉ tiêu` : ""} (${revenueRollup.shopsReported}/${DEFAULT_SHOPS.length} nhà thuốc đã báo cáo tuần này).`
+          : (staffReportsLoading ? "Đang tải báo cáo tuần các shop..." : "Chưa có nhà thuốc nào báo cáo doanh số tuần này.")),
+      s.staffCategoryKey && React.createElement("div", { key:"rollup2", style:{ fontSize:12, background:"var(--paper)", borderRadius:8, padding:"8px 10px", marginBottom:10 } }, [
+        React.createElement("div", { key:"l", style:{ fontWeight:700, marginBottom:4 } }, `Kết quả nhân viên đã báo cáo (tự động, ${rollupRows.length} mục)`),
+        rollupRows.length===0
+          ? React.createElement("div", { key:"e", style:{ color:"var(--inkSoft)" } }, staffReportsLoading ? "Đang tải..." : "Chưa có nhà thuốc nào báo cáo mục này tuần này.")
+          : React.createElement("ul", { key:"ul", style:{ margin:0, paddingLeft:18 } }, rollupRows.map((r,i) => React.createElement("li", { key:i }, `${r.shop}: ${r.text}`))),
+      ]),
+      ...rows.map(r => React.createElement("div", { key:r.id, className:"weeklyRow" }, [
+        rows.length>1 && React.createElement("div", { key:"rm", style:{ textAlign:"right" } },
+          React.createElement("button", { type:"button", className:"weeklyRowRemove", onClick:()=>removeRow(s.key, r.id) }, "✕ Xoá dòng")),
+        React.createElement("div", { key:"grid", className:"weeklyRowGrid" }, [
+          React.createElement("div", { key:"nd" }, [
+            React.createElement("span", { key:"l", className:"weeklyRowLbl" }, "Nội dung kế hoạch"),
+            React.createElement(AutoGrowTextarea, { key:"i", className:"taskResultInput", value:r.noiDung, onChange:e=>updateRow(s.key,r.id,"noiDung",e.target.value), placeholder:"Việc cần làm / chỉ tiêu tuần này..." }),
+          ]),
+          React.createElement("div", { key:"nth", style:{ flex:"0 1 190px" } }, [
+            React.createElement("span", { key:"l", className:"weeklyRowLbl" }, "Người thực hiện"),
+            React.createElement("input", { key:"i", className:"taskResultInput", value:r.nguoiThucHien, onChange:e=>updateRow(s.key,r.id,"nguoiThucHien",e.target.value), placeholder:"Tên người phụ trách..." }),
+          ]),
+          React.createElement("div", { key:"dl", style:{ flex:"0 1 150px" } }, [
+            React.createElement("span", { key:"l", className:"weeklyRowLbl" }, "Deadline"),
+            React.createElement("input", { key:"i", type:"date", className:"taskResultInput", value:r.deadline||"", onChange:e=>updateRow(s.key,r.id,"deadline",e.target.value) }),
+          ]),
+          React.createElement("div", { key:"tg", style:{ flex:"0 1 190px" } }, [
+            React.createElement("span", { key:"l", className:"weeklyRowLbl" }, "Target cam kết"),
+            React.createElement(AutoGrowTextarea, { key:"i", className:"taskResultInput", value:r.target, onChange:e=>updateRow(s.key,r.id,"target",e.target.value), placeholder:"VD: 50 triệu doanh số..." }),
+          ]),
+          React.createElement("div", { key:"kq", style:{ flex:"1 1 100%" } }, [
+            React.createElement("span", { key:"l", className:"weeklyRowLbl" }, "Ghi chú thêm của quản lý"),
+            React.createElement(AutoGrowTextarea, { key:"i", className:"taskResultInput", value:r.ketQua, onChange:e=>updateRow(s.key,r.id,"ketQua",e.target.value), placeholder:"Ghi thêm nếu cần, ngoài phần tự động ở trên..." }),
+          ]),
+        ]),
+      ])),
+      React.createElement("div", { key:"add", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, marginTop:4 } }, [
+        React.createElement("button", { key:"b", type:"button", className:"btn", onClick:()=>addRow(s.key) }, "+ Thêm dòng"),
+        React.createElement("div", { key:"prev", style:{ fontSize:11.5, color:"var(--inkSoft)", background:"var(--paper)", borderRadius:7, padding:"7px 9px", flex:"1 1 260px" } }, [
+          React.createElement("b", { key:"b2" }, "Tuần trước: "), prevRowsSummary(s.key),
+        ]),
+      ]),
+    ]);
+  });
+
+  return React.createElement("div", { style:{ maxWidth:1100, margin:"0 auto", padding:"16px" } }, [
+    React.createElement("h2", { key:"title", className:"pagetitle" }, "Kế hoạch tuần (Quản lý)"),
+    React.createElement("p", { key:"sub", className:"pagesub" },
+      "Kế hoạch & chỉ tiêu theo tuần ở cấp toàn chuỗi. Mục Doanh thu/Nhân sự/Hàng hoá/Cơ sở vật chất tự động lấy số liệu/kết quả từ \"Báo cáo tuần\" của từng nhà thuốc — không cần tổng hợp tay."),
+    weekNav, historyPanel,
+    ...sectionCards,
+    React.createElement("div", { key:"save", style:{ display:"flex", alignItems:"center", gap:12 } }, [
+      React.createElement("button", { key:"btn", type:"button", className:"btn btnPrimary", disabled:saving, onClick:handleSave }, saving ? "Đang lưu..." : "💾 Lưu kế hoạch tuần"),
+      savedAt && React.createElement("span", { key:"s", style:{ fontSize:12, color:"var(--pine)", fontWeight:600 } }, `✅ Đã lưu lúc ${savedAt.toLocaleTimeString("vi-VN")}`),
+    ]),
+  ]);
+}
+
+// ================================================================================
+// DOANH THU / NHÂN VIÊN (HIỆU SUẤT) / KHUYẾN MÃI (CTKM) / TỒN KHO (TỔNG QUAN) — tích hợp tính
+// năng của app Dashboard doanh thu vào app Nhân sự (yêu cầu 19/9/2026), nhưng đọc THẲNG dữ liệu
+// đã đồng bộ qua API sẵn có của app Nhân sự (opsConfig/revenueAnalytics — tính bởi
+// computeRevenueAnalytics ở backend, không phải upload file Excel như app Dashboard cũ).
+// Quản lý xem toàn chuỗi (chọn được từng shop qua dropdown), nhân viên tự động chỉ xem đúng shop
+// mình — dùng chung khuôn mẫu "adminShop" như tab Phân tích hành vi/CRM đã có.
+function RevenueRefreshButton({ refreshing, onRefresh, computedAt }){
+  return React.createElement("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12, flexWrap:"wrap", gap:8 } }, [
+    React.createElement("div", { key:"t", style:{ fontSize:12.5, color:"var(--inkSoft)" } },
+      computedAt ? `Tính lúc ${new Date(computedAt).toLocaleString("vi-VN")}` : "Chưa có dữ liệu"),
+    React.createElement("button", { key:"b", className:"btn btnGhost", disabled:refreshing, onClick:onRefresh, style:{ fontSize:12, padding:"4px 10px" } }, refreshing ? "Đang tính..." : "↻ Tính lại"),
+  ]);
+}
+function useRevenueAnalytics(){
+  const [stats, setStats] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+  useEffect(()=>{
+    return db.collection("opsConfig").doc("revenueAnalytics").onSnapshot(doc=>{ setStats(doc.exists ? doc.data() : null); });
+  },[]);
+  async function refresh(){
+    setRefreshing(true);
+    try{
+      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeRevenueAnalyticsNow");
+      const j = await resp.json();
+      if(!j.ok) alert("Lỗi tính lại: " + (j.error||"?"));
+    }catch(e){ alert("Lỗi tính lại: " + e.message); }
+    setRefreshing(false);
+  }
+  return { stats, refreshing, refresh };
+}
+function RevenueDayChart({ days, vals }){
+  const maxVal = Math.max(...vals, 1);
+  return React.createElement("div", { className:"card", style:{ marginBottom:16 } }, [
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, "Doanh thu theo ngày (30 ngày gần nhất)"),
+    React.createElement("div", { key:"bars", style:{ display:"flex", alignItems:"flex-end", gap:2, height:100, overflowX:"auto" } },
+      vals.map((v,i) => React.createElement("div", { key:i, title:`${days[i]}: ${fmtVND(v)}`, style:{ flex:1, minWidth:6, display:"flex", flexDirection:"column", alignItems:"center", gap:2 } }, [
+        React.createElement("div", { key:"bar", style:{ width:"100%", height:`${Math.max((v/maxVal)*78,1)}px`, background:"var(--pine)", borderRadius:2 } }),
+        i%5===0 && React.createElement("div", { key:"lbl", style:{ fontSize:8, color:"var(--inkSoft)", whiteSpace:"nowrap" } }, days[i].slice(5)),
+      ]))
+    ),
+  ]);
+}
+function ShopFilterBar({ isAdmin, adminShop, setAdminShop, shopFilter }){
+  return React.createElement("div", { style:{ display:"flex", justifyContent:"flex-end", marginBottom:10 } },
+    isAdmin
+      ? React.createElement("select", { value:adminShop, onChange:e=>setAdminShop(e.target.value), style:{ padding:"5px 8px", fontSize:12.5, border:"1px solid var(--line)", borderRadius:8 } },
+          ["Tất cả", ...DEFAULT_SHOPS].map(s=>React.createElement("option", { key:s, value:s }, s)))
+      : React.createElement("div", { style:{ fontSize:12.5, color:"var(--inkSoft)" } }, shopFilter || "")
+  );
+}
+function RevenueAnalyticsView({ isAdmin, myStaff }){
+  const { stats, refreshing, refresh } = useRevenueAnalytics();
+  const [adminShop, setAdminShop] = useState("Tất cả");
+  const shopFilter = isAdmin ? adminShop : (myStaff && myStaff.shop);
+  const isAll = !shopFilter || shopFilter==="Tất cả";
+  const active = stats && !isAll && stats.byShop && stats.byShop[shopFilter] ? stats.byShop[shopFilter] : null;
+  const totals = active || (stats && stats.chainTotals) || {};
+  const revenueByDay = active ? active.revenueByDay : (stats && stats.chainRevenueByDay);
+  const days = []; for(let i=29;i>=0;i--) days.push(addDays(todayISO(), -i));
+  const chartVals = days.map(d => (revenueByDay && revenueByDay[d]) || 0);
+  const growthPct = totals.prev30Revenue ? Math.round(((totals.last30Revenue-totals.prev30Revenue)/totals.prev30Revenue)*1000)/10 : null;
+  const cards = [
+    { label:"Hôm nay", val: totals.todayRevenue },
+    { label:"7 ngày gần nhất", val: totals.last7Revenue },
+    { label:"30 ngày gần nhất", val: totals.last30Revenue },
+    { label:"30 ngày liền trước", val: totals.prev30Revenue },
+  ];
+  return React.createElement("div", { style:{ maxWidth:1100, margin:"0 auto", padding:16 } }, [
+    React.createElement("h2", { key:"title", className:"pagetitle" }, "Doanh thu"),
+    React.createElement("p", { key:"sub", className:"pagesub" }, "Tổng hợp từ đơn hàng đã đồng bộ (externalSalesOrders) — không cần upload file."),
+    React.createElement(RevenueRefreshButton, { key:"rb", refreshing, onRefresh:refresh, computedAt: stats && stats.computedAt }),
+    !stats ? React.createElement("div", { key:"empty", className:"card", style:{ fontSize:13, color:"var(--inkSoft)" } }, "Chưa có dữ liệu — bấm \"Tính lại\" ở trên.")
+    : React.createElement(React.Fragment, { key:"body" }, [
+        React.createElement(ShopFilterBar, { key:"filter", isAdmin, adminShop, setAdminShop, shopFilter }),
+        React.createElement("div", { key:"grid", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10, marginBottom:16 } },
+          cards.map(c => React.createElement("div", { key:c.label, className:"card", style:{ padding:"12px 14px" } }, [
+            React.createElement("div", { key:"l", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:4 } }, c.label),
+            React.createElement("div", { key:"v", style:{ fontSize:18, fontWeight:700 } }, fmtVND(c.val||0)),
+          ]))
+        ),
+        growthPct!=null && React.createElement("div", { key:"growth", className:"card", style:{ marginBottom:16, fontSize:12.5, color: growthPct>=0 ? "var(--pine)" : "#b3261e" } },
+          `${growthPct>=0 ? "▲" : "▼"} ${Math.abs(growthPct)}% so với 30 ngày liền trước`),
+        React.createElement(RevenueDayChart, { key:"chart", days, vals: chartVals }),
+        isAll && stats.byShop && React.createElement("div", { key:"byshop", className:"card" }, [
+          React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, "Doanh thu 30 ngày theo nhà thuốc"),
+          React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:6 } },
+            Object.entries(stats.byShop).sort((a,b)=>(b[1].last30Revenue||0)-(a[1].last30Revenue||0)).map(([shop,v]) => {
+              const max = Math.max(...Object.values(stats.byShop).map(x=>x.last30Revenue||0), 1);
+              return React.createElement("div", { key:shop }, [
+                React.createElement("div", { key:"lbl", style:{ display:"flex", justifyContent:"space-between", fontSize:12, marginBottom:2 } }, [
+                  React.createElement("span", { key:"n" }, shop),
+                  React.createElement("span", { key:"q", style:{ color:"var(--inkSoft)" } }, fmtVND(v.last30Revenue||0)),
+                ]),
+                React.createElement("div", { key:"bar", style:{ height:6, borderRadius:3, background:"var(--pineSoft)" } },
+                  React.createElement("div", { style:{ height:"100%", width:`${((v.last30Revenue||0)/max)*100}%`, background:"var(--pine)", borderRadius:3 } })),
+              ]);
+            })
+          ),
+        ]),
+      ]),
+  ]);
+}
+function StaffPerformanceView({ isAdmin, myStaff }){
+  const { stats, refreshing, refresh } = useRevenueAnalytics();
+  const [adminShop, setAdminShop] = useState("Tất cả");
+  const shopFilter = isAdmin ? adminShop : (myStaff && myStaff.shop);
+  const isAll = !shopFilter || shopFilter==="Tất cả";
+  const employees = stats
+    ? (isAll ? (stats.topEmployeesChain||[]) : ((stats.byShop && stats.byShop[shopFilter] && stats.byShop[shopFilter].employees) || []))
+    : [];
+  const maxRev = Math.max(...employees.map(e=>e.revenue||0), 1);
+  return React.createElement("div", { style:{ maxWidth:1100, margin:"0 auto", padding:16 } }, [
+    React.createElement("h2", { key:"title", className:"pagetitle" }, "Hiệu suất nhân viên"),
+    React.createElement("p", { key:"sub", className:"pagesub" }, "Doanh số theo nhân viên bán hàng (30 ngày gần nhất), tính từ đơn hàng đã đồng bộ."),
+    React.createElement(RevenueRefreshButton, { key:"rb", refreshing, onRefresh:refresh, computedAt: stats && stats.computedAt }),
+    !stats ? React.createElement("div", { key:"empty", className:"card", style:{ fontSize:13, color:"var(--inkSoft)" } }, "Chưa có dữ liệu — bấm \"Tính lại\" ở trên.")
+    : React.createElement(React.Fragment, { key:"body" }, [
+        React.createElement(ShopFilterBar, { key:"filter", isAdmin, adminShop, setAdminShop, shopFilter }),
+        React.createElement("div", { key:"card", className:"card" }, [
+          React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, `Top nhân viên theo doanh số${isAll?" (toàn chuỗi)":""}`),
+          employees.length===0
+            ? React.createElement("div", { key:"e", style:{ fontSize:12.5, color:"var(--inkSoft)" } }, "Chưa có dữ liệu nhân viên.")
+            : React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8 } },
+                employees.slice(0,20).map((e,i) => React.createElement("div", { key:e.name+i }, [
+                  React.createElement("div", { key:"lbl", style:{ display:"flex", justifyContent:"space-between", fontSize:12, marginBottom:2 } }, [
+                    React.createElement("span", { key:"n" }, `${i+1}. ${e.name}${e.shopCount>1?` (${e.shopCount} shop)`:""}`),
+                    React.createElement("span", { key:"q", style:{ color:"var(--inkSoft)" } }, `${fmtVND(e.revenue||0)} · ${e.orders||0} đơn`),
+                  ]),
+                  React.createElement("div", { key:"bar", style:{ height:6, borderRadius:3, background:"var(--pineSoft)" } },
+                    React.createElement("div", { style:{ height:"100%", width:`${((e.revenue||0)/maxRev)*100}%`, background:"var(--clay)", borderRadius:3 } })),
+                ]))
+              ),
+        ]),
+      ]),
+  ]);
+}
+function PromoAnalyticsView({ isAdmin, myStaff }){
+  const { stats, refreshing, refresh } = useRevenueAnalytics();
+  const [adminShop, setAdminShop] = useState("Tất cả");
+  const shopFilter = isAdmin ? adminShop : (myStaff && myStaff.shop);
+  const isAll = !shopFilter || shopFilter==="Tất cả";
+  const promo = stats && stats.promo;
+  const shopVal = promo && !isAll && promo.byShop && promo.byShop[shopFilter];
+  const topProducts = promo ? promo.topProducts||[] : [];
+  const maxRev = Math.max(...topProducts.map(p=>p.revenue||0), 1);
+  return React.createElement("div", { style:{ maxWidth:1100, margin:"0 auto", padding:16 } }, [
+    React.createElement("h2", { key:"title", className:"pagetitle" }, "Khuyến mãi (CTKM)"),
+    React.createElement("p", { key:"sub", className:"pagesub" }, "Nhận diện tự động theo tên hàng có dấu hiệu khuyến mãi (Combo, Tặng kèm, Giảm giá...) trong 30 ngày gần nhất — chưa có cột \"loại khuyến mãi\" riêng trong dữ liệu đồng bộ nên đây là ước tính, không phải số tuyệt đối."),
+    React.createElement(RevenueRefreshButton, { key:"rb", refreshing, onRefresh:refresh, computedAt: stats && stats.computedAt }),
+    !stats || !promo ? React.createElement("div", { key:"empty", className:"card", style:{ fontSize:13, color:"var(--inkSoft)" } }, "Chưa có dữ liệu — bấm \"Tính lại\" ở trên.")
+    : React.createElement(React.Fragment, { key:"body" }, [
+        React.createElement(ShopFilterBar, { key:"filter", isAdmin, adminShop, setAdminShop, shopFilter }),
+        React.createElement("div", { key:"grid", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10, marginBottom:16 } }, [
+          React.createElement("div", { key:"rev", className:"card", style:{ padding:"12px 14px" } }, [
+            React.createElement("div", { key:"l", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:4 } }, "Doanh số liên quan KM (30 ngày)"),
+            React.createElement("div", { key:"v", style:{ fontSize:18, fontWeight:700 } }, fmtVND((isAll ? promo.revenue30 : (shopVal && shopVal.revenue)) || 0)),
+          ]),
+          React.createElement("div", { key:"qty", className:"card", style:{ padding:"12px 14px" } }, [
+            React.createElement("div", { key:"l", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:4 } }, "Số lượng bán (30 ngày)"),
+            React.createElement("div", { key:"v", style:{ fontSize:18, fontWeight:700 } }, fmtNum((isAll ? promo.qty30 : (shopVal && shopVal.qty)) || 0)),
+          ]),
+        ]),
+        React.createElement("div", { key:"card", className:"card" }, [
+          React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, "Top sản phẩm có dấu hiệu khuyến mãi (toàn chuỗi, 30 ngày)"),
+          topProducts.length===0
+            ? React.createElement("div", { key:"e", style:{ fontSize:12.5, color:"var(--inkSoft)" } }, "Chưa phát hiện sản phẩm nào.")
+            : React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:6 } },
+                topProducts.map(p => React.createElement("div", { key:p.name }, [
+                  React.createElement("div", { key:"lbl", style:{ display:"flex", justifyContent:"space-between", fontSize:12, marginBottom:2 } }, [
+                    React.createElement("span", { key:"n" }, p.name),
+                    React.createElement("span", { key:"q", style:{ color:"var(--inkSoft)" } }, `${fmtVND(p.revenue||0)} · SL ${fmtNum(p.qty||0)}`),
+                  ]),
+                  React.createElement("div", { key:"bar", style:{ height:6, borderRadius:3, background:"var(--pineSoft)" } },
+                    React.createElement("div", { style:{ height:"100%", width:`${((p.revenue||0)/maxRev)*100}%`, background:"#b4720a", borderRadius:3 } })),
+                ]))
+              ),
+        ]),
+      ]),
+  ]);
+}
+// ===== Tồn kho (Tổng quan) — KHÔNG tính lại gì mới, chỉ đọc gộp 2 nguồn đã có sẵn trong app:
+// (1) opsConfig/inventoryConsumptionSummary (tốc độ tiêu thụ/trạng thái tồn — tab "Điều chuyển
+// hàng hoá" đã tính), (2) externalInventoryExpiry/{shopCode} (giá trị tồn + % cận date — tab
+// "Đồng bộ dữ liệu"/KPI đã tính) — cho quản lý 1 màn hình tổng quan thay vì phải mở nhiều tab.
+function InventoryHealthView({ isAdmin, myStaff }){
+  const [summary, setSummary] = useState(null);
+  const [expiryByShop, setExpiryByShop] = useState({});
+  const [adminShop, setAdminShop] = useState("Tất cả");
+  const shopFilter = isAdmin ? adminShop : (myStaff && myStaff.shop);
+  const isAll = !shopFilter || shopFilter==="Tất cả";
+  useEffect(()=>{
+    return db.collection("opsConfig").doc("inventoryConsumptionSummary").onSnapshot(doc=>{ setSummary(doc.exists ? doc.data() : null); });
+  },[]);
+  useEffect(()=>{
+    const unsub = db.collection("externalInventoryExpiry").onSnapshot(snap=>{
+      const m = {}; snap.forEach(d=>{ m[d.id] = d.data(); }); setExpiryByShop(m);
+    });
+    return unsub;
+  },[]);
+  const shopsToShow = isAll ? DEFAULT_SHOPS : [shopFilter];
+  const totalValue = shopsToShow.reduce((s,sh)=>s+((expiryByShop[sh]&&expiryByShop[sh].totalValue)||0),0);
+  const maxValue = Math.max(...shopsToShow.map(sh=>(expiryByShop[sh]&&expiryByShop[sh].totalValue)||0), 1);
+  const statusOrder = ["URGENT_REPLENISH","REPLENISH_SOON","OVERSTOCK","MONITOR_HIGH_STOCK","DEAD_STOCK","NORMAL"];
+  const statusLabel = { URGENT_REPLENISH:"🔴 Cần nhập gấp", REPLENISH_SOON:"🟠 Cần nhập sớm", OVERSTOCK:"🟡 Dư thừa", MONITOR_HIGH_STOCK:"🔵 Tồn cao", DEAD_STOCK:"⚫ Không bán 60 ngày", NORMAL:"🟢 Bình thường" };
+  return React.createElement("div", { style:{ maxWidth:1100, margin:"0 auto", padding:16 } }, [
+    React.createElement("h2", { key:"title", className:"pagetitle" }, "Tồn kho (Tổng quan)"),
+    React.createElement("p", { key:"sub", className:"pagesub" }, "Gộp từ dữ liệu đã có sẵn: giá trị tồn/cận date (tab Đồng bộ dữ liệu) + tốc độ tiêu thụ (tab Điều chuyển hàng hoá)."),
+    React.createElement(ShopFilterBar, { key:"filter", isAdmin, adminShop, setAdminShop, shopFilter }),
+    React.createElement("div", { key:"grid", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10, marginBottom:16 } }, [
+      React.createElement("div", { key:"tv", className:"card", style:{ padding:"12px 14px" } }, [
+        React.createElement("div", { key:"l", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:4 } }, "Tổng giá trị tồn kho"),
+        React.createElement("div", { key:"v", style:{ fontSize:18, fontWeight:700 } }, fmtVND(totalValue)),
+      ]),
+      summary && React.createElement("div", { key:"sku", className:"card", style:{ padding:"12px 14px" } }, [
+        React.createElement("div", { key:"l", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:4 } }, "Tổng SKU đang theo dõi (toàn chuỗi)"),
+        React.createElement("div", { key:"v", style:{ fontSize:18, fontWeight:700 } }, fmtNum(summary.totalSKU||0)),
+      ]),
+    ]),
+    isAll && React.createElement("div", { key:"byshop", className:"card", style:{ marginBottom:16 } }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, "Giá trị tồn kho theo nhà thuốc"),
+      React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:6 } },
+        shopsToShow.map(sh => {
+          const v = expiryByShop[sh] || {};
+          return React.createElement("div", { key:sh }, [
+            React.createElement("div", { key:"lbl", style:{ display:"flex", justifyContent:"space-between", fontSize:12, marginBottom:2 } }, [
+              React.createElement("span", { key:"n" }, sh),
+              React.createElement("span", { key:"q", style:{ color:"var(--inkSoft)" } }, `${fmtVND(v.totalValue||0)} · cận 6th ${v.pct6||0}% · cận 12th ${v.pct12||0}%`),
+            ]),
+            React.createElement("div", { key:"bar", style:{ height:6, borderRadius:3, background:"var(--pineSoft)" } },
+              React.createElement("div", { style:{ height:"100%", width:`${((v.totalValue||0)/maxValue)*100}%`, background:"var(--pine)", borderRadius:3 } })),
+          ]);
+        })
+      ),
+    ]),
+    summary && React.createElement("div", { key:"status", className:"card" }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, "Trạng thái tồn theo tốc độ bán (toàn chuỗi, mã hàng×nhà thuốc)"),
+      React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:6 } },
+        statusOrder.filter(k=>summary.byStatus && summary.byStatus[k]).map(k => React.createElement("div", { key:k, style:{ display:"flex", justifyContent:"space-between", fontSize:12.5 } }, [
+          React.createElement("span", { key:"n" }, statusLabel[k]||k),
+          React.createElement("span", { key:"v", style:{ fontWeight:600 } }, fmtNum(summary.byStatus[k])),
+        ]))
+      ),
+      React.createElement("div", { key:"note", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:10 } }, "Xem chi tiết từng mã hàng ở tab \"Điều chuyển hàng hoá\"."),
+    ]),
+  ]);
+}
+
 // ================= APP SHELL =================
-const STAFF_TABS = ["checklist","photos","customerOrders","sales","weekly","tasks","kpi","crm","training","kudos","inventory","temgia"];
+const STAFF_TABS = ["checklist","photos","customerOrders","sales","weekly","tasks","kpi","crm","training","kudos","inventory","temgia","revenueAnalytics","staffPerformance","ctkm","inventoryHealth"];
 const OPS_TABS = [
   { id:"checklist", label:"Checklist ngày" },
   { id:"photos", label:"Báo cáo hình ảnh" },
   { id:"customerOrders", label:"Khách đặt hàng" },
   { id:"sales", label:"Báo cáo doanh số" },
+  { id:"revenueAnalytics", label:"Doanh thu" },
   { id:"weekly", label:"Báo cáo tuần" },
   { id:"tasks", label:"Giao việc" },
   { id:"kpi", label:"KPI" },
   { id:"crm", label:"CRM khách hàng" },
+  { id:"staffPerformance", label:"Hiệu suất nhân viên" },
+  { id:"ctkm", label:"Khuyến mãi (CTKM)" },
   { id:"training", label:"Đào tạo & Buddy" },
   { id:"kudos", label:"Ghi nhận & Quà" },
   { id:"inventory", label:"Kiểm kê" },
+  { id:"inventoryHealth", label:"Tồn kho (Tổng quan)" },
   { id:"temgia", label:"Tem giá" },
   { id:"transfer", label:"Điều chuyển hàng hoá" },
+  { id:"weeklyplan", label:"Kế hoạch tuần (Quản lý)" },
   { id:"staff", label:"Nhân viên" },
 ];
 
@@ -8278,6 +8729,11 @@ const TAB_STYLE = {
   staff:          { icon:"👥", color:"#475569" },
   temgia:         { icon:"🏷️", color:"#c8503a" },
   transfer:       { icon:"🔀", color:"#0e7490" },
+  weeklyplan:     { icon:"🗓️", color:"#7c3aed" },
+  revenueAnalytics: { icon:"💵", color:"#0d9488" },
+  staffPerformance: { icon:"🏆", color:"#0891b2" },
+  ctkm:             { icon:"🎁", color:"#b4720a" },
+  inventoryHealth:  { icon:"📊", color:"#0f6b5c" },
 };
 
 // SVG nét rõ, thay cho icon emoji (emoji hiển thị mờ/vỡ nét trên nhiều máy — nhất là ở kích
@@ -8298,6 +8754,11 @@ const TAB_ICON_SVG = {
   staff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><circle cx="18" cy="9" r="2.6"/><path d="M16 14.3c2.7.3 4.9 2.3 4.9 5.2"/></svg>',
   temgia: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.5 3H20a1 1 0 0 1 1 1v7.5a1 1 0 0 1-.3.7l-8.5 8.5a1 1 0 0 1-1.4 0l-7.5-7.5a1 1 0 0 1 0-1.4l8.5-8.5a1 1 0 0 1 .7-.3z"/><circle cx="16" cy="8" r="1.6" fill="currentColor"/></svg>',
   transfer: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h13M12 4l4 4-4 4"/><path d="M21 16H8M12 20l-4-4 4-4"/></svg>',
+  weeklyplan: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M8 15l2.5 2.5L16 12"/></svg>',
+  revenueAnalytics: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M15 9.5c0-1.1-1.3-2-3-2s-3 .8-3 2 1.3 1.8 3 2 3 .9 3 2-1.3 2-3 2-3-.9-3-2"/></svg>',
+  staffPerformance: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8M12 17v4M7 4h10v4a5 5 0 0 1-10 0V4z"/><path d="M7 5H4a3 3 0 0 0 3 3M17 5h3a3 3 0 0 1-3 3"/></svg>',
+  ctkm: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12v8a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-8"/><rect x="2" y="7" width="20" height="5" rx="1"/><path d="M12 7v14M12 7c-2 0-4-1.3-4-3.2S9.3 1 11 1.5 12 5 12 7zM12 7c2 0 4-1.3 4-3.2S12.7 1 11 1.5 12 5 12 7z"/></svg>',
+  inventoryHealth: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M11 20V4M18 20v-7"/></svg>',
 };
 function renderTabIcon(id, sizePx, extraProps){
   const markup = (TAB_ICON_SVG[id] || TAB_ICON_SVG.staff).replace("<svg ", '<svg width="' + sizePx + '" height="' + sizePx + '" ');
@@ -8422,6 +8883,11 @@ function Dashboard({ user, isAdmin, myStaff }){
         activeTab==="staff" && isAdmin && React.createElement(StaffView, { key:"v" }),
         activeTab==="temgia" && React.createElement(TemGiaView, { key:"v" }),
         activeTab==="transfer" && isAdmin && React.createElement(TransferSuggestionsView, { key:"v" }),
+        activeTab==="weeklyplan" && isAdmin && React.createElement(WeeklyPlanManagerView, { key:"v" }),
+        activeTab==="revenueAnalytics" && React.createElement(RevenueAnalyticsView, { key:"v", isAdmin, myStaff }),
+        activeTab==="staffPerformance" && React.createElement(StaffPerformanceView, { key:"v", isAdmin, myStaff }),
+        activeTab==="ctkm" && React.createElement(PromoAnalyticsView, { key:"v", isAdmin, myStaff }),
+        activeTab==="inventoryHealth" && React.createElement(InventoryHealthView, { key:"v", isAdmin, myStaff }),
       ]),
     ]),
   ]);
