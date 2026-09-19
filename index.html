@@ -3718,6 +3718,8 @@ function CrmView({ isAdmin, myStaff }){
   const [filterLevel, setFilterLevel] = useState("Tất cả");
   const [filterAssigned, setFilterAssigned] = useState("Tất cả");
   const [filterSegment, setFilterSegment] = useState("Tất cả");
+  const [customerPage, setCustomerPage] = useState(1);
+  const CUSTOMER_PAGE_SIZE = 50;
   const [selectedPhone, setSelectedPhone] = useState(null);
   const [noteText, setNoteText] = useState("");
   const [noteFollowUp, setNoteFollowUp] = useState("");
@@ -3998,8 +4000,11 @@ function CrmView({ isAdmin, myStaff }){
   const SEGMENT_NAMES = ["Khách mới", "Khách VIP", "Sắp đến kỳ mua lại", "Có nguy cơ rời bỏ", "Giá trị cao im lặng", "Chưa phân công",
     "VIP (chăm sóc tự động)", "Thân thiết (chăm sóc tự động)", "Thân thiết tăng trưởng — tiềm năng lên VIP", "🎂 Sinh nhật hôm nay"];
 
-  const scopedCustomers = customers.filter(c => isAdmin ? true : c.shop===(myStaff && myStaff.shop));
-  const shopOptions = ["Tất cả", ...Array.from(new Set(customers.map(c=>c.shop).filter(Boolean))).sort((a,b)=>a.localeCompare(b,"vi"))];
+  // Chỉ hiện khách thuộc ĐÚNG 9 nhà thuốc trong chuỗi (DEFAULT_SHOPS) — trước đây admin thấy CẢ
+  // những mã shop lạ (VD "SHOP0044", "SHOP0049") lẫn trong dữ liệu đồng bộ từ hệ thống ngoài (có
+  // thể là mã cũ/mã của chuỗi khác), không thuộc phạm vi quản lý thực tế nên không nên hiển thị.
+  const scopedCustomers = customers.filter(c => DEFAULT_SHOPS.includes(c.shop) && (isAdmin ? true : c.shop===(myStaff && myStaff.shop)));
+  const shopOptions = ["Tất cả", ...DEFAULT_SHOPS];
   const staffOptions = staffList.filter(s => isAdmin ? true : s.shop===(myStaff && myStaff.shop));
 
   const filtered = scopedCustomers.filter(c => {
@@ -4022,6 +4027,16 @@ function CrmView({ isAdmin, myStaff }){
     }
     return segRank(a)-segRank(b) || (a.shop||"").localeCompare(b.shop||"") || (b.level||0)-(a.level||0) || (a.name||"").localeCompare(b.name||"","vi");
   });
+
+  // ===== PHÂN TRANG (9/2026): trước đây bảng luôn cắt cứng ở 200 khách đầu (sau khi lọc/sắp xếp)
+  // nên khách xếp sau vị trí 200 không bao giờ hiện ra được dù đã lọc/tìm đúng. Giờ chia thành
+  // các trang ~50 khách để hiển thị NHẸ hơn (bảng không phải vẽ hàng nghìn dòng cùng lúc), có nút
+  // chuyển trang để xem hết toàn bộ danh sách đã lọc — tìm kiếm/bộ lọc vẫn chạy trên TOÀN BỘ dữ
+  // liệu đã tải như cũ, chỉ phần HIỂN THỊ là được chia trang.
+  const customerTotalPages = Math.max(1, Math.ceil(filtered.length / CUSTOMER_PAGE_SIZE));
+  const customerPageClamped = Math.min(customerPage, customerTotalPages);
+  const pagedCustomers = filtered.slice((customerPageClamped-1)*CUSTOMER_PAGE_SIZE, customerPageClamped*CUSTOMER_PAGE_SIZE);
+  useEffect(()=>{ setCustomerPage(1); }, [search, adminShop, filterLevel, filterAssigned, filterSegment]);
 
   const selected = customers.find(c=>c.phone===selectedPhone);
   // "interactions" giờ đã được query đúng theo selectedPhone rồi (xem useEffect ở trên) —
@@ -4192,9 +4207,9 @@ function CrmView({ isAdmin, myStaff }){
           React.createElement("thead", { key:"h" }, React.createElement("tr", { style:{ background:"#f8f8f6" } }, [
             React.createElement("th", { key:"chk", style:{ padding:"8px 6px" } },
               React.createElement("input", { type:"checkbox",
-                checked: filtered.slice(0,200).length>0 && filtered.slice(0,200).every(c=>selectedPhones.has(c.phone)),
+                checked: pagedCustomers.length>0 && pagedCustomers.every(c=>selectedPhones.has(c.phone)),
                 onChange:e=>{
-                  const page = filtered.slice(0,200).map(c=>c.phone);
+                  const page = pagedCustomers.map(c=>c.phone);
                   setSelectedPhones(prev=>{
                     const next = new Set(prev);
                     if(e.target.checked) page.forEach(p=>next.add(p)); else page.forEach(p=>next.delete(p));
@@ -4206,7 +4221,7 @@ function CrmView({ isAdmin, myStaff }){
             React.createElement("th", { key:"sh", style:{ textAlign:"left", padding:"8px 10px" } }, "Shop"),
             React.createElement("th", { key:"a", style:{ textAlign:"left", padding:"8px 10px" } }, "Phụ trách"),
           ])),
-          React.createElement("tbody", { key:"b" }, filtered.slice(0,200).map(c => React.createElement("tr", {
+          React.createElement("tbody", { key:"b" }, pagedCustomers.map(c => React.createElement("tr", {
             key:c.phone, onClick:()=>setSelectedPhone(c.phone),
             style:{ cursor:"pointer", borderTop:"1px solid var(--line)", background: selectedPhone===c.phone ? "var(--pineSoft)" : "transparent" },
           }, [
@@ -4225,7 +4240,14 @@ function CrmView({ isAdmin, myStaff }){
               ? [c.assignedStaffName, c.assignedStaffIsDefault && React.createElement("span", { key:"d", style:{ fontSize:10, color:"var(--inkSoft)", marginLeft:4 } }, "(tự động)")]
               : React.createElement("span",{style:{color:"var(--inkSoft)"}},"—")),
           ]))),
-        ])
+        ]),
+        // ===== Điều hướng trang — bảng chỉ vẽ 1 trang (~50 khách) mỗi lần cho nhẹ, thay vì vẽ cứng
+        // 200 dòng đầu tiên như trước (khiến khách xếp sau không bao giờ xem được dù lọc đúng).
+        customerTotalPages > 1 && React.createElement("div", { key:"pager", style:{ display:"flex", alignItems:"center", justifyContent:"center", gap:10, padding:"10px 8px", borderTop:"1px solid var(--line)", fontSize:12.5 } }, [
+          React.createElement("button", { key:"prev", type:"button", className:"btn btnGhost", disabled:customerPageClamped<=1, style:{ padding:"4px 10px" }, onClick:()=>setCustomerPage(p=>Math.max(1,p-1)) }, "‹ Trước"),
+          React.createElement("span", { key:"lbl", style:{ color:"var(--inkSoft)" } }, `Trang ${customerPageClamped}/${customerTotalPages}`),
+          React.createElement("button", { key:"next", type:"button", className:"btn btnGhost", disabled:customerPageClamped>=customerTotalPages, style:{ padding:"4px 10px" }, onClick:()=>setCustomerPage(p=>Math.min(customerTotalPages,p+1)) }, "Sau ›"),
+        ]),
       ),
 
       selected && React.createElement("div", { key:"detail", className:"card", style:{ flex:"1 1 320px", position:"sticky", top:16 } }, [
