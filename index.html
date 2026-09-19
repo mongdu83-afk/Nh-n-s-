@@ -3796,6 +3796,20 @@ function CrmView({ isAdmin, myStaff }){
     return unsub;
   }, [selectedPhone]);
   useEffect(()=>{ setRangeResult(null); setRangeError(null); }, [selectedPhone]);
+  // ===== Đề xuất bổ sung (9/2026) — Lịch sử thay đổi phân khúc: đọc từ collection
+  // "customerSegmentHistory" (ghi bởi computeCustomerSegments mỗi khi phân khúc của khách thay
+  // đổi), chỉ của ĐÚNG khách đang xem, mới nhất trước — để thấy được quá trình khách di chuyển
+  // giữa các phân khúc (VD: Thân thiết → VIP ngày nào) ngay trong Customer 360.
+  const [segmentHistoryRaw, setSegmentHistoryRaw] = useState([]);
+  useEffect(()=>{
+    if(!selectedPhone){ setSegmentHistoryRaw([]); return; }
+    // Chỉ lọc bằng "customerId" (không kèm orderBy trên field khác) để không cần tạo thêm chỉ mục
+    // kép — sắp xếp mới nhất trước ngay ở trình duyệt (số lượng mỗi khách rất nhỏ, không tốn kém).
+    const unsub = db.collection("customerSegmentHistory").where("customerId", "==", selectedPhone)
+      .onSnapshot(snap => setSegmentHistoryRaw(snap.docs.map(d => ({ id:d.id, ...d.data() }))), err => logSystemError("customerSegmentHistory", err));
+    return unsub;
+  }, [selectedPhone]);
+  const segmentHistory = [...segmentHistoryRaw].sort((a,b)=> (b.changedAt||"").localeCompare(a.changedAt||"")).slice(0,20);
   const [showCrmTasks, setShowCrmTasks] = useState(false);
   const [crmTaskPriorityFilter, setCrmTaskPriorityFilter] = useState("all");
   const [selectedPhones, setSelectedPhones] = useState(new Set());
@@ -3842,6 +3856,21 @@ function CrmView({ isAdmin, myStaff }){
       if(!resp.ok){ const t = await resp.text().catch(()=> ""); alert(`Tính lại thất bại (mã lỗi ${resp.status}). ${t.slice(0,300)}`); }
     } catch(err){ alert(`Lỗi kết nối khi tính lại: ${err && err.message ? err.message : err}`); }
     setBehaviorRefreshing(false);
+  }
+  // Đề xuất bổ sung (9/2026) — Chấm điểm hiệu quả CSKH theo nhân viên.
+  const [staffEffectiveness, setStaffEffectiveness] = useState(null);
+  const [staffEffRefreshing, setStaffEffRefreshing] = useState(false);
+  useEffect(()=>{
+    const unsub = db.collection("opsConfig").doc("crmStaffEffectiveness").onSnapshot(snap => setStaffEffectiveness(snap.exists ? snap.data() : null));
+    return unsub;
+  }, []);
+  async function refreshStaffEffectiveness(){
+    setStaffEffRefreshing(true);
+    try{
+      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeCrmStaffEffectivenessNow");
+      if(!resp.ok){ const t = await resp.text().catch(()=> ""); alert(`Tính lại thất bại (mã lỗi ${resp.status}). ${t.slice(0,300)}`); }
+    } catch(err){ alert(`Lỗi kết nối khi tính lại: ${err && err.message ? err.message : err}`); }
+    setStaffEffRefreshing(false);
   }
   const DOW_NAMES = ["CN","T2","T3","T4","T5","T6","T7"];
   function renderBehaviorAnalyticsTab(){
@@ -3969,7 +3998,7 @@ function CrmView({ isAdmin, myStaff }){
           })),
         ])
       ),
-      days.length>0 && React.createElement("div", { key:"byday", className:"card" }, [
+      days.length>0 && React.createElement("div", { key:"byday", className:"card", style:{ marginBottom:16 } }, [
         React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, "Số action tạo ra theo ngày (14 ngày gần nhất)"),
         React.createElement("div", { key:"bars", style:{ display:"flex", alignItems:"flex-end", gap:4, height:100 } },
           days.map(d => {
@@ -3981,6 +4010,35 @@ function CrmView({ isAdmin, myStaff }){
             ]);
           })
         ),
+      ]),
+
+      // Đề xuất bổ sung (9/2026) — Hiệu quả CSKH theo nhân viên: % khách phát sinh đơn mua mới
+      // trong vòng 30 ngày sau khi nhân viên hoàn thành 1 việc chăm sóc do Action Engine tạo.
+      React.createElement("div", { key:"staffeff", className:"card", style:{ padding:0, overflow:"hidden" } }, [
+        React.createElement("div", { key:"h", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 14px", flexWrap:"wrap", gap:8 } }, [
+          React.createElement("div", { key:"t" }, [
+            React.createElement("div", { key:"tt", style:{ fontWeight:700, fontSize:13 } }, "Hiệu quả CSKH theo nhân viên"),
+            React.createElement("div", { key:"s", style:{ fontSize:11.5, color:"var(--inkSoft)" } },
+              staffEffectiveness
+                ? `% khách mua lại trong ${staffEffectiveness.returnWindowDays||30} ngày sau khi hoàn thành việc CSKH (${staffEffectiveness.lookbackDays||90} ngày gần nhất) · tính lúc ${staffEffectiveness.computedAt ? new Date(staffEffectiveness.computedAt).toLocaleString("vi-VN") : "—"}`
+                : "Chưa có dữ liệu — bấm \"Tính lại\" bên cạnh."),
+          ]),
+          React.createElement("button", { key:"refresh", className:"btn btnGhost", disabled:staffEffRefreshing, onClick:refreshStaffEffectiveness, style:{ fontSize:12, padding:"4px 10px" } }, staffEffRefreshing ? "Đang tính..." : "↻ Tính lại"),
+        ]),
+        staffEffectiveness && (staffEffectiveness.byStaff||[]).length>0 && React.createElement("table", { key:"tbl", style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5 } }, [
+          React.createElement("thead", { key:"h" }, React.createElement("tr", { style:{ background:"#f8f8f6" } }, [
+            React.createElement("th", { key:"n", style:{ textAlign:"left", padding:"8px 10px" } }, "Nhân viên"),
+            React.createElement("th", { key:"t", style:{ textAlign:"right", padding:"8px 10px" } }, "Việc đã hoàn thành"),
+            React.createElement("th", { key:"r", style:{ textAlign:"right", padding:"8px 10px" } }, "Khách quay lại mua"),
+            React.createElement("th", { key:"p", style:{ textAlign:"right", padding:"8px 10px" } }, "Tỉ lệ hiệu quả"),
+          ])),
+          React.createElement("tbody", { key:"b" }, staffEffectiveness.byStaff.map(s => React.createElement("tr", { key:s.staffId, style:{ borderTop:"1px solid var(--line)" } }, [
+            React.createElement("td", { key:"n", style:{ padding:"8px 10px", fontWeight:600 } }, s.staffName || s.staffId),
+            React.createElement("td", { key:"t", style:{ padding:"8px 10px", textAlign:"right" } }, s.totalCompleted),
+            React.createElement("td", { key:"r", style:{ padding:"8px 10px", textAlign:"right" } }, s.returned),
+            React.createElement("td", { key:"p", style:{ padding:"8px 10px", textAlign:"right", fontWeight:600, color: s.returnRate>=50 ? "var(--pine)" : "var(--clay)" } }, `${s.returnRate}%`),
+          ]))),
+        ]),
       ]),
     ]);
   }
@@ -4021,7 +4079,7 @@ function CrmView({ isAdmin, myStaff }){
   // CDP — phân khúc do computeCustomerSegmentsDaily tính mỗi ngày, ghi thẳng vào field "segments"
   // của từng khách trong crmCustomers (xem index.js).
   const SEGMENT_NAMES = ["Khách mới", "Khách VIP", "Sắp đến kỳ mua lại", "Có nguy cơ rời bỏ", "Giá trị cao im lặng", "Chưa phân công",
-    "VIP (chăm sóc tự động)", "Thân thiết (chăm sóc tự động)", "Thân thiết tăng trưởng — tiềm năng lên VIP", "🎂 Sinh nhật hôm nay"];
+    "VIP (chăm sóc tự động)", "Thân thiết (chăm sóc tự động)", "Thân thiết tăng trưởng — tiềm năng lên VIP", "🎂 Sinh nhật hôm nay", "⚠️ VIP hay đổi nhà thuốc"];
 
   // Chỉ hiện khách thuộc ĐÚNG 9 nhà thuốc trong chuỗi (DEFAULT_SHOPS) — trước đây admin thấy CẢ
   // những mã shop lạ (VD "SHOP0044", "SHOP0049") lẫn trong dữ liệu đồng bộ từ hệ thống ngoài (có
@@ -4060,6 +4118,27 @@ function CrmView({ isAdmin, myStaff }){
   const customerPageClamped = Math.min(customerPage, customerTotalPages);
   const pagedCustomers = filtered.slice((customerPageClamped-1)*CUSTOMER_PAGE_SIZE, customerPageClamped*CUSTOMER_PAGE_SIZE);
   useEffect(()=>{ setCustomerPage(1); }, [search, adminShop, filterLevel, filterAssigned, filterSegment]);
+
+  // Đề xuất bổ sung (9/2026) — Xuất Excel danh sách khách hàng đang lọc (đúng bộ lọc/tìm kiếm hiện
+  // tại, không chỉ trang đang xem) — dùng khi cần gửi danh sách cho nhân viên gọi ngoài app.
+  function exportFilteredCustomers(){
+    const rows = filtered.map(c => ({
+      "Tên": c.name || "(chưa có tên)",
+      "SĐT": c.phone || "",
+      "Hạng": c.levelName || "",
+      "Shop": c.shop || "",
+      "Phân khúc": (c.segments||[]).join(", "),
+      "Phụ trách": c.assignedStaffName || "",
+      "Doanh số 6 tháng (đ)": Math.round(c.amountRank||0),
+      "Số lượt mua": Math.max(c.invoiceRank||0, c.eventPurchaseCount||0),
+      "Lần mua gần nhất": (c.stats && c.stats.lastPurchaseAt) || "",
+      "Nhóm hàng hay mua": (c.topCategories||[]).join(", "),
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Khách hàng");
+    XLSX.writeFile(wb, `Danh_sach_khach_hang_${todayISO()}.xlsx`);
+  }
 
   const selected = customers.find(c=>c.phone===selectedPhone);
   // "interactions" giờ đã được query đúng theo selectedPhone rồi (xem useEffect ở trên) —
@@ -4122,7 +4201,8 @@ function CrmView({ isAdmin, myStaff }){
   // CDP — nhãn phân khúc (tính mỗi ngày bởi computeCustomerSegmentsDaily, xem index.js).
   function segmentBadge(name){
     const colors = { "Khách mới":"#16A34A", "Khách VIP":"#C9A227", "Sắp đến kỳ mua lại":"#0891b2", "Có nguy cơ rời bỏ":"#D98A1F", "Giá trị cao im lặng":"#B0483A", "Chưa phân công":"#6b7280",
-      "VIP (chăm sóc tự động)":"#C9A227", "Thân thiết (chăm sóc tự động)":"#0891b2", "Thân thiết tăng trưởng — tiềm năng lên VIP":"#16A34A", "🎂 Sinh nhật hôm nay":"#B0483A" };
+      "VIP (chăm sóc tự động)":"#C9A227", "Thân thiết (chăm sóc tự động)":"#0891b2", "Thân thiết tăng trưởng — tiềm năng lên VIP":"#16A34A", "🎂 Sinh nhật hôm nay":"#B0483A",
+      "⚠️ VIP hay đổi nhà thuốc":"#B0483A" };
     const c = colors[name] || "#6b7280";
     return React.createElement("span", { key:name, style:{ background:c+"1A", color:c, fontWeight:600, fontSize:10.5, padding:"2px 7px", borderRadius:999, marginRight:4, display:"inline-block", marginBottom:3 } }, name);
   }
@@ -4144,6 +4224,10 @@ function CrmView({ isAdmin, myStaff }){
         key:"autoassign", className:"btn btnGhost", disabled:autoAssigning, onClick:runAutoAssign,
         style:{ fontSize:12, padding:"4px 10px" },
       }, autoAssigning ? "Đang gán..." : "👤 Gán tự động theo Nhà thuốc"),
+      crmSubTab === "khach" && React.createElement("button", {
+        key:"exportxlsx", className:"btn btnGhost", disabled:!filtered || filtered.length===0, onClick:exportFilteredCustomers,
+        style:{ fontSize:12, padding:"4px 10px" },
+      }, "📥 Xuất Excel"),
     ]),
     React.createElement("div", { key:"subtabs", style:{ display:"flex", gap:6, marginBottom:14, borderBottom:"1px solid var(--line)", overflowX:"auto", WebkitOverflowScrolling:"touch" } }, [
       React.createElement("button", { key:"kh", onClick:()=>setCrmSubTab("khach"), style:{ padding:"8px 4px", fontSize:13, fontWeight:600, border:"none", background:"transparent", cursor:"pointer", whiteSpace:"nowrap", flex:"none", color: crmSubTab==="khach" ? "var(--pine)" : "var(--inkSoft)", borderBottom: crmSubTab==="khach" ? "2px solid var(--pine)" : "2px solid transparent", marginRight:16 } }, "Khách hàng"),
@@ -4291,10 +4375,26 @@ function CrmView({ isAdmin, myStaff }){
           `Doanh số 6 tháng: ${Math.round(selected.amountRank||0).toLocaleString("vi-VN")}đ · ${Math.max(selected.invoiceRank||0, selected.eventPurchaseCount||0)} lượt mua`),
         React.createElement("div", { key:"lastp", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } },
           `Lần mua gần nhất: ${formatLastPurchase(selected.stats)}`),
-        // Nhóm hàng hay mua — tính bởi checkVipCategoryConcentrationWeekly (C07), hiện chỉ có với
-        // khách VIP đã được job này quét tới (xoay vòng mỗi tuần, xem ghi chú trong index.js).
-        selected.topCategories && selected.topCategories.length>0 && React.createElement("div", { key:"topcat", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } },
+        // Nhóm hàng hay mua — tính bởi runCheckCategoryConcentration (C07), xoay vòng dần (ưu tiên
+        // VIP trước), xem ghi chú trong index.js.
+        selected.topCategories && selected.topCategories.length>0 && React.createElement("div", { key:"topcat", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:4 } },
           `Nhóm hàng hay mua: ${selected.topCategories.join(", ")}`),
+        // Đề xuất bổ sung (9/2026) — sản phẩm CỤ THỂ hay mua nhất (không chỉ tên nhóm hàng), tính
+        // cùng lúc với topCategories — dùng để tư vấn/gợi ý đúng sản phẩm thay vì chỉ nói chung
+        // chung "nhóm hàng X".
+        selected.topProducts && selected.topProducts.length>0 && React.createElement("div", { key:"topprod", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } },
+          `Sản phẩm hay mua nhất: ${selected.topProducts.map(p=>p.name).join(", ")}`),
+
+        // Đề xuất bổ sung (9/2026) — Lịch sử thay đổi phân khúc (customerSegmentHistory).
+        segmentHistory.length>0 && React.createElement("div", { key:"seghist", className:"card", style:{ padding:10, marginBottom:12, fontSize:12 } }, [
+          React.createElement("div", { key:"t", style:{ fontWeight:700, marginBottom:6, fontSize:12.5 } }, "Lịch sử thay đổi phân khúc"),
+          React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:6, maxHeight:160, overflowY:"auto" } },
+            segmentHistory.map(h => React.createElement("div", { key:h.id, style:{ borderTop:"1px solid var(--line)", paddingTop:5, fontSize:11.5 } }, [
+              React.createElement("div", { key:"d", style:{ color:"var(--inkSoft)" } }, (h.changedAt||"").slice(0,16).replace("T"," ")),
+              React.createElement("div", { key:"c" }, `${(h.from||[]).join(", ")||"—"} → ${(h.to||[]).join(", ")||"—"}`),
+            ]))
+          ),
+        ]),
 
         // CDP — Lớp Intelligence (tính bởi computeCustomerSegmentsDaily): RFM, chu kỳ mua trung
         // bình, dự đoán ngày mua lại, nguy cơ rời bỏ, ước tính giá trị/năm. Chỉ hiện khi đã có
@@ -7538,6 +7638,52 @@ function TransferSuggestionsView(){
   const [catalogSearch, setCatalogSearch] = useState("");
   const [catalogItems, setCatalogItems] = useState(null);
   const [catalogListLoading, setCatalogListLoading] = useState(false);
+  // Lịch sử phân tích điều chuyển — chỉ tải khi bấm mở (không tự tải mỗi lần vào trang).
+  const [showTransferHistory, setShowTransferHistory] = useState(false);
+  const [transferHistory, setTransferHistory] = useState(null);
+  const [transferHistoryLoading, setTransferHistoryLoading] = useState(false);
+  useEffect(()=>{
+    if(!showTransferHistory || transferHistory) return;
+    setTransferHistoryLoading(true);
+    db.collection("transferSuggestionsHistory").orderBy("generatedAtTs", "desc").limit(30).get()
+      .then(snap => setTransferHistory(snap.docs.map(d=>d.data())))
+      .catch(err => { console.error("Lỗi tải lịch sử điều chuyển:", err); setTransferHistory([]); })
+      .finally(() => setTransferHistoryLoading(false));
+  }, [showTransferHistory]);
+  // Ngưỡng dư/thiếu tuỳ chỉnh theo nhóm hàng ("opsConfig/transferThresholds").
+  const [showThresholdEditor, setShowThresholdEditor] = useState(false);
+  const [thresholdCfg, setThresholdCfg] = useState(null);
+  const [thresholdRows, setThresholdRows] = useState([]);
+  const [thresholdSaving, setThresholdSaving] = useState(false);
+  const [thresholdMsg, setThresholdMsg] = useState(null);
+  useEffect(()=>{
+    const unsub = db.collection("opsConfig").doc("transferThresholds").onSnapshot(snap => {
+      const byCategory = snap.exists ? (snap.data().byCategory || {}) : {};
+      setThresholdCfg(byCategory);
+      setThresholdRows(Object.entries(byCategory).map(([category, v]) => ({ category, surplusDays: v.surplusDays || "", shortageDays: v.shortageDays || "" })));
+    });
+    return unsub;
+  }, []);
+  function addThresholdRow(){ setThresholdRows(rows => [...rows, { category:"", surplusDays:"", shortageDays:"" }]); }
+  function updateThresholdRow(i, field, value){ setThresholdRows(rows => rows.map((r,idx) => idx===i ? { ...r, [field]:value } : r)); }
+  function removeThresholdRow(i){ setThresholdRows(rows => rows.filter((_,idx) => idx!==i)); }
+  async function saveThresholds(){
+    setThresholdSaving(true); setThresholdMsg(null);
+    try{
+      const byCategory = {};
+      thresholdRows.forEach(r => {
+        const cat = String(r.category||"").trim();
+        if(!cat) return;
+        const sD = Number(r.surplusDays), shD = Number(r.shortageDays);
+        byCategory[cat] = { surplusDays: sD>0 ? sD : null, shortageDays: shD>0 ? shD : null };
+      });
+      await db.collection("opsConfig").doc("transferThresholds").set({ byCategory, updatedAt:new Date().toISOString() });
+      setThresholdMsg("Đã lưu — bấm \"Phân tích ngay\" để áp dụng ngưỡng mới.");
+    } catch(err){
+      console.error("Lỗi lưu ngưỡng tuỳ chỉnh:", err);
+      setThresholdMsg("Lưu thất bại — thử lại.");
+    } finally { setThresholdSaving(false); }
+  }
   useEffect(()=>{
     if(!showCatalogList || catalogItems) return; // đã tải rồi thì không tải lại mỗi lần gõ tìm
     setCatalogListLoading(true);
@@ -7735,6 +7881,35 @@ function TransferSuggestionsView(){
     .filter(e => filterShop==="Tất cả" || e.fromShop===filterShop || (e.candidateDestinations||[]).some(d=>d.shopCode===filterShop))
     .slice().sort((a,b) => a.daysToExpiry - b.daysToExpiry);
 
+  // Xuất phiếu điều chuyển (file Excel để in/lưu tham khảo — KHÔNG gọi/ghi vào hệ thống POS, quản
+  // lý/nhân viên tự dùng file này làm căn cứ tạo phiếu chuyển hàng thật trong POS). Tách 1 sheet
+  // riêng cho MỖI nhà thuốc NHẬN hàng (đúng như 1 phiếu nhận hàng thật của nhà thuốc đó), theo đúng
+  // danh sách đang lọc/hiển thị (sortedTransfers) để khớp với những gì quản lý đang xem trên màn hình.
+  function exportTransferSlip(){
+    if(sortedTransfers.length===0){ alert("Không có đề xuất điều chuyển nào để xuất."); return; }
+    const wb = XLSX.utils.book_new();
+    const byDestShop = {};
+    sortedTransfers.forEach(t => { (byDestShop[t.toShop] = byDestShop[t.toShop] || []).push(t); });
+    Object.keys(byDestShop).sort(byShop).forEach(shopCode => {
+      const rows = [
+        [`PHIẾU ĐỀ XUẤT ĐIỀU CHUYỂN HÀNG HOÁ — NHẬN TẠI ${shopCode}`],
+        [`Ngày lập: ${new Date().toLocaleDateString("vi-VN")}    Nguồn dữ liệu: ${data && data.generatedAtTs ? new Date(data.generatedAtTs).toLocaleString("vi-VN") : ""}`],
+        [],
+        ["Mã hàng", "Tên hàng", "Từ nhà thuốc", "Số lượng", "Đơn vị", "Ghi chú"],
+        ...byDestShop[shopCode].map(t => [
+          t.productId, t.productName, t.fromShop, t.qty, t.unit||"",
+          [t.priority==="P1" ? "Ưu tiên — bán nhanh" : "", t.toIsRequired ? "Hàng thường trực" : ""].filter(Boolean).join(", "),
+        ]),
+        [],
+        ["Người giao (nhà thuốc gửi)", "", "Người nhận (" + shopCode + ")", "", "Quản lý xác nhận", ""],
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      ws["!cols"] = [{ wch:14 }, { wch:34 }, { wch:14 }, { wch:10 }, { wch:10 }, { wch:24 }];
+      XLSX.utils.book_append_sheet(wb, ws, shopCode.slice(0,31));
+    });
+    XLSX.writeFile(wb, `Phieu_de_xuat_dieu_chuyen_${todayISO()}.xlsx`);
+  }
+
   const shopChipsBar = allShops.length>0 && React.createElement("div", { key:"chips", className:"card", style:{ marginBottom:20, padding:"12px 14px" } }, [
     React.createElement("div", { key:"lbl", style:{ fontSize:12, fontWeight:700, color:"var(--inkSoft)", marginBottom:8 } }, "Lọc theo nhà thuốc"),
     React.createElement("div", { key:"row", style:{ display:"flex", gap:8, overflowX:"auto", paddingBottom:4 } },
@@ -7851,12 +8026,58 @@ function TransferSuggestionsView(){
               ]
             : React.createElement("div", { style:{ fontSize:13, color:"var(--inkSoft)" } }, loaded ? "Chưa có dữ liệu — bấm \"Phân tích ngay\" để chạy lần đầu." : "Đang tải...")
         ),
-        React.createElement("button", { key:"btn", type:"button", className:"btn btnPrimary", disabled:analyzing, onClick:runAnalyze },
-          analyzing ? "Đang phân tích..." : "🔄 Phân tích ngay"),
+        React.createElement("div", { key:"btns", style:{ display:"flex", gap:8, flexWrap:"wrap" } }, [
+          React.createElement("button", { key:"export", type:"button", className:"btn btnGhost", disabled:sortedTransfers.length===0, onClick:exportTransferSlip, style:{ fontSize:12.5, padding:"7px 12px" } }, "📥 Xuất phiếu điều chuyển"),
+          React.createElement("button", { key:"hist", type:"button", className:"btn btnGhost", onClick:()=>setShowTransferHistory(v=>!v), style:{ fontSize:12.5, padding:"7px 12px" } }, showTransferHistory ? "Ẩn lịch sử" : "🕒 Lịch sử phân tích"),
+          React.createElement("button", { key:"thres", type:"button", className:"btn btnGhost", onClick:()=>setShowThresholdEditor(v=>!v), style:{ fontSize:12.5, padding:"7px 12px" } }, showThresholdEditor ? "Ẩn cấu hình ngưỡng" : "⚙️ Ngưỡng theo nhóm hàng"),
+          React.createElement("button", { key:"btn", type:"button", className:"btn btnPrimary", disabled:analyzing, onClick:runAnalyze },
+            analyzing ? "Đang phân tích..." : "🔄 Phân tích ngay"),
+        ]),
       ]),
       errMsg && React.createElement("div", { key:"err", style:{ marginTop:10, fontSize:12.5, color:"var(--clay)" } }, `Lỗi: ${errMsg}`),
       (shopErrors && Object.keys(shopErrors).length>0) && React.createElement("div", { key:"shoperr", style:{ marginTop:10, fontSize:12, color:"var(--clay)" } },
         `Không lấy được tồn kho của: ${Object.entries(shopErrors).map(([s,m]) => `${s} (${m})`).join(", ")}`),
+      data && data.hasCategoryThresholds && React.createElement("div", { key:"customthres", style:{ marginTop:10, fontSize:11.5, color:"var(--inkSoft)" } }, "Đang áp dụng ngưỡng tuỳ chỉnh theo nhóm hàng cho một số nhóm."),
+
+      showTransferHistory && React.createElement("div", { key:"histpanel", style:{ marginTop:14, borderTop:"1px solid var(--line)", paddingTop:14 } }, [
+        React.createElement("div", { key:"t", style:{ fontSize:12.5, fontWeight:700, marginBottom:8 } }, "30 lần phân tích gần nhất"),
+        transferHistoryLoading
+          ? React.createElement("div", { className:"emptyState" }, "Đang tải...")
+          : !transferHistory || transferHistory.length===0
+            ? React.createElement("div", { className:"emptyState" }, "Chưa có lịch sử.")
+            : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+                React.createElement("thead",{key:"h"}, React.createElement("tr",null,
+                  ["Thời điểm","Số cặp chuyển","Dư không nơi nhận","Thiếu cần đặt NCC","Sắp hết hạn","Lỗi lấy tồn kho"].map((h,i)=>React.createElement("th",{key:i},h)))),
+                React.createElement("tbody",{key:"b"}, transferHistory.map((h,i) => React.createElement("tr",{key:i}, [
+                  React.createElement("td",{key:"ts"}, h.generatedAtTs ? new Date(h.generatedAtTs).toLocaleString("vi-VN") : "—"),
+                  React.createElement("td",{key:"tc"}, fmtNum(h.transferCount||0)),
+                  React.createElement("td",{key:"ls"}, fmtNum(h.leftoverSurplusCount||0)),
+                  React.createElement("td",{key:"lsh"}, fmtNum(h.leftoverShortageCount||0)),
+                  React.createElement("td",{key:"exp"}, fmtNum(h.expiryTransferCount||0)),
+                  React.createElement("td",{key:"err"}, fmtNum(h.shopErrorCount||0)),
+                ]))),
+              ])),
+      ]),
+
+      showThresholdEditor && React.createElement("div", { key:"threspanel", style:{ marginTop:14, borderTop:"1px solid var(--line)", paddingTop:14 } }, [
+        React.createElement("div", { key:"t", style:{ fontSize:12.5, fontWeight:700, marginBottom:4 } }, "Ngưỡng dư/thiếu tuỳ chỉnh theo nhóm hàng"),
+        React.createElement("div", { key:"s", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:10 } },
+          `Nhóm hàng không có dòng riêng bên dưới sẽ dùng mặc định chung: dư khi tồn >${(data && data.surplusDays) || 60} ngày bán, thiếu khi tồn <${(data && data.shortageDays) || 10} ngày bán. Tên nhóm hàng phải khớp đúng cột "Nhóm hàng" trong DMHH đã tải lên.`),
+        thresholdRows.map((r,i) => React.createElement("div", { key:i, style:{ display:"flex", gap:8, marginBottom:8, flexWrap:"wrap", alignItems:"center" } }, [
+          React.createElement("input", { key:"cat", type:"text", placeholder:"Tên nhóm hàng", value:r.category, onChange:e=>updateThresholdRow(i,"category",e.target.value),
+            style:{ flex:"1 1 180px", padding:"6px 10px", fontSize:12.5, border:"1px solid var(--line)", borderRadius:8 } }),
+          React.createElement("input", { key:"sd", type:"number", placeholder:"Dư khi > (ngày)", value:r.surplusDays, onChange:e=>updateThresholdRow(i,"surplusDays",e.target.value),
+            style:{ width:130, padding:"6px 10px", fontSize:12.5, border:"1px solid var(--line)", borderRadius:8 } }),
+          React.createElement("input", { key:"shd", type:"number", placeholder:"Thiếu khi < (ngày)", value:r.shortageDays, onChange:e=>updateThresholdRow(i,"shortageDays",e.target.value),
+            style:{ width:140, padding:"6px 10px", fontSize:12.5, border:"1px solid var(--line)", borderRadius:8 } }),
+          React.createElement("button", { key:"rm", type:"button", className:"btn btnGhost", onClick:()=>removeThresholdRow(i), style:{ fontSize:12, padding:"6px 10px" } }, "Xoá"),
+        ])),
+        React.createElement("div", { key:"actions", style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" } }, [
+          React.createElement("button", { key:"add", type:"button", className:"btn btnGhost", onClick:addThresholdRow, style:{ fontSize:12.5, padding:"6px 12px" } }, "+ Thêm nhóm hàng"),
+          React.createElement("button", { key:"save", type:"button", className:"btn btnPrimary", disabled:thresholdSaving, onClick:saveThresholds, style:{ fontSize:12.5, padding:"6px 14px" } }, thresholdSaving ? "Đang lưu..." : "💾 Lưu cấu hình"),
+          thresholdMsg && React.createElement("span", { key:"msg", style:{ fontSize:12, color:"var(--inkSoft)" } }, thresholdMsg),
+        ]),
+      ]),
     ]),
 
     React.createElement("div", { key:"catalog", className:"card", style:{ marginBottom:20, border: catalogDragOver ? "2px dashed var(--pine)" : undefined, background: catalogDragOver ? "var(--pineSoft)" : undefined },
@@ -7955,17 +8176,20 @@ function TransferSuggestionsView(){
     ]),
 
     React.createElement("div", { key:"secShort", className:"card", style:{ marginBottom:20 } }, [
-      React.createElement("div", { key:"t", className:"cardTitle" }, `Thiếu hàng, không nơi nào dư để chuyển — cần đặt bổ sung (${sortedShortage.length})`),
+      React.createElement("div", { key:"t", className:"cardTitle" }, `🛒 Cần đặt hàng NCC — thiếu hàng, không nơi nào dư để chuyển (${sortedShortage.length})`),
+      React.createElement("div", { key:"sub", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:10 } },
+        "Cột \"Đề xuất đặt NCC\" ước tính theo tốc độ bán 30 ngày (dùng tốc độ bán trung bình toàn chuỗi khi nhà thuốc chưa có lịch sử bán mã này) — chỉ là gợi ý, tự điều chỉnh theo quy cách đóng gói/đơn hàng tối thiểu của NCC."),
       sortedShortage.length===0
         ? React.createElement("div", { className:"emptyState" }, "Không có mục nào.")
         : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
             React.createElement("thead",{key:"h"}, React.createElement("tr",null,
-              ["Mã hàng","Tên hàng","Nhà thuốc","Số lượng cần","Tồn hiện tại","Ghi chú"].map((h,i)=>React.createElement("th",{key:i},h)))),
+              ["Mã hàng","Tên hàng","Nhà thuốc","Số lượng cần","Đề xuất đặt NCC","Tồn hiện tại","Ghi chú"].map((h,i)=>React.createElement("th",{key:i},h)))),
             React.createElement("tbody",{key:"b"}, sortedShortage.map((s,i) => React.createElement("tr",{key:i}, [
               React.createElement("td",{key:"pid"}, s.productId),
               React.createElement("td",{key:"pn"}, s.productName),
               React.createElement("td",{key:"sh"}, s.shopCode),
               React.createElement("td",{key:"q"}, `${fmtNum(s.qty)} ${s.unit||""}`),
+              React.createElement("td",{key:"sug", style:{fontWeight:700}}, `${fmtNum(s.suggestedOrderQty ?? s.qty)} ${s.unit||""}`),
               React.createElement("td",{key:"d"}, `${fmtNum(s.daysOfStock)} ngày bán`),
               React.createElement("td",{key:"note"}, s.isRequired ? StatusPill("Hàng thường trực","warn") : "—"),
             ]))),
