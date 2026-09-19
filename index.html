@@ -255,7 +255,7 @@
     }
     .topbarTitle{ display:flex; flex-direction:column; gap:1px; min-width:0; }
     .topbarTitle .t{ font-family:'Fraunces',serif; font-weight:700; font-size:17.5px; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .topbarTitle .s{ font-size:11.5px; color:var(--inkSoft); }
+    .topbarTitle .s{ display:none; }
     .topbarRight{ display:flex; align-items:center; gap:16px; flex:none; }
     .topbarBell{ position:relative; width:36px; height:36px; border-radius:9px; border:1px solid var(--line); background:#fff; display:flex; align-items:center; justify-content:center; font-size:16px; cursor:default; }
     .topbarBellBadge{ position:absolute; top:-6px; right:-6px; min-width:17px; height:17px; padding:0 4px; border-radius:9px; background:var(--clay); color:#fff; font-size:10px; font-weight:800; display:flex; align-items:center; justify-content:center; border:2px solid #fff; }
@@ -7625,13 +7625,14 @@ function BaoCaoTuanView({ isAdmin, myStaff }){
 // cáo quản lý (kế hoạch tuần) + Báo cáo nhà thuốc — mỗi tab gộp có thanh tab con bên trong (xem
 // HangHoaView/NhanVienView/BaoCaoTuanView). Bỏ hẳn tab "Báo cáo doanh số" (sales) — đã có tab
 // "Doanh thu" tự động tính từ dữ liệu API thay thế.
-const STAFF_TABS = ["checklist","photos","hanghoa","tasks","kpi","crm","training","kudos","temgia","revenueAnalytics","nhanvien","ctkm","baocaotuan"];
+const STAFF_TABS = ["checklist","photos","hanghoa","tasks","kpi","crm","training","kudos","temgia","revenueAnalytics","nhanvien","ctkm","baocaotuan","sales"];
 const OPS_TABS = [
   { id:"checklist", label:"Checklist ngày" },
   { id:"photos", label:"Báo cáo hình ảnh" },
   { id:"hanghoa", label:"Hàng hoá" },
   { id:"revenueAnalytics", label:"Doanh thu" },
   { id:"baocaotuan", label:"Báo cáo tuần" },
+  { id:"sales", label:"Báo cáo doanh số ngày" },
   { id:"tasks", label:"Giao việc" },
   { id:"kpi", label:"KPI" },
   { id:"crm", label:"Khách hàng" },
@@ -9117,6 +9118,10 @@ function Dashboard({ user, isAdmin, myStaff }){
         activeTab==="temgia" && React.createElement(TemGiaView, { key:"v" }),
         activeTab==="baocaotuan" && React.createElement(BaoCaoTuanView, { key:"v", isAdmin, myStaff }),
         activeTab==="revenueAnalytics" && React.createElement(RevenueAnalyticsView, { key:"v", isAdmin, myStaff }),
+        // Khôi phục lại "Báo cáo doanh số ngày" cho nhân viên (form nhập doanh số/hệ số theo khung
+        // giờ) — CHỈ ẩn phần tổng hợp của quản lý bên trong (isAdmin luôn truyền false ở đây) vì
+        // quản lý đã xem tổng hợp doanh thu ở tab "Doanh thu" mới rồi, không cần trùng 2 nơi.
+        activeTab==="sales" && React.createElement(SalesReportView, { key:"v", isAdmin:false, myStaff }),
         activeTab==="nhanvien" && React.createElement(NhanVienView, { key:"v", isAdmin, myStaff }),
         activeTab==="ctkm" && React.createElement(PromoAnalyticsView, { key:"v", isAdmin, myStaff }),
       ]),
