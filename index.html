@@ -6945,6 +6945,11 @@ function SalesReportView({ isAdmin, myStaff }){
     adminOpen && React.createElement(React.Fragment, null, [ adminMetrics, adminFilterRow, adminTable ]),
   ]);
 
+  if(!selfShop){
+    // Tài khoản quản lý không gắn với 1 nhà thuốc cụ thể nên không có gì để nhập ở đây (và phần
+    // tổng hợp của quản lý đã ẩn chủ ý) — hiện thông báo thay vì để trắng trang gây hiểu lầm là lỗi.
+    return React.createElement("div", { className:"card", style:{ fontSize:13, color:"var(--inkSoft)" } }, "Tab này dành cho nhân viên nhập báo cáo doanh số theo ngày của nhà thuốc mình — tài khoản quản lý không có nhà thuốc gắn sẵn nên không có gì để nhập ở đây.");
+  }
   return React.createElement(React.Fragment, null, [
     React.createElement("p", { key:"s", className:"pagesub" }, isAdmin ? "Theo dõi doanh số theo ngày & khung giờ của tất cả nhà thuốc." : "Nhập số liệu doanh số theo từng khung giờ trong ngày, đối chiếu chỉ tiêu."),
     selfCard, historyCard, adminSection,
@@ -7329,10 +7334,7 @@ function RevenueMucTieu({ stats, isAdmin, shopFilter, isAll }){
   const row = (!isAll && mt.byShop[shopFilter]) ? mt.byShop[shopFilter] : mt.chain;
   const shopHasNoData = !isAll && mt.byShop[shopFilter] && mt.byShop[shopFilter].hasData===false;
   return React.createElement("div", { style:{ marginBottom:24 } }, [
-    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:14, marginBottom:4 } }, `Chỉ tiêu ${fmtMonthLabel(mt.month)}${!isAll?` — ${shopFilter}`:""}`),
-    React.createElement("div", { key:"sub", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:12 } },
-      "Target & thực tế lấy trực tiếp từ hệ thống upharma.com.vn (mục \"Chỉ tiêu nhà thuốc\") — " +
-      (mt.paceRatio!=null ? `đã qua ${mt.daysElapsed}/${mt.daysInMonth} ngày, "Dự kiến" = ngoại suy theo tốc độ trung bình/ngày tới hết tháng.` : "chưa đủ dữ liệu để ước tính dự kiến hoàn thành.")),
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:14, marginBottom:12 } }, `Chỉ tiêu ${fmtMonthLabel(mt.month)}${!isAll?` — ${shopFilter}`:""}`),
     shopHasNoData && React.createElement("div", { key:"warn", className:"card", style:{ marginBottom:12, fontSize:12, color:"#b3261e" } }, "Chưa có chỉ tiêu tháng này cho nhà thuốc — kiểm tra lại trên hệ thống upharma.com.vn."),
     mt.shopPlanErrors && React.createElement("div", { key:"err", className:"card", style:{ marginBottom:12, fontSize:11.5, color:"#b3261e" } }, `Một số cửa hàng lấy chỉ tiêu bị lỗi: ${Object.keys(mt.shopPlanErrors).join(", ")}`),
     React.createElement(MonthTargetTiles, { key:"tiles", row }),
@@ -7401,7 +7403,8 @@ function RevenueAnalyticsView({ isAdmin, myStaff }){
   const isAll = !shopFilter || shopFilter==="Tất cả";
   const subTabs = [ { id:"theoky", label:"Theo kỳ" }, { id:"sosanh", label:"So sánh theo kỳ" }, { id:"nganh", label:"Theo ngành" } ];
   return React.createElement("div", { style:{ maxWidth:1100, margin:"0 auto", padding:16, overflowX:"hidden" } }, [
-    React.createElement("h2", { key:"title", className:"pagetitle" }, "Doanh thu"),
+    // 19/9/2026: bỏ h2 "Doanh thu" ở đây — topbar phía trên đã hiện đúng tên tab này rồi, để cả 2
+    // thành trùng tiêu đề (yêu cầu).
     React.createElement(RevenueRefreshButton, { key:"rb", refreshing, onRefresh:refresh, computedAt: stats && stats.computedAt }),
     !stats ? React.createElement("div", { key:"empty", className:"card", style:{ fontSize:13, color:"var(--inkSoft)" } }, "Chưa có dữ liệu — bấm \"Tính lại\" ở trên.")
     : React.createElement(React.Fragment, { key:"body" }, [
