@@ -3849,25 +3849,38 @@ function CrmView({ isAdmin, myStaff }){
       return React.createElement("div", { key:"bvempty", className:"card", style:{ fontSize:13, color:"var(--inkSoft)" } },
         "Chưa có dữ liệu — bấm \"Tính lại\" bên dưới hoặc đợi job tự chạy 5:55 sáng mai.");
     }
-    const maxHour = Math.max(...(behaviorStats.hourCounts||[0]), 1);
-    const maxDow = Math.max(...(behaviorStats.dowCounts||[0]), 1);
-    const categories = Object.entries(behaviorStats.categoryQty||{}).sort((a,b)=>b[1]-a[1]).slice(0,10);
+    // ===== Lọc theo nhà thuốc (9/2026): admin chọn được shop cụ thể (dùng chung state "adminShop"
+    // với tab Khách hàng cho nhất quán) để xem riêng số liệu shop đó — nhân viên thường tự động
+    // chỉ thấy đúng shop của mình (không cần dropdown vì chỉ có 1 lựa chọn). "byShop" do backend
+    // tính sẵn (computeBehaviorAnalytics) không có field "customersWithMultiShop"/"lineTotal" vì
+    // 2 số liệu này chỉ có ý nghĩa ở cấp toàn chuỗi — ẩn thẻ đó khi đang xem riêng 1 shop.
+    const shopFilter = isAdmin ? adminShop : (myStaff && myStaff.shop);
+    const isAllShops = !shopFilter || shopFilter==="Tất cả";
+    const shopData = (!isAllShops && behaviorStats.byShop && behaviorStats.byShop[shopFilter]) ? behaviorStats.byShop[shopFilter] : null;
+    const activeStats = shopData || behaviorStats;
+    const maxHour = Math.max(...(activeStats.hourCounts||[0]), 1);
+    const maxDow = Math.max(...(activeStats.dowCounts||[0]), 1);
+    const categories = Object.entries(activeStats.categoryQty||{}).sort((a,b)=>b[1]-a[1]).slice(0,10);
     const maxCat = categories.length ? categories[0][1] : 1;
     const multiShopPct = behaviorStats.customersTotal ? Math.round((behaviorStats.customersWithMultiShop/behaviorStats.customersTotal)*100) : 0;
     return React.createElement("div", { key:"behavior" }, [
-      React.createElement("div", { key:"head", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 } }, [
+      React.createElement("div", { key:"head", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12, flexWrap:"wrap", gap:8 } }, [
         React.createElement("div", { key:"t", style:{ fontSize:12.5, color:"var(--inkSoft)" } },
-          `Tính lúc ${behaviorStats.computedAt ? new Date(behaviorStats.computedAt).toLocaleString("vi-VN") : "—"} · ${behaviorStats.totalWithHour||0}/${behaviorStats.totalEvents||0} đơn (90 ngày) có dữ liệu giờ`),
-        React.createElement("button", { key:"refresh", className:"btn btnGhost", disabled:behaviorRefreshing, onClick:refreshBehaviorStats, style:{ fontSize:12, padding:"4px 10px" } }, behaviorRefreshing ? "Đang tính..." : "↻ Tính lại"),
+          `Tính lúc ${behaviorStats.computedAt ? new Date(behaviorStats.computedAt).toLocaleString("vi-VN") : "—"} · ${activeStats.totalWithHour||0}/${activeStats.totalEvents||0} đơn (90 ngày) có dữ liệu giờ${!isAllShops ? ` · ${shopFilter}` : ""}`),
+        React.createElement("div", { key:"actions", style:{ display:"flex", gap:8, alignItems:"center" } }, [
+          isAdmin && React.createElement("select", { key:"shop", value:adminShop, onChange:e=>setAdminShop(e.target.value), style:{ padding:"5px 8px", fontSize:12.5, border:"1px solid var(--line)", borderRadius:8 } },
+            ["Tất cả", ...DEFAULT_SHOPS].map(s=>React.createElement("option", { key:s, value:s }, s))),
+          React.createElement("button", { key:"refresh", className:"btn btnGhost", disabled:behaviorRefreshing, onClick:refreshBehaviorStats, style:{ fontSize:12, padding:"4px 10px" } }, behaviorRefreshing ? "Đang tính..." : "↻ Tính lại"),
+        ]),
       ]),
 
-      behaviorStats.totalWithHour===0 && React.createElement("div", { key:"nohour", className:"card", style:{ marginBottom:16, fontSize:12.5, color:"var(--inkSoft)" } },
+      activeStats.totalWithHour===0 && React.createElement("div", { key:"nohour", className:"card", style:{ marginBottom:16, fontSize:12.5, color:"var(--inkSoft)" } },
         "Chưa có đơn nào ghi nhận được giờ mua — dữ liệu này chỉ có từ các đơn đồng bộ SAU khi tính năng này được bật, cần đợi vài ngày để tích luỹ đủ."),
 
       React.createElement("div", { key:"hourcard", className:"card", style:{ marginBottom:16 } }, [
         React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, "Khung giờ mua hàng (90 ngày gần nhất)"),
         React.createElement("div", { key:"bars", style:{ display:"flex", alignItems:"flex-end", gap:2, height:90 } },
-          (behaviorStats.hourCounts||[]).map((v,h) => React.createElement("div", { key:h, title:`${h}h: ${v} đơn`, style:{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:2 } }, [
+          (activeStats.hourCounts||[]).map((v,h) => React.createElement("div", { key:h, title:`${h}h: ${v} đơn`, style:{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:2 } }, [
             React.createElement("div", { key:"bar", style:{ width:"100%", height:`${Math.max((v/maxHour)*70,1)}px`, background:"var(--pine)", borderRadius:2 } }),
             h%3===0 && React.createElement("div", { key:"lbl", style:{ fontSize:8.5, color:"var(--inkSoft)" } }, h),
           ]))
@@ -3877,14 +3890,14 @@ function CrmView({ isAdmin, myStaff }){
       React.createElement("div", { key:"dowcard", className:"card", style:{ marginBottom:16 } }, [
         React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, "Ngày trong tuần"),
         React.createElement("div", { key:"bars", style:{ display:"flex", alignItems:"flex-end", gap:6, height:90 } },
-          (behaviorStats.dowCounts||[]).map((v,i) => React.createElement("div", { key:i, title:`${DOW_NAMES[i]}: ${v} đơn`, style:{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:3 } }, [
+          (activeStats.dowCounts||[]).map((v,i) => React.createElement("div", { key:i, title:`${DOW_NAMES[i]}: ${v} đơn`, style:{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:3 } }, [
             React.createElement("div", { key:"bar", style:{ width:"100%", height:`${Math.max((v/maxDow)*70,1)}px`, background:"var(--clay)", borderRadius:3 } }),
             React.createElement("div", { key:"lbl", style:{ fontSize:10, color:"var(--inkSoft)" } }, DOW_NAMES[i]),
           ]))
         ),
       ]),
 
-      React.createElement("div", { key:"shopcard", className:"card", style:{ marginBottom:16 } }, [
+      isAllShops && React.createElement("div", { key:"shopcard", className:"card", style:{ marginBottom:16 } }, [
         React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:6 } }, "Mua ở nhiều nhà thuốc (90 ngày)"),
         React.createElement("div", { key:"v", style:{ fontSize:12.5, color:"var(--inkSoft)" } },
           `${behaviorStats.customersWithMultiShop||0}/${behaviorStats.customersTotal||0} khách (${multiShopPct}%) từng mua ở từ 2 nhà thuốc trở lên — hệ thống là POS tại quầy nên không có khái niệm "kênh online/offline".`),
@@ -3912,13 +3925,23 @@ function CrmView({ isAdmin, myStaff }){
       return React.createElement("div", { key:"cdempty", className:"card", style:{ fontSize:13, color:"var(--inkSoft)" } },
         "Chưa có dữ liệu tổng hợp — bấm \"Tính lại\" bên dưới hoặc đợi job tự chạy 5:50 sáng mai.");
     }
-    const rules = Object.keys(campaignStats.byRule||{}).sort();
-    const days = Object.keys(campaignStats.byDay||{}).sort().slice(-14); // 14 ngày gần nhất cho gọn
+    // ===== Lọc theo nhà thuốc (9/2026): dùng chung state "adminShop" với tab Khách hàng/Phân tích
+    // hành vi — admin chọn được shop cụ thể, nhân viên thường tự động chỉ thấy đúng shop của mình.
+    const shopFilter = isAdmin ? adminShop : (myStaff && myStaff.shop);
+    const isAllShops = !shopFilter || shopFilter==="Tất cả";
+    const shopData = (!isAllShops && campaignStats.byShop && campaignStats.byShop[shopFilter]) ? campaignStats.byShop[shopFilter] : null;
+    const activeCampaign = shopData || campaignStats;
+    const rules = Object.keys(activeCampaign.byRule||{}).sort();
+    const days = Object.keys(activeCampaign.byDay||{}).sort().slice(-14); // 14 ngày gần nhất cho gọn
     return React.createElement("div", { key:"campaign" }, [
-      React.createElement("div", { key:"head", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 } }, [
+      React.createElement("div", { key:"head", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12, flexWrap:"wrap", gap:8 } }, [
         React.createElement("div", { key:"t", style:{ fontSize:12.5, color:"var(--inkSoft)" } },
-          `Tổng ${campaignStats.totalActions||0} action (mọi thời điểm) · tính lúc ${campaignStats.computedAt ? new Date(campaignStats.computedAt).toLocaleString("vi-VN") : "—"}`),
-        React.createElement("button", { key:"refresh", className:"btn btnGhost", disabled:campaignRefreshing, onClick:refreshCampaignStats, style:{ fontSize:12, padding:"4px 10px" } }, campaignRefreshing ? "Đang tính..." : "↻ Tính lại"),
+          `Tổng ${activeCampaign.totalActions||0} action (mọi thời điểm) · tính lúc ${campaignStats.computedAt ? new Date(campaignStats.computedAt).toLocaleString("vi-VN") : "—"}${!isAllShops ? ` · ${shopFilter}` : ""}`),
+        React.createElement("div", { key:"actions", style:{ display:"flex", gap:8, alignItems:"center" } }, [
+          isAdmin && React.createElement("select", { key:"shop", value:adminShop, onChange:e=>setAdminShop(e.target.value), style:{ padding:"5px 8px", fontSize:12.5, border:"1px solid var(--line)", borderRadius:8 } },
+            ["Tất cả", ...DEFAULT_SHOPS].map(s=>React.createElement("option", { key:s, value:s }, s))),
+          React.createElement("button", { key:"refresh", className:"btn btnGhost", disabled:campaignRefreshing, onClick:refreshCampaignStats, style:{ fontSize:12, padding:"4px 10px" } }, campaignRefreshing ? "Đang tính..." : "↻ Tính lại"),
+        ]),
       ]),
       React.createElement("div", { key:"byrule", className:"card", style:{ marginBottom:16, padding:0, overflow:"hidden" } },
         React.createElement("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5 } }, [
@@ -3930,7 +3953,7 @@ function CrmView({ isAdmin, myStaff }){
             React.createElement("th", { key:"p", style:{ textAlign:"right", padding:"8px 10px" } }, "Tỉ lệ hoàn thành"),
           ])),
           React.createElement("tbody", { key:"b" }, rules.map(r => {
-            const s = campaignStats.byRule[r];
+            const s = activeCampaign.byRule[r];
             const open = s.total - s.completed;
             const rate = s.total ? Math.round((s.completed/s.total)*100) : 0;
             return React.createElement("tr", { key:r, style:{ borderTop:"1px solid var(--line)" } }, [
@@ -3950,8 +3973,8 @@ function CrmView({ isAdmin, myStaff }){
         React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, "Số action tạo ra theo ngày (14 ngày gần nhất)"),
         React.createElement("div", { key:"bars", style:{ display:"flex", alignItems:"flex-end", gap:4, height:100 } },
           days.map(d => {
-            const s = campaignStats.byDay[d];
-            const max = Math.max(...days.map(dd=>campaignStats.byDay[dd].total), 1);
+            const s = activeCampaign.byDay[d];
+            const max = Math.max(...days.map(dd=>activeCampaign.byDay[dd].total), 1);
             return React.createElement("div", { key:d, title:`${d}: ${s.total} action`, style:{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:3 } }, [
               React.createElement("div", { key:"bar", style:{ width:"100%", height:`${Math.max((s.total/max)*80,2)}px`, background:"var(--pine)", borderRadius:3 } }),
               React.createElement("div", { key:"lbl", style:{ fontSize:9, color:"var(--inkSoft)" } }, d.slice(5)),
