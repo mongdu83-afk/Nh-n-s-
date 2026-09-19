@@ -3889,7 +3889,7 @@ function CrmView({ isAdmin, myStaff }){
     const activeStats = shopData || behaviorStats;
     const maxHour = Math.max(...(activeStats.hourCounts||[0]), 1);
     const maxDow = Math.max(...(activeStats.dowCounts||[0]), 1);
-    const categories = Object.entries(activeStats.categoryQty||{}).sort((a,b)=>b[1]-a[1]).slice(0,10);
+    const categories = Object.entries(activeStats.categoryRevenue||{}).sort((a,b)=>b[1]-a[1]).slice(0,10);
     const maxCat = categories.length ? categories[0][1] : 1;
     const multiShopPct = behaviorStats.customersTotal ? Math.round((behaviorStats.customersWithMultiShop/behaviorStats.customersTotal)*100) : 0;
     return React.createElement("div", { key:"behavior" }, [
@@ -3933,17 +3933,17 @@ function CrmView({ isAdmin, myStaff }){
       ]),
 
       React.createElement("div", { key:"catcard", className:"card" }, [
-        React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, "Top 10 nhóm hàng bán chạy theo số lượng (30 ngày)"),
+        React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, "Top 10 nhóm hàng bán chạy theo doanh số (30 ngày)"),
         categories.length===0
           ? React.createElement("div", { key:"e", style:{ fontSize:12.5, color:"var(--inkSoft)" } }, "Chưa có dữ liệu — cần upload file DMHH có cột \"Nhóm hàng\" (xem tab Điều chuyển hàng hoá).")
           : React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:6 } },
-              categories.map(([cat,qty]) => React.createElement("div", { key:cat }, [
+              categories.map(([cat,val]) => React.createElement("div", { key:cat }, [
                 React.createElement("div", { key:"lbl", style:{ display:"flex", justifyContent:"space-between", fontSize:12, marginBottom:2 } }, [
                   React.createElement("span", { key:"n" }, cat),
-                  React.createElement("span", { key:"q", style:{ color:"var(--inkSoft)" } }, qty),
+                  React.createElement("span", { key:"q", style:{ color:"var(--inkSoft)" } }, fmtVND(val)),
                 ]),
                 React.createElement("div", { key:"bar", style:{ height:6, borderRadius:3, background:"var(--pineSoft)" } },
-                  React.createElement("div", { style:{ height:"100%", width:`${(qty/maxCat)*100}%`, background:"var(--pine)", borderRadius:3 } })),
+                  React.createElement("div", { style:{ height:"100%", width:`${(val/maxCat)*100}%`, background:"var(--pine)", borderRadius:3 } })),
               ]))
             ),
       ]),
