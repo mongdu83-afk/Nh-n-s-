@@ -3029,7 +3029,7 @@ function TaskAssignView({ isAdmin, myStaff }){
   if(adminStatus==="Đang giao") filteredTasks = filteredTasks.filter(t=>t.trangThai==="Đang giao" && !isOverdue(t));
   else if(adminStatus==="Quá hạn") filteredTasks = filteredTasks.filter(isOverdue);
   else if(adminStatus==="Đã hoàn thành") filteredTasks = filteredTasks.filter(t=>t.trangThai==="Đã hoàn thành");
-  filteredTasks = [...filteredTasks].sort((a,b)=> (a.shop||"").localeCompare(b.shop||"") || (a.deadline<b.deadline?-1:1));
+  filteredTasks = [...filteredTasks].sort((a,b)=> (a.deadline<b.deadline?-1:a.deadline>b.deadline?1:0) || (a.shop||"").localeCompare(b.shop||""));
 
   const tasksInRange = tasks.filter(inTaskDateRange);
   const pendingCount = tasksInRange.filter(t=>t.trangThai==="Đang giao" && !isOverdue(t)).length;
@@ -4020,7 +4020,7 @@ function CrmView({ isAdmin, myStaff }){
       if(segs.includes("Thân thiết (chăm sóc tự động)")) return 1;
       return 2;
     }
-    return (a.shop||"").localeCompare(b.shop||"") || segRank(a)-segRank(b) || (b.level||0)-(a.level||0) || (a.name||"").localeCompare(b.name||"","vi");
+    return segRank(a)-segRank(b) || (a.shop||"").localeCompare(b.shop||"") || (b.level||0)-(a.level||0) || (a.name||"").localeCompare(b.name||"","vi");
   });
 
   const selected = customers.find(c=>c.phone===selectedPhone);
