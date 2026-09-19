@@ -7387,28 +7387,87 @@ function InventoryHealthView({ isAdmin, myStaff }){
   ]);
 }
 
+// ===== Gộp tab (yêu cầu 19/9/2026): thanh tab con dùng chung cho 3 tab gộp bên dưới, cùng kiểu
+// pill như filter shop đã có, để không cần thêm CSS mới. Danh sách tab con tự lọc theo isAdmin
+// (mục nào chỉ quản lý xem thì đã đánh dấu adminOnly:true) — nếu tab con đang chọn bị lọc mất
+// (vd nhân viên vào lại sau khi đổi role), tự rơi về tab con đầu tiên còn lại.
+function SubTabBar({ tabs, active, onChange }){
+  return React.createElement("div", { style:{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap" } },
+    tabs.map(t => React.createElement("button", {
+      key:t.id, type:"button", onClick:()=>onChange(t.id),
+      style:{ padding:"6px 14px", borderRadius:20, border:"1px solid var(--line)", fontSize:12.5, fontWeight:600, cursor:"pointer",
+        background: active===t.id ? "var(--pine)" : "#fff", color: active===t.id ? "#fff" : "var(--ink)" },
+    }, t.label))
+  );
+}
+function HangHoaView({ isAdmin, myStaff }){
+  const subTabsAll = [
+    { id:"orders", label:"Khách đặt hàng" },
+    { id:"kiemke", label:"Kiểm kê" },
+    { id:"tonkho", label:"Tồn kho (Tổng quan)" },
+    { id:"transfer", label:"Điều chuyển hàng hoá", adminOnly:true },
+  ];
+  const subTabs = subTabsAll.filter(t => !t.adminOnly || isAdmin);
+  const [sub, setSub] = useState(subTabs[0].id);
+  const activeSub = subTabs.some(t=>t.id===sub) ? sub : subTabs[0].id;
+  return React.createElement("div", {}, [
+    React.createElement(SubTabBar, { key:"bar", tabs:subTabs, active:activeSub, onChange:setSub }),
+    activeSub==="orders" && React.createElement(CustomerOrderView, { key:"v", isAdmin, myStaff }),
+    activeSub==="kiemke" && React.createElement(InventoryView, { key:"v", userName:(myStaff&&myStaff.name)||"", userShop:(myStaff&&myStaff.shop)||"" }),
+    activeSub==="tonkho" && React.createElement(InventoryHealthView, { key:"v", isAdmin, myStaff }),
+    activeSub==="transfer" && isAdmin && React.createElement(TransferSuggestionsView, { key:"v" }),
+  ]);
+}
+function NhanVienView({ isAdmin, myStaff }){
+  const subTabsAll = [
+    { id:"hieusuat", label:"Hiệu suất" },
+    { id:"danhsach", label:"Danh sách", adminOnly:true },
+  ];
+  const subTabs = subTabsAll.filter(t => !t.adminOnly || isAdmin);
+  const [sub, setSub] = useState(subTabs[0].id);
+  const activeSub = subTabs.some(t=>t.id===sub) ? sub : subTabs[0].id;
+  return React.createElement("div", {}, [
+    React.createElement(SubTabBar, { key:"bar", tabs:subTabs, active:activeSub, onChange:setSub }),
+    activeSub==="hieusuat" && React.createElement(StaffPerformanceView, { key:"v", isAdmin, myStaff }),
+    activeSub==="danhsach" && isAdmin && React.createElement(StaffView, { key:"v" }),
+  ]);
+}
+function BaoCaoTuanView({ isAdmin, myStaff }){
+  const subTabsAll = [
+    { id:"quanly", label:"Báo cáo quản lý", adminOnly:true },
+    { id:"nhathuoc", label:"Báo cáo nhà thuốc" },
+  ];
+  const subTabs = subTabsAll.filter(t => !t.adminOnly || isAdmin);
+  const [sub, setSub] = useState(subTabs[0].id);
+  const activeSub = subTabs.some(t=>t.id===sub) ? sub : subTabs[0].id;
+  return React.createElement("div", {}, [
+    React.createElement(SubTabBar, { key:"bar", tabs:subTabs, active:activeSub, onChange:setSub }),
+    activeSub==="quanly" && isAdmin && React.createElement(WeeklyPlanManagerView, { key:"v" }),
+    activeSub==="nhathuoc" && React.createElement(WeeklyReportView, { key:"v", isAdmin, myStaff }),
+  ]);
+}
+
 // ================= APP SHELL =================
-const STAFF_TABS = ["checklist","photos","customerOrders","sales","weekly","tasks","kpi","crm","training","kudos","inventory","temgia","revenueAnalytics","staffPerformance","ctkm","inventoryHealth"];
+// ===== Gộp tab (yêu cầu 19/9/2026): "Hàng hoá" gộp Khách đặt hàng + Kiểm kê + Tồn kho (Tổng
+// quan) + Điều chuyển hàng hoá; "Nhân viên" gộp Hiệu suất + Danh sách; "Báo cáo tuần" gộp Báo
+// cáo quản lý (kế hoạch tuần) + Báo cáo nhà thuốc — mỗi tab gộp có thanh tab con bên trong (xem
+// HangHoaView/NhanVienView/BaoCaoTuanView). Bỏ hẳn tab "Báo cáo doanh số" (sales) — đã có tab
+// "Doanh thu" tự động tính từ dữ liệu API thay thế.
+const STAFF_TABS = ["checklist","photos","hanghoa","tasks","kpi","crm","training","kudos","temgia","revenueAnalytics","nhanvien","ctkm","baocaotuan"];
 const OPS_TABS = [
   { id:"checklist", label:"Checklist ngày" },
   { id:"photos", label:"Báo cáo hình ảnh" },
-  { id:"customerOrders", label:"Khách đặt hàng" },
-  { id:"sales", label:"Báo cáo doanh số" },
+  { id:"hanghoa", label:"Hàng hoá" },
   { id:"revenueAnalytics", label:"Doanh thu" },
-  { id:"weekly", label:"Báo cáo tuần" },
+  { id:"baocaotuan", label:"Báo cáo tuần" },
   { id:"tasks", label:"Giao việc" },
   { id:"kpi", label:"KPI" },
   { id:"crm", label:"CRM khách hàng" },
-  { id:"staffPerformance", label:"Hiệu suất nhân viên" },
+  { id:"nhanvien", label:"Nhân viên" },
   { id:"ctkm", label:"Khuyến mãi (CTKM)" },
   { id:"training", label:"Đào tạo & Buddy" },
   { id:"kudos", label:"Ghi nhận & Quà" },
-  { id:"inventory", label:"Kiểm kê" },
-  { id:"inventoryHealth", label:"Tồn kho (Tổng quan)" },
   { id:"temgia", label:"Tem giá" },
-  { id:"transfer", label:"Điều chuyển hàng hoá" },
-  { id:"weeklyplan", label:"Kế hoạch tuần (Quản lý)" },
-  { id:"staff", label:"Nhân viên" },
 ];
 
 function LoginScreen(){
@@ -8734,6 +8793,9 @@ const TAB_STYLE = {
   staffPerformance: { icon:"🏆", color:"#0891b2" },
   ctkm:             { icon:"🎁", color:"#b4720a" },
   inventoryHealth:  { icon:"📊", color:"#0f6b5c" },
+  hanghoa:          { icon:"📦", color:"#0f6b5c" },
+  nhanvien:         { icon:"👥", color:"#475569" },
+  baocaotuan:       { icon:"📅", color:"#4f46e5" },
 };
 
 // SVG nét rõ, thay cho icon emoji (emoji hiển thị mờ/vỡ nét trên nhiều máy — nhất là ở kích
@@ -8759,6 +8821,9 @@ const TAB_ICON_SVG = {
   staffPerformance: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8M12 17v4M7 4h10v4a5 5 0 0 1-10 0V4z"/><path d="M7 5H4a3 3 0 0 0 3 3M17 5h3a3 3 0 0 1-3 3"/></svg>',
   ctkm: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12v8a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-8"/><rect x="2" y="7" width="20" height="5" rx="1"/><path d="M12 7v14M12 7c-2 0-4-1.3-4-3.2S9.3 1 11 1.5 12 5 12 7zM12 7c2 0 4-1.3 4-3.2S12.7 1 11 1.5 12 5 12 7z"/></svg>',
   inventoryHealth: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M11 20V4M18 20v-7"/></svg>',
+  hanghoa: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5V8z"/><path d="M3 8l9 5 9-5"/><path d="M12 13v8"/></svg>',
+  nhanvien: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><circle cx="18" cy="9" r="2.6"/><path d="M16 14.3c2.7.3 4.9 2.3 4.9 5.2"/></svg>',
+  baocaotuan: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
 };
 function renderTabIcon(id, sizePx, extraProps){
   const markup = (TAB_ICON_SVG[id] || TAB_ICON_SVG.staff).replace("<svg ", '<svg width="' + sizePx + '" height="' + sizePx + '" ');
@@ -8866,28 +8931,22 @@ function Dashboard({ user, isAdmin, myStaff }){
       ]),
       React.createElement(TaskLiveNotifier, { key:"livenotify", myStaff, isAdmin }),
       !isAdmin && React.createElement(TaskReminderBanner, { key:"reminder", myStaff, onOpenTasks:()=>setActiveTab("tasks") }),
-      !isAdmin && React.createElement(CustomerOrderReminderBanner, { key:"custreminder", myStaff, onOpen:()=>setActiveTab("customerOrders") }),
+      !isAdmin && React.createElement(CustomerOrderReminderBanner, { key:"custreminder", myStaff, onOpen:()=>setActiveTab("hanghoa") }),
       !isAdmin && React.createElement(DailyKpiPaceBanner, { key:"kpipace", myStaff, onOpen:()=>setActiveTab("kpi") }),
       React.createElement("div", { key:"wrap", className:"wrap mobileContentArea" + (showMobileHome ? " isHiddenMobile" : "") }, [
         activeTab==="checklist" && React.createElement(DailyChecklistView, { key:"v", isAdmin, myStaff }),
         activeTab==="photos" && React.createElement(ImageReportView, { key:"v", isAdmin, myStaff }),
-        activeTab==="inventory" && React.createElement(InventoryView, { key:"v", userName: (myStaff && myStaff.name) || "", userShop: (myStaff && myStaff.shop) || "" }),
-        activeTab==="customerOrders" && React.createElement(CustomerOrderView, { key:"v", isAdmin, myStaff }),
-        activeTab==="sales" && React.createElement(SalesReportView, { key:"v", isAdmin, myStaff }),
-        activeTab==="weekly" && React.createElement(WeeklyReportView, { key:"v", isAdmin, myStaff }),
+        activeTab==="hanghoa" && React.createElement(HangHoaView, { key:"v", isAdmin, myStaff }),
         activeTab==="tasks" && React.createElement(TaskAssignView, { key:"v", isAdmin, myStaff }),
         activeTab==="kpi" && React.createElement(KpiView, { key:"v", isAdmin, myStaff }),
         activeTab==="crm" && React.createElement(CrmView, { key:"v", isAdmin, myStaff }),
         activeTab==="training" && React.createElement(TrainingView, { key:"v", isAdmin, myStaff }),
         activeTab==="kudos" && React.createElement(KudosView, { key:"v", isAdmin, myStaff }),
-        activeTab==="staff" && isAdmin && React.createElement(StaffView, { key:"v" }),
         activeTab==="temgia" && React.createElement(TemGiaView, { key:"v" }),
-        activeTab==="transfer" && isAdmin && React.createElement(TransferSuggestionsView, { key:"v" }),
-        activeTab==="weeklyplan" && isAdmin && React.createElement(WeeklyPlanManagerView, { key:"v" }),
+        activeTab==="baocaotuan" && React.createElement(BaoCaoTuanView, { key:"v", isAdmin, myStaff }),
         activeTab==="revenueAnalytics" && React.createElement(RevenueAnalyticsView, { key:"v", isAdmin, myStaff }),
-        activeTab==="staffPerformance" && React.createElement(StaffPerformanceView, { key:"v", isAdmin, myStaff }),
+        activeTab==="nhanvien" && React.createElement(NhanVienView, { key:"v", isAdmin, myStaff }),
         activeTab==="ctkm" && React.createElement(PromoAnalyticsView, { key:"v", isAdmin, myStaff }),
-        activeTab==="inventoryHealth" && React.createElement(InventoryHealthView, { key:"v", isAdmin, myStaff }),
       ]),
     ]),
   ]);
