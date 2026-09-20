@@ -6362,8 +6362,9 @@ function SyncAllDataButton(){
   const iconFor = s => s==="done" ? "✅" : s==="error" ? "⚠️" : s==="running" ? "⏳" : "•";
   return React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
     React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15, marginBottom:4 } }, "Đồng bộ dữ liệu từ hệ thống upharma.com.vn"),
-    React.createElement("div", { key:"s", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } }, "Đã bỏ toàn bộ lịch tự động — bấm 1 nút này để đồng bộ lần lượt cả 6 loại dữ liệu (đơn hàng bán, ca làm việc/tăng ca, tồn kho, chỉ tiêu nhân viên, hàng cận date, nâng hạng khách hàng)."),
-    React.createElement("button", { key:"b", type:"button", className:"btn btnAmber", disabled:running, onClick:runAll }, running ? "Đang đồng bộ..." : "Đồng bộ tất cả ngay"),
+    React.createElement("div", { key:"s", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } },
+      "Cả 6 loại dữ liệu đã tự động đồng bộ hằng ngày theo lịch riêng (đơn hàng bán 23:30, tồn kho 23:50, ca làm việc/tăng ca 6:00, hàng cận date 6:00, chỉ tiêu nhân viên 6:00/12:00/18:00, nâng hạng khách hàng 7:00) — KHÔNG cần bấm tay. Nút dưới đây chỉ dùng khi cần dữ liệu mới ngay lập tức, không cần đợi tới lịch tiếp theo."),
+    React.createElement("button", { key:"b", type:"button", className:"btn btnAmber", disabled:running, onClick:runAll }, running ? "Đang đồng bộ..." : "Đồng bộ ngay (không bắt buộc)"),
     Object.keys(statuses).length>0 && React.createElement("div", { key:"list", style:{ marginTop:12, display:"flex", flexDirection:"column", gap:6 } },
       SYNC_ALL_TASKS.map(t => {
         const st = statuses[t.key];
@@ -9658,11 +9659,25 @@ function renderCommandCenterBriefingLines(result){
     style:{ padding:"7px 0", borderBottom: i < lines.length - 1 ? "1px solid var(--line)" : "none", fontSize:13, lineHeight:1.6 },
   }, line));
 }
+// Dùng cho ô "Chưa đúng, sửa lại" (AiFixBlock) — trước đây truyền thẳng JSON thô vào đó, quản lý mở
+// ra thấy 1 khối JSON khó đọc nên khó sửa/dạy AI đúng cách. Giờ chuyển thành text người đọc được.
+function commandCenterReadableText(result){
+  const parsed = parseCommandCenterItems(result);
+  if(!parsed) return result;
+  const itemLines = parsed.items.map(it => `${it.category}: ${it.title || ""}${it.detail ? " — " + it.detail : ""}`);
+  const actionLines = parsed.actions.length
+    ? ["", "Đề xuất hành động:", ...parsed.actions.map((a, i) => `${i+1}. ${a}`)]
+    : [];
+  return [...itemLines, ...actionLines].join("\n");
+}
 function CommandCenterAiBriefing({ scopeLabel, healthScore, healthParts, checklistPct, submittedCount, totalStaff, revenueBlock, overdueTasks, urgentCount, urgentItems, atRiskCount, silentVipCount, staffNeedingAttention }){
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [snapshot, setSnapshot] = useState("");
   const [errMsg, setErrMsg] = useState(null);
+  // teachInfo cho biết lần phân tích gần nhất có thực sự đọc được "Dạy AI" hay không (xem nút
+  // "🎓 Dạy AI" bên dưới) — hiện ra để quản lý tự kiểm chứng, không phải đoán xem có ăn hay không.
+  const [teachInfo, setTeachInfo] = useState(null);
 
   // Giữ nguyên kết quả đã phân tích (không mất khi chuyển tab/tải lại trang) cho đến khi sang
   // ngày mới hoặc quản lý bấm "↻ Phân tích lại" — lưu tạm ở localStorage theo từng phạm vi xem
@@ -9676,6 +9691,7 @@ function CommandCenterAiBriefing({ scopeLabel, healthScore, healthParts, checkli
       if(saved && saved.date === todayISO() && saved.result){
         setResult(saved.result);
         setSnapshot(saved.snapshot || "");
+        setTeachInfo(saved.teachInfo || null);
       }
     } catch(e){ /* localStorage lỗi/không có — bỏ qua, coi như chưa có kết quả cũ */ }
   }, [storageKey]);
@@ -9704,9 +9720,9 @@ function CommandCenterAiBriefing({ scopeLabel, healthScore, healthParts, checkli
       const data = await resp.json();
       if(data.ok){
         const finalSnapshot = data.aiInputSnapshot || snap;
-        setResult(data.result); setSnapshot(finalSnapshot);
+        setResult(data.result); setSnapshot(finalSnapshot); setTeachInfo(data.teachInfo || null);
         try{
-          localStorage.setItem(storageKey, JSON.stringify({ date: todayISO(), result: data.result, snapshot: finalSnapshot }));
+          localStorage.setItem(storageKey, JSON.stringify({ date: todayISO(), result: data.result, snapshot: finalSnapshot, teachInfo: data.teachInfo || null }));
         } catch(e){ /* localStorage đầy/bị chặn — không chặn luồng chính, chỉ mất cache lần tới */ }
       }
       else setErrMsg(data.reason || data.error || "Phân tích thất bại.");
@@ -9723,6 +9739,12 @@ function CommandCenterAiBriefing({ scopeLabel, healthScore, healthParts, checkli
     errMsg && React.createElement("div", { key:"err", style:{ fontSize:12.5, color:"#b3261e", marginTop:8 } }, errMsg),
     result
       ? React.createElement("div", { key:"res", style:{ marginTop:10 } }, [
+          teachInfo && React.createElement("div", {
+            key:"teachInfo",
+            style:{ fontSize:11, color:"var(--inkSoft)", marginBottom:8, padding:"6px 8px", background:"var(--pineSoft)", borderRadius:6 },
+          }, (teachInfo.hasCustomInstructions || teachInfo.feedbackCount > 0)
+              ? `🎓 Lần phân tích này đã áp dụng: ${teachInfo.hasCustomInstructions ? "yêu cầu chung" : ""}${teachInfo.hasCustomInstructions && teachInfo.feedbackCount > 0 ? " + " : ""}${teachInfo.feedbackCount > 0 ? `${teachInfo.feedbackCount} bài học đã sửa` : ""}.`
+              : "🎓 Lần phân tích này CHƯA có yêu cầu chung hay bài học nào được dạy (mở \"Dạy AI\" ở trên để thêm)."),
           React.createElement("div", {
             key:"txt",
             style:{ maxHeight:420, overflowY:"auto", paddingRight:8 },
@@ -9734,7 +9756,7 @@ function CommandCenterAiBriefing({ scopeLabel, healthScore, healthParts, checkli
               parsed.actions.length > 0 && React.createElement(React.Fragment, { key:"actions" }, renderCommandCenterActionList(parsed.actions)),
             ];
           })()),
-          React.createElement(AiFixBlock, { key:"fix", feature:"commandCenter", contextLabel:scopeLabel, inputSnapshot:snapshot, aiText:result }),
+          React.createElement(AiFixBlock, { key:"fix", feature:"commandCenter", contextLabel:scopeLabel, inputSnapshot:snapshot, aiText:commandCenterReadableText(result) }),
         ])
       : !loading && React.createElement("div", { key:"empty", className:"emptyState", style:{ marginTop:8 } }, "Bấm \"🤖 Phân tích\" để AI đọc số liệu Tổng quan và viết nhận định ngắn."),
   ]);
