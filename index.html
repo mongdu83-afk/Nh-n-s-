@@ -9583,7 +9583,7 @@ function CommandCenterView({ isAdmin, myStaff, onNavigate }){
               ]))
         ),
       ]),
-      React.createElement(CommandCenterAiBriefing, { key:"ai", scopeLabel: isAll?"Toàn chuỗi":adminShop, healthScore, healthParts, checklistPct, submittedCount, totalStaff, revenueBlock, overdueTasks, urgentCount, urgentItems, atRiskCount, silentVipCount }),
+      React.createElement(CommandCenterAiBriefing, { key:"ai", scopeLabel: isAll?"Toàn chuỗi":adminShop, healthScore, healthParts, checklistPct, submittedCount, totalStaff, revenueBlock, overdueTasks, urgentCount, urgentItems, atRiskCount, silentVipCount, staffNeedingAttention }),
     ]),
     // Điểm sức khoẻ — bố cục ngang 4 cột theo đúng mẫu (số lớn + thanh ngang bên dưới mỗi cột).
     React.createElement("div", { key:"health", className:"card" }, [
@@ -9609,17 +9609,68 @@ function fmtVnDate(iso){ const [y,m,d] = iso.split("-"); return `${d}/${m}/${y}`
 // Gửi đúng số liệu ĐANG hiển thị trên tab Tổng quan (không tải/tính thêm gì mới) cho backend đọc và
 // viết nhận định ngắn — dùng chung cơ chế "Dạy AI" (yêu cầu chung + sửa nhận xét) như 2 tính năng AI
 // đã có (Báo cáo tuần, Phân tích tổng hợp KPI). Kết quả chỉ lưu tạm trên màn hình (không lưu Firestore).
-function CommandCenterAiBriefing({ scopeLabel, healthScore, healthParts, checklistPct, submittedCount, totalStaff, revenueBlock, overdueTasks, urgentCount, urgentItems, atRiskCount, silentVipCount }){
+// Backend giờ trả về 1 khối JSON { items:[{category,severity,title,detail}, ...] } — đúng 4 phần tử
+// Doanh số/Hàng hoá/Nhân sự/Khách hàng (xem COMMAND_CENTER_SYSTEM_PROMPT) — để hiện thành danh sách
+// từng dòng (chấm màu + tiêu đề đậm + chi tiết) giống mẫu quản lý gửi, thay vì 1 khối văn bản.
+const COMMAND_CENTER_SEVERITY_COLOR = { critical:"#b3261e", warning:"#b4720a", ok:"var(--pine)" };
+function parseCommandCenterItems(raw){
+  try{
+    const cleaned = String(raw || "").trim().replace(/^```json\s*/i, "").replace(/^```\s*/, "").replace(/```\s*$/, "");
+    const parsed = JSON.parse(cleaned);
+    if(parsed && Array.isArray(parsed.items) && parsed.items.length > 0) return parsed.items;
+  } catch(e){ /* không parse được (JSON hỏng hoặc kết quả cache cũ dạng text) — trả về null để hiện fallback */ }
+  return null;
+}
+function renderCommandCenterItemList(items){
+  return items.map((it, i) => React.createElement("div", {
+    key:"it"+i,
+    style:{ display:"flex", alignItems:"flex-start", gap:9, padding:"9px 0", borderBottom: i < items.length - 1 ? "1px solid var(--line)" : "none" },
+  }, [
+    React.createElement("span", { key:"dot", style:{ width:7, height:7, borderRadius:"50%", marginTop:6, flex:"none", background: COMMAND_CENTER_SEVERITY_COLOR[it.severity] || "var(--inkSoft)" } }),
+    React.createElement("div", { key:"body", style:{ flex:1, minWidth:0 } }, [
+      React.createElement("div", { key:"cat", style:{ fontSize:10.5, fontWeight:700, color:"var(--inkSoft)", textTransform:"uppercase", letterSpacing:0.4, marginBottom:2 } }, it.category || ""),
+      React.createElement("div", { key:"tt", style:{ fontWeight:600, fontSize:13, lineHeight:1.4 } }, it.title || ""),
+      it.detail && React.createElement("div", { key:"dd", style:{ color:"var(--inkSoft)", fontSize:11.5, marginTop:2, lineHeight:1.5 } }, it.detail),
+    ]),
+  ]));
+}
+// Fallback cho kết quả cache cũ (bản trước đổi sang JSON) hoặc trường hợp AI lỡ trả về text thường —
+// vẫn hiện được thay vì trắng trang, chỉ là không có bố cục 4 mảng.
+function renderCommandCenterBriefingLines(result){
+  const lines = String(result||"").split("\n").map(l=>l.trim()).filter(Boolean);
+  return lines.map((line, i) => React.createElement("div", {
+    key:"l"+i,
+    style:{ padding:"7px 0", borderBottom: i < lines.length - 1 ? "1px solid var(--line)" : "none", fontSize:13, lineHeight:1.6 },
+  }, line));
+}
+function CommandCenterAiBriefing({ scopeLabel, healthScore, healthParts, checklistPct, submittedCount, totalStaff, revenueBlock, overdueTasks, urgentCount, urgentItems, atRiskCount, silentVipCount, staffNeedingAttention }){
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [snapshot, setSnapshot] = useState("");
   const [errMsg, setErrMsg] = useState(null);
+
+  // Giữ nguyên kết quả đã phân tích (không mất khi chuyển tab/tải lại trang) cho đến khi sang
+  // ngày mới hoặc quản lý bấm "↻ Phân tích lại" — lưu tạm ở localStorage theo từng phạm vi xem
+  // (scopeLabel) + ngày hôm nay, KHÔNG lưu Firestore (chỉ là cache hiển thị, không phải dữ liệu gốc).
+  const storageKey = `cc_ai_briefing__${scopeLabel}`;
+  useEffect(() => {
+    try{
+      const raw = localStorage.getItem(storageKey);
+      if(!raw) return;
+      const saved = JSON.parse(raw);
+      if(saved && saved.date === todayISO() && saved.result){
+        setResult(saved.result);
+        setSnapshot(saved.snapshot || "");
+      }
+    } catch(e){ /* localStorage lỗi/không có — bỏ qua, coi như chưa có kết quả cũ */ }
+  }, [storageKey]);
 
   function buildSnapshot(){
     const lines = [];
     lines.push(`Điểm sức khoẻ tổng: ${healthScore==null?"chưa đủ dữ liệu":healthScore+"/100"}.`);
     healthParts.forEach(p => lines.push(`- ${p.label} (trọng số ${Math.round(p.weight*100)}%): ${p.score==null?"chưa đủ dữ liệu":Math.round(p.score)+"/100"}.`));
     lines.push(`Checklist hôm nay: ${checklistPct==null?"—":checklistPct+"%"} (${submittedCount}/${totalStaff} nhân viên đã nộp).`);
+    lines.push(`Nhân sự có tiến độ doanh số/KPI dưới 80%: ${staffNeedingAttention==null?"—":staffNeedingAttention} người.`);
     lines.push(`Doanh thu tháng: ${revenueBlock?fmtPct(revenueBlock.pct):"—"} (${revenueBlock?fmtVND(revenueBlock.actual||0):"—"} / ${revenueBlock?fmtVND(revenueBlock.target||0):"—"} target).`);
     lines.push(`Task quá hạn: ${overdueTasks.length} task${overdueTasks.length>0?" — "+overdueTasks.slice(0,5).map(t=>`"${t.title||"?"}" (${t.shop||"?"}, hạn ${t.deadline||"?"})`).join("; "):""}.`);
     lines.push(`Hàng hoá cần xử lý (nhập gấp+nhập sớm): ${urgentCount==null?"—":urgentCount} SKU${urgentItems.length>0?" — nhập gấp: "+urgentItems.slice(0,5).map(it=>`${it.productName||it.productId} (${it.shopCode}, đủ bán ${it.doi==null?"?":Math.round(it.doi)} ngày)`).join("; "):""}.`);
@@ -9636,7 +9687,13 @@ function CommandCenterAiBriefing({ scopeLabel, healthScore, healthParts, checkli
         body: JSON.stringify({ scopeLabel, snapshot: snap }),
       });
       const data = await resp.json();
-      if(data.ok){ setResult(data.result); setSnapshot(data.aiInputSnapshot||snap); }
+      if(data.ok){
+        const finalSnapshot = data.aiInputSnapshot || snap;
+        setResult(data.result); setSnapshot(finalSnapshot);
+        try{
+          localStorage.setItem(storageKey, JSON.stringify({ date: todayISO(), result: data.result, snapshot: finalSnapshot }));
+        } catch(e){ /* localStorage đầy/bị chặn — không chặn luồng chính, chỉ mất cache lần tới */ }
+      }
       else setErrMsg(data.reason || data.error || "Phân tích thất bại.");
     } catch(err){ setErrMsg(err && err.message ? err.message : String(err)); }
     setLoading(false);
@@ -9651,7 +9708,10 @@ function CommandCenterAiBriefing({ scopeLabel, healthScore, healthParts, checkli
     errMsg && React.createElement("div", { key:"err", style:{ fontSize:12.5, color:"#b3261e", marginTop:8 } }, errMsg),
     result
       ? React.createElement("div", { key:"res", style:{ marginTop:10 } }, [
-          React.createElement("div", { key:"txt", style:{ fontSize:13, lineHeight:1.6, whiteSpace:"pre-line" } }, result),
+          React.createElement("div", {
+            key:"txt",
+            style:{ maxHeight:340, overflowY:"auto", paddingRight:8 },
+          }, (() => { const items = parseCommandCenterItems(result); return items ? renderCommandCenterItemList(items) : renderCommandCenterBriefingLines(result); })()),
           React.createElement(AiFixBlock, { key:"fix", feature:"commandCenter", contextLabel:scopeLabel, inputSnapshot:snapshot, aiText:result }),
         ])
       : !loading && React.createElement("div", { key:"empty", className:"emptyState", style:{ marginTop:8 } }, "Bấm \"🤖 Phân tích\" để AI đọc số liệu Tổng quan và viết nhận định ngắn."),
