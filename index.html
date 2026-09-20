@@ -9617,9 +9617,24 @@ function parseCommandCenterItems(raw){
   try{
     const cleaned = String(raw || "").trim().replace(/^```json\s*/i, "").replace(/^```\s*/, "").replace(/```\s*$/, "");
     const parsed = JSON.parse(cleaned);
-    if(parsed && Array.isArray(parsed.items) && parsed.items.length > 0) return parsed.items;
+    if(parsed && Array.isArray(parsed.items) && parsed.items.length > 0){
+      const actions = Array.isArray(parsed.actions) ? parsed.actions.filter(a => a && String(a).trim()) : [];
+      return { items: parsed.items, actions };
+    }
   } catch(e){ /* không parse được (JSON hỏng hoặc kết quả cache cũ dạng text) — trả về null để hiện fallback */ }
   return null;
+}
+function renderCommandCenterActionList(actions){
+  return React.createElement("div", { style:{ marginTop:12 } }, [
+    React.createElement("div", { key:"h", style:{ fontSize:10.5, fontWeight:700, color:"var(--inkSoft)", textTransform:"uppercase", letterSpacing:0.4, marginBottom:6 } },
+      `✅ Đề xuất hành động (${actions.length})`),
+    React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:6 } },
+      actions.map((a, i) => React.createElement("div", { key:"a"+i, style:{ display:"flex", gap:8, alignItems:"flex-start", fontSize:12.5, lineHeight:1.5 } }, [
+        React.createElement("span", { key:"n", style:{ flex:"none", width:18, height:18, borderRadius:"50%", background:"var(--pineSoft)", color:"var(--pine)", fontSize:10.5, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center", marginTop:1 } }, i+1),
+        React.createElement("div", { key:"t", style:{ flex:1 } }, String(a)),
+      ]))
+    ),
+  ]);
 }
 function renderCommandCenterItemList(items){
   return items.map((it, i) => React.createElement("div", {
@@ -9710,8 +9725,15 @@ function CommandCenterAiBriefing({ scopeLabel, healthScore, healthParts, checkli
       ? React.createElement("div", { key:"res", style:{ marginTop:10 } }, [
           React.createElement("div", {
             key:"txt",
-            style:{ maxHeight:340, overflowY:"auto", paddingRight:8 },
-          }, (() => { const items = parseCommandCenterItems(result); return items ? renderCommandCenterItemList(items) : renderCommandCenterBriefingLines(result); })()),
+            style:{ maxHeight:420, overflowY:"auto", paddingRight:8 },
+          }, (() => {
+            const parsed = parseCommandCenterItems(result);
+            if (!parsed) return renderCommandCenterBriefingLines(result);
+            return [
+              React.createElement("div", { key:"items" }, renderCommandCenterItemList(parsed.items)),
+              parsed.actions.length > 0 && React.createElement(React.Fragment, { key:"actions" }, renderCommandCenterActionList(parsed.actions)),
+            ];
+          })()),
           React.createElement(AiFixBlock, { key:"fix", feature:"commandCenter", contextLabel:scopeLabel, inputSnapshot:snapshot, aiText:result }),
         ])
       : !loading && React.createElement("div", { key:"empty", className:"emptyState", style:{ marginTop:8 } }, "Bấm \"🤖 Phân tích\" để AI đọc số liệu Tổng quan và viết nhận định ngắn."),
