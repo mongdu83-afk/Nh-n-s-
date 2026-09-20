@@ -3735,6 +3735,15 @@ function CrmView({ isAdmin, myStaff }){
   const [noteText, setNoteText] = useState("");
   const [noteFollowUp, setNoteFollowUp] = useState("");
   const [savingNote, setSavingNote] = useState(false);
+  // 20/9/2026: Giao việc THỦ CÔNG cho khách hàng đang xem trong Customer 360 — thay cho tính năng
+  // tự động giao việc từ Customer Action Engine (đã tắt, xem AUTO_CRM_TASK_CREATION_ENABLED trong
+  // index.js). Nhân viên/quản lý tự bấm khi thấy cần, thay vì hệ thống tự tạo hàng loạt.
+  const [showTaskForm, setShowTaskForm] = useState(false);
+  const [taskTitle, setTaskTitle] = useState("");
+  const [taskMota, setTaskMota] = useState("");
+  const [taskDeadline, setTaskDeadline] = useState("");
+  const [taskStaffId, setTaskStaffId] = useState("");
+  const [assigningTask, setAssigningTask] = useState(false);
   // Tra cứu giá trị mua hàng theo khoảng ngày tự chọn — tính trực tiếp từ customerEvents.
   const todayStr = new Date().toISOString().slice(0, 10);
   const ninetyDaysAgoStr = (() => { const d = new Date(); d.setDate(d.getDate() - 90); return d.toISOString().slice(0, 10); })();
@@ -4182,6 +4191,34 @@ function CrmView({ isAdmin, myStaff }){
     } finally { setSavingNote(false); }
   }
 
+  // Mở form giao việc — mặc định nhân viên phụ trách sẵn có của khách (nếu có), hạn 3 ngày.
+  function openTaskForm(){
+    setTaskTitle(""); setTaskMota("");
+    setTaskDeadline(addDays(todayISO(), 3));
+    setTaskStaffId((selected && selected.assignedStaffId) || "");
+    setShowTaskForm(true);
+  }
+  async function assignTaskToCustomer(){
+    if(!selected || !taskTitle.trim() || !taskStaffId) return;
+    setAssigningTask(true);
+    try{
+      const s = staffList.find(x=>x.id===taskStaffId);
+      if(!s) return;
+      await addDoc("tasks", {
+        title: taskTitle.trim(), mota: taskMota.trim(), deadline: taskDeadline, hanGio:"",
+        trangThai:"Đang giao", ketQua:"", nguoiBaoCao:"", ngayGiao: todayISO(),
+        nguoiGiaoViec: isAdmin ? "Quản lý khu vực" : (myStaff ? myStaff.name : ""),
+        nguoiGiaoViecRole: isAdmin ? "Quản lý khu vực" : (myStaff ? myStaff.role : ""),
+        dinhKemFiles: [], dinhKemLink: "",
+        assignType:"staff", staffId: s.id, staffName: s.name, shop: s.shop,
+        // Gắn ngữ cảnh khách hàng để tra cứu/liên kết lại từ Customer 360 nếu cần — KHÔNG gắn
+        // crmSourceType (field đó chỉ dành cho task do Action Engine TỰ ĐỘNG tạo, xem index.js).
+        customerId: selected.phone, customerName: selected.name || "", customerPhone: selected.phone,
+      });
+      setShowTaskForm(false); setTaskTitle(""); setTaskMota("");
+    } finally { setAssigningTask(false); }
+  }
+
   // Tra cứu tổng giá trị mua, số đơn, giá trị TB/đơn trong 1 khoảng ngày tự chọn — đọc thẳng từ
   // "customerEvents" (đã đồng bộ qua syncCustomerPurchaseHistoryNow/Daily), không cần gọi API
   // ngoài lại. Giống popup "Chi tiết các đơn hàng đã mua" bên POS nhưng ngay trong app Ops.
@@ -4457,6 +4494,29 @@ function CrmView({ isAdmin, myStaff }){
           React.createElement("select", { key:"sel", value:selected.assignedStaffId||"", onChange:e=>assignStaff(selected.phone, e.target.value), style:{ width:"100%", padding:"6px 8px", fontSize:12.5, border:"1px solid var(--line)", borderRadius:8 } }, [
             React.createElement("option", { key:"none", value:"" }, "— Chưa phân công —"),
             ...staffOptions.map(s=>React.createElement("option", { key:s.id, value:s.id }, s.name)),
+          ]),
+        ]),
+
+        // Giao việc thủ công cho khách này (thay tính năng tự động đã tắt).
+        React.createElement("div", { key:"taskbox", className:"card", style:{ padding:10, marginBottom:14, fontSize:12 } }, [
+          React.createElement("div", { key:"h", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom: showTaskForm?8:0 } }, [
+            React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:12.5 } }, "Giao việc cho khách này"),
+            !showTaskForm && React.createElement("button", { key:"open", type:"button", className:"btn btnPrimary", style:{ padding:"4px 10px", fontSize:12 }, onClick:openTaskForm }, "+ Giao việc"),
+          ]),
+          showTaskForm && React.createElement("div", { key:"form", style:{ display:"flex", flexDirection:"column", gap:6 } }, [
+            React.createElement("input", { key:"title", type:"text", value:taskTitle, onChange:e=>setTaskTitle(e.target.value), placeholder:"Tên việc cần làm (VD: Gọi tư vấn lại cho khách)", style:{ padding:"6px 8px", fontSize:12.5, border:"1px solid var(--line)", borderRadius:8 } }),
+            React.createElement("textarea", { key:"mota", value:taskMota, onChange:e=>setTaskMota(e.target.value), placeholder:"Mô tả chi tiết (tuỳ chọn)...", style:{ width:"100%", minHeight:50, padding:8, fontSize:12.5, border:"1px solid var(--line)", borderRadius:8 } }),
+            React.createElement("div", { key:"row", style:{ display:"flex", gap:6, flexWrap:"wrap" } }, [
+              React.createElement("select", { key:"staff", value:taskStaffId, onChange:e=>setTaskStaffId(e.target.value), style:{ flex:"1 1 160px", padding:"6px 8px", fontSize:12.5, border:"1px solid var(--line)", borderRadius:8 } }, [
+                React.createElement("option", { key:"none", value:"" }, "— Chọn người nhận —"),
+                ...staffOptions.map(s=>React.createElement("option", { key:s.id, value:s.id }, s.name)),
+              ]),
+              React.createElement("input", { key:"dl", type:"date", value:taskDeadline, onChange:e=>setTaskDeadline(e.target.value), style:{ padding:"6px 8px", fontSize:12, border:"1px solid var(--line)", borderRadius:8 } }),
+            ]),
+            React.createElement("div", { key:"actions", style:{ display:"flex", gap:8, justifyContent:"flex-end" } }, [
+              React.createElement("button", { key:"cancel", type:"button", className:"btn btnGhost", style:{ padding:"5px 12px", fontSize:12 }, onClick:()=>setShowTaskForm(false) }, "Huỷ"),
+              React.createElement("button", { key:"save", type:"button", className:"btn btnPrimary", disabled:assigningTask||!taskTitle.trim()||!taskStaffId, style:{ padding:"5px 12px", fontSize:12 }, onClick:assignTaskToCustomer }, assigningTask?"Đang giao...":"Giao việc"),
+            ]),
           ]),
         ]),
 
