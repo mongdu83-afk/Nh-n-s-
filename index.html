@@ -7331,7 +7331,7 @@ function useMonthTracking(monthKey){
 function MonthPicker({ month, setMonth }){
   const todayMonthKey = todayISO().slice(0,7);
   const atCurrent = month >= todayMonthKey;
-  return React.createElement("div", { style:{ display:"flex", alignItems:"center", gap:10, marginBottom:12 } }, [
+  return React.createElement("div", { style:{ display:"flex", alignItems:"center", gap:10, marginBottom:0 } }, [
     React.createElement("button", { key:"prev", type:"button", className:"btn btnGhost", style:{ padding:"5px 10px", fontSize:13 }, onClick:()=>setMonth(addMonthsToKey(month,-1)) }, "‹ Tháng trước"),
     React.createElement("div", { key:"lbl", style:{ fontWeight:700, fontSize:14, minWidth:110, textAlign:"center" } }, fmtMonthLabel(month)),
     React.createElement("button", { key:"next", type:"button", className:"btn btnGhost", style:{ padding:"5px 10px", fontSize:13, opacity: atCurrent?0.4:1, cursor: atCurrent?"not-allowed":"pointer" }, disabled:atCurrent, onClick:()=>!atCurrent && setMonth(addMonthsToKey(month,1)) }, "Tháng sau ›"),
@@ -7384,14 +7384,21 @@ function MonthTargetTiles({ row }){
 // bảng quá rộng (20 cột dữ liệu), phải cuộn ngang mới thấy TBB/Bill — thu gọn lại để hiện đủ luôn
 // không cần cuộn, đúng góp ý của quản lý.
 const TARGET_TABLE_GROUPS = {
-  revenue:  { label:"Doanh thu",  solid:"#16A34A", tint:"#DCF5E3", head:"#0F5C2C", fmt:null, cols:5 },
-  hangHeSo: { label:"Hàng hệ số", solid:"#D97706", tint:"#FBE9CC", head:"#8A4B06", fmt:null, cols:5 },
+  // 20/9/2026: thêm cột "Target ngày" (mức doanh thu/HHS cần đạt MỖI NGÀY còn lại của tháng để về
+  // đích) cho 2 nhóm Doanh thu/Hàng hệ số — tính từ (Target - Thực tế đã ghi nhận)/số ngày bán hàng
+  // còn lại (xem remainingDays truyền vào TargetCompletionTable, lấy từ mt.daysInMonth-mt.daysElapsed).
+  revenue:  { label:"Doanh thu",  solid:"#16A34A", tint:"#DCF5E3", head:"#0F5C2C", fmt:null, cols:6, dailyTarget:true },
+  hangHeSo: { label:"Hàng hệ số", solid:"#D97706", tint:"#FBE9CC", head:"#8A4B06", fmt:null, cols:6, dailyTarget:true },
   tbb:      { label:"TBB",        solid:"#7C3AED", tint:"#EDE3FB", head:"#4C1D95", fmt:null, cols:3 },
   invoice:  { label:"Bill",       solid:"#2563EB", tint:"#DCEAFB", head:"#1E3A8A", fmt:"num", cols:3 },
 };
+function computeDailyTarget(target, actual, remainingDays){
+  if(!remainingDays || remainingDays<=0) return null;
+  return Math.max(0, (target||0)-(actual||0)) / remainingDays;
+}
 function TargetCompletionTable({ mt, shops }){
   const groupKeys = ["revenue","hangHeSo","tbb","invoice"];
-  const subLabelsFull = ["Thực tế","Target","TL đạt","Dự kiến","TL dự kiến"];
+  const subLabelsFull = ["Thực tế","Target","TL đạt","Dự kiến","TL dự kiến","Target ngày"];
   const subLabelsFor = key => subLabelsFull.slice(0, TARGET_TABLE_GROUPS[key].cols);
   const fmtFor = key => TARGET_TABLE_GROUPS[key].fmt==="num" ? fmtNum : fmtVNDCompact;
   const groupBorder = key => ({ borderRight:`2px solid ${TARGET_TABLE_GROUPS[key].solid}` });
@@ -7399,6 +7406,9 @@ function TargetCompletionTable({ mt, shops }){
   const groupHead = key => React.createElement("th", { key, colSpan:TARGET_TABLE_GROUPS[key].cols, style:{ padding:"6px 5px", fontSize:10.5, textTransform:"uppercase", fontWeight:800, letterSpacing:.03, color:"#fff", background: TARGET_TABLE_GROUPS[key].solid, ...groupBorder(key) } }, TARGET_TABLE_GROUPS[key].label);
   const subHead = (label, key, i, n) => React.createElement("th", { key:key+i, style:{ padding:"4px 5px", fontSize:9.5, color: TARGET_TABLE_GROUPS[key].head, fontWeight:700, background: TARGET_TABLE_GROUPS[key].tint, borderBottom:"2px solid var(--line)", whiteSpace:"nowrap", ...(i===n-1?groupBorder(key):{}) } }, label);
   const rows = [{ label:"TỔNG TOÀN KHU VỰC", ...mt.chain, strong:true }, ...shops.map(s=>({ label:s, ...(mt.byShop[s]||{ revenue:{}, hangHeSo:{}, customers:{}, invoice:{}, tbb:{} }) }))];
+  // Số ngày bán hàng còn lại của tháng (kể cả hôm nay) — tháng đã qua thì =0 (không còn ý nghĩa
+  // "Target ngày" nữa, hiện "—"). daysInMonth/daysElapsed lấy từ computeMonthTracking() (index.js).
+  const remainingDays = Math.max(0, (mt.daysInMonth||0) - (mt.daysElapsed||0));
   return React.createElement("div", { className:"card", style:{ overflowX:"auto", maxWidth:"100%", padding:0 } },
     React.createElement("table", { style:{ borderCollapse:"collapse", width:"100%", tableLayout:"auto", fontVariantNumeric:"tabular-nums" } }, [
       React.createElement("thead", { key:"h" }, [
@@ -7412,16 +7422,22 @@ function TargetCompletionTable({ mt, shops }){
         rows.map((r,ri) => React.createElement("tr", { key:r.label, style:{ fontWeight: r.strong?700:400, background: r.strong?"#F0FBF3":(ri%2===0?"var(--card)":"var(--paper)") } }, [
           React.createElement("td", { key:"lbl", style:{ padding:"5px 8px", fontSize:11.5, borderBottom:"1px solid var(--line)", whiteSpace:"nowrap" } }, r.label),
           ...groupKeys.flatMap(key => {
-            const b = r[key] || {}, fmt = fmtFor(key), n = TARGET_TABLE_GROUPS[key].cols;
+            const g = TARGET_TABLE_GROUPS[key];
+            const b = r[key] || {}, fmt = fmtFor(key), n = g.cols;
             const full = [
               cell(fmt(b.actual||0)),
               cell(fmt(b.target||0)),
               cell(fmtPct(b.pct), { color:pctColor(b.pct), fontWeight:800 }),
               cell(fmt(b.projected||0)),
               cell(fmtPct(b.projectedPct), { color:pctColor(b.projectedPct), fontWeight:800 }),
-            ].slice(0, n);
-            full[n-1] = React.cloneElement(full[n-1], { style:{ ...full[n-1].props.style, ...groupBorder(key) } });
-            return full;
+            ];
+            if(g.dailyTarget){
+              const dt = computeDailyTarget(b.target, b.actual, remainingDays);
+              full.push(cell(dt==null ? "—" : fmt(dt), { fontWeight:800, color:"var(--clay)" }));
+            }
+            const sliced = full.slice(0, n);
+            sliced[n-1] = React.cloneElement(sliced[n-1], { style:{ ...sliced[n-1].props.style, ...groupBorder(key) } });
+            return sliced;
           }),
         ]))
       ),
@@ -7438,7 +7454,9 @@ function RevenueMucTieu({ mt, isAdmin, shopFilter, isAll }){
     mt.shopPlanErrors && React.createElement("div", { key:"err", className:"card", style:{ marginBottom:12, fontSize:11.5, color:"#b3261e" } }, `Một số cửa hàng lấy chỉ tiêu bị lỗi: ${Object.keys(mt.shopPlanErrors).join(", ")}`),
     React.createElement(MonthTargetTiles, { key:"tiles", row }),
     isAll && React.createElement("div", { key:"table", style:{ marginTop:16 } }, [
-      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, "Tỷ lệ hoàn thành target theo cửa hàng"),
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:2 } }, "Tỷ lệ hoàn thành target theo cửa hàng"),
+      mt.isCurrentMonth && React.createElement("div", { key:"note", style:{ fontSize:11, color:"var(--inkSoft)", marginBottom:8 } },
+        `"Target ngày" = (Target − Thực tế đã ghi nhận) ÷ ${Math.max(0,(mt.daysInMonth||0)-(mt.daysElapsed||0))} ngày bán hàng còn lại của tháng`),
       React.createElement(TargetCompletionTable, { key:"tbl", mt, shops: DEFAULT_SHOPS }),
     ]),
   ]);
@@ -7505,12 +7523,28 @@ function RevenueAnalyticsView({ isAdmin, myStaff }){
   return React.createElement("div", { style:{ maxWidth:1100, margin:"0 auto", padding:16, overflowX:"hidden" } }, [
     // 19/9/2026: bỏ h2 "Doanh thu" ở đây — topbar phía trên đã hiện đúng tên tab này rồi, để cả 2
     // thành trùng tiêu đề (yêu cầu).
-    React.createElement(RevenueRefreshButton, { key:"rb", refreshing, onRefresh:refresh, computedAt: stats && stats.computedAt }),
-    !stats ? React.createElement("div", { key:"empty", className:"card", style:{ fontSize:13, color:"var(--inkSoft)" } }, "Chưa có dữ liệu — bấm \"Tính lại\" ở trên.")
+    !stats ? React.createElement(React.Fragment, { key:"empty" }, [
+        React.createElement(RevenueRefreshButton, { key:"rb", refreshing, onRefresh:refresh, computedAt: stats && stats.computedAt }),
+        React.createElement("div", { key:"e", className:"card", style:{ fontSize:13, color:"var(--inkSoft)" } }, "Chưa có dữ liệu — bấm \"Tính lại\" ở trên."),
+      ])
     : React.createElement(React.Fragment, { key:"body" }, [
-        React.createElement(ShopFilterBar, { key:"filter", isAdmin, adminShop, setAdminShop, shopFilter }),
-        React.createElement(SubTabBar, { key:"sub", tabs:subTabs, active:sub, onChange:setSub }),
-        sub==="theoky" && React.createElement(MonthPicker, { key:"mp", month, setMonth }),
+        // 20/9/2026: gộp "Tính lúc..."/"Tính lại"/lọc nhà thuốc/tab con/chọn tháng từ 4 hàng riêng
+        // xuống còn 2 hàng gọn hơn (theo yêu cầu) — đẩy thêm không gian cho báo cáo bên dưới.
+        React.createElement("div", { key:"row1", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, flexWrap:"wrap", gap:8 } }, [
+          React.createElement("div", { key:"t", style:{ fontSize:12, color:"var(--inkSoft)" } },
+            stats.computedAt ? `Tính lúc ${new Date(stats.computedAt).toLocaleString("vi-VN")}` : "Chưa có dữ liệu"),
+          React.createElement("div", { key:"actions", style:{ display:"flex", gap:8, alignItems:"center" } }, [
+            isAdmin
+              ? React.createElement("select", { key:"shop", value:adminShop, onChange:e=>setAdminShop(e.target.value), style:{ padding:"5px 8px", fontSize:12, border:"1px solid var(--line)", borderRadius:8 } },
+                  ["Tất cả", ...DEFAULT_SHOPS].map(s=>React.createElement("option", { key:s, value:s }, s)))
+              : React.createElement("div", { key:"shop", style:{ fontSize:12, color:"var(--inkSoft)" } }, shopFilter || ""),
+            React.createElement("button", { key:"refresh", className:"btn btnGhost", disabled:refreshing, onClick:refresh, style:{ fontSize:12, padding:"4px 10px" } }, refreshing ? "Đang tính..." : "↻ Tính lại"),
+          ]),
+        ]),
+        React.createElement("div", { key:"row2", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14, flexWrap:"wrap", gap:8 } }, [
+          React.createElement(SubTabBar, { key:"sub", tabs:subTabs, active:sub, onChange:setSub, style:{ marginBottom:0 } }),
+          sub==="theoky" && React.createElement(MonthPicker, { key:"mp", month, setMonth }),
+        ]),
         sub==="theoky" && React.createElement(RevenueMucTieu, { key:"mt", mt:monthTracking, isAdmin, shopFilter, isAll }),
         sub==="sosanh" && React.createElement(RevenueSoSanhKy, { key:"v", stats, shopFilter, isAll }),
         sub==="nganh" && React.createElement(RevenueTheoNganh, { key:"v", shopFilter, isAll }),
@@ -7666,8 +7700,8 @@ function InventoryHealthView({ isAdmin, myStaff }){
 // pill như filter shop đã có, để không cần thêm CSS mới. Danh sách tab con tự lọc theo isAdmin
 // (mục nào chỉ quản lý xem thì đã đánh dấu adminOnly:true) — nếu tab con đang chọn bị lọc mất
 // (vd nhân viên vào lại sau khi đổi role), tự rơi về tab con đầu tiên còn lại.
-function SubTabBar({ tabs, active, onChange }){
-  return React.createElement("div", { style:{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap" } },
+function SubTabBar({ tabs, active, onChange, style }){
+  return React.createElement("div", { style:{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap", ...style } },
     tabs.map(t => React.createElement("button", {
       key:t.id, type:"button", onClick:()=>onChange(t.id),
       style:{ padding:"6px 14px", borderRadius:20, border:"1px solid var(--line)", fontSize:12.5, fontWeight:600, cursor:"pointer",
