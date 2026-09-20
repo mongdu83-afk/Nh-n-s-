@@ -7331,9 +7331,13 @@ function useRevenueAnalytics(){
     setRefreshing(true);
     try{
       const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeRevenueAnalyticsNow");
-      const j = await resp.json();
-      if(!j.ok) alert("Lỗi tính lại: " + (j.error||"?"));
-    }catch(e){ alert("Lỗi tính lại: " + e.message); }
+      const raw = await resp.text();
+      let j = null;
+      try{ j = JSON.parse(raw); }catch(parseErr){ /* server trả về text thô (vd lỗi hạ tầng), không phải JSON */ }
+      if(!resp.ok || !j || !j.ok){
+        alert("Lỗi tính lại (mã " + resp.status + "): " + (j && j.error ? j.error : raw.slice(0,200) || "?"));
+      }
+    }catch(e){ alert("Lỗi kết nối khi tính lại: " + e.message); }
     setRefreshing(false);
   }
   return { stats, refreshing, refresh };
