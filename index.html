@@ -2862,7 +2862,7 @@ function WeeklyReportView({ isAdmin, myStaff }){
 }
 
 // ================= MODULE 5: GIAO VIỆC (QUẢN LÝ KHU VỰC) =================
-function TaskAssignView({ isAdmin, myStaff }){
+function TaskAssignView({ isAdmin, myStaff, navParam }){
   const [tasks, setTasks] = useState([]);
   const [staffList, setStaffList] = useState([]);
   const [showForm, setShowForm] = useState(false);
@@ -2870,6 +2870,9 @@ function TaskAssignView({ isAdmin, myStaff }){
   const [uploadingFormAttachment, setUploadingFormAttachment] = useState(false);
   const [adminShop, setAdminShop] = useState("Tất cả");
   const [adminStatus, setAdminStatus] = useState("Tất cả");
+  // 20/9/2026: nhảy thẳng tới đúng bộ lọc trạng thái khi được điều hướng từ tab Tổng quan (VD bấm
+  // "Task quá hạn") — không thì trang này luôn mở mặc định "Tất cả" trạng thái.
+  useEffect(()=>{ if(navParam && navParam.status) setAdminStatus(navParam.status); }, [navParam]);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [reportingId, setReportingId] = useState(null);
@@ -3799,7 +3802,7 @@ function CtahForm({ staffRole, ctahDoc, onSaveField, readOnly }){
 // "crmCustomers", do Cloud Function syncCrmCustomersNow/Daily đồng bộ mỗi ngày từ hệ thống
 // upharma.com.vn), ghi chú chăm sóc (collection "crmInteractions"), và giao khách cho đúng nhân
 // viên phụ trách.
-function CrmView({ isAdmin, myStaff }){
+function CrmView({ isAdmin, myStaff, navParam }){
   const [customers, setCustomers] = useState([]);
   const [staffList, setStaffList] = useState([]);
   const [search, setSearch] = useState("");
@@ -3807,6 +3810,9 @@ function CrmView({ isAdmin, myStaff }){
   const [filterLevel, setFilterLevel] = useState("Tất cả");
   const [filterAssigned, setFilterAssigned] = useState("Tất cả");
   const [filterSegment, setFilterSegment] = useState("Tất cả");
+  // 20/9/2026: nhảy thẳng tới đúng phân khúc khi được điều hướng từ tab Tổng quan (VD bấm "khách
+  // có nguy cơ rời bỏ") — không thì trang này luôn mở mặc định "Tất cả" phân khúc.
+  useEffect(()=>{ if(navParam && navParam.segment) setFilterSegment(navParam.segment); }, [navParam]);
   const [customerPage, setCustomerPage] = useState(1);
   const CUSTOMER_PAGE_SIZE = 50;
   const [selectedPhone, setSelectedPhone] = useState(null);
@@ -7794,7 +7800,7 @@ function SubTabBar({ tabs, active, onChange, style }){
     }, t.label))
   );
 }
-function HangHoaView({ isAdmin, myStaff }){
+function HangHoaView({ isAdmin, myStaff, navParam }){
   const subTabsAll = [
     { id:"orders", label:"Khách đặt hàng" },
     { id:"tonkho", label:"Tồn kho" },
@@ -7803,13 +7809,16 @@ function HangHoaView({ isAdmin, myStaff }){
   ];
   const subTabs = subTabsAll.filter(t => !t.adminOnly || isAdmin);
   const [sub, setSub] = useState(subTabs[0].id);
+  // 20/9/2026: nhảy tới đúng tab con khi được điều hướng từ nơi khác (VD tab Tổng quan bấm "SKU
+  // cần nhập gấp" phải mở đúng "Phân tích hàng hoá", không phải luôn rơi về "Khách đặt hàng").
+  useEffect(()=>{ if(navParam && navParam.sub && subTabs.some(t=>t.id===navParam.sub)) setSub(navParam.sub); }, [navParam]);
   const activeSub = subTabs.some(t=>t.id===sub) ? sub : subTabs[0].id;
   return React.createElement("div", {}, [
     React.createElement(SubTabBar, { key:"bar", tabs:subTabs, active:activeSub, onChange:setSub }),
     activeSub==="orders" && React.createElement(CustomerOrderView, { key:"v", isAdmin, myStaff }),
     activeSub==="kiemke" && React.createElement(InventoryView, { key:"v", userName:(myStaff&&myStaff.name)||"", userShop:(myStaff&&myStaff.shop)||"" }),
     activeSub==="tonkho" && React.createElement(InventoryHealthView, { key:"v", isAdmin, myStaff }),
-    activeSub==="transfer" && isAdmin && React.createElement(TransferSuggestionsView, { key:"v" }),
+    activeSub==="transfer" && isAdmin && React.createElement(TransferSuggestionsView, { key:"v", navParam }),
   ]);
 }
 function NhanVienView({ isAdmin, myStaff }){
@@ -8639,7 +8648,7 @@ function buildTemGiaHtml(){
 // Chỉ hiển thị lại kết quả do Cloud Function "runSyncTransferSuggestions" đã tính sẵn và ghi vào
 // "opsConfig/transferSuggestions" — tab này KHÔNG tự tính toán gì, chỉ đọc (onSnapshot, tự cập
 // nhật real-time) + có nút "Phân tích ngay" để gọi endpoint syncTransferSuggestionsNow theo yêu cầu.
-function TransferSuggestionsView(){
+function TransferSuggestionsView({ navParam } = {}){
   const [data, setData] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
@@ -8737,6 +8746,12 @@ function TransferSuggestionsView(){
   const [flaggedItems, setFlaggedItems] = useState([]);
   const [flaggedLoading, setFlaggedLoading] = useState(false);
   const [flaggedStatus, setFlaggedStatus] = useState("URGENT_REPLENISH");
+  // 20/9/2026: nhảy tới đúng "Tốc độ tiêu thụ" + đúng trạng thái khi được điều hướng từ tab Tổng
+  // quan (VD bấm "SKU cần nhập gấp") — không thì trang này luôn mở mặc định ở "Điều chuyển".
+  useEffect(()=>{
+    if(navParam && navParam.invSubTab) setInvSubTab(navParam.invSubTab);
+    if(navParam && navParam.flaggedStatus) setFlaggedStatus(navParam.flaggedStatus);
+  }, [navParam]);
   useEffect(()=>{
     if(invSubTab!=="tocdo") return;
     setFlaggedLoading(true);
@@ -9389,6 +9404,21 @@ function CommandCenterView({ isAdmin, myStaff, onNavigate }){
   const submittedCount = reportsScoped.filter(r => r.trangThai==="Đã nộp").length;
   const totalStaff = staffScoped.length;
   const checklistPct = totalStaff ? Math.round((submittedCount/totalStaff)*1000)/10 : null;
+  // "Nhân sự cần chú ý" (20/9/2026, sửa theo yêu cầu quản lý) — KHÔNG dùng dữ liệu nộp checklist
+  // nữa, mà đếm số nhân viên có tốc độ hoàn thành DOANH SỐ/KPI thấp hôm nay, lấy từ collection có
+  // sẵn "dailyKpiPace" (tính mỗi ngày lúc 8h sáng, xem hàm runNotifyDailyKpiPace trong index.js —
+  // đã có sẵn pctDoanhSo/kpiPct cho từng nhân viên, không cần tính lại công thức KPI ở đây).
+  // Ngưỡng "thấp" tạm chọn < 80% tiến độ (doanh số hoặc KPI tổng), đúng tinh thần "KPI pace thấp"
+  // trong mẫu — có thể đổi ngưỡng nếu quản lý muốn mức khác.
+  const [kpiPaceList, setKpiPaceList] = useState([]);
+  useEffect(()=>{
+    const unsub = db.collection("dailyKpiPace").onSnapshot(snap => setKpiPaceList(snap.docs.map(d=>d.data())), err => logSystemError("dailyKpiPace", err));
+    return unsub;
+  }, []);
+  const kpiPaceScoped = isAll ? kpiPaceList : kpiPaceList.filter(p=>p.shop===adminShop);
+  const KPI_PACE_LOW_THRESHOLD = 0.8;
+  const lowPaceStaff = kpiPaceScoped.filter(p => (p.pctDoanhSo!=null && p.pctDoanhSo < KPI_PACE_LOW_THRESHOLD) || (p.kpiPct!=null && p.kpiPct < KPI_PACE_LOW_THRESHOLD));
+  const staffNeedingAttention = kpiPaceScoped.length ? lowPaceStaff.length : null;
 
   const [openTasks, setOpenTasks] = useState([]);
   useEffect(()=>{
@@ -9494,18 +9524,22 @@ function CommandCenterView({ isAdmin, myStaff, onNavigate }){
   const healthColor = healthScore==null ? "var(--inkSoft)" : healthScore>=80 ? "var(--pine)" : healthScore>=60 ? "var(--amber)" : "#b3261e";
 
   const hasUrgentList = overdueTasks.length>0 || urgentItems.length>0 || atRiskCount>0 || silentVipCount>0 || (isAll ? shopsNearExpiry>0 : thisShopExpiryPct6>=5);
-  const go = (tab) => onNavigate && onNavigate(tab);
+  const go = (tab, param) => onNavigate && onNavigate(tab, param);
 
   // Danh sách "Cần xử lý ngay" dạng chuẩn hoá — mỗi dòng có nhãn phân loại (pill màu, giống mẫu
-  // URGENT/HR/CRM/GOODS) để bố cục đúng như hình quản lý gửi.
+  // URGENT/HR/CRM/GOODS) để bố cục đúng như hình quản lý gửi. "param" chỉ định sẵn đúng tab con/bộ
+  // lọc bên trong tab đích (xem navParam ở Dashboard) — để bấm vào là tới ĐÚNG chỗ cần xem, không
+  // chỉ mở tab cha rồi rơi về tab con đầu tiên (VD "hàng hoá thiếu" phải mở đúng "Phân tích hàng
+  // hoá → Tốc độ tiêu thụ", không phải "Khách đặt hàng").
   const urgentRows = [
-    ...overdueTasks.slice(0,4).map(t => ({ key:"task_"+t.id, tag:"TASK", tagColor:"#b3261e", title:`${t.title||"(không tên)"} — ${t.shop||""}`, sub:`Quá hạn ${t.deadline||""}`, tab:"tasks" })),
-    ...urgentItems.map(it => ({ key:"sku_"+it.shopCode+"_"+it.productId, tag:"HÀNG HOÁ", tagColor:"#b4720a", title:`${it.productName||it.productId} — ${it.shopCode}`, sub:`Đủ bán ${it.doi==null?"—":Math.round(it.doi)} ngày`, tab:"hanghoa" })),
-    ...(atRiskCount>0 ? [{ key:"seg1", tag:"KHÁCH HÀNG", tagColor:"#7c3aed", title:`${fmtNum(atRiskCount)} khách hàng có nguy cơ rời bỏ`, sub:"Xem tab Khách hàng", tab:"crm" }] : []),
-    ...(silentVipCount>0 ? [{ key:"seg2", tag:"KHÁCH HÀNG", tagColor:"#7c3aed", title:`${fmtNum(silentVipCount)} khách giá trị cao đang im lặng`, sub:"Xem tab Khách hàng", tab:"crm" }] : []),
+    ...overdueTasks.slice(0,4).map(t => ({ key:"task_"+t.id, tag:"TASK", tagColor:"#b3261e", title:`${t.title||"(không tên)"} — ${t.shop||""}`, sub:`Quá hạn ${t.deadline||""}`, tab:"tasks", param:{ status:"Quá hạn" } })),
+    ...(staffNeedingAttention>0 ? [{ key:"hr1", tag:"NHÂN SỰ", tagColor:"#0a6bb4", title:`${fmtNum(staffNeedingAttention)} nhân sự có tiến độ doanh số/KPI dưới 80%`, sub:"Xem tab KPI", tab:"kpi" }] : []),
+    ...urgentItems.map(it => ({ key:"sku_"+it.shopCode+"_"+it.productId, tag:"HÀNG HOÁ", tagColor:"#b4720a", title:`${it.productName||it.productId} — ${it.shopCode}`, sub:`Đủ bán ${it.doi==null?"—":Math.round(it.doi)} ngày`, tab:"hanghoa", param:{ sub:"transfer", invSubTab:"tocdo", flaggedStatus:"URGENT_REPLENISH" } })),
+    ...(atRiskCount>0 ? [{ key:"seg1", tag:"KHÁCH HÀNG", tagColor:"#7c3aed", title:`${fmtNum(atRiskCount)} khách hàng có nguy cơ rời bỏ`, sub:"Xem tab Khách hàng", tab:"crm", param:{ segment:"Có nguy cơ rời bỏ" } }] : []),
+    ...(silentVipCount>0 ? [{ key:"seg2", tag:"KHÁCH HÀNG", tagColor:"#7c3aed", title:`${fmtNum(silentVipCount)} khách giá trị cao đang im lặng`, sub:"Xem tab Khách hàng", tab:"crm", param:{ segment:"Giá trị cao im lặng" } }] : []),
     ...(isAll
-      ? (shopsNearExpiry>0 ? [{ key:"exp", tag:"HÀNG HOÁ", tagColor:"#b4720a", title:`${shopsNearExpiry} nhà thuốc có tỷ lệ hàng cận date đáng chú ý`, sub:"Cận date 6 tháng ≥ 5% giá trị tồn", tab:"hanghoa" }] : [])
-      : (thisShopExpiryPct6>=5 ? [{ key:"exp", tag:"HÀNG HOÁ", tagColor:"#b4720a", title:`${adminShop} có ${thisShopExpiryPct6}% giá trị tồn cận date 6 tháng`, sub:"Xem tab Hàng hoá", tab:"hanghoa" }] : [])),
+      ? (shopsNearExpiry>0 ? [{ key:"exp", tag:"HÀNG HOÁ", tagColor:"#b4720a", title:`${shopsNearExpiry} nhà thuốc có tỷ lệ hàng cận date đáng chú ý`, sub:"Cận date 6 tháng ≥ 5% giá trị tồn", tab:"hanghoa", param:{ sub:"tonkho" } }] : [])
+      : (thisShopExpiryPct6>=5 ? [{ key:"exp", tag:"HÀNG HOÁ", tagColor:"#b4720a", title:`${adminShop} có ${thisShopExpiryPct6}% giá trị tồn cận date 6 tháng`, sub:"Xem tab Hàng hoá", tab:"hanghoa", param:{ sub:"tonkho" } }] : [])),
   ];
 
   return React.createElement("div", { style:{ maxWidth:1160, margin:"0 auto", padding:16 } }, [
@@ -9527,9 +9561,9 @@ function CommandCenterView({ isAdmin, myStaff, onNavigate }){
         React.createElement("button", { key:"refresh", type:"button", disabled:revRefreshing, onClick:(e)=>{ e.stopPropagation(); refreshRevenue(); },
           style:{ position:"absolute", top:8, right:8, border:"none", background:"none", cursor:"pointer", fontSize:11, color:"var(--inkSoft)" } }, revRefreshing ? "Đang tính..." : "↻ Tính lại"),
       ]),
-      React.createElement("div", { key:"task", onClick:()=>go("tasks"), style:{ cursor:"pointer" } },
-        React.createElement(StatTile, { label:"Task quá hạn", value: fmtNum(overdueTasks.length), sub:`${fmtNum(tasksScoped.length)} task đang giao`, tint: overdueTasks.length>0 ? "#fdecec" : "var(--pineSoft)" })),
-      React.createElement("div", { key:"inv", onClick:()=>go("hanghoa"), style:{ cursor:"pointer" } },
+      React.createElement("div", { key:"staffAttn", onClick:()=>go("kpi"), style:{ cursor:"pointer" } },
+        React.createElement(StatTile, { label:"Nhân sự cần chú ý", value: staffNeedingAttention==null ? "—" : fmtNum(staffNeedingAttention), sub:"Doanh số/KPI tiến độ dưới 80%", tint: (staffNeedingAttention||0)>0 ? "#fdecec" : "var(--pineSoft)" })),
+      React.createElement("div", { key:"inv", onClick:()=>go("hanghoa", { sub:"transfer", invSubTab:"tocdo" }), style:{ cursor:"pointer" } },
         React.createElement(StatTile, { label:"Hàng hoá cần xử lý", value: urgentCount==null ? "—" : fmtNum(urgentCount), sub:"Cần nhập gấp + nhập sớm", tint: (urgentCount||0)>0 ? "#fff4e0" : "var(--pineSoft)" })),
     ]),
     // 2 cột: trái "Cần xử lý ngay" (danh sách việc), phải "AI Briefing" (bấm mới chạy, xem CommandCenterAiBriefing).
@@ -9539,7 +9573,7 @@ function CommandCenterView({ isAdmin, myStaff, onNavigate }){
         React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8 } },
           urgentRows.length===0
             ? [React.createElement("div", { key:"empty", className:"emptyState" }, "Không có việc gì khẩn cấp — mọi thứ đang ổn.")]
-            : urgentRows.map(r => React.createElement("div", { key:r.key, onClick:()=>go(r.tab), style:{ display:"flex", alignItems:"center", gap:8, fontSize:12.5, borderBottom:"1px solid var(--line)", paddingBottom:6, cursor:"pointer" } }, [
+            : urgentRows.map(r => React.createElement("div", { key:r.key, onClick:()=>go(r.tab, r.param), style:{ display:"flex", alignItems:"center", gap:8, fontSize:12.5, borderBottom:"1px solid var(--line)", paddingBottom:6, cursor:"pointer" } }, [
                 React.createElement("span", { key:"dot", style:{ width:7, height:7, borderRadius:"50%", background:r.tagColor, flex:"none" } }),
                 React.createElement("div", { key:"txt", style:{ flex:1, minWidth:0 } }, [
                   React.createElement("div", { key:"tt", style:{ fontWeight:600 } }, r.title),
@@ -9696,7 +9730,11 @@ function Dashboard({ user, isAdmin, myStaff }){
   // hiện, giá trị này không ảnh hưởng gì tới desktop.
   const [showMobileHome, setShowMobileHome] = useState(true);
   const { unreadCount, markSeen } = useUnreadTabs(myStaff);
-  function setActiveTab(tabId){ setActiveTabRaw(tabId); setShowMobileHome(false); markSeen(tabId); }
+  // 20/9/2026: cho phép điều hướng kèm "chỉ định sẵn" tab con/bộ lọc bên trong (VD tab Tổng quan
+  // bấm "SKU cần nhập gấp" phải mở đúng Hàng hoá → Phân tích hàng hoá → Tốc độ tiêu thụ, không chỉ
+  // mở tab Hàng hoá rồi rơi về tab con đầu tiên) — param truyền xuống đúng view liên quan qua navParam.
+  const [navParam, setNavParam] = useState(null);
+  function setActiveTab(tabId, param){ setActiveTabRaw(tabId); setShowMobileHome(false); markSeen(tabId); setNavParam(param||null); }
   // Đang đứng sẵn ở tab nào thì tab đó tự coi như "đã xem" ngay khi có tin mới xuất hiện,
   // không cần đợi bấm ra rồi bấm lại mới xoá chấm đỏ.
   useEffect(()=>{ if(unreadCount[activeTab]>0) markSeen(activeTab); });
@@ -9806,10 +9844,10 @@ function Dashboard({ user, isAdmin, myStaff }){
         activeTab==="command" && React.createElement(CommandCenterView, { key:"v", isAdmin, myStaff, onNavigate:setActiveTab }),
         activeTab==="checklist" && React.createElement(DailyChecklistView, { key:"v", isAdmin, myStaff }),
         activeTab==="photos" && React.createElement(ImageReportView, { key:"v", isAdmin, myStaff }),
-        activeTab==="hanghoa" && React.createElement(HangHoaView, { key:"v", isAdmin, myStaff }),
-        activeTab==="tasks" && React.createElement(TaskAssignView, { key:"v", isAdmin, myStaff }),
+        activeTab==="hanghoa" && React.createElement(HangHoaView, { key:"v", isAdmin, myStaff, navParam }),
+        activeTab==="tasks" && React.createElement(TaskAssignView, { key:"v", isAdmin, myStaff, navParam }),
         activeTab==="kpi" && React.createElement(KpiView, { key:"v", isAdmin, myStaff }),
-        activeTab==="crm" && React.createElement(CrmView, { key:"v", isAdmin, myStaff }),
+        activeTab==="crm" && React.createElement(CrmView, { key:"v", isAdmin, myStaff, navParam }),
         activeTab==="training" && React.createElement(TrainingView, { key:"v", isAdmin, myStaff }),
         activeTab==="kudos" && React.createElement(KudosView, { key:"v", isAdmin, myStaff }),
         activeTab==="temgia" && React.createElement(TemGiaView, { key:"v" }),
