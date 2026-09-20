@@ -9370,9 +9370,14 @@ function CommandCenterView({ isAdmin, myStaff, onNavigate }){
   const todayStr = todayISO();
   const currentMonthKey = todayStr.slice(0,7);
   const mt = useMonthTracking(currentMonthKey);
+  // 20/9/2026: bộ lọc theo nhà thuốc — mặc định "Tất cả" (toàn chuỗi), chọn 1 nhà thuốc thì mọi
+  // thẻ/danh sách bên dưới tự lọc lại theo đúng nhà thuốc đó.
+  const [adminShop, setAdminShop] = useState("Tất cả");
+  const isAll = adminShop==="Tất cả";
 
   const [staffList, setStaffList] = useState([]);
   useEffect(()=>{ const u = subscribeCol("staff", setStaffList); return u; }, []);
+  const staffScoped = isAll ? staffList : staffList.filter(s=>s.shop===adminShop);
 
   const [todayReports, setTodayReports] = useState([]);
   useEffect(()=>{
@@ -9380,8 +9385,9 @@ function CommandCenterView({ isAdmin, myStaff, onNavigate }){
       .onSnapshot(snap => setTodayReports(snap.docs.map(d => d.data())), err => logSystemError("dailyReports", err));
     return unsub;
   }, [todayStr]);
-  const submittedCount = todayReports.filter(r => r.trangThai==="Đã nộp").length;
-  const totalStaff = staffList.length;
+  const reportsScoped = isAll ? todayReports : todayReports.filter(r=>r.shop===adminShop);
+  const submittedCount = reportsScoped.filter(r => r.trangThai==="Đã nộp").length;
+  const totalStaff = staffScoped.length;
   const checklistPct = totalStaff ? Math.round((submittedCount/totalStaff)*1000)/10 : null;
 
   const [openTasks, setOpenTasks] = useState([]);
@@ -9392,22 +9398,36 @@ function CommandCenterView({ isAdmin, myStaff, onNavigate }){
   }, []);
   function taskDeadlineTs(t){ return `${t.deadline}T${t.hanGio || "23:59"}`; }
   const nowTs = `${todayStr}T${nowHM()}`;
-  const overdueTasks = openTasks.filter(t => taskDeadlineTs(t) < nowTs).sort((a,b) => taskDeadlineTs(a).localeCompare(taskDeadlineTs(b)));
+  const tasksScoped = isAll ? openTasks : openTasks.filter(t=>t.shop===adminShop);
+  const overdueTasks = tasksScoped.filter(t => taskDeadlineTs(t) < nowTs).sort((a,b) => taskDeadlineTs(a).localeCompare(taskDeadlineTs(b)));
 
+  // Tồn kho — nhóm "Tất cả" đọc từ doc tổng hợp sẵn (nhẹ); chọn riêng 1 nhà thuốc thì tải đúng
+  // nhà thuốc đó 1 lần (chỉ where theo shopCode, không cần thêm chỉ mục kết hợp) rồi tự đếm.
   const [invSummary, setInvSummary] = useState(null);
   useEffect(()=>{
     return db.collection("opsConfig").doc("inventoryConsumptionSummary").onSnapshot(doc => setInvSummary(doc.exists ? doc.data() : null));
   }, []);
+  const [shopInvItems, setShopInvItems] = useState(null);
+  useEffect(()=>{
+    if(isAll){ setShopInvItems(null); return; }
+    db.collection("inventoryMetrics").where("shopCode", "==", adminShop).get()
+      .then(snap => setShopInvItems(snap.docs.map(d=>d.data())))
+      .catch(err => { console.error("Lỗi tải tồn kho theo nhà thuốc:", err); setShopInvItems([]); });
+  }, [adminShop, isAll]);
   const byStatus = (invSummary && invSummary.byStatus) || {};
-  const urgentCount = invSummary ? (byStatus.URGENT_REPLENISH||0) + (byStatus.REPLENISH_SOON||0) : null;
-
-  const [urgentItems, setUrgentItems] = useState([]);
+  const urgentCount = isAll
+    ? (invSummary ? (byStatus.URGENT_REPLENISH||0) + (byStatus.REPLENISH_SOON||0) : null)
+    : (shopInvItems==null ? null : shopInvItems.filter(it=>it.stockStatus==="URGENT_REPLENISH"||it.stockStatus==="REPLENISH_SOON").length);
+  const [urgentItemsAll, setUrgentItemsAll] = useState([]);
   useEffect(()=>{
     db.collection("inventoryMetrics").where("stockStatus", "==", "URGENT_REPLENISH").limit(5).get()
-      .then(snap => setUrgentItems(snap.docs.map(d => d.data())))
-      .catch(err => { console.error("Lỗi tải SKU cần nhập gấp:", err); setUrgentItems([]); });
+      .then(snap => setUrgentItemsAll(snap.docs.map(d => d.data())))
+      .catch(err => { console.error("Lỗi tải SKU cần nhập gấp:", err); setUrgentItemsAll([]); });
   }, []);
+  const urgentItems = isAll ? urgentItemsAll : (shopInvItems||[]).filter(it=>it.stockStatus==="URGENT_REPLENISH").sort((a,b)=>(a.doi||0)-(b.doi||0)).slice(0,5);
 
+  // Khách hàng — "Tất cả" đọc doc đếm sẵn theo phân khúc (nhẹ, toàn chuỗi); chọn riêng 1 nhà thuốc
+  // thì nghe trực tiếp crmCustomers của đúng nhà thuốc đó (giống cách tab Khách hàng đang làm).
   const [segCounts, setSegCounts] = useState({});
   useEffect(()=>{
     const unsub = db.collection("customerSegments").onSnapshot(snap => {
@@ -9415,8 +9435,25 @@ function CommandCenterView({ isAdmin, myStaff, onNavigate }){
     }, err => logSystemError("customerSegments", err));
     return unsub;
   }, []);
-  const atRiskCount = segCounts["Có nguy cơ rời bỏ"] || 0;
-  const silentVipCount = segCounts["Giá trị cao im lặng"] || 0;
+  const [shopCustomers, setShopCustomers] = useState(null);
+  useEffect(()=>{
+    if(isAll){ setShopCustomers(null); return undefined; }
+    const unsub = db.collection("crmCustomers").where("shop", "==", adminShop)
+      .onSnapshot(snap => setShopCustomers(snap.docs.map(d=>d.data())), err => logSystemError("crmCustomers", err));
+    return unsub;
+  }, [adminShop, isAll]);
+  const atRiskCount = isAll ? (segCounts["Có nguy cơ rời bỏ"]||0) : (shopCustomers||[]).filter(c=>(c.segments||[]).includes("Có nguy cơ rời bỏ")).length;
+  const silentVipCount = isAll ? (segCounts["Giá trị cao im lặng"]||0) : (shopCustomers||[]).filter(c=>(c.segments||[]).includes("Giá trị cao im lặng")).length;
+  // Tổng số khách trong phạm vi đang xem — chỉ để tính tỷ lệ cho "Điểm sức khoẻ" bên dưới, dùng
+  // count() (đếm ở server, không tải dữ liệu khách về) nếu Firestore hỗ trợ, không thì tải về đếm.
+  const [totalCustomers, setTotalCustomers] = useState(null);
+  useEffect(()=>{
+    let cancelled = false;
+    const q = isAll ? db.collection("crmCustomers") : db.collection("crmCustomers").where("shop", "==", adminShop);
+    const p = q.count ? q.count().get().then(s=>s.data().count) : q.get().then(s=>s.size);
+    p.then(n => { if(!cancelled) setTotalCustomers(n); }).catch(err => { console.error("Lỗi đếm khách hàng:", err); if(!cancelled) setTotalCustomers(null); });
+    return () => { cancelled = true; };
+  }, [adminShop, isAll]);
 
   const [expiryByShop, setExpiryByShop] = useState({});
   useEffect(()=>{
@@ -9425,35 +9462,165 @@ function CommandCenterView({ isAdmin, myStaff, onNavigate }){
     });
   }, []);
   const shopsNearExpiry = DEFAULT_SHOPS.filter(s => ((expiryByShop[s]&&expiryByShop[s].pct6)||0) >= 5).length;
+  const thisShopExpiryPct6 = !isAll ? ((expiryByShop[adminShop]&&expiryByShop[adminShop].pct6)||0) : null;
 
-  const revenueBlock = mt ? mt.chain.revenue : null;
-  const hasUrgentList = overdueTasks.length>0 || urgentItems.length>0 || atRiskCount>0 || silentVipCount>0 || shopsNearExpiry>0;
+  const revenueBlock = mt ? (isAll ? mt.chain.revenue : ((mt.byShop[adminShop]||{}).revenue||null)) : null;
+  const [revRefreshing, setRevRefreshing] = useState(false);
+  async function refreshRevenue(){
+    setRevRefreshing(true);
+    try{
+      const resp = await fetch(`https://asia-southeast1-upharma-176d5.cloudfunctions.net/getMonthTrackingNow?month=${currentMonthKey}`);
+      if(!resp.ok){ const t = await resp.text().catch(()=>""); alert(`Tính lại thất bại (mã lỗi ${resp.status}). ${t.slice(0,300)}`); }
+    } catch(err){ alert(`Lỗi kết nối khi tính lại: ${err && err.message ? err.message : err}`); }
+    setRevRefreshing(false);
+  }
 
-  return React.createElement("div", { style:{ maxWidth:1100, margin:"0 auto", padding:16 } }, [
-    React.createElement("h2", { key:"title", className:"pagetitle" }, "Tổng quan"),
-    React.createElement("div", { key:"tiles", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:12, marginBottom:20 } }, [
-      React.createElement(StatTile, { key:"checklist", label:"Checklist hôm nay", value: checklistPct==null ? "—" : `${checklistPct}%`, sub:`${fmtNum(submittedCount)}/${fmtNum(totalStaff)} nhân viên đã nộp`, tint:"var(--pineSoft)" }),
-      React.createElement(StatTile, { key:"rev", label:"Doanh thu tháng", value: revenueBlock ? fmtPct(revenueBlock.pct) : "—", sub: revenueBlock ? `${fmtVND(revenueBlock.actual||0)} / ${fmtVND(revenueBlock.target||0)}` : "Đang tải...", tint:"var(--pineSoft)" }),
-      React.createElement(StatTile, { key:"task", label:"Task quá hạn", value: fmtNum(overdueTasks.length), sub:`${fmtNum(openTasks.length)} task đang giao`, tint: overdueTasks.length>0 ? "#fdecec" : "var(--pineSoft)" }),
-      React.createElement(StatTile, { key:"inv", label:"Hàng hoá cần xử lý", value: urgentCount==null ? "—" : fmtNum(urgentCount), sub:"Cần nhập gấp + nhập sớm", tint: (urgentCount||0)>0 ? "#fff4e0" : "var(--pineSoft)" }),
-    ]),
-    React.createElement("div", { key:"urgent", className:"card" }, [
-      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:14, marginBottom:10 } }, "🔥 Cần xử lý ngay"),
-      React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8 } }, [
-        ...overdueTasks.slice(0,4).map(t => React.createElement("div", { key:"task_"+t.id, style:{ display:"flex", justifyContent:"space-between", flexWrap:"wrap", gap:6, fontSize:12.5, borderBottom:"1px solid var(--line)", paddingBottom:6 } }, [
-          React.createElement("span", { key:"n" }, `📌 ${t.title||"(không tên)"} — ${t.shop||""}`),
-          React.createElement("span", { key:"d", style:{ color:"#b3261e", fontWeight:600 } }, `Hạn ${t.deadline||""}`),
-        ])),
-        ...urgentItems.slice(0,4).map(it => React.createElement("div", { key:"sku_"+it.shopCode+"_"+it.productId, style:{ display:"flex", justifyContent:"space-between", flexWrap:"wrap", gap:6, fontSize:12.5, borderBottom:"1px solid var(--line)", paddingBottom:6 } }, [
-          React.createElement("span", { key:"n" }, `📦 ${it.productName||it.productId} — ${it.shopCode}`),
-          React.createElement("span", { key:"d", style:{ color:"#b3261e", fontWeight:600 } }, `Đủ bán ${it.doi==null?"—":Math.round(it.doi)} ngày`),
-        ])),
-        atRiskCount>0 && React.createElement("div", { key:"seg1", style:{ fontSize:12.5, borderBottom:"1px solid var(--line)", paddingBottom:6 } }, `⚠️ ${fmtNum(atRiskCount)} khách hàng có nguy cơ rời bỏ — xem tab Khách hàng`),
-        silentVipCount>0 && React.createElement("div", { key:"seg2", style:{ fontSize:12.5, borderBottom:"1px solid var(--line)", paddingBottom:6 } }, `💎 ${fmtNum(silentVipCount)} khách giá trị cao đang im lặng — xem tab Khách hàng`),
-        shopsNearExpiry>0 && React.createElement("div", { key:"exp", style:{ fontSize:12.5 } }, `⏳ ${shopsNearExpiry} nhà thuốc có tỷ lệ hàng cận date (6 tháng) đáng chú ý — xem tab Hàng hoá`),
-        !hasUrgentList && React.createElement("div", { key:"empty", className:"emptyState" }, "Không có việc gì khẩn cấp — mọi thứ đang ổn."),
+  // ===== Điểm sức khoẻ nhà thuốc (20/9/2026, theo yêu cầu quản lý) — trung bình có trọng số của 4
+  // mảng, mỗi mảng quy về thang 0-100 từ đúng số liệu thật đã tính ở trên (không thêm nguồn mới):
+  // Doanh thu 40% (dựa % hoàn thành target tháng) · Khách hàng 30% (dựa % khách KHÔNG thuộc nhóm
+  // rủi ro/im lặng) · Tồn kho 25% (dựa % SKU KHÔNG bị cảnh báo cần nhập gấp/sớm) · Checklist 5%
+  // (dựa % nhân viên đã nộp hôm nay). Mảng nào chưa có dữ liệu (đang tải) thì tạm bỏ qua và chia
+  // lại trọng số cho các mảng còn lại, tránh hiện điểm thấp giả do chưa tải xong.
+  function clamp100(n){ return Math.max(0, Math.min(100, n)); }
+  const totalSkuScope = isAll ? (invSummary && invSummary.totalSKU) : (shopInvItems ? shopInvItems.length : null);
+  const healthParts = [
+    { label:"Doanh thu", weight:0.40, score: revenueBlock ? clamp100(revenueBlock.pct||0) : null },
+    { label:"Khách hàng", weight:0.30, score: (totalCustomers==null) ? null : (totalCustomers===0 ? 100 : clamp100(100 - ((atRiskCount+silentVipCount)/totalCustomers)*100)) },
+    { label:"Tồn kho", weight:0.25, score: (urgentCount==null || !totalSkuScope) ? null : clamp100(100 - (urgentCount/totalSkuScope)*100) },
+    { label:"Checklist", weight:0.05, score: checklistPct==null ? null : clamp100(checklistPct) },
+  ];
+  const knownWeight = healthParts.filter(p=>p.score!=null).reduce((s,p)=>s+p.weight,0);
+  const healthScore = knownWeight>0 ? Math.round(healthParts.reduce((s,p)=>s+(p.score||0)*p.weight,0) / knownWeight) : null;
+  const healthColor = healthScore==null ? "var(--inkSoft)" : healthScore>=80 ? "var(--pine)" : healthScore>=60 ? "var(--amber)" : "#b3261e";
+
+  const hasUrgentList = overdueTasks.length>0 || urgentItems.length>0 || atRiskCount>0 || silentVipCount>0 || (isAll ? shopsNearExpiry>0 : thisShopExpiryPct6>=5);
+  const go = (tab) => onNavigate && onNavigate(tab);
+
+  // Danh sách "Cần xử lý ngay" dạng chuẩn hoá — mỗi dòng có nhãn phân loại (pill màu, giống mẫu
+  // URGENT/HR/CRM/GOODS) để bố cục đúng như hình quản lý gửi.
+  const urgentRows = [
+    ...overdueTasks.slice(0,4).map(t => ({ key:"task_"+t.id, tag:"TASK", tagColor:"#b3261e", title:`${t.title||"(không tên)"} — ${t.shop||""}`, sub:`Quá hạn ${t.deadline||""}`, tab:"tasks" })),
+    ...urgentItems.map(it => ({ key:"sku_"+it.shopCode+"_"+it.productId, tag:"HÀNG HOÁ", tagColor:"#b4720a", title:`${it.productName||it.productId} — ${it.shopCode}`, sub:`Đủ bán ${it.doi==null?"—":Math.round(it.doi)} ngày`, tab:"hanghoa" })),
+    ...(atRiskCount>0 ? [{ key:"seg1", tag:"KHÁCH HÀNG", tagColor:"#7c3aed", title:`${fmtNum(atRiskCount)} khách hàng có nguy cơ rời bỏ`, sub:"Xem tab Khách hàng", tab:"crm" }] : []),
+    ...(silentVipCount>0 ? [{ key:"seg2", tag:"KHÁCH HÀNG", tagColor:"#7c3aed", title:`${fmtNum(silentVipCount)} khách giá trị cao đang im lặng`, sub:"Xem tab Khách hàng", tab:"crm" }] : []),
+    ...(isAll
+      ? (shopsNearExpiry>0 ? [{ key:"exp", tag:"HÀNG HOÁ", tagColor:"#b4720a", title:`${shopsNearExpiry} nhà thuốc có tỷ lệ hàng cận date đáng chú ý`, sub:"Cận date 6 tháng ≥ 5% giá trị tồn", tab:"hanghoa" }] : [])
+      : (thisShopExpiryPct6>=5 ? [{ key:"exp", tag:"HÀNG HOÁ", tagColor:"#b4720a", title:`${adminShop} có ${thisShopExpiryPct6}% giá trị tồn cận date 6 tháng`, sub:"Xem tab Hàng hoá", tab:"hanghoa" }] : [])),
+  ];
+
+  return React.createElement("div", { style:{ maxWidth:1160, margin:"0 auto", padding:16 } }, [
+    React.createElement("div", { key:"head", style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", flexWrap:"wrap", gap:8, marginBottom:16 } }, [
+      React.createElement("div", { key:"t" }, [
+        React.createElement("h2", { key:"h", className:"pagetitle", style:{ marginBottom:2 } }, "Tổng quan"),
+        React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)" } },
+          `${fmtVnWeekday(todayStr)}, ${fmtVnDate(todayStr)}${mt && mt.computedAt ? ` · Doanh thu cập nhật lúc ${new Date(mt.computedAt).toLocaleTimeString("vi-VN",{hour:"2-digit",minute:"2-digit"})}` : ""}`),
       ]),
+      React.createElement("select", { key:"shop", value:adminShop, onChange:e=>setAdminShop(e.target.value), style:{ padding:"6px 10px", fontSize:12.5, border:"1px solid var(--line)", borderRadius:8 } },
+        ["Tất cả", ...DEFAULT_SHOPS].map(s=>React.createElement("option", { key:s, value:s }, s))),
     ]),
+    React.createElement("div", { key:"tiles", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:12, marginBottom:16 } }, [
+      React.createElement("div", { key:"checklist", onClick:()=>go("checklist"), style:{ cursor:"pointer" } },
+        React.createElement(StatTile, { label:"Checklist hôm nay", value: checklistPct==null ? "—" : `${checklistPct}%`, sub:`${fmtNum(submittedCount)}/${fmtNum(totalStaff)} nhân viên đã nộp`, tint:"var(--pineSoft)" })),
+      React.createElement("div", { key:"rev", style:{ position:"relative" } }, [
+        React.createElement("div", { key:"tile", onClick:()=>go("revenueAnalytics"), style:{ cursor:"pointer" } },
+          React.createElement(StatTile, { label:"Doanh thu tháng", value: revenueBlock ? fmtPct(revenueBlock.pct) : "—", sub: revenueBlock ? `${fmtVND(revenueBlock.actual||0)} / ${fmtVND(revenueBlock.target||0)}` : "Chưa có dữ liệu", tint:"var(--pineSoft)" })),
+        React.createElement("button", { key:"refresh", type:"button", disabled:revRefreshing, onClick:(e)=>{ e.stopPropagation(); refreshRevenue(); },
+          style:{ position:"absolute", top:8, right:8, border:"none", background:"none", cursor:"pointer", fontSize:11, color:"var(--inkSoft)" } }, revRefreshing ? "Đang tính..." : "↻ Tính lại"),
+      ]),
+      React.createElement("div", { key:"task", onClick:()=>go("tasks"), style:{ cursor:"pointer" } },
+        React.createElement(StatTile, { label:"Task quá hạn", value: fmtNum(overdueTasks.length), sub:`${fmtNum(tasksScoped.length)} task đang giao`, tint: overdueTasks.length>0 ? "#fdecec" : "var(--pineSoft)" })),
+      React.createElement("div", { key:"inv", onClick:()=>go("hanghoa"), style:{ cursor:"pointer" } },
+        React.createElement(StatTile, { label:"Hàng hoá cần xử lý", value: urgentCount==null ? "—" : fmtNum(urgentCount), sub:"Cần nhập gấp + nhập sớm", tint: (urgentCount||0)>0 ? "#fff4e0" : "var(--pineSoft)" })),
+    ]),
+    // 2 cột: trái "Cần xử lý ngay" (danh sách việc), phải "AI Briefing" (bấm mới chạy, xem CommandCenterAiBriefing).
+    React.createElement("div", { key:"row2col", style:{ display:"grid", gridTemplateColumns:"1.1fr 1fr", gap:12, marginBottom:16 } }, [
+      React.createElement("div", { key:"urgent", className:"card" }, [
+        React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:14, marginBottom:10 } }, "🔥 Cần xử lý ngay"),
+        React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8 } },
+          urgentRows.length===0
+            ? [React.createElement("div", { key:"empty", className:"emptyState" }, "Không có việc gì khẩn cấp — mọi thứ đang ổn.")]
+            : urgentRows.map(r => React.createElement("div", { key:r.key, onClick:()=>go(r.tab), style:{ display:"flex", alignItems:"center", gap:8, fontSize:12.5, borderBottom:"1px solid var(--line)", paddingBottom:6, cursor:"pointer" } }, [
+                React.createElement("span", { key:"dot", style:{ width:7, height:7, borderRadius:"50%", background:r.tagColor, flex:"none" } }),
+                React.createElement("div", { key:"txt", style:{ flex:1, minWidth:0 } }, [
+                  React.createElement("div", { key:"tt", style:{ fontWeight:600 } }, r.title),
+                  React.createElement("div", { key:"ss", style:{ color:"var(--inkSoft)", fontSize:11.5 } }, r.sub),
+                ]),
+                React.createElement("span", { key:"pill", style:{ flex:"none", fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:10, color:r.tagColor, background:r.tagColor+"1a" } }, r.tag),
+              ]))
+        ),
+      ]),
+      React.createElement(CommandCenterAiBriefing, { key:"ai", scopeLabel: isAll?"Toàn chuỗi":adminShop, healthScore, healthParts, checklistPct, submittedCount, totalStaff, revenueBlock, overdueTasks, urgentCount, urgentItems, atRiskCount, silentVipCount }),
+    ]),
+    // Điểm sức khoẻ — bố cục ngang 4 cột theo đúng mẫu (số lớn + thanh ngang bên dưới mỗi cột).
+    React.createElement("div", { key:"health", className:"card" }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:14, marginBottom:2 } }, `Điểm sức khoẻ nhà thuốc${healthScore==null?"":`: ${healthScore}/100`}`),
+      React.createElement("div", { key:"cols", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:16, marginTop:12 } },
+        healthParts.map(p => React.createElement("div", { key:p.label }, [
+          React.createElement("div", { key:"l", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:4 } }, `${p.label} (${Math.round(p.weight*100)}%)`),
+          React.createElement("div", { key:"v", style:{ fontSize:24, fontWeight:800, fontFamily:"'Fraunces',serif", marginBottom:6, color: p.score==null?"var(--inkSoft)":(p.score>=80?"var(--pine)":p.score>=60?"var(--amber)":"#b3261e") } }, p.score==null?"—":Math.round(p.score)),
+          React.createElement("div", { key:"bar", style:{ height:6, borderRadius:3, background:"var(--pineSoft)" } },
+            React.createElement("div", { style:{ height:"100%", width:`${p.score==null?0:p.score}%`, borderRadius:3, background: p.score==null?"var(--line)":(p.score>=80?"var(--pine)":p.score>=60?"var(--amber)":"#b3261e") } })),
+        ]))
+      ),
+    ]),
+  ]);
+}
+function fmtVnWeekday(iso){
+  const names = ["Chủ Nhật","Thứ Hai","Thứ Ba","Thứ Tư","Thứ Năm","Thứ Sáu","Thứ Bảy"];
+  const d = new Date(iso+"T00:00:00");
+  return names[d.getDay()];
+}
+function fmtVnDate(iso){ const [y,m,d] = iso.split("-"); return `${d}/${m}/${y}`; }
+// ===== AI Briefing (Command Center) — bấm mới chạy (không tự động, tránh tốn phí mỗi lần mở tab).
+// Gửi đúng số liệu ĐANG hiển thị trên tab Tổng quan (không tải/tính thêm gì mới) cho backend đọc và
+// viết nhận định ngắn — dùng chung cơ chế "Dạy AI" (yêu cầu chung + sửa nhận xét) như 2 tính năng AI
+// đã có (Báo cáo tuần, Phân tích tổng hợp KPI). Kết quả chỉ lưu tạm trên màn hình (không lưu Firestore).
+function CommandCenterAiBriefing({ scopeLabel, healthScore, healthParts, checklistPct, submittedCount, totalStaff, revenueBlock, overdueTasks, urgentCount, urgentItems, atRiskCount, silentVipCount }){
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+  const [snapshot, setSnapshot] = useState("");
+  const [errMsg, setErrMsg] = useState(null);
+
+  function buildSnapshot(){
+    const lines = [];
+    lines.push(`Điểm sức khoẻ tổng: ${healthScore==null?"chưa đủ dữ liệu":healthScore+"/100"}.`);
+    healthParts.forEach(p => lines.push(`- ${p.label} (trọng số ${Math.round(p.weight*100)}%): ${p.score==null?"chưa đủ dữ liệu":Math.round(p.score)+"/100"}.`));
+    lines.push(`Checklist hôm nay: ${checklistPct==null?"—":checklistPct+"%"} (${submittedCount}/${totalStaff} nhân viên đã nộp).`);
+    lines.push(`Doanh thu tháng: ${revenueBlock?fmtPct(revenueBlock.pct):"—"} (${revenueBlock?fmtVND(revenueBlock.actual||0):"—"} / ${revenueBlock?fmtVND(revenueBlock.target||0):"—"} target).`);
+    lines.push(`Task quá hạn: ${overdueTasks.length} task${overdueTasks.length>0?" — "+overdueTasks.slice(0,5).map(t=>`"${t.title||"?"}" (${t.shop||"?"}, hạn ${t.deadline||"?"})`).join("; "):""}.`);
+    lines.push(`Hàng hoá cần xử lý (nhập gấp+nhập sớm): ${urgentCount==null?"—":urgentCount} SKU${urgentItems.length>0?" — nhập gấp: "+urgentItems.slice(0,5).map(it=>`${it.productName||it.productId} (${it.shopCode}, đủ bán ${it.doi==null?"?":Math.round(it.doi)} ngày)`).join("; "):""}.`);
+    lines.push(`Khách hàng có nguy cơ rời bỏ: ${atRiskCount}. Khách giá trị cao đang im lặng: ${silentVipCount}.`);
+    return lines.join("\n");
+  }
+
+  async function run(){
+    setLoading(true); setErrMsg(null);
+    const snap = buildSnapshot();
+    try{
+      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/analyzeCommandCenterNow", {
+        method:"POST", headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ scopeLabel, snapshot: snap }),
+      });
+      const data = await resp.json();
+      if(data.ok){ setResult(data.result); setSnapshot(data.aiInputSnapshot||snap); }
+      else setErrMsg(data.reason || data.error || "Phân tích thất bại.");
+    } catch(err){ setErrMsg(err && err.message ? err.message : String(err)); }
+    setLoading(false);
+  }
+
+  return React.createElement("div", { className:"card" }, [
+    React.createElement("div", { key:"t", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 } }, [
+      React.createElement("div", { key:"l", style:{ fontWeight:700, fontSize:14 } }, `✦ AI Briefing — ${scopeLabel}`),
+      React.createElement("button", { key:"b", type:"button", className:"btn btnPrimary", disabled:loading, style:{ fontSize:12, padding:"5px 12px" }, onClick:run }, loading ? "Đang phân tích..." : (result ? "↻ Phân tích lại" : "🤖 Phân tích")),
+    ]),
+    React.createElement(AiTeachPanel, { key:"teach", configDocId:"aiCommandCenterConfig", label:"— Tổng quan" }),
+    errMsg && React.createElement("div", { key:"err", style:{ fontSize:12.5, color:"#b3261e", marginTop:8 } }, errMsg),
+    result
+      ? React.createElement("div", { key:"res", style:{ marginTop:10 } }, [
+          React.createElement("div", { key:"txt", style:{ fontSize:13, lineHeight:1.6, whiteSpace:"pre-line" } }, result),
+          React.createElement(AiFixBlock, { key:"fix", feature:"commandCenter", contextLabel:scopeLabel, inputSnapshot:snapshot, aiText:result }),
+        ])
+      : !loading && React.createElement("div", { key:"empty", className:"emptyState", style:{ marginTop:8 } }, "Bấm \"🤖 Phân tích\" để AI đọc số liệu Tổng quan và viết nhận định ngắn."),
   ]);
 }
 
