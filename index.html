@@ -7873,8 +7873,8 @@ function BaoCaoTuanView({ isAdmin, myStaff }){
 // "Doanh thu" tự động tính từ dữ liệu API thay thế.
 const STAFF_TABS = ["checklist","photos","hanghoa","tasks","kpi","crm","training","kudos","temgia","revenueAnalytics","nhanvien","ctkm","baocaotuan","sales"];
 const OPS_TABS = [
-  { id:"command", label:"Tổng quan" },
-  { id:"action", label:"Action Center" },
+  { id:"command", label:"Tổng quan điều hành" },
+  { id:"action", label:"Công việc cần xử lý" },
   { id:"emp360", label:"Employee 360" },
   { id:"cust360", label:"Customer 360" },
   { id:"prod360", label:"Product 360" },
@@ -7902,13 +7902,16 @@ const OPS_TABS = [
 // thấy danh sách tab phẳng như cũ (xem STAFF_TABS + cách dùng OPS_GROUPS_STAFF bên dưới).
 // "sales" (Báo cáo doanh số ngày) không đưa vào nhóm nào của quản lý vì tab này vốn đã ẩn khỏi
 // quản lý từ trước (quản lý không gắn nhà thuốc nên không có gì để xem).
+// 21/9/2026 (nâng cấp Upharma Ops — mục II đặc tả): đổi tên + xếp lại thứ tự menu theo đúng đặc tả
+// (Tổng quan điều hành → Nhân sự → Khách hàng → Hàng hoá → Vận hành → Công việc cần xử lý → AI → Hệ thống).
+// Chỉ đổi NHÃN và THỨ TỰ — id nhóm/tab giữ nguyên nên icon, badge, điều hướng cũ đều chạy như trước.
 const OPS_GROUPS_ADMIN = [
-  { id:"command", label:"Tổng quan", tabs:["command"] },
-  { id:"action", label:"Action Center", tabs:["action"] },
-  { id:"vanhanh", label:"Vận hành", tabs:["checklist","photos","revenueAnalytics","baocaotuan"] },
+  { id:"command", label:"Tổng quan điều hành", tabs:["command"] },
   { id:"nhansu", label:"Nhân sự", tabs:["emp360","tasks","kpi","nhanvien","training","kudos"] },
   { id:"khachhang", label:"Khách hàng", tabs:["cust360","crm","ctkm"] },
   { id:"hanghoagroup", label:"Hàng hoá", tabs:["prod360","hanghoa","temgia"] },
+  { id:"vanhanh", label:"Vận hành", tabs:["checklist","photos","revenueAnalytics","baocaotuan"] },
+  { id:"action", label:"Công việc cần xử lý", tabs:["action"] },
   { id:"ai", label:"AI", tabs:["ai"] },
   { id:"hethong", label:"Hệ thống", tabs:["hethong"] },
 ];
@@ -9624,6 +9627,328 @@ function CommandCenterView({ isAdmin, myStaff, onNavigate }){
     ]),
   ]);
 }
+// ================= TỔNG QUAN ĐIỀU HÀNH (nâng cấp P0-1 — thay CommandCenterView cũ ở tab "command") =================
+// Trả lời 5 câu: đang có vấn đề gì → nằm ở đâu → vì sao (điểm + nguyên nhân) → ai/việc gì cần xử lý hôm nay →
+// bấm được để đi thẳng tới chi tiết. Số liệu nặng KHÔNG tính ở trình duyệt: điểm sức khoẻ/vấn đề từng nhà thuốc
+// đọc từ doc tổng hợp opsConfig/shopHealthSummary (hàm computeShopHealth trong index.js, chạy 08:30 hằng ngày),
+// đếm tồn kho/khách theo nhà thuốc đọc từ inventoryConsumptionSummary.byShop + customerSegmentsByShop.
+// Khi backend mới chưa deploy, các thẻ số liệu vẫn hiện bằng nguồn cũ (chỉ toàn chuỗi); phần "Tình hình nhà
+// thuốc" và điểm sức khoẻ hiện trạng thái "chưa có dữ liệu" kèm nút tính ngay.
+function shopLabel(code){ const m = /^SHOP0*(\d+)$/i.exec(String(code||"")); return m ? "NT"+m[1] : String(code||""); }
+const HEALTH_LEVELS = {
+  good:{ label:"Tốt", color:"#16A34A" }, watch:{ label:"Theo dõi", color:"#C9A227" },
+  improve:{ label:"Cần cải thiện", color:"#D98A1F" }, urgent:{ label:"Cần xử lý ngay", color:"#B3261E" },
+  none:{ label:"Chưa có dữ liệu", color:"#6B7A70" },
+};
+function healthLevelOf(score){ return score==null ? "none" : score>=85 ? "good" : score>=70 ? "watch" : score>=50 ? "improve" : "urgent"; }
+const HEALTH_GROUP_ORDER = ["revenue","hr","customer","goods","ops"];
+const HEALTH_GROUP_LABEL = { revenue:"Doanh thu", hr:"Nhân sự", customer:"Khách hàng", goods:"Hàng hoá", ops:"Vận hành" };
+const HEALTH_GROUP_MODULE = { revenue:"Khác", hr:"HR", customer:"CRM", goods:"Goods", ops:"Khác" };
+const ISSUE_SEV = { red:{ color:"#B3261E", dot:"🔴", rank:0 }, orange:{ color:"#D98A1F", dot:"🟠", rank:1 }, yellow:{ color:"#C9A227", dot:"🟡", rank:2 } };
+function sumObjects(byShop, shopCodes){
+  const out = {};
+  (shopCodes || Object.keys(byShop||{})).forEach(code => { const o = (byShop||{})[code]; if(!o) return; Object.keys(o).forEach(k => { if(typeof o[k]==="number") out[k] = (out[k]||0) + o[k]; }); });
+  return out;
+}
+// Gộp điểm các nhà thuốc trong phạm vi đang xem → điểm tổng + điểm từng nhóm + nguyên nhân.
+function aggregateShopHealth(summary, shopFilter){
+  const shopsMap = (summary && summary.shops) || {};
+  const list = shopFilter==="Tất cả" ? Object.values(shopsMap) : (shopsMap[shopFilter] ? [shopsMap[shopFilter]] : []);
+  if(list.length===0) return null;
+  const single = list.length===1 ? list[0] : null;
+  const mean = arr => { const v = arr.filter(x => x!=null); return v.length ? Math.round(v.reduce((a,b)=>a+b,0)/v.length) : null; };
+  const groups = {};
+  HEALTH_GROUP_ORDER.forEach(k => {
+    const score = single ? (single.groups[k] && single.groups[k].score) : mean(list.map(s => s.groups[k] && s.groups[k].score));
+    let reason;
+    if(single) reason = (single.groups[k] && single.groups[k].reason) || "";
+    else {
+      const worst = list.filter(s => s.groups[k] && s.groups[k].score!=null && s.groups[k].score<70).sort((a,b)=>a.groups[k].score-b.groups[k].score);
+      reason = worst.length ? `${worst.length}/${list.length} nhà thuốc dưới 70 điểm: ${worst.slice(0,3).map(s => `${shopLabel(s.shopCode)} (${s.groups[k].score})`).join(", ")}${worst.length>3?"…":""}` : "Các nhà thuốc đều từ 70 điểm trở lên";
+    }
+    groups[k] = { score, reason };
+  });
+  const w = (summary && summary.weights) || {};
+  let known = 0, acc = 0;
+  HEALTH_GROUP_ORDER.forEach(k => { if(groups[k].score!=null){ known += (w[k]||0); acc += groups[k].score*(w[k]||0); } });
+  const score = single ? single.score : (known>0 ? Math.round(acc/known) : null);
+  return { score, groups, weights:w, list };
+}
+
+function OverviewGroupCard({ title, color, headline, headlineSub, lines, onClick }){
+  return rc("div", { className:"card", onClick, style:{ cursor:onClick?"pointer":"default", borderTop:`3px solid ${color}`, padding:"12px 14px" } }, [
+    rc("div", { key:"t", style:{ fontSize:11, fontWeight:700, color:"var(--inkSoft)", textTransform:"uppercase", letterSpacing:.03, marginBottom:4 } }, title),
+    rc("div", { key:"h", style:{ fontSize:24, fontWeight:800, fontFamily:"'Fraunces',serif", color } }, headline),
+    headlineSub && rc("div", { key:"hs", style:{ fontSize:11, color:"var(--inkSoft)", marginBottom:6 } }, headlineSub),
+    ...lines.map((l, i) => rc("div", { key:"l"+i, style:{ display:"flex", justifyContent:"space-between", gap:8, fontSize:12, padding:"3px 0", borderTop: i===0 ? "1px solid var(--line)" : "none", marginTop: i===0 ? 6 : 0 } }, [
+      rc("span", { key:"a", style:{ color:"var(--inkSoft)" } }, l.label),
+      rc("b", { key:"b", style:{ color:l.color||"var(--ink)" } }, l.value),
+    ])),
+  ]);
+}
+
+function ExecOverviewView({ isAdmin, myStaff, onNavigate }){
+  const todayStr = todayISO();
+  const [monthKey, setMonthKey] = useState(todayStr.slice(0,7));
+  const mt = useMonthTracking(monthKey);
+  const [adminShop, setAdminShop] = useState("Tất cả");
+  const isAll = adminShop==="Tất cả";
+  const [showAllIssues, setShowAllIssues] = useState(false);
+  const [composer, setComposer] = useState(null);
+  const [healthBusy, setHealthBusy] = useState(false);
+  const go = (tab, param) => onNavigate && onNavigate(tab, param);
+
+  // ---- Dữ liệu nền (đều nhẹ: doc tổng hợp + danh sách nhỏ) ----
+  const [summary, setSummary] = useState(null);
+  useEffect(()=>{ return db.collection("opsConfig").doc("shopHealthSummary").onSnapshot(d => setSummary(d.exists ? d.data() : null), err => logSystemError("shopHealthSummary", err)); }, []);
+  const [invSummary, setInvSummary] = useState(null);
+  useEffect(()=>{ return db.collection("opsConfig").doc("inventoryConsumptionSummary").onSnapshot(d => setInvSummary(d.exists ? d.data() : null)); }, []);
+  const [custByShop, setCustByShop] = useState(null);
+  useEffect(()=>{ return db.collection("opsConfig").doc("customerSegmentsByShop").onSnapshot(d => setCustByShop(d.exists ? d.data() : null)); }, []);
+  const [segCounts, setSegCounts] = useState({});
+  useEffect(()=>{ return db.collection("customerSegments").onSnapshot(snap => { const m = {}; snap.forEach(d => { const v = d.data(); m[v.name] = v.memberCount; }); setSegCounts(m); }, err => logSystemError("customerSegments", err)); }, []);
+  const [expiryByShop, setExpiryByShop] = useState({});
+  useEffect(()=>{ return db.collection("externalInventoryExpiry").onSnapshot(snap => { const m = {}; snap.forEach(d => { m[d.id] = d.data(); }); setExpiryByShop(m); }); }, []);
+  const [staffList, setStaffList] = useState([]);
+  useEffect(()=>{ const u = subscribeCol("staff", setStaffList); return u; }, []);
+  const [todayReports, setTodayReports] = useState([]);
+  useEffect(()=>{ return db.collection("dailyReports").where("ngay","==",todayStr).onSnapshot(snap => setTodayReports(snap.docs.map(d => d.data())), err => logSystemError("dailyReports", err)); }, [todayStr]);
+  const [openTasks, setOpenTasks] = useState([]);
+  useEffect(()=>{ return db.collection("tasks").where("trangThai","==","Đang giao").onSnapshot(snap => setOpenTasks(snap.docs.map(d => ({ id:d.id, ...d.data() }))), err => logSystemError("tasks", err)); }, []);
+  const [doneToday, setDoneToday] = useState([]);
+  useEffect(()=>{ return db.collection("tasks").where("ngayHoanThanh","==",todayStr).onSnapshot(snap => setDoneToday(snap.docs.map(d => ({ id:d.id, ...d.data() }))), err => logSystemError("tasks", err)); }, [todayStr]);
+  const [urgentItemsAll, setUrgentItemsAll] = useState([]);
+  useEffect(()=>{ db.collection("inventoryMetrics").where("stockStatus","==","URGENT_REPLENISH").limit(5).get().then(snap => setUrgentItemsAll(snap.docs.map(d => d.data()))).catch(() => setUrgentItemsAll([])); }, []);
+
+  // ---- Phạm vi theo bộ lọc nhà thuốc ----
+  const inScope = shop => isAll || shop===adminShop;
+  const staffScoped = staffList.filter(s => inScope(s.shop));
+  const submittedCount = todayReports.filter(r => inScope(r.shop) && r.trangThai==="Đã nộp").length;
+  const nowTs = `${todayStr}T${nowHM()}`;
+  const tasksScoped = openTasks.filter(t => inScope(t.shop));
+  const overdueTasks = tasksScoped.filter(t => t.deadline && taskDeadlineTs360(t) < nowTs).sort((a,b) => taskDeadlineTs360(a).localeCompare(taskDeadlineTs360(b)));
+  const dueTodayOpen = tasksScoped.filter(t => t.deadline===todayStr).length;
+  const doneTodayN = doneToday.filter(t => inScope(t.shop)).length;
+
+  const revenueBlock = mt ? (isAll ? mt.chain.revenue : ((mt.byShop[adminShop]||{}).revenue||null)) : null;
+
+  const goods = (() => {
+    if(invSummary && invSummary.byShop) return isAll ? sumObjects(invSummary.byShop) : (invSummary.byShop[adminShop] || null);
+    if(isAll && invSummary){ const st = invSummary.byStatus||{}, vel = invSummary.byVelocity||{};
+      return { totalSKU:invSummary.totalSKU||0, urgent:st.URGENT_REPLENISH||0, soon:st.REPLENISH_SOON||0, overstock:st.OVERSTOCK||0, dead:st.DEAD_STOCK||0, slow:(vel.SLOW||0)+(vel.VERY_SLOW||0) }; }
+    return null;
+  })();
+  const shopsNearExpiry = DEFAULT_SHOPS.filter(s => ((expiryByShop[s]&&expiryByShop[s].pct6)||0) >= 5).length;
+  const thisShopExpiryPct6 = !isAll ? ((expiryByShop[adminShop]&&expiryByShop[adminShop].pct6)||0) : null;
+  const cust = (() => {
+    if(custByShop && custByShop.byShop) return isAll ? sumObjects(custByShop.byShop) : (custByShop.byShop[adminShop] || null);
+    if(isAll && Object.keys(segCounts).length){ const a = segCounts["Có nguy cơ rời bỏ"]||0, b = segCounts["Giá trị cao im lặng"]||0; return { total:null, vip:segCounts["Khách VIP"]||0, atRisk:a, silentVip:b, needCare:a+b }; }
+    return null;
+  })();
+  const agg = aggregateShopHealth(summary, adminShop);
+  const staffNeedingAttention = agg ? agg.list.reduce((s, x) => s + ((x.metrics && x.metrics.hr && x.metrics.hr.lowPace) || 0), 0) : null;
+
+  async function recomputeHealth(){
+    setHealthBusy(true);
+    try{
+      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeShopHealthNow");
+      if(!resp.ok){ const t = await resp.text().catch(()=>""); window.alert(`Tính điểm thất bại (mã lỗi ${resp.status}). ${t.slice(0,300)}`); }
+    } catch(err){ window.alert("Lỗi kết nối khi tính điểm: " + (err && err.message ? err.message : err)); }
+    setHealthBusy(false);
+  }
+
+  // ---- "Vấn đề cần quan tâm": gộp vấn đề của các nhà thuốc trong phạm vi, đỏ trước cam trước vàng ----
+  const issues = agg ? agg.list.flatMap(s => (s.issues||[]).map(i => ({ ...i, shopCode:s.shopCode, shopScore:s.score==null?101:s.score })))
+    .sort((a,b) => (ISSUE_SEV[a.severity].rank - ISSUE_SEV[b.severity].rank) || (a.shopScore - b.shopScore)) : [];
+  const issuesShown = showAllIssues ? issues : issues.slice(0, 8);
+  function openIssueTask(i){
+    setComposer({ heading:"Tạo công việc xử lý", title:`[${shopLabel(i.shopCode)}] ${i.title}`, mota:`${i.detail||""}`.trim(), module:HEALTH_GROUP_MODULE[i.group]||"Khác",
+      shopOnly:true, shop:i.shopCode, extra:{ sourceIssueCode:i.code, sourceIssueTitle:i.title, sourceShop:i.shopCode, actionInsight:i.title } });
+  }
+
+  // ---- "Hôm nay tôi phải làm gì?": việc gửi quản lý + việc nhân viên quá hạn cần nhắc ----
+  const today = todayStr;
+  const lvlOf = t => taskLevel360(t, nowTs, today) || "assigned";
+  const lvlMeta = { urgent:{ dot:"🔴", color:CL360.bad }, attention:{ dot:"🟠", color:CL360.warn }, assigned:{ dot:"⚪", color:CL360.gray } };
+  const mineOpen = tasksScoped.filter(t => t.assignType==="admin");
+  const teamOverdue = overdueTasks.filter(t => t.assignType!=="admin");
+  const rank = { urgent:0, attention:1, assigned:2 };
+  const todoRows = [ ...mineOpen.map(t => ({ t, own:true })), ...teamOverdue.slice(0,5).map(t => ({ t, own:false })) ]
+    .sort((a,b) => (rank[lvlOf(a.t)]-rank[lvlOf(b.t)]) || taskDeadlineTs360(a.t).localeCompare(taskDeadlineTs360(b.t))).slice(0, 10)
+    .map(({ t, own }) => {
+      const lv = lvlMeta[lvlOf(t)]; const late = t.deadline && taskDeadlineTs360(t) < nowTs;
+      return { onClick:()=>go("action", { tab: own ? "mine" : "overdue" }), cells:[
+        rc("span", { key:"lv" }, lv.dot),
+        rc("span", { key:"ti", style:{ fontWeight:600 } }, (t.title||"(không tên)") + (own ? "" : "  · nhắc NV")),
+        `${shopLabel(t.shop)}${t.staffName ? " · "+t.staffName : ""}`,
+        `${dmy360(t.deadline)}${t.hanGio ? " "+t.hanGio : ""}`,
+        rc(Pill360, { key:"st", text: late ? "Quá hạn" : "Chưa làm", color: late ? CL360.bad : CL360.gray }),
+      ] };
+    });
+
+  // ---- Thẻ 5 nhóm chỉ số ----
+  const pctHead = revenueBlock ? (revenueBlock.projectedPct!=null ? revenueBlock.projectedPct : revenueBlock.pct) : null;
+  const revColor = pctHead==null ? CL360.gray : pctHead>=95 ? CL360.good : pctHead>=80 ? CL360.warn : CL360.bad;
+  const n = v => v==null ? "—" : fmtNum(v);
+  const cards = [
+    { key:"rev", title:"Doanh thu tháng", color:revColor, headline: pctHead==null ? "—" : `${pctHead}%`, headlineSub:"Dự kiến đạt cả tháng", tab:["revenueAnalytics"], lines:[
+      { label:"Thực hiện", value: revenueBlock ? fmtVNDCompact(revenueBlock.actual||0) : "—" },
+      { label:"Chỉ tiêu", value: revenueBlock ? fmtVNDCompact(revenueBlock.target||0) : "—" },
+      { label:"Đạt lũy kế", value: revenueBlock && revenueBlock.pct!=null ? `${revenueBlock.pct}%` : "—" } ] },
+    { key:"hr", title:"Nhân sự", color: overdueTasks.length>0 ? CL360.warn : CL360.good, headline:n(staffScoped.length), headlineSub:"Tổng nhân viên", tab:["emp360"], lines:[
+      { label:"Đã nộp checklist hôm nay", value:`${n(submittedCount)}/${n(staffScoped.length)}` },
+      { label:"Tiến độ KPI dưới 80%", value:n(staffNeedingAttention), color:(staffNeedingAttention||0)>0?CL360.warn:undefined },
+      { label:"Công việc quá hạn", value:n(overdueTasks.length), color:overdueTasks.length>0?CL360.bad:undefined } ] },
+    { key:"cust", title:"Khách hàng", color: cust && cust.silentVip>0 ? CL360.warn : CL360.good, headline:n(cust && cust.total), headlineSub:"Tổng khách hàng", tab:["crm"], lines:[
+      { label:"Khách cần chăm sóc", value:n(cust && cust.needCare), color:cust && cust.needCare>0?CL360.warn:undefined },
+      { label:"Nguy cơ không quay lại", value:n(cust && cust.atRisk) },
+      { label:"Khách VIP / VIP im lặng", value:`${n(cust && cust.vip)} / ${n(cust && cust.silentVip)}`, color:cust && cust.silentVip>0?CL360.bad:undefined } ] },
+    { key:"goods", title:"Hàng hoá", color: goods && goods.urgent>0 ? CL360.bad : CL360.good, headline:n(goods && goods.urgent), headlineSub:"Hàng thiếu (bán nhanh, tồn thấp)", tab:["hanghoa",{ sub:"transfer", invSubTab:"tocdo" }], lines:[
+      { label:"Tồn cao / Bán chậm", value:`${n(goods && goods.overstock)} / ${n(goods && goods.slow)}` },
+      { label:"Không bán / Nguy cơ thiếu", value:`${n(goods && goods.dead)} / ${n(goods && goods.soon)}` },
+      { label:"Sắp hết hạn (6 tháng)", value: isAll ? `${shopsNearExpiry} NT ≥5%` : `${thisShopExpiryPct6}% tồn`, color:(isAll ? shopsNearExpiry>0 : thisShopExpiryPct6>=5)?CL360.warn:undefined } ] },
+    { key:"ops", title:"Vận hành hôm nay", color: overdueTasks.length>0 ? CL360.bad : CL360.good, headline:n(dueTodayOpen+doneTodayN), headlineSub:"Việc đến hạn hôm nay", tab:["action"], lines:[
+      { label:"Đã hoàn thành", value:n(doneTodayN), color:CL360.good },
+      { label:"Chưa hoàn thành", value:n(dueTodayOpen) },
+      { label:"Quá hạn", value:n(overdueTasks.length), color:overdueTasks.length>0?CL360.bad:undefined } ] },
+  ];
+
+  // ---- Điểm sức khoẻ + nguyên nhân ----
+  const lvl = agg ? HEALTH_LEVELS[healthLevelOf(agg.score)] : HEALTH_LEVELS.none;
+  const healthParts = HEALTH_GROUP_ORDER.map(k => ({ label:HEALTH_GROUP_LABEL[k], weight:(agg && agg.weights[k]) || 0, score: agg ? agg.groups[k].score : null }));
+  const computedLabel = summary && summary.computedAt ? new Date(summary.computedAt).toLocaleString("vi-VN",{ hour:"2-digit", minute:"2-digit", day:"2-digit", month:"2-digit" }) : null;
+  const shopCards = summary ? Object.values(summary.shops||{}).filter(s => inScope(s.shopCode)).sort((a,b) => (a.score==null?999:a.score) - (b.score==null?999:b.score)) : [];
+  const selStyle = { padding:"6px 10px", fontSize:12.5, border:"1px solid var(--line)", borderRadius:8 };
+
+  return rc("div", { style:{ maxWidth:1160, margin:"0 auto", padding:16 } }, [
+    // Thanh bộ lọc — Nhà thuốc + Kỳ doanh thu (tháng) + ngày hiện tại. (Khu vực/Quản lý khu vực: hệ thống hiện chỉ có 1 tài khoản quản lý, chưa có dữ liệu khu vực để lọc.)
+    rc("div", { key:"head", style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", flexWrap:"wrap", gap:10, marginBottom:14 } }, [
+      rc("div", { key:"t" }, [
+        rc("h2", { key:"h", className:"pagetitle", style:{ marginBottom:2 } }, "Tổng quan điều hành"),
+        rc("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)" } }, `${fmtVnWeekday(todayStr)}, ${fmtVnDate(todayStr)} · ${isAll ? "Toàn bộ nhà thuốc" : shopLabel(adminShop)}${computedLabel ? ` · Điểm cập nhật ${computedLabel}` : ""}`),
+      ]),
+      rc("div", { key:"f", style:{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" } }, [
+        rc(MonthPicker, { key:"m", month:monthKey, setMonth:setMonthKey }),
+        rc("select", { key:"shop", value:adminShop, onChange:e=>setAdminShop(e.target.value), style:selStyle },
+          [{ v:"Tất cả", l:"Tất cả nhà thuốc" }, ...DEFAULT_SHOPS.map(s => ({ v:s, l:`${shopLabel(s)} · ${s}` }))].map(o => rc("option", { key:o.v, value:o.v }, o.l))),
+      ]),
+    ]),
+
+    // 5 nhóm chỉ số
+    rc("div", { key:"tiles", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:12, marginBottom:16 } },
+      cards.map(c => rc(OverviewGroupCard, { key:c.key, title:c.title, color:c.color, headline:c.headline, headlineSub:c.headlineSub, lines:c.lines, onClick:()=>go(c.tab[0], c.tab[1]) }))),
+
+    // Vấn đề cần quan tâm + Hôm nay tôi phải làm gì
+    rc("div", { key:"row2", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))", gap:12, marginBottom:16, alignItems:"start" } }, [
+      rc("div", { key:"issues", className:"card" }, [
+        rc(Head360, { key:"h", title:`Vấn đề cần quan tâm${issues.length ? ` (${issues.length})` : ""}` }),
+        !summary ? rc("div", { key:"e", className:"emptyState" }, [ "Chưa có dữ liệu tổng hợp vấn đề theo nhà thuốc. ", rc("button", { key:"b", type:"button", className:"btn", disabled:healthBusy, style:{ fontSize:12, marginTop:8 }, onClick:recomputeHealth }, healthBusy ? "Đang tính..." : "Tính ngay") ])
+          : issues.length===0 ? rc("div", { key:"e", className:"emptyState" }, "Không phát hiện vấn đề nào — mọi thứ đang ổn.")
+          : rc("div", { key:"l" }, issuesShown.map((i, idx) => rc("div", { key:i.shopCode+i.code+idx, style:{ display:"flex", alignItems:"flex-start", gap:8, padding:"8px 0", borderBottom:"1px solid var(--line)" } }, [
+              rc("span", { key:"d", style:{ flex:"none", marginTop:1 } }, ISSUE_SEV[i.severity].dot),
+              rc("div", { key:"x", onClick:()=>go(i.tab, i.param), style:{ flex:1, minWidth:0, cursor:"pointer" } }, [
+                rc("div", { key:"a", style:{ fontWeight:600, fontSize:12.5 } }, `${shopLabel(i.shopCode)} — ${i.title}`),
+                i.detail && rc("div", { key:"b", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:2 } }, i.detail),
+              ]),
+              rc(Pill360, { key:"p", text:(HEALTH_GROUP_LABEL[i.group]||"").toUpperCase(), color:ISSUE_SEV[i.severity].color }),
+              rc("button", { key:"c", type:"button", className:"btn btnGhost", style:{ fontSize:11, padding:"3px 8px", flex:"none" }, onClick:()=>openIssueTask(i) }, "＋ Việc"),
+            ]))),
+        issues.length>8 && rc("div", { key:"more", onClick:()=>setShowAllIssues(v=>!v), style:{ fontSize:11.5, color:CL360.info, cursor:"pointer", marginTop:8 } }, showAllIssues ? "Thu gọn ‹" : `Xem tất cả ${issues.length} vấn đề ›`),
+      ]),
+      rc("div", { key:"todo", className:"card" }, [
+        rc(Head360, { key:"h", title:"Hôm nay tôi phải làm gì?", right:rc("span", { key:"lnk", onClick:()=>go("action"), style:{ fontSize:11.5, color:CL360.info, cursor:"pointer" } }, "Mở Công việc ›") }),
+        rc(Table360, { key:"t", head:["", "Công việc", "Đối tượng", "Hạn", "Trạng thái"], rows:todoRows, emptyText:"Hôm nay không có việc nào đang chờ bạn." }),
+      ]),
+    ]),
+
+    // Điểm sức khoẻ + nguyên nhân
+    rc("div", { key:"health", className:"card", style:{ marginBottom:16 } }, [
+      rc("div", { key:"t", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, flexWrap:"wrap", marginBottom:4 } }, [
+        rc("div", { key:"a", style:{ fontWeight:700, fontSize:14 } }, [ `Điểm sức khoẻ ${isAll ? "toàn chuỗi" : shopLabel(adminShop)}`, agg && agg.score!=null ? rc("span", { key:"s", style:{ marginLeft:8, color:lvl.color } }, `${agg.score}/100 · ${lvl.label}`) : null ]),
+        rc("button", { key:"r", type:"button", className:"btn btnGhost", disabled:healthBusy, style:{ fontSize:11.5, padding:"4px 10px" }, onClick:recomputeHealth }, healthBusy ? "Đang tính..." : "↻ Tính lại điểm"),
+      ]),
+      !agg ? rc("div", { key:"e", className:"emptyState" }, "Chưa có điểm — bấm “Tính lại điểm” (cần đã deploy bản index.js mới).")
+        : rc("div", { key:"cols", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16, marginTop:12 } },
+            HEALTH_GROUP_ORDER.map(k => { const g = agg.groups[k]; const m = HEALTH_LEVELS[healthLevelOf(g.score)];
+              return rc("div", { key:k }, [
+                rc("div", { key:"l", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:4 } }, `${HEALTH_GROUP_LABEL[k]} (${Math.round((agg.weights[k]||0)*100)}%)`),
+                rc("div", { key:"v", style:{ fontSize:24, fontWeight:800, fontFamily:"'Fraunces',serif", marginBottom:6, color:m.color } }, g.score==null ? "—" : g.score),
+                rc("div", { key:"bar", style:{ height:6, borderRadius:3, background:"var(--line)" } }, rc("div", { style:{ height:"100%", width:`${g.score==null?0:g.score}%`, borderRadius:3, background:m.color } })),
+                rc("div", { key:"r", style:{ fontSize:11, color:"var(--inkSoft)", marginTop:6, lineHeight:1.45 } }, g.reason),
+              ]); })),
+    ]),
+
+    // Tình hình nhà thuốc — xếp nhà thuốc cần quan tâm nhất lên đầu
+    rc("div", { key:"shops", className:"card", style:{ marginBottom:16 } }, [
+      rc(Head360, { key:"h", title:"Tình hình nhà thuốc", right:rc("span", { style:{ fontSize:11, color:"var(--inkSoft)" } }, "Xếp theo mức cần quan tâm (điểm thấp trước)") }),
+      shopCards.length===0 ? rc("div", { key:"e", className:"emptyState" }, "Chưa có dữ liệu điểm nhà thuốc.")
+        : rc("div", { key:"g", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(230px,1fr))", gap:10 } }, shopCards.map(s => {
+            const m = HEALTH_LEVELS[healthLevelOf(s.score)];
+            return rc("div", { key:s.shopCode, onClick:()=>{ setAdminShop(s.shopCode); window.scrollTo({ top:0, behavior:"smooth" }); }, style:{ border:"1px solid var(--line)", borderLeft:`4px solid ${m.color}`, borderRadius:10, padding:"10px 12px", cursor:"pointer", background:"#fff" } }, [
+              rc("div", { key:"a", style:{ display:"flex", justifyContent:"space-between", alignItems:"baseline" } }, [
+                rc("b", { key:"n", style:{ fontSize:14 } }, shopLabel(s.shopCode)),
+                rc("span", { key:"s", style:{ fontWeight:800, fontSize:18, fontFamily:"'Fraunces',serif", color:m.color } }, s.score==null ? "—" : s.score),
+              ]),
+              rc("div", { key:"lv", style:{ fontSize:11, color:m.color, fontWeight:700, marginBottom:6 } }, m.label),
+              rc("div", { key:"chips", style:{ display:"flex", flexWrap:"wrap", gap:6, fontSize:11 } }, HEALTH_GROUP_ORDER.map(k => { const g = s.groups[k]; const gm = HEALTH_LEVELS[healthLevelOf(g && g.score)];
+                return rc("span", { key:k, title:(g && g.reason)||"", style:{ color:"var(--inkSoft)" } }, [ rc("span", { key:"d", style:{ display:"inline-block", width:7, height:7, borderRadius:"50%", background:gm.color, marginRight:3 } }), `${HEALTH_GROUP_LABEL[k]} ${g && g.score!=null ? g.score : "—"}`]);
+              })),
+              rc("div", { key:"i", style:{ fontSize:11.5, marginTop:6, color: s.issueCount>0 ? CL360.bad : CL360.good, fontWeight:600 } }, s.issueCount>0 ? `${s.issueCount} vấn đề đang mở` : "Không có vấn đề mở"),
+            ]);
+          })),
+    ]),
+
+    // AI Briefing (giữ nguyên tính năng cũ, đọc số liệu đang hiển thị)
+    rc(CommandCenterAiBriefing, { key:"ai", scopeLabel: isAll ? "Toàn chuỗi" : adminShop, healthScore: agg ? agg.score : null, healthParts,
+      checklistPct: staffScoped.length ? Math.round((submittedCount/staffScoped.length)*1000)/10 : null, submittedCount, totalStaff:staffScoped.length,
+      revenueBlock, overdueTasks, urgentCount: goods ? (goods.urgent||0)+(goods.soon||0) : null,
+      urgentItems: isAll ? urgentItemsAll : urgentItemsAll.filter(it => it.shopCode===adminShop),
+      atRiskCount: cust ? (cust.atRisk||0) : 0, silentVipCount: cust ? (cust.silentVip||0) : 0, staffNeedingAttention }),
+    composer && rc(TaskComposer360, { key:"cmp", preset:composer, onClose:()=>setComposer(null) }),
+  ]);
+}
+
+// Cấu hình tỷ trọng điểm sức khoẻ (mục "Hệ thống") — lưu opsConfig/shopHealthConfig.weights, backend tự chuẩn hoá về tổng 100%.
+function ShopHealthWeightsEditor(){
+  const DEFAULTS = { revenue:25, hr:20, customer:20, goods:20, ops:15 };
+  const [vals, setVals] = useState(DEFAULTS);
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");
+  useEffect(()=>{
+    return db.collection("opsConfig").doc("shopHealthConfig").onSnapshot(d => {
+      const w = d.exists ? (d.data().weights || {}) : {};
+      const next = {}; HEALTH_GROUP_ORDER.forEach(k => { next[k] = w[k]!=null ? Math.round(w[k]*(w[k]<=1?100:1)*10)/10 : DEFAULTS[k]; });
+      setVals(next); setLoaded(true);
+    });
+  }, []);
+  const total = HEALTH_GROUP_ORDER.reduce((s,k) => s + (Number(vals[k])||0), 0);
+  async function save(){
+    if(total<=0){ setMsg("Tổng tỷ trọng phải lớn hơn 0."); return; }
+    setSaving(true); setMsg("");
+    try{
+      const weights = {}; HEALTH_GROUP_ORDER.forEach(k => { weights[k] = (Number(vals[k])||0)/total; });
+      await db.collection("opsConfig").doc("shopHealthConfig").set({ weights }, { merge:true });
+      setMsg("Đã lưu. Điểm mới áp dụng sau lần tính tiếp theo (08:30 hằng ngày hoặc bấm “Tính lại điểm” ở Tổng quan).");
+    } catch(err){ setMsg("Không lưu được: " + (err && err.message ? err.message : err)); }
+    setSaving(false);
+  }
+  return rc("div", { className:"card", style:{ marginBottom:14 } }, [
+    rc("div", { key:"t", style:{ fontWeight:700, fontSize:15, marginBottom:4 } }, "Tỷ trọng điểm sức khoẻ nhà thuốc"),
+    rc("div", { key:"s", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } }, "Điểm nhà thuốc = Σ điểm từng nhóm × tỷ trọng. Mặc định 25/20/20/20/15. Nhập số tuỳ ý — hệ thống tự quy về tổng 100%."),
+    !loaded ? rc("div", { key:"l", className:"emptyState" }, "Đang tải...")
+      : rc("div", { key:"f" }, [
+          rc("div", { key:"g", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:10, marginBottom:10 } }, HEALTH_GROUP_ORDER.map(k => rc("div", { key:k, className:"field" }, [
+            rc("label", { key:"l" }, HEALTH_GROUP_LABEL[k] + " (%)"),
+            rc("input", { key:"i", type:"number", min:0, max:100, value:vals[k], onChange:e=>setVals(v => ({ ...v, [k]:e.target.value })) }),
+          ]))),
+          rc("div", { key:"sum", style:{ fontSize:12, marginBottom:8, color: Math.round(total)===100 ? "var(--pine)" : CL360.warn } }, `Tổng nhập: ${Math.round(total*10)/10}%${Math.round(total)===100 ? "" : " (sẽ được quy về 100%)"}`),
+          rc("button", { key:"b", type:"button", className:"btn btnPrimary", disabled:saving, onClick:save }, saving ? "Đang lưu..." : "Lưu tỷ trọng"),
+          msg && rc("div", { key:"m", style:{ fontSize:12, marginTop:8, color:"var(--inkSoft)" } }, msg),
+        ]),
+  ]);
+}
+
 function fmtVnWeekday(iso){
   const names = ["Chủ Nhật","Thứ Hai","Thứ Ba","Thứ Tư","Thứ Năm","Thứ Sáu","Thứ Bảy"];
   const d = new Date(iso+"T00:00:00");
@@ -10907,6 +11232,7 @@ function SystemHubView(){
   return React.createElement("div", { style:{ maxWidth:900, margin:"0 auto", padding:16 } }, [
     React.createElement("h2", { key:"title", className:"pagetitle" }, "Hệ thống"),
     React.createElement(ShopListEditor, { key:"shoplist" }),
+    React.createElement(ShopHealthWeightsEditor, { key:"healthweights" }),
     React.createElement(DataSyncSection, { key:"datasync" }),
     React.createElement(CleanupTokensButton, { key:"cleanup" }),
     React.createElement(SystemErrorLogView, { key:"errlog" }),
@@ -11049,7 +11375,7 @@ function Dashboard({ user, isAdmin, myStaff }){
           tabs: activeGroup.tabs.map(id => ({ id, label:(leafTabs.find(t=>t.id===id)||{}).label || id })),
           active: activeTab, onChange:setActiveTab,
         }),
-        activeTab==="command" && React.createElement(CommandCenterView, { key:"v", isAdmin, myStaff, onNavigate:setActiveTab }),
+        activeTab==="command" && React.createElement(ExecOverviewView, { key:"v", isAdmin, myStaff, onNavigate:setActiveTab }),
         activeTab==="action" && isAdmin && React.createElement(ActionCenterView, { key:"v", isAdmin, myStaff, navParam, onNavigate:setActiveTab, openTasks:openTasks360 }),
         activeTab==="emp360" && isAdmin && React.createElement(Employee360View, { key:"v", isAdmin, myStaff, navParam, onNavigate:setActiveTab }),
         activeTab==="cust360" && isAdmin && React.createElement(Customer360View, { key:"v", isAdmin, myStaff, navParam, onNavigate:setActiveTab }),
