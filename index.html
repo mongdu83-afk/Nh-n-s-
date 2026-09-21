@@ -10267,6 +10267,7 @@ function Customer360View({ isAdmin, myStaff, navParam, onNavigate }){
   const [tab, setTab] = useState("overview");
   const [composer, setComposer] = useState(null);
   const [lists, setLists] = useState(null);
+  const [expandOrderId, setExpandOrderId] = useState("");
 
   useEffect(()=>{ if(navParam && navParam.phone){ setPhone(navParam.phone); setTab("overview"); } }, [navParam]);
   // Danh sách gợi ý khi chưa chọn khách: 2 nhóm cần chăm sóc nhất (đọc giới hạn 8 khách/nhóm).
@@ -10281,6 +10282,7 @@ function Customer360View({ isAdmin, myStaff, navParam, onNavigate }){
   useEffect(()=>{
     if(!phone){ setCust(null); setEvents([]); setInter([]); setSegHist([]); return undefined; }
     setCustLoading(true);
+    setExpandOrderId("");
     const u1 = db.collection("crmCustomers").doc(phone).onSnapshot(d => { setCust(d.exists ? { id:d.id, ...d.data() } : null); setCustLoading(false); }, err => { logSystemError("crmCustomers", err); setCustLoading(false); });
     const u2 = db.collection("crmInteractions").where("phone", "==", phone)
       .onSnapshot(s => setInter(s.docs.map(d => ({ id:d.id, ...d.data() }))), err => logSystemError("crmInteractions", err));
@@ -10341,9 +10343,22 @@ function Customer360View({ isAdmin, myStaff, navParam, onNavigate }){
 
   const intel = cust.intelligence || {};
   const today = todayISO();
-  let purchases = events.filter(e => e.type==="purchase" && e.timestamp).map(e => ({ timestamp:String(e.timestamp).slice(0,10), totalAmount:Number(e.totalAmount)||0, shopId:e.shopId, salesName:e.salesName }));
-  if(purchases.length===0) purchases = ((cust.stats && cust.stats.purchaseAmountHistory) || []).filter(h => h.date).map(h => ({ timestamp:String(h.date).slice(0,10), totalAmount:Number(h.amount)||0 }));
+  let purchases = events.filter(e => e.type==="purchase" && e.timestamp).map(e => ({ timestamp:String(e.timestamp).slice(0,10), totalAmount:Number(e.totalAmount)||0, shopId:e.shopId, salesName:e.salesName, orderId:e.orderId||"", items:Array.isArray(e.items)?e.items:[] }));
+  if(purchases.length===0) purchases = ((cust.stats && cust.stats.purchaseAmountHistory) || []).filter(h => h.date).map(h => ({ timestamp:String(h.date).slice(0,10), totalAmount:Number(h.amount)||0, orderId:"", items:[] }));
   purchases.sort((a,b) => b.timestamp.localeCompare(a.timestamp));
+  // Tổng hợp lịch sử SẢN PHẨM đã mua (gộp theo mã/tên sản phẩm) từ items của từng đơn — chỉ có
+  // dữ liệu với các đơn đã đồng bộ qua GetDetailBuyerLst (nguồn có lưu items, xem 19/9/2026).
+  const productAgg = {};
+  purchases.forEach(p => (p.items||[]).forEach(it => {
+    const key = it.productId || it.productName;
+    if(!key) return;
+    if(!productAgg[key]) productAgg[key] = { productId:it.productId||"", productName:it.productName||it.productId||"(chưa rõ tên)", unit:it.unit||"", qty:0, amount:0, lastDate:p.timestamp };
+    productAgg[key].qty += Number(it.quantity)||0;
+    productAgg[key].amount += Number(it.amount)||0;
+    if(p.timestamp > productAgg[key].lastDate) productAgg[key].lastDate = p.timestamp;
+    if(it.unit && !productAgg[key].unit) productAgg[key].unit = it.unit;
+  }));
+  const productList = Object.values(productAgg).sort((a,b) => b.qty - a.qty);
   const d90 = addDays(today, -90), d180 = addDays(today, -180);
   const cur = purchases.filter(p => p.timestamp > d90), prev = purchases.filter(p => p.timestamp <= d90 && p.timestamp > d180);
   const sum = (a) => a.reduce((s, p) => s + p.totalAmount, 0);
@@ -10423,16 +10438,41 @@ function Customer360View({ isAdmin, myStaff, navParam, onNavigate }){
       rc("div", { key:"tl", className:"card" }, [ rc(Head360, { key:"h", title:"Lịch sử hành vi", right: tl.length>6 ? rc("span", { style:{ fontSize:11, color:CL360.info, cursor:"pointer" }, onClick:()=>setTab("history") }, "Xem toàn bộ") : null }),
         rc(Timeline360, { key:"t", events:tl.slice(0, 6), emptyText:"Chưa có lịch sử mua hoặc chăm sóc." }) ]),
     ]);
+  } else if(tab==="products"){
+    body = rc("div", { key:"pr" }, [
+      rc("div", { key:"c1", className:"card" }, [
+        rc(Head360, { key:"h", title:`Sản phẩm đã mua (${productList.length} mã, gộp từ ${purchases.length} đơn)` }),
+        productList.length===0 && rc("div", { key:"e", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8 } },
+          "Chưa có dữ liệu chi tiết sản phẩm cho khách này — chỉ các đơn đã đồng bộ qua \"Lịch sử mua hàng theo khách\" (GetDetailBuyerLst) mới có danh sách sản phẩm."),
+        rc(Table360, { key:"t", head:["Sản phẩm","Mã SP","ĐVT","Tổng SL","Tổng tiền","Mua gần nhất"],
+          rows:productList.map(p => ({ cells:[p.productName, p.productId||"—", p.unit||"—", fmtNum(p.qty), fmtVND(p.amount), dmy360(p.lastDate)] })),
+          emptyText:"Chưa có dữ liệu sản phẩm." }),
+      ]),
+    ]);
   } else {
-    body = rc("div", { key:"hs", className:"card" }, [
-      rc(Head360, { key:"h", title:`Lịch sử mua (${purchases.length} đơn gần nhất đã đồng bộ)` }),
-      rc(Table360, { key:"t", head:["Ngày","Nhà thuốc","Giá trị","NV bán"], rows:purchases.slice(0, 50).map(p => ({ cells:[dmy360(p.timestamp), p.shopId||"—", fmtVND(p.totalAmount), p.salesName||"—"] })), emptyText:"Chưa có đơn mua nào." }),
-      rc(Head360, { key:"h2", title:"Toàn bộ hoạt động" }), rc(Timeline360, { key:"tl", events:tl.slice(0, 40) }),
+    const expandedOrder = expandOrderId ? purchases.find(p => p.orderId===expandOrderId) : null;
+    body = rc("div", { key:"hs" }, [
+      rc("div", { key:"c1", className:"card" }, [
+        rc(Head360, { key:"h", title:`Lịch sử mua (${purchases.length} đơn gần nhất đã đồng bộ)`,
+          right: productList.length>0 ? rc("span", { style:{ fontSize:11, color:CL360.info, cursor:"pointer" }, onClick:()=>setTab("products") }, "Xem theo sản phẩm ›") : null }),
+        rc(Table360, { key:"t", head:["Ngày","Nhà thuốc","Giá trị","NV bán","Sản phẩm"], rows:purchases.slice(0, 50).map(p => ({
+          onClick: (p.orderId && p.items && p.items.length>0) ? ()=>setExpandOrderId(id => id===p.orderId ? "" : p.orderId) : undefined,
+          cells:[dmy360(p.timestamp), p.shopId||"—", fmtVND(p.totalAmount), p.salesName||"—",
+            (p.items && p.items.length>0) ? (expandOrderId===p.orderId ? "▲ Ẩn" : `▾ ${p.items.length} SP`) : "—"],
+        })), emptyText:"Chưa có đơn mua nào." }),
+        expandedOrder && expandedOrder.items && expandedOrder.items.length>0 && rc("div", { key:"exp", style:{ marginTop:10, paddingTop:10, borderTop:"1px dashed var(--line)" } }, [
+          rc("div", { key:"t", style:{ fontSize:11.5, fontWeight:700, marginBottom:6, color:"var(--inkSoft)" } }, `Sản phẩm trong đơn ngày ${dmy360(expandedOrder.timestamp)}:`),
+          rc(Table360, { key:"tb", head:["Sản phẩm","Mã SP","SL","ĐVT","Thành tiền"], rows:expandedOrder.items.map((it,i) => ({ cells:[it.productName||"—", it.productId||"—", fmtNum(it.quantity), it.unit||"—", fmtVND(it.amount)] })) }),
+        ]),
+      ]),
+      rc("div", { key:"c2", className:"card" }, [
+        rc(Head360, { key:"h2", title:"Toàn bộ hoạt động" }), rc(Timeline360, { key:"tl", events:tl.slice(0, 40) }),
+      ]),
     ]);
   }
   return rc("div", { style:wrapStyle }, [
     header, profile,
-    rc(SubTabBar, { key:"tabs", tabs:[{ id:"overview", label:"Tổng quan" }, { id:"history", label:"Lịch sử mua" }], active:tab, onChange:setTab }),
+    rc(SubTabBar, { key:"tabs", tabs:[{ id:"overview", label:"Tổng quan" }, { id:"history", label:"Lịch sử mua" }, { id:"products", label:"Sản phẩm đã mua" }], active:tab, onChange:setTab }),
     body,
     composer && rc(TaskComposer360, { key:"cmp", preset:composer, onClose:()=>setComposer(null), onSaved:()=>setTick(n=>n+1) }),
   ]);
