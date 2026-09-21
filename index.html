@@ -10133,9 +10133,18 @@ function Employee360View({ isAdmin, myStaff, navParam, onNavigate }){
     const need = paceList.filter(p => (p.pctDoanhSo!=null && p.pctDoanhSo < 0.8) || (p.kpiPct!=null && p.kpiPct < 0.8))
       .filter(p => shopFilter==="Tất cả" || p.shop===shopFilter)
       .sort((a,b) => Math.min(a.pctDoanhSo ?? 9, a.kpiPct ?? 9) - Math.min(b.pctDoanhSo ?? 9, b.kpiPct ?? 9)).slice(0, 15);
+    // 100% nhân sự (kể cả người đang ≥80%, không lọc theo pace) — ghép mọi nhân viên trong "staff"
+    // (đúng theo shopFilter đang chọn) với dữ liệu pace nếu có; ai chưa có pace hiện "Chưa có dữ liệu".
+    const allRows = staffList.filter(s => shopFilter==="Tất cả" || s.shop===shopFilter)
+      .map(s => {
+        const p = paceList.find(pp => pp.staffId===s.id) || null;
+        const minRatio = p ? Math.min(p.pctDoanhSo ?? 9, p.kpiPct ?? 9) : 9.5;
+        return { staffId:s.id, name:s.name, shop:s.shop, role:s.role, pace:p, minRatio };
+      })
+      .sort((a,b) => a.minRatio - b.minRatio || (a.name||"").localeCompare(b.name||"", "vi"));
     return rc("div", { style:wrapStyle }, [
       header,
-      rc("div", { key:"c", className:"card" }, [
+      rc("div", { key:"c", className:"card", style:{ marginBottom:12 } }, [
         rc("div", { key:"t", style:{ fontWeight:700, fontSize:14, marginBottom:4 } }, "Nhân sự cần chú ý"),
         rc("div", { key:"s", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8 } }, "Tiến độ doanh số hoặc KPI dưới 80% (cập nhật mỗi sáng). Bấm để mở hồ sơ 360."),
         need.length===0
@@ -10143,6 +10152,21 @@ function Employee360View({ isAdmin, myStaff, navParam, onNavigate }){
           : need.map(p => rc(Row360, { key:p.staffId, color:CL360.bad, title:p.staffName, sub:`${p.shop} · ${p.role}`,
               onClick:()=>{ setPickedId(p.staffId); setTab("overview"); },
               right:rc(Pill360, { text:`Doanh số ${pct360(p.pctDoanhSo)} · KPI ${pct360(p.kpiPct)}`, color:CL360.bad }) })),
+      ]),
+      rc("div", { key:"all", className:"card" }, [
+        rc(Head360, { key:"h", title:`Toàn bộ nhân sự (${allRows.length})` }),
+        rc("div", { key:"s", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8 } }, "100% nhân viên theo bộ lọc nhà thuốc đang chọn — kể cả người đang đạt tiến độ ≥ 80%. Bấm 1 dòng để mở hồ sơ 360."),
+        rc(Table360, { key:"t", head:["Nhân viên","Nhà thuốc · Vai trò","Doanh số","KPI"],
+          rows:allRows.map(r => ({
+            onClick:()=>{ setPickedId(r.staffId); setTab("overview"); },
+            cells:[
+              r.name || "(không tên)",
+              `${r.shop||"—"} · ${r.role||"—"}`,
+              r.pace ? rc("b", { style:{ color:ratioColor360(r.pace.pctDoanhSo) } }, pct360(r.pace.pctDoanhSo)) : rc("span", { style:{ color:CL360.gray } }, "—"),
+              r.pace ? rc("b", { style:{ color:ratioColor360(r.pace.kpiPct) } }, pct360(r.pace.kpiPct)) : rc("span", { style:{ color:CL360.gray } }, "—"),
+            ],
+          })),
+          emptyText:"Chưa có nhân viên nào." }),
       ]),
     ]);
   }
@@ -10371,7 +10395,7 @@ function Customer360View({ isAdmin, myStaff, navParam, onNavigate }){
       rc(MiniStat360, { key:"a", label:"90 ngày", value:fmtVNDCompact(curSum), sub:`Giá trị mua (${cur.length} đơn)` }),
       rc(MiniStat360, { key:"b", label:"AOV", value: aov ? fmtVNDCompact(aov) : "—", sub:"Giá trị đơn trung bình" }),
       rc(MiniStat360, { key:"c", label:"Tần suất", value:freq.toLocaleString("vi-VN", { maximumFractionDigits:1 }), sub:"Đơn/tháng (90 ngày)" }),
-      rc(MiniStat360, { key:"d", label:"Lần cuối mua", value: daysLast==null ? "—" : `${daysLast}d`, valueColor: overCycle ? CL360.bad : undefined, sub: overCycle ? `Vượt chu kỳ (TB ${cycle} ngày)` : (cycle ? `Trong chu kỳ (TB ${cycle} ngày)` : "Chưa đủ dữ liệu chu kỳ"), subColor: overCycle ? CL360.bad : undefined }),
+      rc(MiniStat360, { key:"d", label:"Lần cuối mua", value: daysLast==null ? "—" : (daysLast===0 ? "Hôm nay" : `${daysLast} ngày trước`), valueColor: overCycle ? CL360.bad : undefined, sub: overCycle ? `Vượt chu kỳ (TB ${cycle} ngày)` : (cycle ? `Trong chu kỳ (TB ${cycle} ngày)` : "Chưa đủ dữ liệu chu kỳ"), subColor: overCycle ? CL360.bad : undefined }),
     ]),
   ]);
 
