@@ -2918,7 +2918,6 @@ function TaskAssignView({ isAdmin, myStaff, navParam }){
   // 20/9/2026: nhảy thẳng tới đúng bộ lọc trạng thái khi được điều hướng từ tab Tổng quan (VD bấm
   // "Task quá hạn") — không thì trang này luôn mở mặc định "Tất cả" trạng thái.
   useEffect(()=>{ if(navParam && navParam.status) setAdminStatus(navParam.status); }, [navParam]);
-  useEffect(()=>{ setRejectText(""); }, [viewTask && viewTask.id]);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [reportingId, setReportingId] = useState(null);
@@ -3289,6 +3288,10 @@ function TaskAssignView({ isAdmin, myStaff, navParam }){
   const [feedbackText, setFeedbackText] = useState("");
   const [rejectText, setRejectText] = useState("");
   const [impactText, setImpactText] = useState("");
+  // BUG FIX (22/9/2026): dòng này trước đây bị đặt tuốt ở đầu component (trước khi "viewTask" và
+  // "rejectText" được khai báo bằng const), gây lỗi "Cannot access before initialization" và crash
+  // trắng màn hình MỖI LẦN vào tab "Giao việc" — chuyển xuống đúng chỗ sau khi cả 2 state đã tồn tại.
+  useEffect(()=>{ setRejectText(""); }, [viewTask && viewTask.id]);
   const viewModal = viewTask && React.createElement("div", { className:"modalOverlay", onClick:()=>setViewTask(null) },
     React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:2 } }, viewTask.title),
