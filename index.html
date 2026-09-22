@@ -7811,29 +7811,194 @@ function RevenueMucTieu({ mt, isAdmin, shopFilter, isAll }){
     ]),
   ]);
 }
-// Bỏ báo cáo "khoảng ngày tuỳ chọn" cũ (tiles/chart/xếp hạng nhà thuốc) — trùng lặp với phần
-// Chỉ tiêu tháng ở trên, chỉ còn giữ lại bộ lọc ngày (đẩy lên đầu tab, xem RevenueAnalyticsView).
-function RevenueSoSanhKy({ stats, shopFilter, isAll }){
-  const rows = isAll
-    ? Object.entries(stats.byShop||{}).map(([shop,v])=>({ label:shop, ...v }))
-    : (stats.byShop && stats.byShop[shopFilter] ? [{ label:shopFilter, ...stats.byShop[shopFilter] }] : []);
-  const chainRow = { label:"TOÀN CHUỖI", ...(stats.chainTotals||{}) };
-  const allRows = isAll ? [chainRow, ...rows] : rows;
+// ===== "So sánh theo kỳ" làm lại theo mẫu app Dashboard doanh thu cũ (22/9/2026, theo 2 ảnh chụp
+// màn hình quản lý gửi): biểu đồ xu hướng doanh thu/TBB/số bill/SKU-trung-bình-bill theo ngày (chọn
+// khoảng ngày tuỳ ý, tối đa 90 ngày gần nhất), cộng với khối "So sánh 2 khoảng thời gian" (2 bộ
+// chọn ngày độc lập Kỳ trước/Kỳ sau) gồm: 2 số doanh thu lớn + % chênh lệch tổng, biểu đồ cột ngang
+// % thay đổi theo 5 chỉ số, và bảng Chỉ số/Kỳ trước/Kỳ sau/Chênh lệch (Doanh thu, Số lượng bill,
+// Trung bình bill — TÍNH THỰC TẾ = doanh thu thực tế/số bill thực tế, không phải theo target —,
+// SKU trung bình/bill, Doanh thu & Điểm thưởng hàng hệ số). 22/9/2026 (2): doanh thu + hàng hệ số
+// giờ tính được cho BẤT KỲ khoảng ngày nào (trước đây hàng hệ số chỉ có theo THÁNG vì lấy từ API
+// chỉ tiêu bên ngoài, xem monthTracking) — tự tính thẳng từ dữ liệu bán hàng đã đồng bộ, khớp với
+// danh mục "hàng hệ số" đã đồng bộ sẵn (externalPointSalesProducts, xem computeRevenueAnalytics ở
+// index.js). Điểm thưởng = doanh thu hàng hệ số ÷ 1.000 (quy đổi đã xác nhận với quản lý 19/9/2026).
+function fmtSku(n){ if(n==null||isNaN(n)) return "—"; return n.toLocaleString("vi-VN",{minimumFractionDigits:1,maximumFractionDigits:1}); }
+function buildDaySeries(map, from, to){
+  const days = [], vals = [];
+  let d = from, guard = 0;
+  while(d<=to && guard<400){ days.push(d); vals.push((map && map[d]) || 0); d = addDays(d,1); guard++; }
+  return { days, vals };
+}
+function periodMetrics(revMap, cntMap, lineMap, hhsMap, from, to){
+  const revenue = sumDayRange(revMap, from, to);
+  const orders = sumDayRange(cntMap, from, to);
+  const hasLineData = !!lineMap;
+  const lines = hasLineData ? sumDayRange(lineMap, from, to) : 0;
+  // 22/9/2026: doanh thu hàng hệ số — tính THẲNG từ dữ liệu bán hàng đã đồng bộ (khớp danh mục
+  // externalPointSalesProducts), nên cộng dồn được cho BẤT KỲ khoảng ngày nào (khác "Chỉ tiêu
+  // tháng" ở tab "Theo kỳ", vốn chỉ có theo cả tháng vì lấy từ API chỉ tiêu bên ngoài).
+  const hasHhsData = !!hhsMap;
+  const hhsRevenue = hasHhsData ? sumDayRange(hhsMap, from, to) : null;
+  return {
+    revenue, orders,
+    avgBill: orders ? Math.round(revenue/orders) : 0, // = doanh thu thực tế / số bill thực tế
+    skuPerBill: (orders && hasLineData) ? Math.round((lines/orders)*10)/10 : null,
+    hhsRevenue,
+    hhsPoints: hhsRevenue!=null ? Math.round((hhsRevenue/1000)*10)/10 : null, // 1 điểm = 1.000đ
+  };
+}
+function pctChange(cur, prev){
+  if(!prev) return null;
+  return Math.round(((cur-prev)/prev)*1000)/10;
+}
+function daySeriesPoints(vals, w, h, pad){
+  const n = vals.length;
+  const maxV = Math.max(...vals, 1);
+  const minV = Math.min(Math.min(...vals, 0), 0);
+  const range = (maxV-minV) || 1;
+  return vals.map((v,i) => {
+    const x = n<=1 ? w/2 : (i/(n-1))*(w-pad*2)+pad;
+    const y = h-pad - ((v-minV)/range)*(h-pad*2);
+    return [x,y];
+  });
+}
+function DailyLineChart({ title, days, vals, fmt, color }){
+  fmt = fmt || fmtVND; color = color || "var(--pine)";
+  const W=560, H=110, PAD=6;
+  const pts = daySeriesPoints(vals, W, H, PAD);
+  const path = pts.map((p,i)=> (i===0?"M":"L")+p[0].toFixed(1)+","+p[1].toFixed(1)).join(" ");
+  const maxV = vals.length ? Math.max(...vals) : 0;
   return React.createElement("div", { className:"card" }, [
-    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:12 } }, "So sánh 30 ngày gần nhất với 30 ngày liền trước"),
-    React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:10 } },
-      allRows.map(r => {
-        const growth = r.prev30Revenue ? Math.round(((r.last30Revenue-r.prev30Revenue)/r.prev30Revenue)*1000)/10 : null;
-        return React.createElement("div", { key:r.label, style:{ borderBottom:"1px solid var(--line)", paddingBottom:8 } }, [
-          React.createElement("div", { key:"lbl", style:{ fontWeight: r.label==="TOÀN CHUỖI" ? 700 : 600, fontSize:12.5, marginBottom:4 } }, r.label),
-          React.createElement("div", { key:"vals", style:{ display:"flex", gap:16, fontSize:12, flexWrap:"wrap", alignItems:"center" } }, [
-            React.createElement("span", { key:"a" }, `Kỳ này: ${fmtVND(r.last30Revenue||0)}`),
-            React.createElement("span", { key:"b", style:{ color:"var(--inkSoft)" } }, `Kỳ trước: ${fmtVND(r.prev30Revenue||0)}`),
-            growth!=null && React.createElement("span", { key:"g", style:{ fontWeight:700, color: growth>=0 ? "var(--pine)" : "#b3261e" } }, `${growth>=0?"▲":"▼"} ${Math.abs(growth)}%`),
+    React.createElement("div", { key:"t", style:{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:8, gap:8, flexWrap:"wrap" } }, [
+      React.createElement("div", { key:"lbl", style:{ fontWeight:700, fontSize:12.5 } }, title),
+      React.createElement("div", { key:"max", style:{ fontSize:11, color:"var(--inkSoft)" } }, `Cao nhất: ${fmt(maxV)}`),
+    ]),
+    days.length===0
+      ? React.createElement("div", { key:"e", style:{ fontSize:12, color:"var(--inkSoft)" } }, "Chưa có dữ liệu.")
+      : React.createElement("svg", { key:"svg", viewBox:`0 0 ${W} ${H}`, preserveAspectRatio:"none", style:{ width:"100%", height:90, display:"block" } },
+          React.createElement("path", { d:path, fill:"none", stroke:color, strokeWidth:2, vectorEffect:"non-scaling-stroke" })),
+    days.length>0 && React.createElement("div", { key:"lbls", style:{ display:"flex", justifyContent:"space-between", fontSize:9.5, color:"var(--inkSoft)", marginTop:4 } }, [
+      React.createElement("span", { key:"a" }, days[0].slice(5)),
+      React.createElement("span", { key:"b" }, days[days.length-1].slice(5)),
+    ]),
+  ]);
+}
+function PctChangeBarChart({ items }){
+  const maxAbs = Math.max(...items.map(it=>Math.abs(it.pct||0)), 5);
+  return React.createElement("div", { className:"card" }, [
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:12 } }, "% thay đổi kỳ sau so kỳ trước"),
+    React.createElement("div", { key:"rows", style:{ display:"flex", flexDirection:"column", gap:10 } },
+      items.map(it => {
+        const pct = it.pct;
+        const w = pct==null ? 0 : Math.min(100, (Math.abs(pct)/maxAbs)*100);
+        const positive = pct!=null && pct>=0;
+        const barColor = pct==null ? "var(--line)" : (positive ? "var(--pine)" : "#b3261e");
+        return React.createElement("div", { key:it.label }, [
+          React.createElement("div", { key:"lbl", style:{ display:"flex", justifyContent:"space-between", fontSize:12, marginBottom:3 } }, [
+            React.createElement("span", { key:"n" }, it.label),
+            React.createElement("span", { key:"v", style:{ fontWeight:700, color: pct==null?"var(--inkSoft)":barColor } }, pct==null?"—":`${positive?"▲":"▼"} ${Math.abs(pct)}%`),
           ]),
+          React.createElement("div", { key:"track", style:{ height:8, background:"var(--line)", borderRadius:4, overflow:"hidden" } },
+            React.createElement("div", { style:{ height:"100%", width:`${w}%`, background:barColor, borderRadius:4 } })),
         ]);
       })
     ),
+  ]);
+}
+function CompareTable({ rows }){
+  const heads = ["CHỈ SỐ","KỲ TRƯỚC","KỲ SAU","CHÊNH LỆCH"];
+  return React.createElement("div", { className:"card", style:{ overflowX:"auto", padding:0 } },
+    React.createElement("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5, fontVariantNumeric:"tabular-nums" } }, [
+      React.createElement("thead", { key:"h" },
+        React.createElement("tr", {}, heads.map((h,i) =>
+          React.createElement("th", { key:i, style:{ textAlign: i===0?"left":"right", padding:"8px 10px", fontSize:10.5, textTransform:"uppercase", letterSpacing:.03, color:"var(--inkSoft)", borderBottom:"2px solid var(--line)" } }, h)))),
+      React.createElement("tbody", { key:"b" },
+        rows.map(r => {
+          const pct = pctChange(r.cur, r.prev);
+          const positive = pct!=null && pct>=0;
+          return React.createElement("tr", { key:r.label }, [
+            React.createElement("td", { key:"l", style:{ padding:"7px 10px", borderBottom:"1px solid var(--line)" } }, r.label),
+            React.createElement("td", { key:"p", style:{ padding:"7px 10px", textAlign:"right", borderBottom:"1px solid var(--line)" } }, r.fmt(r.prev)),
+            React.createElement("td", { key:"c", style:{ padding:"7px 10px", textAlign:"right", borderBottom:"1px solid var(--line)" } }, r.fmt(r.cur)),
+            React.createElement("td", { key:"d", style:{ padding:"7px 10px", textAlign:"right", fontWeight:700, borderBottom:"1px solid var(--line)", color: pct==null?"var(--inkSoft)":(positive?"var(--pine)":"#b3261e") } }, pct==null?"—":`${positive?"▲":"▼"} ${Math.abs(pct)}%`),
+          ]);
+        })
+      ),
+    ])
+  );
+}
+function RevenueSoSanhKy({ stats, shopFilter, isAll }){
+  const shopStats = (!isAll && stats.byShop && stats.byShop[shopFilter]) ? stats.byShop[shopFilter] : null;
+  const revMap = isAll ? stats.chainRevenueByDay : (shopStats ? shopStats.revenueByDay : {});
+  const cntMap = isAll ? stats.chainOrderCountByDay : (shopStats ? shopStats.orderCountByDay : {});
+  const lineMap = isAll ? stats.chainLineCountByDay : (shopStats ? shopStats.lineCountByDay : null);
+  const hhsMap = isAll ? stats.chainHhsRevenueByDay : (shopStats ? shopStats.hhsRevenueByDay : null);
+  const today = todayISO();
+  const minDate = addDays(today, -89); // trùng cutoff90 ở backend (computeRevenueAnalytics)
+
+  const [trendFrom, setTrendFrom] = useState(addDays(today,-29));
+  const [trendTo, setTrendTo] = useState(today);
+  const [prevFrom, setPrevFrom] = useState(addDays(today,-59));
+  const [prevTo, setPrevTo] = useState(addDays(today,-30));
+  const [curFrom, setCurFrom] = useState(addDays(today,-29));
+  const [curTo, setCurTo] = useState(today);
+
+  const revSeries = buildDaySeries(revMap, trendFrom, trendTo);
+  const cntSeries = buildDaySeries(cntMap, trendFrom, trendTo);
+  const lineSeries = buildDaySeries(lineMap, trendFrom, trendTo);
+  const tbbVals = revSeries.vals.map((v,i) => cntSeries.vals[i] ? Math.round(v/cntSeries.vals[i]) : 0);
+  const skuVals = lineSeries.vals.map((v,i) => cntSeries.vals[i] ? Math.round((v/cntSeries.vals[i])*10)/10 : 0);
+
+  const prevM = periodMetrics(revMap, cntMap, lineMap, hhsMap, prevFrom, prevTo);
+  const curM = periodMetrics(revMap, cntMap, lineMap, hhsMap, curFrom, curTo);
+  const overallPct = pctChange(curM.revenue, prevM.revenue);
+
+  const barItems = [
+    { label:"Doanh thu", pct: pctChange(curM.revenue, prevM.revenue) },
+    { label:"Số lượng bill", pct: pctChange(curM.orders, prevM.orders) },
+    { label:"Trung bình bill", pct: pctChange(curM.avgBill, prevM.avgBill) },
+    { label:"SKU trung bình/bill", pct: (curM.skuPerBill!=null && prevM.skuPerBill!=null) ? pctChange(curM.skuPerBill, prevM.skuPerBill) : null },
+    { label:"Doanh thu hàng hệ số", pct: (curM.hhsRevenue!=null && prevM.hhsRevenue!=null) ? pctChange(curM.hhsRevenue, prevM.hhsRevenue) : null },
+  ];
+  const tableRows = [
+    { label:"Doanh thu", prev:prevM.revenue, cur:curM.revenue, fmt:fmtVND },
+    { label:"Số lượng bill", prev:prevM.orders, cur:curM.orders, fmt:fmtNum },
+    { label:"Trung bình bill", prev:prevM.avgBill, cur:curM.avgBill, fmt:fmtVND },
+    { label:"SKU trung bình/bill", prev:prevM.skuPerBill, cur:curM.skuPerBill, fmt:fmtSku },
+    { label:"Doanh thu hàng hệ số", prev:prevM.hhsRevenue, cur:curM.hhsRevenue, fmt:fmtVND },
+    { label:"Điểm thưởng hàng hệ số", prev:prevM.hhsPoints, cur:curM.hhsPoints, fmt:fmtSku },
+  ];
+
+  return React.createElement("div", {}, [
+    React.createElement("div", { key:"trendhdr", style:{ fontWeight:700, fontSize:14, margin:"4px 0 10px" } }, "Doanh thu theo thời gian"),
+    React.createElement(RevenueDateRangePicker, { key:"dp", from:trendFrom, to:trendTo, setFrom:v=>setTrendFrom(v<minDate?minDate:v), setTo:setTrendTo }),
+    React.createElement("div", { key:"minnote", style:{ fontSize:11, color:"var(--inkSoft)", marginBottom:10 } },
+      `Xem được tối đa 90 ngày gần nhất (từ ${minDate})`),
+    React.createElement(DailyLineChart, { key:"rev", title:"Doanh thu theo thời gian", days:revSeries.days, vals:revSeries.vals, fmt:fmtVND, color:"var(--pine)" }),
+    React.createElement("div", { key:"g3", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:12, marginTop:12 } }, [
+      React.createElement(DailyLineChart, { key:"tbb", title:"Trung bình bill theo ngày", days:revSeries.days, vals:tbbVals, fmt:fmtVND, color:"var(--clay)" }),
+      React.createElement(DailyLineChart, { key:"cnt", title:"Số lượng bill theo ngày", days:cntSeries.days, vals:cntSeries.vals, fmt:fmtNum, color:"var(--amber)" }),
+      React.createElement(DailyLineChart, { key:"sku", title:"SKU trung bình/bill theo ngày", days:lineSeries.days, vals:skuVals, fmt:fmtSku, color:"#7C3AED" }),
+    ]),
+    React.createElement("div", { key:"cmphdr", style:{ fontWeight:700, fontSize:14, margin:"26px 0 10px" } }, "So sánh 2 khoảng thời gian"),
+    React.createElement("div", { key:"cmprow", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))", gap:12, marginBottom:14, alignItems:"stretch" } }, [
+      React.createElement("div", { key:"prev", className:"card" }, [
+        React.createElement("div", { key:"t", style:{ fontSize:11, fontWeight:700, color:"var(--inkSoft)", textTransform:"uppercase", marginBottom:8 } }, "Kỳ trước"),
+        React.createElement(RevenueDateRangePicker, { key:"dp", from:prevFrom, to:prevTo, setFrom:setPrevFrom, setTo:setPrevTo }),
+        React.createElement("div", { key:"v", style:{ fontSize:22, fontWeight:700, fontFamily:"'Fraunces',serif", marginTop:8 } }, fmtVND(prevM.revenue)),
+      ]),
+      React.createElement("div", { key:"cur", className:"card" }, [
+        React.createElement("div", { key:"t", style:{ fontSize:11, fontWeight:700, color:"var(--inkSoft)", textTransform:"uppercase", marginBottom:8 } }, "Kỳ sau"),
+        React.createElement(RevenueDateRangePicker, { key:"dp", from:curFrom, to:curTo, setFrom:setCurFrom, setTo:setCurTo }),
+        React.createElement("div", { key:"v", style:{ fontSize:22, fontWeight:700, fontFamily:"'Fraunces',serif", marginTop:8 } }, fmtVND(curM.revenue)),
+      ]),
+      React.createElement("div", { key:"delta", className:"card", style:{ background: overallPct==null?"var(--paper)":(overallPct>=0?"var(--pineSoft)":"#FBE3E1"), display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", textAlign:"center" } }, [
+        React.createElement("div", { key:"t", style:{ fontSize:11, fontWeight:700, color:"var(--inkSoft)", textTransform:"uppercase", marginBottom:8 } }, "Chênh lệch kỳ sau so kỳ trước"),
+        React.createElement("div", { key:"v", style:{ fontSize:26, fontWeight:800, color: overallPct==null?"var(--inkSoft)":(overallPct>=0?"var(--pine)":"#b3261e") } }, overallPct==null?"—":`${overallPct>=0?"▲":"▼"} ${Math.abs(overallPct)}%`),
+      ]),
+    ]),
+    React.createElement(PctChangeBarChart, { key:"bar", items: barItems }),
+    React.createElement("div", { key:"tblwrap", style:{ marginTop:14 } }, React.createElement(CompareTable, { rows: tableRows })),
   ]);
 }
 function RevenueTheoNganh({ shopFilter, isAll }){
