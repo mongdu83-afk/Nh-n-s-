@@ -4541,10 +4541,15 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
   }
 
   // ===== P1-2 (mục XII-XIV đặc tả): "KHÁCH HÀNG CẦN CHĂM SÓC" chia 6 nhóm. Không tính lại gì mới —
-  // chỉ đọc lại ĐÚNG các nhãn "segments" + cờ freqDropTaskOpenId/basketDropTaskOpenId đã có sẵn
-  // trên mỗi khách (do computeCustomerSegmentsDaily trong index.js tính mỗi ngày 05:30), gom vào
-  // đúng 6 nhóm theo tên gọi trong đặc tả. 1 khách có thể thuộc nhiều nhóm cùng lúc (VD vừa VIP vừa
-  // đang giảm tần suất mua) — đúng thực tế, không ép về đúng 1 nhóm.
+  // chỉ đọc lại ĐÚNG các nhãn "segments" đã có sẵn trên mỗi khách (do computeCustomerSegmentsDaily
+  // trong index.js tính mỗi ngày 05:30), gom vào đúng 6 nhóm theo tên gọi trong đặc tả. 1 khách có
+  // thể thuộc nhiều nhóm cùng lúc (VD vừa VIP vừa đang giảm tần suất mua) — đúng thực tế, không ép
+  // về đúng 1 nhóm.
+  // 22/9/2026: Nhóm 4/5 đổi từ lọc theo cờ freqDropTaskOpenId/basketDropTaskOpenId (chỉ được set
+  // khi TẠO TASK tự động thành công) sang lọc theo nhãn segments "Giảm tần suất mua"/"Giảm giá trị
+  // mua" (gắn độc lập với việc tạo task) — vì AUTO_CRM_TASK_CREATION_ENABLED đã tắt từ 20/9/2026
+  // (chủ chuỗi yêu cầu, do từng giao 5.000+ task tự động gây quá tải), khiến 2 cờ Task đó không
+  // còn được set nữa dù khách vẫn thực sự đang giảm mua — 2 nhóm này trước đó luôn hiện trống.
   function renderCareGroupsTab(){
     const scoped = scopedCustomers.filter(c => !isAdmin || adminShop==="Tất cả" || c.shop===adminShop);
     const CARE_GROUPS = [
@@ -4555,9 +4560,9 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
       { key:"lapsed", label:"Nhóm 3 — Khách lâu chưa quay lại", color:"#B0483A",
         test:c => (c.segments||[]).some(s=>s==="Có nguy cơ rời bỏ"||s==="Giá trị cao im lặng") },
       { key:"freqdrop", label:"Nhóm 4 — Khách giảm tần suất mua", color:"#D98A1F",
-        test:c => !!c.freqDropTaskOpenId },
+        test:c => (c.segments||[]).includes("Giảm tần suất mua") },
       { key:"basketdrop", label:"Nhóm 5 — Khách giảm giá trị mua", color:"#D98A1F",
-        test:c => !!c.basketDropTaskOpenId },
+        test:c => (c.segments||[]).includes("Giảm giá trị mua") },
       { key:"repurchase", label:"Nhóm 6 — Khách có cơ hội mua lại", color:"#16A34A",
         test:c => (c.segments||[]).includes("Sắp đến kỳ mua lại") },
     ];
