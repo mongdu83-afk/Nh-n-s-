@@ -10948,7 +10948,7 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate }){
           : issues.length===0 ? rc("div", { key:"e", className:"emptyState" }, "Không phát hiện vấn đề nào — mọi thứ đang ổn.")
           : rc("div", { key:"l" }, issuesShown.map((i, idx) => rc("div", { key:i.shopCode+i.code+idx, style:{ display:"flex", alignItems:"flex-start", gap:8, padding:"8px 0", borderBottom:"1px solid var(--line)" } }, [
               rc("span", { key:"d", style:{ flex:"none", marginTop:1 } }, ISSUE_SEV[i.severity].dot),
-              rc("div", { key:"x", onClick:()=> i.code==="HH01" ? setIssueDetail(i) : go(i.tab, i.param), style:{ flex:1, minWidth:0, cursor:"pointer" } }, [
+              rc("div", { key:"x", onClick:()=> ISSUE_KIND_OF[i.code] ? setIssueDetail(i) : go(i.tab, i.param), style:{ flex:1, minWidth:0, cursor:"pointer" } }, [
                 rc("div", { key:"a", style:{ fontWeight:600, fontSize:12.5 } }, `${shopLabel(i.shopCode)} — ${i.title}`),
                 i.detail && rc("div", { key:"b", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:2 } }, i.detail),
               ]),
@@ -11129,9 +11129,9 @@ function ShopProfileView({ isAdmin, myStaff, navParam, onNavigate }){
           `✔ Đã có việc xử lý đang mở: ${existing.title || "(không tên)"} · hạn ${dmy360(existing.deadline)}${existing.staffName ? " · " + existing.staffName : ""}`),
       ]),
       rc("div", { key:"bt", style:{ display:"flex", gap:6, flexWrap:"wrap", justifyContent:"flex-end" } }, [
-        // "HH01" (thiếu hàng bán chạy) đã có màn Chi tiết vấn đề riêng (dữ liệu chứng minh + đề xuất điều
-        // chuyển + giao việc/đo kết quả/đánh giá hiệu quả) — các mã vấn đề khác vẫn điều hướng như cũ.
-        linkBtn("Xem chi tiết", ()=> i.code==="HH01" ? setIssueDetail(i) : go(i.tab, i.param)),
+        // "HH01"/"NS01"/"KH01"/"KH02" đã có màn Chi tiết vấn đề riêng (dữ liệu chứng minh + đề xuất xử lý
+        // + giao việc/đo kết quả/đánh giá hiệu quả) — các mã vấn đề khác vẫn điều hướng như cũ.
+        linkBtn("Xem chi tiết", ()=> ISSUE_KIND_OF[i.code] ? setIssueDetail(i) : go(i.tab, i.param)),
         !existing && rc("button", { key:"t", type:"button", className:"btn btnPrimary", style:{ fontSize:11.5, padding:"4px 10px", flex:"none" }, onClick:()=>openIssueTask(i) }, "＋ Tạo công việc xử lý"),
       ]),
     ]);
@@ -11707,25 +11707,30 @@ function TaskComposer360({ preset, onClose, onSaved }){
   );
 }
 
-// ================= CHI TIẾT VẤN ĐỀ — VÒNG KHÉP KÍN (giai đoạn 1: "Thiếu hàng bán nhanh" / HH01) =================
-// Nguyên tắc: KHÔNG tạo dữ liệu giả. Mọi số liệu bên dưới đọc trực tiếp từ inventoryMetrics (tồn kho +
-// tốc độ bán, do engine tồn kho tính sẵn hằng ngày) và opsConfig/transferSuggestions (đề xuất điều
-// chuyển, do syncTransferSuggestionsNow tính sẵn) — màn này chỉ GHÉP LẠI 2 nguồn đã có sẵn trong hệ
-// thống, không tự suy diễn hay bịa số. Quyết định của quản lý (Từ chối/Giao việc/Đo kết quả/Đánh giá
-// hiệu quả) lưu vào 1 doc nhỏ trong collection "issueActions" (id = "<shop>__<mã vấn đề>"), tách riêng
-// khỏi opsConfig/shopHealthSummary (vốn bị TÍNH LẠI mỗi ngày) để quyết định đã lưu không bao giờ mất.
-// Vòng khép kín: Vấn đề (HH01, từ computeShopHealth) → Dữ liệu chứng minh (inventoryMetrics) → Đề xuất
-// (transferSuggestions) → Giao việc (tasks, sourceIssueCode) → Đo kết quả (inventoryMetrics lần 2) →
-// Đánh giá hiệu quả → Lưu Kinh nghiệm vận hành (opsExperience, issueCode).
+// ================= CHI TIẾT VẤN ĐỀ — VÒNG KHÉP KÍN (3 loại vấn đề mẫu: HH01/NS01/KH01/KH02) =================
+// Nguyên tắc: KHÔNG tạo dữ liệu giả. Mọi số liệu bên dưới đọc trực tiếp từ dữ liệu đã có sẵn trong hệ
+// thống (không tự suy diễn hay bịa số):
+//   - HH01 "Thiếu hàng bán nhanh": inventoryMetrics (tồn + tốc độ bán) + opsConfig/transferSuggestions.
+//   - NS01 "Nhân sự tiến độ thấp": dailyKpiPace (doanh số%/KPI% từng nhân viên, tính sẵn hằng ngày).
+//   - KH01/KH02 "Khách VIP im lặng / có nguy cơ rời bỏ": crmCustomers.segments (phân khúc tính sẵn hằng ngày).
+// Quyết định của quản lý (Từ chối/Giao việc/Đo kết quả/Đánh giá hiệu quả) lưu vào 1 doc nhỏ trong
+// collection "issueActions" (id = "<shop>__<mã vấn đề>"), tách riêng khỏi opsConfig/shopHealthSummary
+// (vốn bị TÍNH LẠI mỗi ngày) để quyết định đã lưu không bao giờ mất.
+// Vòng khép kín: Vấn đề (từ computeShopHealth) → Dữ liệu chứng minh → Đề xuất xử lý → Giao việc (tasks,
+// sourceIssueCode) → Đo kết quả (đọc lại đúng nguồn dữ liệu) → Đánh giá hiệu quả → Lưu Kinh nghiệm vận hành
+// (opsExperience, issueCode).
 const ISSUE_EFFECT = {
   hieu_qua:       { label:"Hiệu quả",          icon:"🟢", color:CL360.good },
   mot_phan:       { label:"Hiệu quả một phần", icon:"🟡", color:CL360.warn },
   khong_hieu_qua: { label:"Không hiệu quả",    icon:"🔴", color:CL360.bad },
 };
+// Mã vấn đề nào đã có màn "Chi tiết vấn đề" (vòng khép kín) — các mã khác vẫn điều hướng như cũ.
+const ISSUE_KIND_OF = { HH01:"goods", NS01:"hr", KH01:"customer", KH02:"customer" };
 function issueActionKeyOf(shop, code){ return `${shop}__${code}`; }
 
 function IssueDetailModal360({ issue, shop, onClose, onNavigate }){
   const code = issue.code;
+  const kind = ISSUE_KIND_OF[code] || "goods";
   const [action, setAction] = useState(null); // doc issueActions/{shop}__{code} — quyết định đã lưu (nếu có)
   useEffect(()=>{
     return db.collection("issueActions").doc(issueActionKeyOf(shop, code)).onSnapshot(
@@ -11733,28 +11738,70 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate }){
       err => logSystemError("issueActions", err));
   }, [shop, code]);
 
-  // ---- Dữ liệu chứng minh: toàn bộ SKU đang "Cần nhập gấp" (URGENT_REPLENISH) của đúng nhà thuốc này ----
-  const [urgentList, setUrgentList] = useState(null);
+  // ---- Dữ liệu chứng minh — nguồn khác nhau theo từng loại vấn đề ----
+  const [proofList, setProofList] = useState(null);
   useEffect(()=>{
-    if(code!=="HH01"){ setUrgentList([]); return; }
-    let cancelled = false; setUrgentList(null);
-    db.collection("inventoryMetrics").where("shopCode","==",shop).where("stockStatus","==","URGENT_REPLENISH").limit(60).get()
-      .then(snap => { if(!cancelled) setUrgentList(snap.docs.map(d => d.data()).sort((a,b) => (a.doi||0)-(b.doi||0))); })
-      .catch(err => { logSystemError("inventoryMetrics(issueDetail)", err); if(!cancelled) setUrgentList([]); });
+    let cancelled = false; setProofList(null);
+    if(kind==="goods"){
+      // Toàn bộ SKU đang "Cần nhập gấp" (URGENT_REPLENISH) của đúng nhà thuốc này.
+      db.collection("inventoryMetrics").where("shopCode","==",shop).where("stockStatus","==","URGENT_REPLENISH").limit(60).get()
+        .then(snap => { if(!cancelled) setProofList(snap.docs.map(d => d.data()).sort((a,b) => (a.doi||0)-(b.doi||0))); })
+        .catch(err => { logSystemError("inventoryMetrics(issueDetail)", err); if(!cancelled) setProofList([]); });
+    } else if(kind==="hr"){
+      // Nhân viên có tiến độ doanh số/KPI dưới 80% (đúng ngưỡng lowPaceThreshold dùng trong Health Score),
+      // đọc từ dailyKpiPace (1 doc/nhân viên, tính sẵn mỗi sáng) — chỉ lọc theo shop (1 chỉ mục đơn).
+      db.collection("dailyKpiPace").where("shop","==",shop).get()
+        .then(snap => {
+          if(cancelled) return;
+          const low = snap.docs.map(d => d.data()).filter(p => (p.pctDoanhSo!=null && p.pctDoanhSo<0.8) || (p.kpiPct!=null && p.kpiPct<0.8));
+          low.sort((a,b) => Math.min(a.pctDoanhSo==null?9:a.pctDoanhSo, a.kpiPct==null?9:a.kpiPct) - Math.min(b.pctDoanhSo==null?9:b.pctDoanhSo, b.kpiPct==null?9:b.kpiPct));
+          setProofList(low);
+        })
+        .catch(err => { logSystemError("dailyKpiPace(issueDetail)", err); if(!cancelled) setProofList([]); });
+    } else if(kind==="customer"){
+      // Khách hàng đúng phân khúc của vấn đề này (KH01="Giá trị cao im lặng", KH02="Có nguy cơ rời bỏ"),
+      // đọc từ crmCustomers.segments (tính sẵn mỗi ngày) — chỉ lọc theo shop, lọc segment ở trình duyệt để
+      // không cần thêm chỉ mục kép (shop + array-contains).
+      const segLabel = (issue.param && issue.param.segment) || (code==="KH01" ? "Giá trị cao im lặng" : "Có nguy cơ rời bỏ");
+      db.collection("crmCustomers").where("shop","==",shop).get()
+        .then(snap => {
+          if(cancelled) return;
+          const list = snap.docs.map(d => ({ id:d.id, ...d.data() })).filter(c => Array.isArray(c.segments) && c.segments.includes(segLabel));
+          list.sort((a,b) => (b.amountRank||0)-(a.amountRank||0));
+          setProofList(list.slice(0,30));
+        })
+        .catch(err => { logSystemError("crmCustomers(issueDetail)", err); if(!cancelled) setProofList([]); });
+    }
     return () => { cancelled = true; };
-  }, [shop, code]);
+  }, [shop, code, kind]);
 
-  // ---- Đề xuất điều chuyển: khớp opsConfig/transferSuggestions.transfers có toShop=shop và đúng mã đang thiếu ----
+  // ---- Đề xuất điều chuyển (chỉ dùng cho HH01): khớp opsConfig/transferSuggestions.transfers có toShop=shop ----
   const [transferDoc, setTransferDoc] = useState(null);
   useEffect(()=>{
+    if(kind!=="goods") return;
     return db.collection("opsConfig").doc("transferSuggestions").onSnapshot(
       d => setTransferDoc(d.exists ? d.data() : null),
       err => logSystemError("transferSuggestions(issueDetail)", err));
-  }, []);
+  }, [kind]);
 
-  const urgentIds = new Set((urgentList||[]).map(u => u.productId));
-  const matched = ((transferDoc && transferDoc.transfers) || []).filter(t => t.toShop===shop && urgentIds.has(t.productId));
-  // Nguồn chính = nhà thuốc góp nhiều số lượng chuyển nhất (1 nguồn/lần cho dễ hiểu, như ví dụ đặc tả).
+  // ---- Cửa hàng trưởng của nhà thuốc (chỉ dùng cho NS01/KH01/KH02, để giao việc trực tiếp cho đúng người
+  // phụ trách thay vì giao chung cho cả nhà thuốc) — chỉ lọc theo shop (1 chỉ mục đơn), lọc role ở trình
+  // duyệt để không cần thêm chỉ mục kép (shop + role) mới.
+  const [shopStaff, setShopStaff] = useState(null);
+  useEffect(()=>{
+    if(kind==="goods"){ setShopStaff([]); return; }
+    let cancelled = false;
+    db.collection("staff").where("shop","==",shop).get()
+      .then(snap => { if(!cancelled) setShopStaff(snap.docs.map(d => ({ id:d.id, ...d.data() }))); })
+      .catch(err => { logSystemError("staff(issueDetail)", err); if(!cancelled) setShopStaff([]); });
+    return () => { cancelled = true; };
+  }, [shop, kind]);
+  const cht = (shopStaff||[]).find(s => s.role==="Cửa hàng trưởng") || null;
+
+  // ---- Đề xuất xử lý — tính riêng theo từng loại vấn đề ----
+  const urgentIds = new Set(kind==="goods" ? (proofList||[]).map(u => u.productId) : []);
+  const matched = kind==="goods" ? ((transferDoc && transferDoc.transfers) || []).filter(t => t.toShop===shop && urgentIds.has(t.productId)) : [];
+  // Nguồn chính (goods) = nhà thuốc góp nhiều số lượng chuyển nhất (1 nguồn/lần cho dễ hiểu, như ví dụ đặc tả).
   const bySource = {};
   matched.forEach(t => { (bySource[t.fromShop] = bySource[t.fromShop] || []).push(t); });
   const sourceShops = Object.keys(bySource).sort((a,b) => {
@@ -11762,15 +11809,21 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate }){
     return qb - qa;
   });
   const primarySource = sourceShops[0] || null;
-  const recoItems = primarySource ? bySource[primarySource].map(t => {
-    const u = (urgentList||[]).find(x => x.productId===t.productId);
+  const recoItemsGoods = primarySource ? bySource[primarySource].map(t => {
+    const u = (proofList||[]).find(x => x.productId===t.productId);
     const projectedDoi = (u && u.ads30 > 0) ? Math.round(((u.stockQty||0) + (t.qty||0)) / u.ads30) : null;
-    return { productId:t.productId, productName:t.productName, qty:t.qty, unit:t.unit||"", fromDaysStock:t.fromDaysStock, projectedDoi };
+    return { key:t.productId, productId:t.productId, productName:t.productName, qty:t.qty, unit:t.unit||"", fromDaysStock:t.fromDaysStock, projectedDoi };
   }) : [];
-  const recoTotalQty = recoItems.reduce((s,it) => s+(it.qty||0), 0);
-  const avgFromDays = recoItems.length ? Math.round(recoItems.reduce((s,it)=>s+(it.fromDaysStock||0),0) / recoItems.length) : null;
-  const coveragePct = (urgentList && urgentList.length) ? Math.round((matched.length / urgentList.length) * 100) : null;
-  const minDoi = (urgentList && urgentList.length) ? Math.min(...urgentList.map(u => u.doi==null ? 9999 : Math.round(u.doi))) : null;
+  const recoTotalQty = recoItemsGoods.reduce((s,it) => s+(it.qty||0), 0);
+  const avgFromDays = recoItemsGoods.length ? Math.round(recoItemsGoods.reduce((s,it)=>s+(it.fromDaysStock||0),0) / recoItemsGoods.length) : null;
+  const coveragePct = (proofList && kind==="goods" && proofList.length) ? Math.round((matched.length / proofList.length) * 100) : null;
+  const minDoi = (proofList && kind==="goods" && proofList.length) ? Math.min(...proofList.map(u => u.doi==null ? 9999 : Math.round(u.doi))) : null;
+
+  const recoItemsHr = kind==="hr" ? (proofList||[]).map(p => ({ key:p.staffId, staffId:p.staffId, label:p.staffName||p.staffId, pctDoanhSo:p.pctDoanhSo, kpiPct:p.kpiPct })) : [];
+  const recoItemsCust = kind==="customer" ? (proofList||[]).map(c => ({ key:c.id, phone:c.id, label:c.name||c.id, lastPurchaseAt:(c.stats&&c.stats.lastPurchaseAt)||null, amountRank:c.amountRank||0 })) : [];
+  // "Có đề xuất xử lý" khi: goods có nguồn điều chuyển; hr/customer có ít nhất 1 người/khách trong danh sách.
+  const hasReco = kind==="goods" ? !!primarySource : kind==="hr" ? recoItemsHr.length>0 : recoItemsCust.length>0;
+  const recoTargetLabel = kind==="goods" ? (primarySource ? shopLabel(primarySource) : "—") : (cht ? cht.name : `Cả nhà thuốc ${shopLabel(shop)}`);
 
   const [composer, setComposer] = useState(null);
   const [rejecting, setRejecting] = useState(false);
@@ -11797,27 +11850,57 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate }){
     setBusy(false);
   }
   function openGiaoViec(){
-    const itemsTxt = recoItems.map(it => `- ${it.productName || it.productId} x${fmtNum(it.qty)}${it.unit?" "+it.unit:""}`).join("\n");
-    setComposer({
-      heading:"Giao việc điều chuyển hàng",
-      title:`Điều chuyển ${recoItems.length} mã hàng về ${shopLabel(shop)}`,
-      mota:`Nguồn: ${shopLabel(primarySource)}\nHàng cần chuyển:\n${itemsTxt}${avgFromDays!=null?`\nTồn tại nguồn: khoảng ${avgFromDays} ngày`:""}`,
-      module:"Goods", shopOnly:true, shop:primarySource,
-      extra:{
-        sourceIssueCode:code, sourceIssueTitle:issue.title, sourceShop:shop,
-        actionInsight:issue.title, issueActionKey:issueActionKeyOf(shop, code),
-        transferFromShop:primarySource, transferToShop:shop, transferTotalQty:recoTotalQty,
-        transferItems: recoItems.map(it => ({ productId:it.productId, productName:it.productName, qty:it.qty, unit:it.unit })),
-      },
-    });
+    if(kind==="goods"){
+      const itemsTxt = recoItemsGoods.map(it => `- ${it.productName || it.productId} x${fmtNum(it.qty)}${it.unit?" "+it.unit:""}`).join("\n");
+      setComposer({
+        heading:"Giao việc điều chuyển hàng",
+        title:`Điều chuyển ${recoItemsGoods.length} mã hàng về ${shopLabel(shop)}`,
+        mota:`Nguồn: ${shopLabel(primarySource)}\nHàng cần chuyển:\n${itemsTxt}${avgFromDays!=null?`\nTồn tại nguồn: khoảng ${avgFromDays} ngày`:""}`,
+        module:"Goods", shopOnly:true, shop:primarySource,
+        extra:{
+          sourceIssueCode:code, sourceIssueTitle:issue.title, sourceShop:shop,
+          actionInsight:issue.title, issueActionKey:issueActionKeyOf(shop, code),
+          transferFromShop:primarySource, transferToShop:shop, transferTotalQty:recoTotalQty,
+          transferItems: recoItemsGoods.map(it => ({ productId:it.productId, productName:it.productName, qty:it.qty, unit:it.unit })),
+        },
+      });
+    } else if(kind==="hr"){
+      const itemsTxt = recoItemsHr.map(it => `- ${it.label}: Doanh số ${it.pctDoanhSo!=null?Math.round(it.pctDoanhSo*100)+"%":"—"}, KPI ${it.kpiPct!=null?Math.round(it.kpiPct*100)+"%":"—"}`).join("\n");
+      setComposer({
+        heading:"Giao việc coaching nhân sự",
+        title:`Coaching ${recoItemsHr.length} nhân viên tiến độ thấp — ${shopLabel(shop)}`,
+        mota:`Nhân viên cần hỗ trợ (doanh số/KPI dưới 80% mục tiêu):\n${itemsTxt}`,
+        module:"HR", ...(cht ? { staffId:cht.id } : { shopOnly:true, shop }),
+        extra:{ sourceIssueCode:code, sourceIssueTitle:issue.title, sourceShop:shop, actionInsight:issue.title, issueActionKey:issueActionKeyOf(shop, code) },
+      });
+    } else {
+      const itemsTxt = recoItemsCust.slice(0,20).map(it => `- ${it.label} (${it.phone})${it.lastPurchaseAt?` — mua gần nhất ${it.lastPurchaseAt}`:""}`).join("\n");
+      setComposer({
+        heading:"Giao việc chăm sóc khách hàng",
+        title:`Chăm sóc ${recoItemsCust.length} khách ${code==="KH01"?"giá trị cao đang im lặng":"có nguy cơ rời bỏ"} — ${shopLabel(shop)}`,
+        mota:`Danh sách khách cần liên hệ:\n${itemsTxt}`,
+        module:"CRM", ...(cht ? { staffId:cht.id } : { shopOnly:true, shop }),
+        extra:{ sourceIssueCode:code, sourceIssueTitle:issue.title, sourceShop:shop, actionInsight:issue.title, issueActionKey:issueActionKeyOf(shop, code) },
+      });
+    }
   }
   async function onTaskSaved(taskId){
     setBusy(true);
     try{
+      let recommendation, resultBeforeItems;
+      if(kind==="goods"){
+        recommendation = { fromShop:primarySource, totalQty:recoTotalQty, items:recoItemsGoods, coveragePct, generatedAtTs:(transferDoc && transferDoc.generatedAtTs) || null };
+        resultBeforeItems = (proofList||[]).map(u => ({ key:u.productId, label:u.productName||u.productId, doi:u.doi==null?null:Math.round(u.doi), ads30:u.ads30==null?null:Math.round(u.ads30*10)/10, stockQty:u.stockQty||0 }));
+      } else if(kind==="hr"){
+        recommendation = { assignedTo: cht ? cht.name : shopLabel(shop), items:recoItemsHr };
+        resultBeforeItems = recoItemsHr.map(it => ({ key:it.key, label:it.label, pctDoanhSo:it.pctDoanhSo==null?null:it.pctDoanhSo, kpiPct:it.kpiPct==null?null:it.kpiPct }));
+      } else {
+        recommendation = { assignedTo: cht ? cht.name : shopLabel(shop), items:recoItemsCust };
+        resultBeforeItems = recoItemsCust.map(it => ({ key:it.key, label:it.label, lastPurchaseAt:it.lastPurchaseAt }));
+      }
       await db.collection("issueActions").doc(issueActionKeyOf(shop, code)).set({
         shop, code, title:issue.title, status:"da_giao_viec", assignedTaskId:taskId,
-        recommendation:{ fromShop:primarySource, totalQty:recoTotalQty, items:recoItems, coveragePct, generatedAtTs:(transferDoc && transferDoc.generatedAtTs) || null },
-        resultBefore:{ capturedAtTs:new Date().toISOString(), items:(urgentList||[]).map(u => ({ productId:u.productId, productName:u.productName, doi:u.doi==null?null:Math.round(u.doi), ads30:u.ads30==null?null:Math.round(u.ads30*10)/10, stockQty:u.stockQty||0 })) },
+        recommendation, resultBefore:{ capturedAtTs:new Date().toISOString(), items:resultBeforeItems },
         updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(), createdAtTs: firebase.firestore.FieldValue.serverTimestamp(),
       }, { merge:true });
     } catch(err){ window.alert("Đã giao việc nhưng chưa ghi lại được liên kết vấn đề: " + (err && err.message ? err.message : err)); }
@@ -11834,12 +11917,25 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate }){
   async function measureResult(){
     setBusy(true);
     try{
-      const ids = new Set(((action.resultBefore && action.resultBefore.items) || []).map(it => it.productId));
-      // Chỉ lọc theo shopCode (chỉ mục đơn, không cần chỉ mục kép mới) rồi lọc mã hàng ở phía trình
-      // duyệt — tránh cần tạo thêm composite index cho truy vấn "in" kết hợp shopCode.
-      const snap = await db.collection("inventoryMetrics").where("shopCode","==",shop).get();
-      const byId = {}; snap.forEach(d => { const v = d.data(); if(ids.has(v.productId)) byId[v.productId] = v; });
-      const after = [...ids].map(pid => { const u = byId[pid]; return { productId:pid, productName:(u&&u.productName)||pid, doi:(u&&u.doi!=null)?Math.round(u.doi):null, ads30:(u&&u.ads30!=null)?Math.round(u.ads30*10)/10:null, stockQty:(u&&u.stockQty)||0 }; });
+      const beforeItems = (action.resultBefore && action.resultBefore.items) || [];
+      const ids = new Set(beforeItems.map(it => it.key));
+      let after = [];
+      if(kind==="goods"){
+        // Chỉ lọc theo shopCode (chỉ mục đơn, không cần chỉ mục kép mới) rồi lọc mã hàng ở phía trình
+        // duyệt — tránh cần tạo thêm composite index cho truy vấn "in" kết hợp shopCode.
+        const snap = await db.collection("inventoryMetrics").where("shopCode","==",shop).get();
+        const byId = {}; snap.forEach(d => { const v = d.data(); if(ids.has(v.productId)) byId[v.productId] = v; });
+        after = [...ids].map(pid => { const u = byId[pid]; return { key:pid, label:(u&&u.productName)||pid, doi:(u&&u.doi!=null)?Math.round(u.doi):null, ads30:(u&&u.ads30!=null)?Math.round(u.ads30*10)/10:null, stockQty:(u&&u.stockQty)||0 }; });
+      } else if(kind==="hr"){
+        const snap = await db.collection("dailyKpiPace").where("shop","==",shop).get();
+        const byId = {}; snap.forEach(d => { const v = d.data(); if(ids.has(v.staffId)) byId[v.staffId] = v; });
+        after = [...ids].map(sid => { const p = byId[sid]; return { key:sid, label:(p&&p.staffName)||sid, pctDoanhSo:(p&&p.pctDoanhSo!=null)?p.pctDoanhSo:null, kpiPct:(p&&p.kpiPct!=null)?p.kpiPct:null }; });
+      } else {
+        const snap = await db.collection("crmCustomers").where("shop","==",shop).get();
+        const byId = {}; snap.forEach(d => { byId[d.id] = d.data(); });
+        const segLabel = code==="KH01" ? "Giá trị cao im lặng" : "Có nguy cơ rời bỏ";
+        after = [...ids].map(phone => { const c = byId[phone]; const stillInSegment = c ? (Array.isArray(c.segments) && c.segments.includes(segLabel)) : null; return { key:phone, label:(c&&c.name)||phone, lastPurchaseAt:(c&&c.stats&&c.stats.lastPurchaseAt)||null, stillInSegment }; });
+      }
       await db.collection("issueActions").doc(issueActionKeyOf(shop, code)).set({
         status:"cho_danh_gia", resultAfter:{ capturedAtTs:new Date().toISOString(), items:after },
         updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
@@ -11862,13 +11958,24 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate }){
   function saveAsExperience(){
     const before = action.resultBefore && action.resultBefore.items && action.resultBefore.items[0];
     const after = action.resultAfter && action.resultAfter.items && action.resultAfter.items[0];
-    const draft = {
-      vanDe: issue.title, issueCode: code, issueShop: shop,
-      nguyenNhan:"Tồn kho thấp hơn mức đủ bán an toàn (đủ bán dưới ngưỡng cảnh báo).",
-      cachXuLy:`Điều chuyển ${(action.recommendation&&action.recommendation.totalQty)||""} sản phẩm từ ${shopLabel((action.recommendation&&action.recommendation.fromShop)||"")} về ${shopLabel(shop)}.`,
-      ketQua: (before && after) ? `Số ngày đủ bán tăng từ ${before.doi==null?"—":before.doi} ngày lên ${after.doi==null?"—":after.doi} ngày.` : "",
-      hieuQua:"Hiệu quả", phamViApDung:"Các nhà thuốc có tình trạng thiếu hàng bán nhanh tương tự.",
-    };
+    let nguyenNhan, cachXuLy, ketQua, phamViApDung;
+    if(kind==="goods"){
+      nguyenNhan = "Tồn kho thấp hơn mức đủ bán an toàn (đủ bán dưới ngưỡng cảnh báo).";
+      cachXuLy = `Điều chuyển ${(action.recommendation&&action.recommendation.totalQty)||""} sản phẩm từ ${shopLabel((action.recommendation&&action.recommendation.fromShop)||"")} về ${shopLabel(shop)}.`;
+      ketQua = (before && after) ? `Số ngày đủ bán tăng từ ${before.doi==null?"—":before.doi} ngày lên ${after.doi==null?"—":after.doi} ngày.` : "";
+      phamViApDung = "Các nhà thuốc có tình trạng thiếu hàng bán nhanh tương tự.";
+    } else if(kind==="hr"){
+      nguyenNhan = "Nhân viên có tiến độ doanh số/KPI dưới 80% mục tiêu tháng.";
+      cachXuLy = `Giao coaching cho ${(action.recommendation&&action.recommendation.items&&action.recommendation.items.length)||""} nhân viên (phụ trách: ${(action.recommendation&&action.recommendation.assignedTo)||""}).`;
+      ketQua = (before && after) ? `Doanh số/KPI thấp nhất tăng từ ${before.pctDoanhSo!=null?Math.round(before.pctDoanhSo*100)+"%":"—"} lên ${after.pctDoanhSo!=null?Math.round(after.pctDoanhSo*100)+"%":"—"}.` : "";
+      phamViApDung = "Các nhà thuốc có nhân sự tiến độ doanh số/KPI thấp tương tự.";
+    } else {
+      nguyenNhan = code==="KH01" ? "Khách giá trị cao lâu chưa quay lại mua (im lặng)." : "Khách có dấu hiệu giảm tần suất/giá trị mua, nguy cơ rời bỏ.";
+      cachXuLy = `Giao chăm sóc/liên hệ ${(action.recommendation&&action.recommendation.items&&action.recommendation.items.length)||""} khách (phụ trách: ${(action.recommendation&&action.recommendation.assignedTo)||""}).`;
+      ketQua = after ? `Sau xử lý: ${(action.resultAfter.items||[]).filter(x=>x.stillInSegment===false).length}/${(action.resultAfter.items||[]).length} khách đã ra khỏi nhóm cảnh báo.` : "";
+      phamViApDung = "Các nhà thuốc có khách VIP/khách nguy cơ rời bỏ tương tự.";
+    }
+    const draft = { vanDe: issue.title, issueCode: code, issueShop: shop, nguyenNhan, cachXuLy, ketQua, hieuQua:"Hiệu quả", phamViApDung };
     onNavigate && onNavigate("kinhnghiem", { draft });
     onClose && onClose();
   }
@@ -11886,6 +11993,25 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate }){
   const sev = ISSUE_SEV[issue.severity] || ISSUE_SEV.yellow;
   const statusLabel = !action ? "MỚI PHÁT HIỆN" : ({ bo_qua:"ĐÃ BỎ QUA", da_giao_viec:"ĐÃ GIAO VIỆC", cho_danh_gia:"CHỜ ĐÁNH GIÁ HIỆU QUẢ", da_dong:"ĐÃ ĐÓNG" }[action.status] || action.status);
   const rowStyle = { display:"flex", justifyContent:"space-between", fontSize:12.5, padding:"5px 0", borderBottom:"1px solid var(--line)" };
+  const proofHead = kind==="goods" ? ["Mã hàng","Tên hàng","Tốc độ bán/ngày","Tồn hiện tại","Số ngày còn"]
+    : kind==="hr" ? ["Nhân viên","Vai trò","Doanh số %","KPI %"]
+    : ["Khách hàng","SĐT","Doanh số 6 tháng","Mua gần nhất"];
+  const proofRows = kind==="goods" ? (proofList||[]).map(u => ({ cells:[
+      u.productId, u.productName||u.productId, u.ads30==null?"—":u.ads30, fmtNum(u.stockQty),
+      rc("span", { key:"d", style:{ color:CL360.bad, fontWeight:700 } }, u.doi==null?"—":`${Math.round(u.doi)} ngày`),
+    ] }))
+    : kind==="hr" ? (proofList||[]).map(p => ({ cells:[
+      p.staffName||p.staffId, p.role||"—",
+      rc("span", { key:"a", style:{ color: p.pctDoanhSo!=null && p.pctDoanhSo<0.8 ? CL360.bad : "inherit", fontWeight:700 } }, p.pctDoanhSo==null?"—":`${Math.round(p.pctDoanhSo*100)}%`),
+      rc("span", { key:"b", style:{ color: p.kpiPct!=null && p.kpiPct<0.8 ? CL360.bad : "inherit", fontWeight:700 } }, p.kpiPct==null?"—":`${Math.round(p.kpiPct*100)}%`),
+    ] }))
+    : (proofList||[]).map(c => ({ cells:[
+      c.name||c.id, c.id, fmtNum(Math.round(c.amountRank||0)),
+      rc("span", { key:"d", style:{ color:CL360.bad, fontWeight:700 } }, (c.stats&&c.stats.lastPurchaseAt)||"—"),
+    ] }));
+  const proofEmptyMsg = kind==="goods" ? "Không còn mã hàng nào ở trạng thái thiếu gấp."
+    : kind==="hr" ? "Không còn nhân viên nào có tiến độ doanh số/KPI dưới 80%."
+    : "Không còn khách hàng nào thuộc nhóm cảnh báo này.";
 
   return rc("div", { className:"modalOverlay", onClick:onClose },
     rc("div", { className:"modal", style:{ maxWidth:640 }, onClick:e=>e.stopPropagation() }, [
@@ -11900,30 +12026,43 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate }){
       // Dữ liệu chứng minh
       rc("div", { key:"proof", style:{ marginTop:14 } }, [
         rc("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:6 } }, "Dữ liệu chứng minh"),
-        !urgentList ? rc("div", { key:"e", className:"emptyState" }, "Đang tải...")
-          : urgentList.length===0 ? rc("div", { key:"e", className:"emptyState" }, "Không còn mã hàng nào ở trạng thái thiếu gấp.")
-          : rc(Table360, { key:"tbl", head:["Mã hàng","Tên hàng","Tốc độ bán/ngày","Tồn hiện tại","Số ngày còn"], rows: urgentList.map(u => ({ cells:[
-              u.productId, u.productName||u.productId, u.ads30==null?"—":u.ads30, fmtNum(u.stockQty),
-              rc("span", { key:"d", style:{ color:CL360.bad, fontWeight:700 } }, u.doi==null?"—":`${Math.round(u.doi)} ngày`),
-            ] })) }),
-        urgentList && urgentList.length>0 && rc("div", { key:"note", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:6 } },
+        !proofList ? rc("div", { key:"e", className:"emptyState" }, "Đang tải...")
+          : proofList.length===0 ? rc("div", { key:"e", className:"emptyState" }, proofEmptyMsg)
+          : rc(Table360, { key:"tbl", head:proofHead, rows:proofRows }),
+        kind==="goods" && proofList && proofList.length>0 && rc("div", { key:"note", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:6 } },
           `Số ngày tồn thấp nhất ${minDoi} ngày → nguy cơ hết hàng cao → có thể ảnh hưởng doanh số.`),
       ]),
 
       // Đề xuất xử lý
       rc("div", { key:"reco", style:{ marginTop:16 } }, [
         rc("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:6 } }, "Đề xuất xử lý"),
-        !transferDoc ? rc("div", { key:"e", className:"emptyState" }, "Đang tải đề xuất điều chuyển...")
+        kind==="goods" && (!transferDoc ? rc("div", { key:"e", className:"emptyState" }, "Đang tải đề xuất điều chuyển...")
           : !primarySource ? rc("div", { key:"e", className:"emptyState" }, "Chưa có đề xuất điều chuyển phù hợp từ dữ liệu hiện có — có thể cần đặt hàng NCC, hoặc bấm \"🔄 Phân tích ngay\" ở tab Hàng hoá → Điều chuyển để tính lại.")
           : rc("div", { key:"box", style:{ background:"var(--pineSoft)", borderRadius:10, padding:"10px 12px" } }, [
               rc("div", { key:"a", style:rowStyle }, [ rc("span",{key:"k"},"Nguồn"), rc("b",{key:"v"}, shopLabel(primarySource)) ]),
               avgFromDays!=null && rc("div", { key:"b", style:rowStyle }, [ rc("span",{key:"k"},"Tồn tại nguồn"), rc("b",{key:"v"}, `~${avgFromDays} ngày`) ]),
               rc("div", { key:"c", style:rowStyle }, [ rc("span",{key:"k"},"Tổng số lượng đề xuất"), rc("b",{key:"v"}, `${fmtNum(recoTotalQty)} sản phẩm`) ]),
-              coveragePct!=null && rc("div", { key:"d", style:{ ...rowStyle, borderBottom:"none" } }, [ rc("span",{key:"k"},"Độ phủ đề xuất"), rc("b",{key:"v"}, `${matched.length}/${urgentList.length} mã có nguồn (${coveragePct}%)`) ]),
-              rc("div", { key:"items", style:{ marginTop:8 } }, recoItems.map(it => rc("div", { key:it.productId, style:{ fontSize:12, padding:"3px 0" } },
+              coveragePct!=null && rc("div", { key:"d", style:{ ...rowStyle, borderBottom:"none" } }, [ rc("span",{key:"k"},"Độ phủ đề xuất"), rc("b",{key:"v"}, `${matched.length}/${(proofList||[]).length} mã có nguồn (${coveragePct}%)`) ]),
+              rc("div", { key:"items", style:{ marginTop:8 } }, recoItemsGoods.map(it => rc("div", { key:it.productId, style:{ fontSize:12, padding:"3px 0" } },
                 `${it.productName||it.productId}  x${fmtNum(it.qty)}${it.unit?" "+it.unit:""}${it.projectedDoi!=null?`  →  sau điều chuyển ~${it.projectedDoi} ngày tồn`:""}`)) ),
               rc("div", { key:"impact", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:8 } }, "Ảnh hưởng dự kiến: giảm nguy cơ hết hàng cho các mã bán nhanh nêu trên."),
-            ]),
+            ])),
+        kind==="hr" && (recoItemsHr.length===0 ? rc("div", { key:"e", className:"emptyState" }, "Không có nhân viên nào cần coaching hiện tại.")
+          : rc("div", { key:"box", style:{ background:"var(--pineSoft)", borderRadius:10, padding:"10px 12px" } }, [
+              rc("div", { key:"a", style:rowStyle }, [ rc("span",{key:"k"},"Giao cho"), rc("b",{key:"v"}, recoTargetLabel) ]),
+              rc("div", { key:"c", style:{ ...rowStyle, borderBottom:"none" } }, [ rc("span",{key:"k"},"Số nhân viên cần coaching"), rc("b",{key:"v"}, `${recoItemsHr.length} người`) ]),
+              rc("div", { key:"items", style:{ marginTop:8 } }, recoItemsHr.map(it => rc("div", { key:it.key, style:{ fontSize:12, padding:"3px 0" } },
+                `${it.label}  —  Doanh số ${it.pctDoanhSo!=null?Math.round(it.pctDoanhSo*100)+"%":"—"}, KPI ${it.kpiPct!=null?Math.round(it.kpiPct*100)+"%":"—"}`)) ),
+              rc("div", { key:"impact", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:8 } }, "Ảnh hưởng dự kiến: cải thiện tiến độ doanh số/KPI của các nhân viên nêu trên."),
+            ])),
+        kind==="customer" && (recoItemsCust.length===0 ? rc("div", { key:"e", className:"emptyState" }, "Không có khách hàng nào thuộc nhóm cảnh báo này hiện tại.")
+          : rc("div", { key:"box", style:{ background:"var(--pineSoft)", borderRadius:10, padding:"10px 12px" } }, [
+              rc("div", { key:"a", style:rowStyle }, [ rc("span",{key:"k"},"Giao cho"), rc("b",{key:"v"}, recoTargetLabel) ]),
+              rc("div", { key:"c", style:{ ...rowStyle, borderBottom:"none" } }, [ rc("span",{key:"k"},"Số khách cần chăm sóc"), rc("b",{key:"v"}, `${recoItemsCust.length} khách`) ]),
+              rc("div", { key:"items", style:{ marginTop:8, maxHeight:160, overflowY:"auto" } }, recoItemsCust.slice(0,20).map(it => rc("div", { key:it.key, style:{ fontSize:12, padding:"3px 0" } },
+                `${it.label} (${it.phone})${it.lastPurchaseAt?` — mua gần nhất ${it.lastPurchaseAt}`:""}`)) ),
+              rc("div", { key:"impact", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:8 } }, "Ảnh hưởng dự kiến: khách quay lại mua / thoát khỏi nhóm cảnh báo."),
+            ])),
         similarTotal>0 && rc("div", { key:"sim", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:8 } },
           `💡 Đã có ${similarTotal} trường hợp tương tự từng xử lý, ${similarGood} trường hợp hiệu quả (tỷ lệ ${similarRate}%).`),
       ]),
@@ -11931,9 +12070,9 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate }){
       // Hành động: Từ chối / Xem nguồn / Giao việc — chỉ hiện khi vấn đề còn MỚI (chưa có quyết định lưu)
       !action && rc("div", { key:"actions", style:{ display:"flex", gap:8, flexWrap:"wrap", justifyContent:"flex-end", marginTop:16 } }, [
         rc("button", { key:"rj", type:"button", className:"btn btnGhost", onClick:()=>setRejecting(true) }, "Từ chối đề xuất"),
-        primarySource && rc("button", { key:"src", type:"button", className:"btn btnGhost", onClick:()=>{ onNavigate && onNavigate("hanghoa", { sub:"transfer", invSubTab:"tocdo", shop:primarySource }); onClose && onClose(); } }, "Xem chi tiết nguồn"),
-        primarySource && rc("button", { key:"gv", type:"button", className:"btn btnPrimary", onClick:openGiaoViec }, "Giao việc"),
-        !primarySource && rc("button", { key:"gv2", type:"button", className:"btn btnPrimary", onClick:()=>{ onNavigate && onNavigate("action"); onClose && onClose(); } }, "Giao việc thủ công"),
+        kind==="goods" && primarySource && rc("button", { key:"src", type:"button", className:"btn btnGhost", onClick:()=>{ onNavigate && onNavigate("hanghoa", { sub:"transfer", invSubTab:"tocdo", shop:primarySource }); onClose && onClose(); } }, "Xem chi tiết nguồn"),
+        hasReco && rc("button", { key:"gv", type:"button", className:"btn btnPrimary", onClick:openGiaoViec }, "Giao việc"),
+        !hasReco && rc("button", { key:"gv2", type:"button", className:"btn btnPrimary", onClick:()=>{ onNavigate && onNavigate("action"); onClose && onClose(); } }, "Giao việc thủ công"),
       ]),
       rejecting && rc("div", { key:"rjbox", style:{ marginTop:12, borderTop:"1px solid var(--line)", paddingTop:12 } }, [
         rc("label", { key:"l", style:{ fontSize:12, fontWeight:600 } }, "Lý do từ chối"),
@@ -11957,7 +12096,7 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate }){
           `Công việc: ${linkedTask.title||"—"} · `, rc(Pill360, { key:"p", text: linkedTask.trangThai==="Đã hoàn thành" ? "Đã hoàn thành" : (linkedTask.subTrangThai||linkedTask.trangThai||"—"), color: linkedTask.trangThai==="Đã hoàn thành" ? CL360.good : CL360.info }),
         ]) : rc("div", { key:"tk", className:"emptyState" }, "Đang tải công việc liên kết..."),
         linkedTask && linkedTask.trangThai==="Đã hoàn thành" && rc("div", { key:"m", style:{ marginTop:10 } }, [
-          rc("div", { key:"s", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:6 } }, "Công việc đã hoàn thành — đo lại tồn kho/tốc độ bán hiện tại để biết có còn nguy cơ hết hàng không."),
+          rc("div", { key:"s", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:6 } }, "Công việc đã hoàn thành — đo lại số liệu hiện tại để biết vấn đề đã cải thiện chưa."),
           rc("button", { key:"b", type:"button", className:"btn btnPrimary", disabled:busy, onClick:measureResult }, busy ? "Đang đo..." : "📏 Đo kết quả sau xử lý"),
         ]),
       ]),
@@ -11965,9 +12104,23 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate }){
       // Chờ đánh giá hiệu quả
       action && action.status==="cho_danh_gia" && rc("div", { key:"eval", style:{ marginTop:14, borderTop:"1px solid var(--line)", paddingTop:12 } }, [
         rc("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:6 } }, "Kết quả trước / sau xử lý"),
-        rc(Table360, { key:"tbl", head:["Mã hàng","Đủ bán trước","Đủ bán sau"], rows:(action.resultBefore.items||[]).map(b => {
-          const a = ((action.resultAfter && action.resultAfter.items) || []).find(x => x.productId===b.productId);
-          return { cells:[ b.productName||b.productId, b.doi==null?"—":`${b.doi} ngày`, rc("span",{key:"v",style:{fontWeight:700,color:(a&&a.doi!=null&&a.doi>=(b.doi||0))?CL360.good:CL360.bad}}, a&&a.doi!=null?`${a.doi} ngày`:"—") ] };
+        kind==="goods" && rc(Table360, { key:"tbl", head:["Mã hàng","Đủ bán trước","Đủ bán sau"], rows:(action.resultBefore.items||[]).map(b => {
+          const a = ((action.resultAfter && action.resultAfter.items) || []).find(x => x.key===b.key);
+          return { cells:[ b.label, b.doi==null?"—":`${b.doi} ngày`, rc("span",{key:"v",style:{fontWeight:700,color:(a&&a.doi!=null&&a.doi>=(b.doi||0))?CL360.good:CL360.bad}}, a&&a.doi!=null?`${a.doi} ngày`:"—") ] };
+        }) }),
+        kind==="hr" && rc(Table360, { key:"tbl", head:["Nhân viên","Doanh số trước","Doanh số sau","KPI trước","KPI sau"], rows:(action.resultBefore.items||[]).map(b => {
+          const a = ((action.resultAfter && action.resultAfter.items) || []).find(x => x.key===b.key);
+          const dsBefore = b.pctDoanhSo!=null ? Math.round(b.pctDoanhSo*100) : null, dsAfter = a && a.pctDoanhSo!=null ? Math.round(a.pctDoanhSo*100) : null;
+          const kpiBefore = b.kpiPct!=null ? Math.round(b.kpiPct*100) : null, kpiAfter = a && a.kpiPct!=null ? Math.round(a.kpiPct*100) : null;
+          return { cells:[ b.label,
+            dsBefore==null?"—":`${dsBefore}%`, rc("span",{key:"ds",style:{fontWeight:700,color:(dsAfter!=null&&dsBefore!=null&&dsAfter>=dsBefore)?CL360.good:CL360.bad}}, dsAfter==null?"—":`${dsAfter}%`),
+            kpiBefore==null?"—":`${kpiBefore}%`, rc("span",{key:"kp",style:{fontWeight:700,color:(kpiAfter!=null&&kpiBefore!=null&&kpiAfter>=kpiBefore)?CL360.good:CL360.bad}}, kpiAfter==null?"—":`${kpiAfter}%`),
+          ] };
+        }) }),
+        kind==="customer" && rc(Table360, { key:"tbl", head:["Khách hàng","Mua gần nhất (trước)","Mua gần nhất (sau)","Còn trong nhóm cảnh báo?"], rows:(action.resultBefore.items||[]).map(b => {
+          const a = ((action.resultAfter && action.resultAfter.items) || []).find(x => x.key===b.key);
+          return { cells:[ b.label, b.lastPurchaseAt||"—", a&&a.lastPurchaseAt||"—",
+            rc("span",{key:"v",style:{fontWeight:700,color:a&&a.stillInSegment===false?CL360.good:CL360.bad}}, a?(a.stillInSegment===false?"Đã thoát":"Còn trong nhóm"):"—") ] };
         }) }),
         rc("div", { key:"q", style:{ fontSize:12.5, fontWeight:600, marginTop:12, marginBottom:6 } }, "Đánh giá hiệu quả xử lý"),
         rc("textarea", { key:"note", rows:2, placeholder:"Nguyên nhân (bắt buộc nếu không hiệu quả / hiệu quả một phần)", value:effNote, onChange:e=>setEffNote(e.target.value), style:{ width:"100%", padding:8, borderRadius:8, border:"1px solid var(--line)", fontSize:12.5, marginBottom:8 } }),
