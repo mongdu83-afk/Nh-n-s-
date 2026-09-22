@@ -7935,7 +7935,561 @@ function StaffPerformanceView({ isAdmin, myStaff }){
       ]),
   ]);
 }
+// ===== Khuyến mại theo chương trình (22/9/2026) — làm lại tab "Khuyến Mại": thay vì chỉ tự nhận
+// diện SP có tên giống khuyến mãi (vẫn giữ lại bên dưới như 1 phần bổ sung), giờ quản lý có thể
+// tải lên MỖI THÁNG 2 file Excel công ty đang dùng sẵn (1 file kế hoạch dạng có sheet "Chi phí"
+// liệt kê Nội dung/Chi phí DK/Doanh thu DK từng chương trình, 1 file "thực tế" theo dõi mã voucher
+// đã phát/đã dùng — mỗi sheet là 1 chương trình) để app tự đọc và tính lại hiệu quả từng chương
+// trình (tỷ lệ dùng voucher, doanh thu/chi phí thực tế so với kế hoạch), lưu vào Firestore
+// `promoCampaigns` (id: `${monthKey}__${slug tên}`) để xem lại bất kỳ lúc nào không cần mở lại Excel.
+// Cách đọc file "thực tế" được viết TỔNG QUÁT (không hardcode theo tên sheet cụ thể của tháng 9) vì
+// bố cục có thể đổi nhẹ theo tháng: dò cột "Mã voucher"/"Voucher" (số phát hành) và cột liền kề "NT
+// sử dụng" (đã dùng, ghi rõ nhà thuốc) — nếu không có cột "NT sử dụng" nhưng có cột "Nhà Thuốc" riêng
+// (kiểu danh sách khách hàng như KH VIP) thì chỉ đếm được số đã PHÁT, không biết đã dùng bao nhiêu.
+function slugifyPromoName(str){
+  return stripAccents(String(str||"")).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"") || "ctkm";
+}
+function promoNormHeader(v){
+  return stripAccents(String(v==null?"":v)).toLowerCase().replace(/\s+/g," ").trim();
+}
+function promoIsNumericCell(v){
+  if(v==null) return false;
+  if(typeof v === "number") return isFinite(v);
+  if(typeof v === "string"){ const s=v.trim(); return s!=="" && /^\d+(\.\d+)?$/.test(s); }
+  return false;
+}
+function promoShopKey(v){
+  const s = String(v==null?"":v).trim();
+  if(!s) return s;
+  if(/^\d+$/.test(s)) return `NT${s}`;
+  const m = s.match(/^shop0*(\d+)$/i);
+  if(m) return `NT${m[1]}`;
+  return s;
+}
+// Đọc file KẾ HOẠCH: tìm sheet có 1 dòng tiêu đề chứa cả "Nội dung" và "Chi phí" (không cần đúng
+// tên sheet là "Chi phí" — chỉ cần đúng cấu trúc bảng tổng hợp này) — ra danh sách chương trình
+// kèm chi phí/doanh thu dự kiến.
+function parsePromoPlanWorkbook(wb){
+  for(const sheetName of wb.SheetNames){
+    const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header:1, defval:null });
+    for(let hr=0; hr<Math.min(aoa.length,15); hr++){
+      const row = aoa[hr]||[];
+      const norm = row.map(promoNormHeader);
+      const nameCol = norm.findIndex(h=>h==="noi dung");
+      if(nameCol<0) continue;
+      const costCol = norm.findIndex(h=>h.includes("chi phi"));
+      const revCol = norm.findIndex(h=>h.includes("doanh thu"));
+      if(costCol<0) continue;
+      const rows = [];
+      for(let r=hr+1; r<aoa.length; r++){
+        const dr = aoa[r]||[];
+        const name = dr[nameCol];
+        if(name==null || String(name).trim()==="") continue;
+        rows.push({ name:String(name).trim(), cost: typeof dr[costCol]==="number"?dr[costCol]:null, revenue: revCol>=0 && typeof dr[revCol]==="number"?dr[revCol]:null });
+      }
+      if(rows.length) return { sheetName, rows, skusBySheet: parsePromoSkuSheets(wb, sheetName) };
+    }
+  }
+  return { sheetName:null, rows:[], skusBySheet:{} };
+}
+// Với các chương trình tính trên SKU cụ thể (giảm giá theo SKU, tặng quà theo HĐ, combo...) mà đã
+// có sẵn dữ liệu bán hàng đồng bộ (externalSalesLines) nên KHÔNG cần file "thực tế" riêng — chỉ cần
+// danh sách mã sản phẩm của chương trình, lấy thẳng từ sheet kế hoạch của từng chương trình (cột
+// "Mã sản phẩm"/"Mã hàng"). planSheetName = sheet tổng hợp (VD "Chi phí") — không quét lại chính nó.
+function parsePromoSkuSheets(wb, planSheetName){
+  const result = {};
+  for(const sheetName of wb.SheetNames){
+    if(sheetName===planSheetName) continue;
+    const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header:1, defval:null });
+    for(let hr=0; hr<Math.min(aoa.length,15); hr++){
+      const norm = (aoa[hr]||[]).map(promoNormHeader);
+      const skuCol = norm.findIndex(h=>h==="ma san pham"||h==="ma hang"||h==="ma sp");
+      if(skuCol<0) continue;
+      const skus = [];
+      for(let r=hr+1; r<aoa.length; r++){
+        const v = (aoa[r]||[])[skuCol];
+        if(v!=null && String(v).trim()!=="") skus.push(String(v).trim());
+      }
+      if(skus.length) result[sheetName] = [...new Set(skus)];
+      break;
+    }
+  }
+  return result;
+}
+// Đọc file THỰC TẾ: quét từng sheet, tự dò cột "Mã voucher"/"Voucher" (có thể có nhiều nhóm/loại
+// voucher trên cùng 1 sheet, ví dụ "Voucher 30k" và "Voucher 10k" cạnh nhau) + cột "NT sử dụng"
+// liền kề (đã dùng) hoặc cột "Nhà Thuốc" riêng (chỉ biết đã phát, không biết đã dùng).
+function parsePromoActualWorkbook(wb){
+  const result = {};
+  for(const sheetName of wb.SheetNames){
+    const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header:1, defval:null });
+    let hr = -1, header = [];
+    for(let i=0; i<Math.min(aoa.length,6); i++){
+      const norm = (aoa[i]||[]).map(promoNormHeader);
+      if(norm.some(h=>h==="ma voucher"||h==="voucher")){ hr=i; header=norm; break; }
+    }
+    if(hr<0) continue;
+    const nhaThuocCol = header.findIndex(h=>h==="nha thuoc");
+    const voucherCols = header.map((h,i)=>({h,i})).filter(x=>x.h==="ma voucher"||x.h==="voucher").map(x=>x.i);
+    if(voucherCols.length===0) continue;
+    const groups = [];
+    let anyUsageCol = false;
+    for(const vc of voucherCols){
+      const usageCol = header[vc+1] && header[vc+1].includes("nt su dung") ? vc+1 : null;
+      if(usageCol!=null) anyUsageCol = true;
+      let tierLabel = null, issued=0, used=0; const byKey = {};
+      for(let r=hr+1; r<aoa.length; r++){
+        const row = aoa[r]||[];
+        const val = row[vc];
+        if(val==null || String(val).trim()==="") continue;
+        if(!promoIsNumericCell(val)){ if(!tierLabel) tierLabel = String(val).trim(); continue; }
+        issued++;
+        if(usageCol!=null){
+          const uv = row[usageCol];
+          if(uv!=null && String(uv).trim()!==""){ used++; const k=promoShopKey(uv); byKey[k]=(byKey[k]||0)+1; }
+        } else if(nhaThuocCol>=0){
+          const sv = row[nhaThuocCol];
+          if(sv!=null && String(sv).trim()!==""){ const k=promoShopKey(sv); byKey[k]=(byKey[k]||0)+1; }
+        }
+      }
+      groups.push({ tierLabel: tierLabel || "Voucher", issued, used: usageCol!=null?used:null, byKey, mode: usageCol!=null?"usage":(nhaThuocCol>=0?"issuance":"none") });
+    }
+    const totalIssued = groups.reduce((s,g)=>s+g.issued,0);
+    const totalUsed = anyUsageCol ? groups.reduce((s,g)=>s+(g.used||0),0) : null;
+    const byShop = {};
+    groups.forEach(g=>Object.keys(g.byKey).forEach(k=>{ byShop[k]=(byShop[k]||0)+g.byKey[k]; }));
+    result[sheetName] = { groups, totalIssued, totalUsed, byShop, hasUsageTracking: anyUsageCol };
+  }
+  return result;
+}
+function PromoImportPanel({ myStaff, monthKey, setMonthKey, onSaved }){
+  const [planFile, setPlanFile] = useState(null);
+  const [actualFile, setActualFile] = useState(null);
+  const [planParsed, setPlanParsed] = useState(null);
+  const [actualParsed, setActualParsed] = useState(null);
+  const [mapping, setMapping] = useState({});
+  const [notes, setNotes] = useState({});
+  const [included, setIncluded] = useState({});
+  const [avgOrderValue, setAvgOrderValue] = useState({});
+  const [skuMapping, setSkuMapping] = useState({});
+  const [skuDates, setSkuDates] = useState({});
+  const [skuResults, setSkuResults] = useState({});
+  const [skuBusy, setSkuBusy] = useState({});
+  const [apiLookup, setApiLookup] = useState({}); // rowName -> { documentId, shopCode }
+  const [apiSkuResult, setApiSkuResult] = useState({}); // rowName -> { promoName, timeStart, timeEnd, skus }
+  const [apiBusy, setApiBusy] = useState({});
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  // Tra chương trình theo DocumentID (yêu cầu 22/9/2026: LẤY TOKEN TỰ ĐỘNG) — Cloud Function tự
+  // đăng nhập hệ thống bán hàng (tài khoản đã lưu sẵn ở opsConfig/externalSystemCreds, KHÔNG cần
+  // quản lý tự mở DevTools copy Token tay) và trả về đúng danh sách SKU + thời gian khai báo trên
+  // hệ thống cho DocumentID đó — dùng làm danh sách SKU "chuẩn", ưu tiên hơn cột SKU đọc từ Excel.
+  async function lookupPromoApi(rowName){
+    const l = apiLookup[rowName] || {};
+    if(!l.documentId || !l.shopCode) return;
+    setApiBusy(m=>({ ...m, [rowName]:true }));
+    try{
+      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/getPromoHeaderByIdNow", {
+        method:"POST", headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ documentId:l.documentId, shopCode:l.shopCode }),
+      });
+      const data = await resp.json();
+      if(data && data.ok){
+        setApiSkuResult(m=>({ ...m, [rowName]:data }));
+        setSkuDates(m=>({ ...m, [rowName]: { start: data.timeStart||(m[rowName]&&m[rowName].start)||"", end: data.timeEnd||(m[rowName]&&m[rowName].end)||"" } }));
+      } else {
+        setMsg(`Tra API cho "${rowName}" lỗi: ${(data && data.error)||"không rõ"}`);
+      }
+    } catch(err){
+      console.error("lookupPromoApi lỗi:", err);
+      setMsg(`Tra API cho "${rowName}" lỗi kết nối — thử lại.`);
+    } finally { setApiBusy(m=>({ ...m, [rowName]:false })); }
+  }
+
+  async function computeSkuActual(rowName){
+    const sheetName = skuMapping[rowName];
+    const apiSkus = apiSkuResult[rowName] && apiSkuResult[rowName].skus;
+    const skus = (apiSkus && apiSkus.length) ? apiSkus : ((planParsed && planParsed.skusBySheet && planParsed.skusBySheet[sheetName]) || []);
+    const dates = skuDates[rowName] || {};
+    if(!skus.length || !dates.start || !dates.end){ return; }
+    setSkuBusy(m=>({ ...m, [rowName]:true }));
+    try{
+      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computePromoSkuActualsNow", {
+        method:"POST", headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ skus, dateStart: dates.start, dateEnd: dates.end }),
+      });
+      const data = await resp.json();
+      if(data && data.ok){ setSkuResults(m=>({ ...m, [rowName]: data })); }
+      else { setMsg(`Tính doanh thu SKU cho "${rowName}" lỗi: ${(data && data.error)||"không rõ"}`); }
+    } catch(err){
+      console.error("computeSkuActual lỗi:", err);
+      setMsg(`Tính doanh thu SKU cho "${rowName}" lỗi kết nối — thử lại.`);
+    } finally { setSkuBusy(m=>({ ...m, [rowName]:false })); }
+  }
+
+  async function doPreview(){
+    if(!planFile){ setMsg("Cần chọn ít nhất file kế hoạch (có sheet dạng Nội dung/Chi phí/Doanh thu)."); return; }
+    setBusy(true); setMsg(null);
+    try{
+      const planWb = XLSX.read(await planFile.arrayBuffer(), { type:"array" });
+      const plan = parsePromoPlanWorkbook(planWb);
+      if(!plan.rows.length){ setMsg("Không tìm thấy bảng tổng hợp (cần 1 sheet có dòng tiêu đề chứa 'Nội dung' và 'Chi phí') trong file kế hoạch."); setBusy(false); return; }
+      setPlanParsed(plan);
+      let actual = {};
+      if(actualFile){
+        const actualWb = XLSX.read(await actualFile.arrayBuffer(), { type:"array" });
+        actual = parsePromoActualWorkbook(actualWb);
+      }
+      setActualParsed(actual);
+      // Gợi ý ghép tự động: so khớp tên chương trình với tên sheet thực tế theo từ khoá chung.
+      const actualNames = Object.keys(actual);
+      const guess = {};
+      plan.rows.forEach(row=>{
+        const words = promoNormHeader(row.name).split(/[^a-z0-9]+/).filter(w=>w.length>=3);
+        let best=null, bestScore=0;
+        actualNames.forEach(an=>{
+          const anNorm = promoNormHeader(an);
+          const score = words.filter(w=>anNorm.includes(w)).length;
+          if(score>bestScore){ bestScore=score; best=an; }
+        });
+        guess[row.name] = bestScore>0 ? best : "";
+      });
+      setMapping(guess);
+      setNotes({});
+      // Gợi ý ghép với danh sách SKU kế hoạch (cho nhóm chương trình đã có sẵn dữ liệu bán hàng đồng
+      // bộ — giảm giá theo SKU, tặng quà theo HĐ, combo... — theo yêu cầu 22/9/2026).
+      const skuSheetNames = Object.keys(plan.skusBySheet||{});
+      const skuGuess = {};
+      plan.rows.forEach(row=>{
+        const words = promoNormHeader(row.name).split(/[^a-z0-9]+/).filter(w=>w.length>=3);
+        let best=null, bestScore=0;
+        skuSheetNames.forEach(sn=>{
+          const snNorm = promoNormHeader(sn);
+          const score = words.filter(w=>snNorm.includes(w)).length;
+          if(score>bestScore){ bestScore=score; best=sn; }
+        });
+        skuGuess[row.name] = bestScore>0 ? best : "";
+      });
+      setSkuMapping(skuGuess);
+      setSkuResults({});
+      setApiLookup({}); setApiSkuResult({});
+      // Bỏ tick sẵn các dòng rõ ràng không phải 1 chương trình cụ thể (dòng tổng/target/budget/tỷ lệ
+      // hay lẫn trong cùng sheet "Chi phí") — quản lý vẫn xem được và có thể tick lại nếu cần.
+      const inc = {};
+      plan.rows.forEach(row=>{
+        const n = promoNormHeader(row.name);
+        const looksLikeNoise = /^tong |^target|^budget|^%|ty le|chi phi mua|chi phi no /.test(n);
+        inc[row.name] = !looksLikeNoise;
+      });
+      setIncluded(inc);
+    } catch(err){
+      console.error("Đọc file khuyến mại lỗi:", err);
+      setMsg("Đọc file lỗi — kiểm tra đúng định dạng .xlsx.");
+    } finally { setBusy(false); }
+  }
+
+  async function doSave(){
+    if(!planParsed) return;
+    setBusy(true); setMsg(null);
+    try{
+      const rowsToSave = planParsed.rows.filter(row=>included[row.name]!==false);
+      const batch = db.batch();
+      rowsToSave.forEach(row=>{
+        const id = `${monthKey}__${slugifyPromoName(row.name)}`;
+        const ref = db.collection("promoCampaigns").doc(id);
+        const actualSheet = mapping[row.name] || null;
+        const actualData = actualSheet && actualParsed ? actualParsed[actualSheet] : null;
+        const avgOv = Number(avgOrderValue[row.name]) || null;
+        const skuRes = skuResults[row.name];
+        batch.set(ref, {
+          monthKey, name: row.name,
+          planCost: row.cost, planRevenue: row.revenue,
+          actualSheetName: actualSheet || null,
+          actualIssued: actualData ? actualData.totalIssued : null,
+          actualUsed: actualData ? actualData.totalUsed : null,
+          actualByShop: actualData ? Object.keys(actualData.byShop).map(k=>({ key:k, count:actualData.byShop[k] })) : [],
+          avgOrderValue: avgOv,
+          // Nhóm chương trình tính theo SKU (đã có sẵn dữ liệu bán hàng đồng bộ — không cần voucher):
+          // doanh thu/số lượng thực tế lấy TRỰC TIẾP từ externalSalesLines qua computePromoSkuActualsNow.
+          actualRevenueSku: skuRes ? skuRes.totalRevenue : null,
+          actualQtySku: skuRes ? skuRes.totalQty : null,
+          actualByShopSku: skuRes ? Object.keys(skuRes.byShop).map(k=>({ key:k, revenue:skuRes.byShop[k].revenue, qty:skuRes.byShop[k].qty })) : [],
+          skuSource: (apiSkuResult[row.name] && apiSkuResult[row.name].skus && apiSkuResult[row.name].skus.length) ? "api" : (skuMapping[row.name] ? "excel" : null),
+          skuSheetName: skuMapping[row.name] || null,
+          skuApiDocumentId: (apiLookup[row.name] && apiLookup[row.name].documentId) || null,
+          skuDateStart: (skuDates[row.name]&&skuDates[row.name].start) || null,
+          skuDateEnd: (skuDates[row.name]&&skuDates[row.name].end) || null,
+          note: notes[row.name] || "",
+          updatedAtTs: new Date().toISOString(),
+          updatedBy: (myStaff && myStaff.name) || "",
+        }, { merge:true });
+      });
+      await batch.commit();
+      setMsg(`Đã lưu ${rowsToSave.length} chương trình cho tháng ${monthKey}.`);
+      setPlanFile(null); setActualFile(null); setPlanParsed(null); setActualParsed(null); setMapping({}); setIncluded({});
+      setSkuMapping({}); setSkuDates({}); setSkuResults({}); setApiLookup({}); setApiSkuResult({});
+      if(onSaved) onSaved();
+    } catch(err){
+      console.error("Lưu khuyến mại lỗi:", err);
+      setMsg("Lưu lỗi — thử lại.");
+    } finally { setBusy(false); }
+  }
+
+  return React.createElement("div", { className:"card" }, [
+    React.createElement("div", { key:"t", className:"cardTitle" }, "Nhập dữ liệu khuyến mại theo tháng"),
+    React.createElement("div", { key:"sub", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:12 } },
+      "Bước 1: chọn tháng và tải lên file kế hoạch (bắt buộc, có sheet tổng hợp Nội dung/Chi phí DK/Doanh thu DK — ví dụ sheet \"Chi phí\") và file thực tế theo dõi voucher (không bắt buộc, mỗi sheet 1 chương trình, có cột \"Mã voucher\"/\"Voucher\" và \"NT sử dụng\" hoặc \"Nhà Thuốc\"). Bước 2: xem trước, chỉnh ghép chương trình ↔ sheet thực tế, và nhập \"Giá trị đơn TB\" (lấy từ cột Giá trị đơn/Giá trị đơn DK trong sheet của từng chương trình) để tính DOANH THU THỰC TẾ ước tính = Số voucher đã dùng × Giá trị đơn TB — đây là chỉ số quan trọng nhất để so hiệu quả giữa các chương trình. Bước 3: lưu."),
+    React.createElement("div", { key:"row1", className:"btnRow", style:{ marginBottom:10, alignItems:"center" } }, [
+      React.createElement("input", { key:"m", type:"month", value:monthKey, onChange:e=>setMonthKey(e.target.value), style:{ padding:"7px 9px", border:"1px solid var(--line)", borderRadius:8, fontSize:13 } }),
+      React.createElement("label", { key:"p1", className:"btn btnGhost", style:{ cursor:"pointer", padding:"6px 12px", fontSize:12 } }, [
+        React.createElement("input", { key:"i", type:"file", accept:".xlsx,.xls", style:{ display:"none" }, onChange:e=>{ const f=e.target.files[0]; if(f) setPlanFile(f); } }),
+        planFile ? `Kế hoạch: ${planFile.name}` : "Chọn file kế hoạch",
+      ]),
+      React.createElement("label", { key:"p2", className:"btn btnGhost", style:{ cursor:"pointer", padding:"6px 12px", fontSize:12 } }, [
+        React.createElement("input", { key:"i", type:"file", accept:".xlsx,.xls", style:{ display:"none" }, onChange:e=>{ const f=e.target.files[0]; if(f) setActualFile(f); } }),
+        actualFile ? `Thực tế: ${actualFile.name}` : "Chọn file thực tế (không bắt buộc)",
+      ]),
+      React.createElement("button", { key:"go", type:"button", className:"btn btnPrimary", disabled:busy||!planFile, onClick:doPreview, style:{ padding:"7px 14px", fontSize:12.5 } }, busy ? "Đang đọc..." : "Xem trước"),
+    ]),
+    msg && React.createElement("div", { key:"msg", style:{ fontSize:12.5, color:"var(--pine)", background:"var(--pineSoft)", borderRadius:8, padding:"8px 10px", marginBottom:10 } }, msg),
+    planParsed && React.createElement("div", { key:"preview" }, [
+      React.createElement("table", { key:"tbl", style:{ width:"100%", borderCollapse:"collapse", fontSize:12 } }, [
+        React.createElement("thead", { key:"h" }, React.createElement("tr", {}, ["Lưu?","Chương trình","Chi phí KH","Doanh thu KH","Ghép với sheet thực tế","Giá trị đơn TB","Ghi chú"].map(h=>
+          React.createElement("th", { key:h, style:{ textAlign:"left", padding:"6px 8px", borderBottom:"2px solid var(--line)" } }, h)))),
+        React.createElement("tbody", { key:"b" }, planParsed.rows.map(row=>
+          React.createElement("tr", { key:row.name, style:{ opacity: included[row.name]===false ? 0.45 : 1 } }, [
+            React.createElement("td", { key:"chk", style:{ padding:"6px 8px", borderBottom:"1px solid var(--line)" } },
+              React.createElement("input", { type:"checkbox", checked: included[row.name]!==false, onChange:e=>setIncluded(m=>({ ...m, [row.name]:e.target.checked })) })),
+            React.createElement("td", { key:"n", style:{ padding:"6px 8px", borderBottom:"1px solid var(--line)", fontWeight:600 } }, row.name),
+            React.createElement("td", { key:"c", style:{ padding:"6px 8px", borderBottom:"1px solid var(--line)" } }, row.cost!=null?fmtVND(row.cost):"—"),
+            React.createElement("td", { key:"r", style:{ padding:"6px 8px", borderBottom:"1px solid var(--line)" } }, row.revenue!=null?fmtVND(row.revenue):"—"),
+            React.createElement("td", { key:"map", style:{ padding:"6px 8px", borderBottom:"1px solid var(--line)" } },
+              React.createElement("select", { value:mapping[row.name]||"", onChange:e=>setMapping(m=>({ ...m, [row.name]:e.target.value })), style:{ fontSize:12, padding:"4px 6px", borderRadius:6, border:"1px solid var(--line)" } }, [
+                React.createElement("option", { key:"none", value:"" }, "— chưa có dữ liệu thực tế —"),
+                ...Object.keys(actualParsed||{}).map(an=>React.createElement("option", { key:an, value:an },
+                  `${an} (phát ${actualParsed[an].totalIssued}${actualParsed[an].totalUsed!=null?`, dùng ${actualParsed[an].totalUsed}`:""})`)),
+              ])),
+            React.createElement("td", { key:"aov", style:{ padding:"6px 8px", borderBottom:"1px solid var(--line)" } },
+              React.createElement("input", { type:"number", value:avgOrderValue[row.name]||"", onChange:e=>setAvgOrderValue(m=>({ ...m, [row.name]:e.target.value })), placeholder:"VD: 700000", style:{ width:100, fontSize:11.5, padding:"4px 6px", borderRadius:6, border:"1px solid var(--line)" } })),
+            React.createElement("td", { key:"note", style:{ padding:"6px 8px", borderBottom:"1px solid var(--line)" } },
+              React.createElement("input", { type:"text", value:notes[row.name]||"", onChange:e=>setNotes(n=>({ ...n, [row.name]:e.target.value })), placeholder:"VD: thời gian, phạm vi NT...", style:{ width:"100%", fontSize:11.5, padding:"4px 6px", borderRadius:6, border:"1px solid var(--line)" } })),
+          ]))),
+      ]),
+      Object.keys(planParsed.skusBySheet||{}).length>0 && React.createElement("div", { key:"skusec", style:{ marginTop:18 } }, [
+        React.createElement("div", { key:"t2", style:{ fontWeight:700, fontSize:13, marginBottom:4 } }, "Chương trình tính theo SKU (đã có sẵn dữ liệu bán hàng đồng bộ)"),
+        React.createElement("div", { key:"sub2", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:10 } },
+          "Với các chương trình giảm giá trực tiếp trên SP, tặng quà theo giá trị hoá đơn, combo... đã khai báo sẵn trên hệ thống bán hàng — không cần file thực tế riêng, chỉ cần chọn đúng danh sách SKU (tự dò từ sheet kế hoạch) + khoảng thời gian chạy chương trình, app tự cộng doanh thu/số lượng bán thực tế từ dữ liệu đã đồng bộ sẵn (cùng nguồn tab \"Doanh thu\")."),
+        React.createElement("table", { key:"tbl2", style:{ width:"100%", borderCollapse:"collapse", fontSize:12 } }, [
+          React.createElement("thead", { key:"h" }, React.createElement("tr", {}, ["Chương trình","Ghép với DS SKU kế hoạch","Từ ngày","Đến ngày","","Kết quả"].map(h=>
+            React.createElement("th", { key:h, style:{ textAlign:"left", padding:"6px 8px", borderBottom:"2px solid var(--line)" } }, h)))),
+          React.createElement("tbody", { key:"b" }, planParsed.rows.filter(row=>included[row.name]!==false).map(row=>{
+            const res = skuResults[row.name];
+            const dates = skuDates[row.name] || {};
+            const apiRes = apiSkuResult[row.name];
+            const lk = apiLookup[row.name] || {};
+            const effectiveSkuCount = (apiRes && apiRes.skus && apiRes.skus.length) || (skuMapping[row.name] && planParsed.skusBySheet[skuMapping[row.name]] && planParsed.skusBySheet[skuMapping[row.name]].length) || 0;
+            return React.createElement(React.Fragment, { key:row.name }, [
+              React.createElement("tr", { key:"main" }, [
+                React.createElement("td", { key:"n", style:{ padding:"6px 8px", borderBottom:"1px solid var(--line)", fontWeight:600 } }, row.name),
+                React.createElement("td", { key:"map", style:{ padding:"6px 8px", borderBottom:"1px solid var(--line)" } },
+                  React.createElement("select", { value:skuMapping[row.name]||"", onChange:e=>setSkuMapping(m=>({ ...m, [row.name]:e.target.value })), style:{ fontSize:12, padding:"4px 6px", borderRadius:6, border:"1px solid var(--line)" } }, [
+                    React.createElement("option", { key:"none", value:"" }, "— không áp dụng —"),
+                    ...Object.keys(planParsed.skusBySheet).map(sn=>React.createElement("option", { key:sn, value:sn }, `${sn} (${planParsed.skusBySheet[sn].length} SKU, từ Excel)`)),
+                  ])),
+                React.createElement("td", { key:"d1", style:{ padding:"6px 8px", borderBottom:"1px solid var(--line)" } },
+                  React.createElement("input", { type:"date", value:dates.start||"", onChange:e=>setSkuDates(m=>({ ...m, [row.name]:{ ...dates, start:e.target.value } })), style:{ fontSize:11.5, padding:"4px 6px", borderRadius:6, border:"1px solid var(--line)" } })),
+                React.createElement("td", { key:"d2", style:{ padding:"6px 8px", borderBottom:"1px solid var(--line)" } },
+                  React.createElement("input", { type:"date", value:dates.end||"", onChange:e=>setSkuDates(m=>({ ...m, [row.name]:{ ...dates, end:e.target.value } })), style:{ fontSize:11.5, padding:"4px 6px", borderRadius:6, border:"1px solid var(--line)" } })),
+                React.createElement("td", { key:"btn", style:{ padding:"6px 8px", borderBottom:"1px solid var(--line)" } },
+                  React.createElement("button", { type:"button", className:"btn btnGhost", style:{ fontSize:11.5, padding:"4px 10px" },
+                    disabled: !effectiveSkuCount || !dates.start || !dates.end || skuBusy[row.name],
+                    onClick:()=>computeSkuActual(row.name) }, skuBusy[row.name] ? "Đang tính..." : "Tính doanh thu")),
+                React.createElement("td", { key:"res", style:{ padding:"6px 8px", borderBottom:"1px solid var(--line)", fontSize:11.5 } },
+                  res ? `${fmtVND(res.totalRevenue)} · SL ${fmtNum(res.totalQty)} · khớp ${res.matchedSkuCount} SKU` : "—"),
+              ]),
+              React.createElement("tr", { key:"api" }, [
+                React.createElement("td", {}),
+                React.createElement("td", { colSpan:5, style:{ padding:"0 8px 8px", borderBottom:"1px solid var(--line)" } },
+                  React.createElement("div", { style:{ display:"flex", gap:6, alignItems:"center", flexWrap:"wrap" } }, [
+                    React.createElement("span", { key:"lbl", style:{ fontSize:10.5, color:"var(--inkSoft)" } }, "hoặc tra đúng DS SKU + thời gian từ hệ thống bán hàng (tự lấy Token, không cần copy tay):"),
+                    React.createElement("input", { key:"doc", type:"text", value:lk.documentId||"", placeholder:"DocumentID (VD: CTKM180926/66883)",
+                      onChange:e=>setApiLookup(m=>({ ...m, [row.name]:{ ...lk, documentId:e.target.value } })),
+                      style:{ fontSize:11, padding:"3px 6px", borderRadius:6, border:"1px solid var(--line)", width:190 } }),
+                    React.createElement("select", { key:"shop", value:lk.shopCode||"", onChange:e=>setApiLookup(m=>({ ...m, [row.name]:{ ...lk, shopCode:e.target.value } })),
+                      style:{ fontSize:11, padding:"3px 6px", borderRadius:6, border:"1px solid var(--line)" } }, [
+                      React.createElement("option", { key:"none", value:"" }, "Nhà thuốc..."),
+                      ...DEFAULT_SHOPS.map(s=>React.createElement("option", { key:s, value:s }, s)),
+                    ]),
+                    React.createElement("button", { key:"go", type:"button", className:"btn btnGhost", style:{ fontSize:10.5, padding:"3px 8px" },
+                      disabled: !lk.documentId || !lk.shopCode || apiBusy[row.name], onClick:()=>lookupPromoApi(row.name) },
+                      apiBusy[row.name] ? "Đang tra..." : "Tra API"),
+                    apiRes && React.createElement("span", { key:"ok", style:{ fontSize:10.5, color:"var(--pine)" } },
+                      `✓ "${apiRes.promoName}" — ${apiRes.skus.length} SKU, ${apiRes.timeStart} → ${apiRes.timeEnd} (đang dùng DS này thay vì Excel)`),
+                  ])),
+              ]),
+            ]);
+          })),
+        ]),
+      ]),
+      React.createElement("div", { key:"save", style:{ marginTop:12 } },
+        React.createElement("button", { type:"button", className:"btn btnPrimary", disabled:busy, onClick:doSave, style:{ padding:"8px 16px", fontSize:13 } },
+          busy ? "Đang lưu..." : `Lưu ${planParsed.rows.filter(r=>included[r.name]!==false).length} chương trình vào hệ thống`)),
+    ]),
+  ]);
+}
+// ===== Khai báo thủ công 1 chương trình (22/9/2026) — quản lý cho biết: khi gọi API hệ thống bán
+// hàng để tra "nội dung chương trình khuyến mại" (GetPromoHeaderByID), CHỈ các chương trình giảm
+// giá theo SKU (giảm giá trực tiếp, tặng quà theo HĐ, combo...) mới được khai báo chính thức ở đó
+// — các chương trình phát VOUCHER RỜI (Gửi vỏ thuốc, Tặng quà trẻ em, Coupon KH VIP...) KHÔNG được
+// hệ thống bán hàng khai báo thành 1 "chương trình" có DocumentID riêng, mã voucher chỉ xuất hiện
+// LẺ TẺ trong báo cáo bán hàng khi khách dùng — nên không có gì để "tra API" cho nhóm này. Cách duy
+// nhất để báo cáo đầy đủ nhóm voucher là quản lý tự khai báo tên/chi phí/doanh thu kế hoạch của
+// chương trình (giống như đang phải tự tổng hợp trong file "CTKM tháng" bằng tay) — form này cho
+// khai báo trực tiếp trong app, KHÔNG bắt buộc phải có sẵn file Excel "Chi phí" như bước "Xem
+// trước" ở trên (dành cho khi chỉ có 1-2 chương trình voucher cần khai báo/sửa nhanh, không muốn
+// dựng cả file Excel kế hoạch chỉ để nhập 1 dòng).
+function PromoManualEntryForm({ myStaff, monthKey }){
+  const blank = { name:"", cost:"", revenue:"", issued:"", used:"", avgOv:"", note:"" };
+  const [form, setForm] = useState(blank);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  async function save(){
+    if(!form.name.trim()){ setMsg("Cần nhập tên chương trình."); return; }
+    setBusy(true); setMsg(null);
+    try{
+      const id = `${monthKey}__${slugifyPromoName(form.name)}`;
+      await db.collection("promoCampaigns").doc(id).set({
+        monthKey, name: form.name.trim(),
+        planCost: form.cost!==""?Number(form.cost):null,
+        planRevenue: form.revenue!==""?Number(form.revenue):null,
+        actualIssued: form.issued!==""?Number(form.issued):null,
+        actualUsed: form.used!==""?Number(form.used):null,
+        avgOrderValue: form.avgOv!==""?Number(form.avgOv):null,
+        note: form.note||"",
+        manualEntry: true,
+        updatedAtTs: new Date().toISOString(),
+        updatedBy: (myStaff && myStaff.name) || "",
+      }, { merge:true });
+      setMsg(`Đã lưu chương trình "${form.name.trim()}" cho tháng ${monthKey}.`);
+      setForm(blank);
+    } catch(err){
+      console.error("Lưu chương trình thủ công lỗi:", err);
+      setMsg("Lưu lỗi — thử lại.");
+    } finally { setBusy(false); }
+  }
+  const f = (key, label, placeholder, type) => React.createElement("div", { key, style:{ display:"flex", flexDirection:"column", gap:3 } }, [
+    React.createElement("label", { key:"l", style:{ fontSize:11, color:"var(--inkSoft)" } }, label),
+    React.createElement("input", { key:"i", type: type||"text", value:form[key], placeholder, onChange:e=>setForm(s=>({ ...s, [key]:e.target.value })),
+      style:{ fontSize:12.5, padding:"6px 8px", borderRadius:8, border:"1px solid var(--line)" } }),
+  ]);
+  return React.createElement("div", { className:"card", style:{ marginTop:16 } }, [
+    React.createElement("div", { key:"t", className:"cardTitle" }, "Khai báo thủ công 1 chương trình (không có trong API hệ thống bán hàng)"),
+    React.createElement("div", { key:"sub", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:12 } },
+      "Dùng cho chương trình phát VOUCHER RỜI (Gửi vỏ thuốc, Tặng quà trẻ em, Coupon KH VIP...) — hệ thống bán hàng KHÔNG khai báo nhóm này thành 1 \"chương trình\" riêng có DocumentID nên không tra API được, mã voucher chỉ hiện lẻ tẻ trong báo cáo bán hàng khi khách dùng. Nhập tay ở đây để báo cáo đầy đủ, không cần dựng file Excel kế hoạch chỉ để khai báo 1 chương trình."),
+    React.createElement("div", { key:"grid", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:10, marginBottom:12 } }, [
+      f("name","Tên chương trình","VD: Gửi vỏ thuốc trao quà tặng"),
+      f("cost","Chi phí kế hoạch (VNĐ)","VD: 2000000","number"),
+      f("revenue","Doanh thu kế hoạch (VNĐ)","VD: 22500000","number"),
+      f("issued","Số voucher đã phát hành","VD: 100","number"),
+      f("used","Số voucher đã sử dụng","VD: 2","number"),
+      f("avgOv","Giá trị đơn TB (để tính DT thực tế)","VD: 330000","number"),
+    ]),
+    React.createElement("div", { key:"note", style:{ marginBottom:12 } }, f("note","Ghi chú (thời gian, phạm vi NT...)","VD: 16/9-15/10/2026, áp dụng 9 NT")),
+    msg && React.createElement("div", { key:"msg", style:{ fontSize:12.5, color:"var(--pine)", background:"var(--pineSoft)", borderRadius:8, padding:"8px 10px", marginBottom:10 } }, msg),
+    React.createElement("button", { key:"save", type:"button", className:"btn btnPrimary", disabled:busy, onClick:save, style:{ padding:"7px 16px", fontSize:13 } },
+      busy ? "Đang lưu..." : "Lưu chương trình"),
+  ]);
+}
+// Doanh thu thực tế của 1 chương trình: ưu tiên số tính trực tiếp từ dữ liệu bán hàng theo SKU
+// (actualRevenueSku, đáng tin hơn vì lấy thẳng từ hệ thống bán hàng) — chỉ dùng ước tính từ voucher
+// (đã dùng × giá trị đơn TB, do quản lý tự nhập) khi chương trình không tính theo SKU.
+function promoActualRevenueOf(c){
+  if(c.actualRevenueSku!=null) return c.actualRevenueSku;
+  if(c.actualUsed!=null && c.avgOrderValue) return c.actualUsed*c.avgOrderValue;
+  return null;
+}
+function PromoCampaignReport({ isAdmin, myStaff, monthKey, setMonthKey }){
+  const [campaigns, setCampaigns] = useState(null);
+  const [expanded, setExpanded] = useState(null);
+  useEffect(()=>{
+    const unsub = db.collection("promoCampaigns").where("monthKey","==",monthKey).onSnapshot(snap=>{
+      const list = []; snap.forEach(d=>list.push({ id:d.id, ...d.data() }));
+      // Hiệu quả DOANH THU là quan trọng nhất (theo yêu cầu 22/9/2026): chương trình nào ước tính
+      // được doanh thu thực tế (có actualUsed + avgOrderValue) xếp lên trước, theo % đạt so với kế
+      // hoạch giảm dần; chương trình chưa đủ dữ liệu doanh thu xếp sau, theo tên.
+      list.sort((a,b)=>{
+        const pa = promoActualRevenueOf(a);
+        const pb = promoActualRevenueOf(b);
+        const pctA = pa!=null && a.planRevenue ? pa/a.planRevenue : null;
+        const pctB = pb!=null && b.planRevenue ? pb/b.planRevenue : null;
+        if(pctA!=null && pctB!=null) return pctB-pctA;
+        if(pctA!=null) return -1;
+        if(pctB!=null) return 1;
+        return a.name.localeCompare(b.name,"vi");
+      });
+      setCampaigns(list);
+    });
+    return unsub;
+  }, [monthKey]);
+  return React.createElement("div", {}, [
+    React.createElement("div", { key:"row", className:"btnRow", style:{ marginBottom:12, alignItems:"center" } }, [
+      React.createElement("input", { key:"m", type:"month", value:monthKey, onChange:e=>setMonthKey(e.target.value), style:{ padding:"7px 9px", border:"1px solid var(--line)", borderRadius:8, fontSize:13 } }),
+    ]),
+    campaigns && campaigns.length>0 && React.createElement("div", { key:"sortnote", style:{ fontSize:11, color:"var(--inkSoft)", marginBottom:10 } }, "Xếp theo % doanh thu thực tế đạt được so với kế hoạch (cao → thấp); chương trình chưa nhập \"Giá trị đơn TB\" nên chưa tính được doanh thu thực tế xếp ở cuối."),
+    !campaigns ? React.createElement("div", { key:"l", className:"emptyState" }, "Đang tải...")
+    : campaigns.length===0 ? React.createElement("div", { key:"e", className:"emptyState" }, isAdmin ? "Chưa có dữ liệu tháng này — vào tab \"Nhập dữ liệu\" để tải file lên." : "Chưa có dữ liệu tháng này.")
+    : React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:10 } },
+        campaigns.map(c=>{
+          const roi = (c.planCost && c.planRevenue) ? (c.planRevenue/c.planCost) : null;
+          const rate = (c.actualIssued && c.actualUsed!=null) ? (c.actualUsed/c.actualIssued) : null;
+          const actualRevenue = promoActualRevenueOf(c);
+          const revenuePct = (actualRevenue!=null && c.planRevenue) ? (actualRevenue/c.planRevenue) : null;
+          const isOpen = expanded===c.id;
+          return React.createElement("div", { key:c.id, className:"card", style:{ padding:"12px 14px" } }, [
+            React.createElement("div", { key:"h", style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10, cursor: c.actualByShop&&c.actualByShop.length ? "pointer":"default" }, onClick:()=>{ if(c.actualByShop&&c.actualByShop.length) setExpanded(isOpen?null:c.id); } }, [
+              React.createElement("div", { key:"l" }, [
+                React.createElement("div", { key:"n", style:{ fontWeight:700, fontSize:13.5 } }, c.name),
+                c.note && React.createElement("div", { key:"note", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:2 } }, c.note),
+              ]),
+              React.createElement("div", { key:"badges", style:{ display:"flex", flexDirection:"column", gap:4, alignItems:"flex-end" } }, [
+                React.createElement("div", { key:"rev", style:{ fontSize:11, fontWeight:700, padding:"3px 9px", borderRadius:12,
+                  background: revenuePct==null ? "var(--paper)" : revenuePct<0.5 ? "#fbe9e7" : revenuePct<0.9 ? "#fdf1de" : "var(--pineSoft)",
+                  color: revenuePct==null ? "var(--inkSoft)" : revenuePct<0.5 ? "#b3261e" : revenuePct<0.9 ? "#b4720a" : "var(--pine)" } },
+                  revenuePct==null ? "Chưa tính được doanh thu" : `Doanh thu đạt ${(revenuePct*100).toFixed(0)}% KH`),
+                rate!=null && React.createElement("div", { key:"rate", style:{ fontSize:10.5, color:"var(--inkSoft)" } }, `Tỷ lệ dùng voucher ${(rate*100).toFixed(1)}%`),
+              ]),
+            ]),
+            React.createElement("div", { key:"grid", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:8, marginTop:10, fontSize:12 } }, [
+              React.createElement("div", { key:"cp" }, [React.createElement("div",{style:{color:"var(--inkSoft)",fontSize:10.5}},"Chi phí KH"), React.createElement("div",{style:{fontWeight:600}}, c.planCost!=null?fmtVND(c.planCost):"—")]),
+              React.createElement("div", { key:"dt" }, [React.createElement("div",{style:{color:"var(--inkSoft)",fontSize:10.5}},"Doanh thu KH"), React.createElement("div",{style:{fontWeight:600}}, c.planRevenue!=null?fmtVND(c.planRevenue):"—")]),
+              React.createElement("div", { key:"dtt" }, [React.createElement("div",{style:{color:"var(--inkSoft)",fontSize:10.5}},"Doanh thu thực tế (ước tính)"), React.createElement("div",{style:{fontWeight:700,color:"var(--pine)"}}, actualRevenue!=null?fmtVND(actualRevenue):"—")]),
+              React.createElement("div", { key:"roi" }, [React.createElement("div",{style:{color:"var(--inkSoft)",fontSize:10.5}},"ROI kế hoạch"), React.createElement("div",{style:{fontWeight:600}}, roi!=null?`${roi.toFixed(1)}x`:"—")]),
+              React.createElement("div", { key:"is" }, [React.createElement("div",{style:{color:"var(--inkSoft)",fontSize:10.5}},"Đã phát hành"), React.createElement("div",{style:{fontWeight:600}}, c.actualIssued!=null?fmtNum(c.actualIssued):"—")]),
+              React.createElement("div", { key:"us" }, [React.createElement("div",{style:{color:"var(--inkSoft)",fontSize:10.5}},"Đã sử dụng"), React.createElement("div",{style:{fontWeight:600}}, c.actualUsed!=null?fmtNum(c.actualUsed):"—")]),
+            ]),
+            isOpen && c.actualByShop && c.actualByShop.length>0 && React.createElement("div", { key:"shop", style:{ marginTop:10, paddingTop:10, borderTop:"1px solid var(--line)", display:"flex", flexWrap:"wrap", gap:8 } },
+              c.actualByShop.sort((a,b)=>b.count-a.count).map(s=>React.createElement("div", { key:s.key, style:{ fontSize:11.5, background:"var(--paper)", borderRadius:8, padding:"4px 9px" } }, `${s.key}: ${s.count}`))),
+          ]);
+        })
+      ),
+  ]);
+}
 function PromoAnalyticsView({ isAdmin, myStaff }){
+  const [subTab, setSubTab] = useState("report");
+  const [monthKey, setMonthKey] = useState(todayISO().slice(0,7));
+  const subTabs = [ { id:"report", label:"Báo cáo hiệu quả" }, ...(isAdmin ? [{ id:"import", label:"Nhập dữ liệu" }] : []) ];
+  return React.createElement("div", { style:{ maxWidth:1100, margin:"0 auto", padding:16 } }, [
+    React.createElement("h2", { key:"title", className:"pagetitle" }, "Khuyến Mại"),
+    React.createElement("p", { key:"sub", className:"pagesub" }, "Hiệu quả từng chương trình khuyến mại theo tháng (chi phí/doanh thu kế hoạch, tỷ lệ dùng voucher thực tế) — nhập từ file Excel kế hoạch + file theo dõi voucher mỗi tháng."),
+    React.createElement(SubTabBar, { key:"bar", tabs:subTabs, active:subTab, onChange:setSubTab }),
+    subTab==="report" && React.createElement(PromoCampaignReport, { key:"r", isAdmin, myStaff, monthKey, setMonthKey }),
+    subTab==="import" && isAdmin && React.createElement(PromoImportPanel, { key:"i", myStaff, monthKey, setMonthKey, onSaved:()=>setSubTab("report") }),
+    subTab==="import" && isAdmin && React.createElement(PromoManualEntryForm, { key:"manual", myStaff, monthKey }),
+    subTab==="report" && React.createElement(PromoAutoDetectSection, { key:"auto", isAdmin, myStaff }),
+  ]);
+}
+function PromoAutoDetectSection({ isAdmin, myStaff }){
   const { stats, refreshing, refresh } = useRevenueAnalytics();
   const [adminShop, setAdminShop] = useState("Tất cả");
   const shopFilter = isAdmin ? adminShop : (myStaff && myStaff.shop);
@@ -7944,9 +8498,9 @@ function PromoAnalyticsView({ isAdmin, myStaff }){
   const shopVal = promo && !isAll && promo.byShop && promo.byShop[shopFilter];
   const topProducts = promo ? promo.topProducts||[] : [];
   const maxRev = Math.max(...topProducts.map(p=>p.revenue||0), 1);
-  return React.createElement("div", { style:{ maxWidth:1100, margin:"0 auto", padding:16 } }, [
-    React.createElement("h2", { key:"title", className:"pagetitle" }, "Khuyến mãi (CTKM)"),
-    React.createElement("p", { key:"sub", className:"pagesub" }, "Nhận diện tự động theo tên hàng có dấu hiệu khuyến mãi (Combo, Tặng kèm, Giảm giá...) trong 30 ngày gần nhất — chưa có cột \"loại khuyến mãi\" riêng trong dữ liệu đồng bộ nên đây là ước tính, không phải số tuyệt đối."),
+  return React.createElement("div", { style:{ marginTop:24 } }, [
+    React.createElement("div", { key:"title", style:{ fontWeight:700, fontSize:14, marginBottom:4 } }, "Ước tính tự động theo tên hàng (bổ sung)"),
+    React.createElement("p", { key:"sub", className:"pagesub", style:{ marginTop:0 } }, "Nhận diện tự động theo tên hàng có dấu hiệu khuyến mãi (Combo, Tặng kèm, Giảm giá...) trong 30 ngày gần nhất — chưa có cột \"loại khuyến mãi\" riêng trong dữ liệu đồng bộ nên đây là ước tính, không phải số tuyệt đối, không thay thế báo cáo theo chương trình ở trên."),
     React.createElement(RevenueRefreshButton, { key:"rb", refreshing, onRefresh:refresh, computedAt: stats && stats.computedAt }),
     !stats || !promo ? React.createElement("div", { key:"empty", className:"card", style:{ fontSize:13, color:"var(--inkSoft)" } }, "Chưa có dữ liệu — bấm \"Tính lại\" ở trên.")
     : React.createElement(React.Fragment, { key:"body" }, [
@@ -11167,6 +11721,9 @@ function Employee360View({ isAdmin, myStaff, navParam, onNavigate }){
       rc("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)" } }, "Hiệu suất → nguyên nhân → coaching → kết quả"),
     ]),
     rc("div", { key:"pick", style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" } }, [
+      // 22/9/2026 (thao tác thân thiện người dùng): nút "← Danh sách" để rời hồ sơ 1 nhân viên quay
+      // về màn danh sách/tìm kiếm — trước đây chỉ có cách xoá tay ô tìm kiếm.
+      pickedId && rc("button", { key:"back", type:"button", className:"btn btnGhost", style:{ fontSize:12, padding:"6px 10px" }, onClick:()=>setPickedId("") }, "← Danh sách"),
       rc("select", { key:"shop", value:shopFilter, onChange:e=>setShopFilter(e.target.value), style:{ padding:"6px 10px", fontSize:12.5, border:"1px solid var(--line)", borderRadius:8 } },
         ["Tất cả", ...DEFAULT_SHOPS].map(s => rc("option", { key:s, value:s }, s))),
       rc("div", { key:"np", style:{ minWidth:240 } }, rc(NamePicker, { options:staffOptions, value:pickedId, onChange:v=>{ setPickedId(v); setTab("overview"); }, placeholder:"Tìm nhân viên..." })),
@@ -11410,7 +11967,11 @@ function Customer360View({ isAdmin, myStaff, navParam, onNavigate }){
       rc("h2", { key:"h", className:"pagetitle", style:{ marginBottom:2 } }, "Customer 360"),
       rc("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)" } }, "Giá trị → hành vi → health → next best action"),
     ]),
-    rc(SearchBox360, { key:"sb", value:q, onChange:setQ, onSubmit:runSearch, busy:searching, placeholder:"Số điện thoại (đầu số) hoặc tên khách (phần đầu)..." }),
+    rc("div", { key:"sbwrap", style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" } }, [
+      // 22/9/2026 (thao tác thân thiện người dùng): nút "← Danh sách" để rời hồ sơ khách quay về màn tìm kiếm.
+      phone && rc("button", { key:"back", type:"button", className:"btn btnGhost", style:{ fontSize:12, padding:"6px 10px" }, onClick:()=>setPhone("") }, "← Danh sách"),
+      rc(SearchBox360, { key:"sb", value:q, onChange:setQ, onSubmit:runSearch, busy:searching, placeholder:"Số điện thoại (đầu số) hoặc tên khách (phần đầu)..." }),
+    ]),
   ]);
   const wrapStyle = { maxWidth:1160, margin:"0 auto", padding:16 };
   const custRow = (c, colr) => rc(Row360, { key:c.id, color:colr, title:c.name || "(chưa có tên)", sub:`${c.phone||c.id} · ${c.shop||"—"}${c.stats && c.stats.lastPurchaseAt ? ` · mua gần nhất ${dmy360(c.stats.lastPurchaseAt)}` : ""}`,
@@ -11633,7 +12194,11 @@ function Product360View({ isAdmin, myStaff, navParam, onNavigate }){
       rc("h2", { key:"h", className:"pagetitle", style:{ marginBottom:2 } }, "Product 360"),
       rc("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)" } }, "Tồn → velocity → rủi ro → điều chuyển/đặt hàng"),
     ]),
-    rc(SearchBox360, { key:"sb", value:q, onChange:setQ, onSubmit:runSearch, busy:searching, placeholder:"Mã hàng hoặc phần đầu tên hàng..." }),
+    rc("div", { key:"sbwrap", style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" } }, [
+      // 22/9/2026 (thao tác thân thiện người dùng): nút "← Danh sách" để rời hồ sơ 1 mã hàng quay về màn tìm kiếm.
+      pid && rc("button", { key:"back", type:"button", className:"btn btnGhost", style:{ fontSize:12, padding:"6px 10px" }, onClick:()=>setPid("") }, "← Danh sách"),
+      rc(SearchBox360, { key:"sb", value:q, onChange:setQ, onSubmit:runSearch, busy:searching, placeholder:"Mã hàng hoặc phần đầu tên hàng..." }),
+    ]),
   ]);
   const wrapStyle = { maxWidth:1160, margin:"0 auto", padding:16 };
   const prodRow = (p, colr, sub) => rc(Row360, { key:p.productId, color:colr, title:p.productName, sub:sub || `Mã ${p.productId}`, onClick:()=>{ setPid(p.productId); setResults(null); }, right:rc("span", { style:{ color:CL360.info, fontSize:11 } }, "Mở ›") });
@@ -12305,12 +12870,40 @@ function Dashboard({ user, isAdmin, myStaff }){
   // bấm "SKU cần nhập gấp" phải mở đúng Hàng hoá → Phân tích hàng hoá → Tốc độ tiêu thụ, không chỉ
   // mở tab Hàng hoá rồi rơi về tab con đầu tiên) — param truyền xuống đúng view liên quan qua navParam.
   const [navParam, setNavParam] = useState(null);
+  // 22/9/2026 (thao tác thân thiện người dùng): 2 bổ sung điều hướng —
+  //  1) "navHistory": ngăn xếp các màn đã đi qua, để có nút "← Quay lại" dùng chung cho MỌI tab (thay
+  //     vì tự thêm nút quay lại riêng ở từng màn) — mỗi lần setActiveTab sang 1 tab/tham số THỰC SỰ
+  //     khác hiện tại thì đẩy màn đang đứng vào ngăn xếp; bấm "Quay lại" thì lấy ra và không đẩy thêm.
+  //  2) "resetSignal": đếm số lần 1 tab được "bấm lại trong khi đang đứng ở đó" (từ sidebar, thanh tab
+  //     điện thoại, hoặc thanh tab con) — dùng làm "key" ép React tạo lại toàn bộ component của tab đó
+  //     từ đầu, coi như 1 cách "reset" (bỏ mọi bộ lọc/trạng thái đang chọn dở) mà không cần sửa riêng
+  //     từng màn hình.
+  const [navHistory, setNavHistory] = useState([]);
+  const [resetSignal, setResetSignal] = useState({});
   // 20/9/2026: Action Center — 1 listener việc đang mở dùng chung cho nút "🔥 N cần xử lý", badge sidebar và màn Action Center.
   const openTasks360 = useOpenTasks360(isAdmin);
   const needAction360 = isAdmin ? countNeedAction360(openTasks360) : 0;
   const [showSearch360, setShowSearch360] = useState(false);
   const [showCompose360, setShowCompose360] = useState(false);
-  function setActiveTab(tabId, param){ setActiveTabRaw(tabId); setShowMobileHome(false); markSeen(tabId); setNavParam(param||null); }
+  function setActiveTab(tabId, param){
+    if(tabId===activeTab){
+      // Bấm lại đúng tab đang đứng (sidebar/thanh tab/thanh tab con) — coi là yêu cầu RESET, không
+      // phải điều hướng đi nơi khác nên KHÔNG đẩy vào lịch sử "Quay lại".
+      setResetSignal(s => ({ ...s, [tabId]: (s[tabId]||0) + 1 }));
+    } else {
+      setNavHistory(h => [...h, { tab:activeTab, param:navParam }].slice(-20));
+    }
+    setActiveTabRaw(tabId); setShowMobileHome(false); markSeen(tabId); setNavParam(param||null);
+  }
+  function goBackTab(){
+    setNavHistory(h => {
+      if(h.length===0) return h;
+      const prev = h[h.length-1];
+      setActiveTabRaw(prev.tab); setNavParam(prev.param||null); setShowMobileHome(false); markSeen(prev.tab);
+      return h.slice(0, -1);
+    });
+  }
+  const viewResetKey = "v_" + activeTab + "_" + (resetSignal[activeTab]||0);
   // Đang đứng sẵn ở tab nào thì tab đó tự coi như "đã xem" ngay khi có tin mới xuất hiện,
   // không cần đợi bấm ra rồi bấm lại mới xoá chấm đỏ.
   useEffect(()=>{ if(unreadCount[activeTab]>0) markSeen(activeTab); });
@@ -12332,7 +12925,7 @@ function Dashboard({ user, isAdmin, myStaff }){
       ]),
       React.createElement("div", { key:"nav", className:"sidebarNav" }, navGroups.map(g => {
         const u = groupUnread(g);
-        return React.createElement("button", { key:g.id, type:"button", className:"sidebarItem" + (activeGroup.id===g.id ? " active" : ""), onClick:()=>{ if(!g.tabs.includes(activeTab)) setActiveTab(g.tabs[0]); } }, [
+        return React.createElement("button", { key:g.id, type:"button", className:"sidebarItem" + (activeGroup.id===g.id ? " active" : ""), onClick:()=>{ setActiveTab(g.tabs.includes(activeTab) ? activeTab : g.tabs[0]); } }, [
           React.createElement("span", { key:"i", className:"sIcon" }, renderTabIcon(g.id, 17, {})),
           React.createElement("span", { key:"l", className:"sLabel" }, g.label),
           u>0 && React.createElement("span", { key:"b", className:"sidebarBadge" }, u>99 ? "99+" : u),
@@ -12344,9 +12937,15 @@ function Dashboard({ user, isAdmin, myStaff }){
     ]),
     // ===== Thanh trên cùng — chỉ hiện trên máy tính, song song với sidebar =====
     React.createElement("div", { key:"topbardesktop", className:"topbarDesktop" }, [
-      React.createElement("div", { key:"title", className:"topbarTitle" }, [
-        React.createElement("span", { key:"t", className:"t" }, activeGroup ? activeGroup.label : "Upharma Ops"),
-        React.createElement("span", { key:"s", className:"s" }, (activeGroup && activeGroup.tabs.length>1 && activeTabInfo) ? activeTabInfo.label : "Hệ thống vận hành & nhân sự"),
+      React.createElement("div", { key:"title", className:"topbarTitle", style:{ display:"flex", alignItems:"center", gap:10 } }, [
+        // 22/9/2026 (thao tác thân thiện người dùng): nút "Quay lại" dùng chung cho MỌI tab — chỉ
+        // hiện khi thực sự có màn trước đó để quay về (từ Tổng quan bấm vào 1 việc, từ 1 hồ sơ 360
+        // quay ra danh sách, v.v.), không chiếm chỗ khi mới mở app.
+        navHistory.length>0 && React.createElement("button", { key:"back", type:"button", className:"btn btnGhost", style:{ fontSize:12, padding:"5px 10px", flexShrink:0 }, onClick:goBackTab }, "← Quay lại"),
+        React.createElement("div", { key:"lbl" }, [
+          React.createElement("span", { key:"t", className:"t" }, activeGroup ? activeGroup.label : "Upharma Ops"),
+          React.createElement("span", { key:"s", className:"s" }, (activeGroup && activeGroup.tabs.length>1 && activeTabInfo) ? activeTabInfo.label : "Hệ thống vận hành & nhân sự"),
+        ]),
       ]),
       React.createElement("div", { key:"right", className:"topbarRight" }, [
         isAdmin && React.createElement("div", { key:"acts360", style:{ display:"flex", gap:8, alignItems:"center" } }, [
@@ -12381,7 +12980,7 @@ function Dashboard({ user, isAdmin, myStaff }){
       ]),
       React.createElement("div", { key:"tabs", className:"tabs" }, navGroups.map(g => {
         const u = groupUnread(g);
-        return React.createElement("button", { key:g.id, className:activeGroup.id===g.id?"active":"", onClick:()=>{ if(!g.tabs.includes(activeTab)) setActiveTab(g.tabs[0]); } }, [
+        return React.createElement("button", { key:g.id, className:activeGroup.id===g.id?"active":"", onClick:()=>{ setActiveTab(g.tabs.includes(activeTab) ? activeTab : g.tabs[0]); } }, [
           g.label,
           u>0 && React.createElement("span", { key:"badge", className:"unreadBadge" }, u>99 ? "99+" : u),
         ]);
@@ -12404,7 +13003,10 @@ function Dashboard({ user, isAdmin, myStaff }){
         })
       ),
       // ===== Thanh quay lại Trang chủ — chỉ hiện trên điện thoại khi đang xem 1 tab cụ thể =====
-      React.createElement("div", { key:"backbar", className:"mobileBackBar" + (!showMobileHome ? " isShown" : ""), onClick:()=>setShowMobileHome(true) }, [
+      // 22/9/2026: nếu có màn trước đó trong lịch sử điều hướng (navHistory), bấm mũi tên sẽ quay về
+      // ĐÚNG màn đó thay vì luôn nhảy thẳng ra Trang chủ — thân thiện hơn khi đang xem sâu (VD từ
+      // Tổng quan bấm vào 1 nhân viên, giờ bấm "‹" quay lại đúng Tổng quan chứ không mất ngữ cảnh).
+      React.createElement("div", { key:"backbar", className:"mobileBackBar" + (!showMobileHome ? " isShown" : ""), onClick:()=> navHistory.length>0 ? goBackTab() : setShowMobileHome(true) }, [
         React.createElement("span", { key:"a", className:"arrow" }, "‹"),
         React.createElement("span", { key:"l" }, activeTabInfo ? activeTabInfo.label : "Trang chủ"),
       ]),
@@ -12422,33 +13024,33 @@ function Dashboard({ user, isAdmin, myStaff }){
           tabs: activeGroup.tabs.map(id => ({ id, label:(leafTabs.find(t=>t.id===id)||{}).label || id })),
           active: activeTab, onChange:setActiveTab,
         }),
-        activeTab==="command" && React.createElement(ExecOverviewView, { key:"v", isAdmin, myStaff, onNavigate:setActiveTab }),
-        activeTab==="shop360" && isAdmin && React.createElement(ShopProfileView, { key:"v", isAdmin, myStaff, navParam, onNavigate:setActiveTab }),
-        activeTab==="action" && isAdmin && React.createElement(ActionCenterView, { key:"v", isAdmin, myStaff, navParam, onNavigate:setActiveTab, openTasks:openTasks360 }),
-        activeTab==="emp360" && isAdmin && React.createElement(Employee360View, { key:"v", isAdmin, myStaff, navParam, onNavigate:setActiveTab }),
-        activeTab==="cust360" && isAdmin && React.createElement(Customer360View, { key:"v", isAdmin, myStaff, navParam, onNavigate:setActiveTab }),
-        activeTab==="prod360" && isAdmin && React.createElement(Product360View, { key:"v", isAdmin, myStaff, navParam, onNavigate:setActiveTab }),
-        activeTab==="checklist" && React.createElement(DailyChecklistView, { key:"v", isAdmin, myStaff }),
-        activeTab==="homnay" && React.createElement(TodayShopTasksView, { key:"v", isAdmin, myStaff, onNavigate:setActiveTab }),
-        activeTab==="photos" && React.createElement(ImageReportView, { key:"v", isAdmin, myStaff }),
-        activeTab==="hanghoa" && React.createElement(HangHoaView, { key:"v", isAdmin, myStaff, navParam }),
-        activeTab==="tasks" && React.createElement(TaskAssignView, { key:"v", isAdmin, myStaff, navParam }),
-        activeTab==="kpi" && React.createElement(KpiView, { key:"v", isAdmin, myStaff }),
-        activeTab==="crm" && React.createElement(CrmView, { key:"v", isAdmin, myStaff, navParam, onNavigate:setActiveTab }),
-        activeTab==="training" && React.createElement(TrainingView, { key:"v", isAdmin, myStaff }),
-        activeTab==="kudos" && React.createElement(KudosView, { key:"v", isAdmin, myStaff }),
-        activeTab==="temgia" && React.createElement(TemGiaView, { key:"v" }),
-        activeTab==="baocaotuan" && React.createElement(BaoCaoTuanView, { key:"v", isAdmin, myStaff }),
-        activeTab==="kinhnghiem" && React.createElement(KinhNghiemVanHanhView, { key:"v", myStaff }),
-        activeTab==="revenueAnalytics" && React.createElement(RevenueAnalyticsView, { key:"v", isAdmin, myStaff }),
+        activeTab==="command" && React.createElement(ExecOverviewView, { key:viewResetKey, isAdmin, myStaff, onNavigate:setActiveTab }),
+        activeTab==="shop360" && isAdmin && React.createElement(ShopProfileView, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab }),
+        activeTab==="action" && isAdmin && React.createElement(ActionCenterView, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab, openTasks:openTasks360 }),
+        activeTab==="emp360" && isAdmin && React.createElement(Employee360View, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab }),
+        activeTab==="cust360" && isAdmin && React.createElement(Customer360View, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab }),
+        activeTab==="prod360" && isAdmin && React.createElement(Product360View, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab }),
+        activeTab==="checklist" && React.createElement(DailyChecklistView, { key:viewResetKey, isAdmin, myStaff }),
+        activeTab==="homnay" && React.createElement(TodayShopTasksView, { key:viewResetKey, isAdmin, myStaff, onNavigate:setActiveTab }),
+        activeTab==="photos" && React.createElement(ImageReportView, { key:viewResetKey, isAdmin, myStaff }),
+        activeTab==="hanghoa" && React.createElement(HangHoaView, { key:viewResetKey, isAdmin, myStaff, navParam }),
+        activeTab==="tasks" && React.createElement(TaskAssignView, { key:viewResetKey, isAdmin, myStaff, navParam }),
+        activeTab==="kpi" && React.createElement(KpiView, { key:viewResetKey, isAdmin, myStaff }),
+        activeTab==="crm" && React.createElement(CrmView, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab }),
+        activeTab==="training" && React.createElement(TrainingView, { key:viewResetKey, isAdmin, myStaff }),
+        activeTab==="kudos" && React.createElement(KudosView, { key:viewResetKey, isAdmin, myStaff }),
+        activeTab==="temgia" && React.createElement(TemGiaView, { key:viewResetKey }),
+        activeTab==="baocaotuan" && React.createElement(BaoCaoTuanView, { key:viewResetKey, isAdmin, myStaff }),
+        activeTab==="kinhnghiem" && React.createElement(KinhNghiemVanHanhView, { key:viewResetKey, myStaff }),
+        activeTab==="revenueAnalytics" && React.createElement(RevenueAnalyticsView, { key:viewResetKey, isAdmin, myStaff }),
         // Khôi phục lại "Báo cáo doanh số ngày" cho nhân viên (form nhập doanh số/hệ số theo khung
         // giờ) — CHỈ ẩn phần tổng hợp của quản lý bên trong (isAdmin luôn truyền false ở đây) vì
         // quản lý đã xem tổng hợp doanh thu ở tab "Doanh thu" mới rồi, không cần trùng 2 nơi.
-        activeTab==="sales" && React.createElement(SalesReportView, { key:"v", isAdmin:false, myStaff }),
-        activeTab==="nhanvien" && React.createElement(NhanVienView, { key:"v", isAdmin, myStaff }),
-        activeTab==="ctkm" && React.createElement(PromoAnalyticsView, { key:"v", isAdmin, myStaff }),
-        activeTab==="ai" && React.createElement(AiHubView, { key:"v", onNavigate:setActiveTab }),
-        activeTab==="hethong" && isAdmin && React.createElement(SystemHubView, { key:"v" }),
+        activeTab==="sales" && React.createElement(SalesReportView, { key:viewResetKey, isAdmin:false, myStaff }),
+        activeTab==="nhanvien" && React.createElement(NhanVienView, { key:viewResetKey, isAdmin, myStaff }),
+        activeTab==="ctkm" && React.createElement(PromoAnalyticsView, { key:viewResetKey, isAdmin, myStaff }),
+        activeTab==="ai" && React.createElement(AiHubView, { key:viewResetKey, onNavigate:setActiveTab }),
+        activeTab==="hethong" && isAdmin && React.createElement(SystemHubView, { key:viewResetKey }),
       ]),
     ]),
     isAdmin && showSearch360 && React.createElement(GlobalSearch360, { key:"gs360", onClose:()=>setShowSearch360(false), onNavigate:setActiveTab }),
