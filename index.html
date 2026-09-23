@@ -4014,6 +4014,15 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
   const [noteText, setNoteText] = useState("");
   const [noteFollowUp, setNoteFollowUp] = useState("");
   const [savingNote, setSavingNote] = useState(false);
+  // ===== 23/9/2026 — NHÂN VIÊN TỰ NHẬN KHÁCH (thay phân công tự động đã tắt): bấm "Nhận chăm
+  // sóc" mở modal bắt buộc ghi note kế hoạch (dự định làm gì + hẹn ngày nào) TRƯỚC khi gán khách
+  // về mình — dùng transaction Firestore để 2 người bấm cùng lúc 1 khách không giành nhau được.
+  const [claimingPhone, setClaimingPhone] = useState(null);
+  const [claimNote, setClaimNote] = useState("");
+  const [claimFollowUp, setClaimFollowUp] = useState(addDays(todayISO(), 1));
+  const [claiming, setClaiming] = useState(false);
+  const [claimError, setClaimError] = useState(null);
+  const [returningPhone, setReturningPhone] = useState(null);
   // 20/9/2026: Giao việc THỦ CÔNG cho khách hàng đang xem trong Customer 360 — thay cho tính năng
   // tự động giao việc từ Customer Action Engine (đã tắt, xem AUTO_CRM_TASK_CREATION_ENABLED trong
   // index.js). Nhân viên/quản lý tự bấm khi thấy cần, thay vì hệ thống tự tạo hàng loạt.
@@ -4327,12 +4336,16 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
         staffEffectiveness && (staffEffectiveness.byStaff||[]).length>0 && React.createElement("table", { key:"tbl", style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5 } }, [
           React.createElement("thead", { key:"h" }, React.createElement("tr", { style:{ background:"#f8f8f6" } }, [
             React.createElement("th", { key:"n", style:{ textAlign:"left", padding:"8px 10px" } }, "Nhân viên"),
+            // 23/9/2026: "Đang nhận" — số khách đang được phân công theo mô hình tự nhận (không
+            // giới hạn số lượng, chỉ để quản lý tự theo dõi ai đang ôm nhiều/ít).
+            React.createElement("th", { key:"asn", style:{ textAlign:"right", padding:"8px 10px" } }, "Đang nhận"),
             React.createElement("th", { key:"t", style:{ textAlign:"right", padding:"8px 10px" } }, "Việc đã hoàn thành"),
             React.createElement("th", { key:"r", style:{ textAlign:"right", padding:"8px 10px" } }, "Khách quay lại mua"),
             React.createElement("th", { key:"p", style:{ textAlign:"right", padding:"8px 10px" } }, "Tỉ lệ hiệu quả"),
           ])),
           React.createElement("tbody", { key:"b" }, staffEffectiveness.byStaff.map(s => React.createElement("tr", { key:s.staffId, style:{ borderTop:"1px solid var(--line)" } }, [
             React.createElement("td", { key:"n", style:{ padding:"8px 10px", fontWeight:600 } }, s.staffName || s.staffId),
+            React.createElement("td", { key:"asn", style:{ padding:"8px 10px", textAlign:"right", fontWeight:600 } }, s.assignedNow||0),
             React.createElement("td", { key:"t", style:{ padding:"8px 10px", textAlign:"right" } }, s.totalCompleted),
             React.createElement("td", { key:"r", style:{ padding:"8px 10px", textAlign:"right" } }, s.returned),
             React.createElement("td", { key:"p", style:{ padding:"8px 10px", textAlign:"right", fontWeight:600, color: s.returnRate>=50 ? "var(--pine)" : "var(--clay)" } }, `${s.returnRate}%`),
@@ -4451,6 +4464,76 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
     // Danh sách của admin không còn real-time (xem loadCustomersOnce ở trên) — cập nhật ngay tại
     // chỗ để admin thấy đúng lựa chọn vừa thao tác mà không cần bấm "Làm mới".
     setCustomers(cs => cs.map(c => c.phone===phone ? { ...c, ...patch } : c));
+  }
+
+  // Mở modal "Nhận chăm sóc" — bắt buộc ghi note kế hoạch trước khi nhận, xem submitClaim().
+  function openClaim(phone){
+    setClaimingPhone(phone);
+    setClaimNote("");
+    setClaimFollowUp(addDays(todayISO(), 1));
+    setClaimError(null);
+  }
+  async function submitClaim(){
+    if(!claimingPhone || !myStaff || !claimNote.trim() || !claimFollowUp) return;
+    setClaiming(true);
+    setClaimError(null);
+    try{
+      const ref = db.collection("crmCustomers").doc(claimingPhone);
+      // Transaction — chỉ gán khi khách ĐANG "Chưa phân công" tại thời điểm ghi (không phải lúc mở
+      // modal), để 2 nhân viên bấm cùng lúc 1 khách không giành nhau được: người ghi sau sẽ thấy
+      // báo lỗi "khách vừa được người khác nhận" thay vì ghi đè.
+      const cust = await db.runTransaction(async (tx) => {
+        const doc = await tx.get(ref);
+        const data = doc.exists ? doc.data() : {};
+        if (data.assignedStaffId) return null; // đã có người nhận trước — báo lỗi bên ngoài
+        tx.set(ref, { assignedStaffId: myStaff.id, assignedStaffName: myStaff.name, assignedStaffIsDefault: false }, { merge:true });
+        return data;
+      });
+      if (!cust) {
+        setClaimError("Khách này vừa được người khác nhận — thử chọn khách khác.");
+        setClaiming(false);
+        return;
+      }
+      const lastInteractionTs = new Date().toISOString();
+      await db.collection("crmInteractions").add({
+        phone: claimingPhone, shop: cust.shop || (myStaff && myStaff.shop) || "",
+        staffId: myStaff.id, staffName: myStaff.name,
+        note: `[Nhận chăm sóc] ${claimNote.trim()}`, nextFollowUpDate: claimFollowUp,
+        createdAtTs: lastInteractionTs,
+      });
+      await ref.set({ lastInteractionTs }, { merge:true });
+      setCustomers(cs => cs.map(c => c.phone===claimingPhone
+        ? { ...c, assignedStaffId: myStaff.id, assignedStaffName: myStaff.name, assignedStaffIsDefault:false, lastInteractionTs }
+        : c));
+      setClaimingPhone(null);
+      setSelectedPhone(claimingPhone);
+    } catch(err){
+      logSystemError("crmClaim", err);
+      setClaimError("Có lỗi khi nhận khách — thử lại.");
+    }
+    setClaiming(false);
+  }
+
+  // "Trả lại khách" — nhân viên chủ động ngưng chăm sóc giữa chừng, khách trở về "Chưa phân
+  // công" để người khác nhận lại. Transaction chỉ xoá khi ĐÚNG mình đang là người phụ trách hiện
+  // tại (tránh trường hợp hiếm: vừa bị quản lý gán cho người khác trong lúc mình định trả lại).
+  async function returnCustomer(phone){
+    if(!myStaff) return;
+    setReturningPhone(phone);
+    try{
+      const ref = db.collection("crmCustomers").doc(phone);
+      const ok = await db.runTransaction(async (tx) => {
+        const doc = await tx.get(ref);
+        const data = doc.exists ? doc.data() : {};
+        if (data.assignedStaffId !== myStaff.id && !isAdmin) return false;
+        tx.set(ref, { assignedStaffId: null, assignedStaffName: null, assignedStaffIsDefault: false }, { merge:true });
+        return true;
+      });
+      if (ok) {
+        setCustomers(cs => cs.map(c => c.phone===phone ? { ...c, assignedStaffId:null, assignedStaffName:null, assignedStaffIsDefault:false } : c));
+      }
+    } catch(err){ logSystemError("crmReturn", err); }
+    setReturningPhone(null);
   }
 
   async function addNote(){
@@ -4595,6 +4678,24 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
   }
 
   return React.createElement("div", { style:{ maxWidth:1280, margin:"0 auto", padding:"16px" } }, [
+    // ===== Modal "Nhận chăm sóc" (23/9/2026) — bắt buộc ghi note kế hoạch (dự định làm gì + hẹn
+    // ngày nào) trước khi gán khách về mình. Xem submitClaim() ở trên (transaction chống giành
+    // khách khi 2 người bấm cùng lúc).
+    claimingPhone && React.createElement("div", { key:"claimOverlay", style:{ position:"fixed", inset:0, background:"rgba(0,0,0,.45)", zIndex:200, display:"flex", alignItems:"center", justifyContent:"center", padding:16 } },
+      React.createElement("div", { className:"card", style:{ width:"100%", maxWidth:380, background:"#fff" } }, [
+        React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:14.5, marginBottom:4 } }, "Nhận chăm sóc khách hàng"),
+        React.createElement("div", { key:"ph", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } }, claimingPhone),
+        React.createElement("div", { key:"l1", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:4 } }, "Kế hoạch chăm sóc (bắt buộc) — dự định làm gì"),
+        React.createElement("textarea", { key:"note", value:claimNote, onChange:e=>setClaimNote(e.target.value), placeholder:"VD: Gọi tư vấn lại sản phẩm đang dùng, hỏi thăm tình hình...", style:{ width:"100%", minHeight:60, padding:8, fontSize:12.5, border:"1px solid var(--line)", borderRadius:8, marginBottom:8 } }),
+        React.createElement("div", { key:"l2", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:4 } }, "Hẹn liên hệ lại ngày (bắt buộc)"),
+        React.createElement("input", { key:"date", type:"date", value:claimFollowUp, onChange:e=>setClaimFollowUp(e.target.value), style:{ width:"100%", padding:"6px 8px", fontSize:12.5, border:"1px solid var(--line)", borderRadius:8, marginBottom:10 } }),
+        claimError && React.createElement("div", { key:"err", style:{ color:"var(--clay)", fontSize:12, marginBottom:8 } }, claimError),
+        React.createElement("div", { key:"acts", style:{ display:"flex", gap:8, justifyContent:"flex-end" } }, [
+          React.createElement("button", { key:"cancel", type:"button", className:"btn btnGhost", style:{ padding:"6px 14px", fontSize:12.5 }, onClick:()=>setClaimingPhone(null) }, "Huỷ"),
+          React.createElement("button", { key:"save", type:"button", className:"btn btnPrimary", disabled:claiming||!claimNote.trim()||!claimFollowUp, style:{ padding:"6px 14px", fontSize:12.5 }, onClick:submitClaim }, claiming ? "Đang nhận..." : "Xác nhận nhận khách"),
+        ]),
+      ])
+    ),
     React.createElement("div", { key:"title", style:{ fontWeight:700, fontSize:18, marginBottom:4, display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" } }, [
       React.createElement("span", { key:"t" }, "CRM khách hàng"),
       isAdmin && React.createElement("button", {
@@ -4726,9 +4827,20 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
             ]),
             React.createElement("td", { key:"l", style:{ padding:"8px 10px" } }, levelBadge(c.levelName)),
             React.createElement("td", { key:"sh", style:{ padding:"8px 10px" } }, c.shop),
-            React.createElement("td", { key:"a", style:{ padding:"8px 10px" } }, c.assignedStaffName
-              ? [c.assignedStaffName, c.assignedStaffIsDefault && React.createElement("span", { key:"d", style:{ fontSize:10, color:"var(--inkSoft)", marginLeft:4 } }, "(tự động)")]
-              : React.createElement("span",{style:{color:"var(--inkSoft)"}},"—")),
+            React.createElement("td", { key:"a", style:{ padding:"8px 10px" } }, [
+              c.assignedStaffName
+                ? React.createElement("span", { key:"nm" }, c.assignedStaffName)
+                : React.createElement("span",{ key:"none", style:{color:"var(--inkSoft)"}},"—"),
+              // "Nhận chăm sóc" — chỉ nhân viên thường (không phải admin) thấy, và chỉ với khách
+              // CHƯA có người phụ trách (đã lọc theo đúng shop của mình từ scopedCustomers rồi).
+              !isAdmin && !c.assignedStaffId && React.createElement("button", { key:"claim", type:"button", className:"btn btnPrimary",
+                style:{ marginLeft:8, padding:"2px 8px", fontSize:11 },
+                onClick:(e)=>{ e.stopPropagation(); openClaim(c.phone); } }, "Nhận chăm sóc"),
+              // "Trả lại khách" — chỉ hiện với đúng khách mình đang phụ trách.
+              !isAdmin && myStaff && c.assignedStaffId===myStaff.id && React.createElement("button", { key:"return", type:"button", className:"btn btnGhost",
+                style:{ marginLeft:8, padding:"2px 8px", fontSize:11 }, disabled:returningPhone===c.phone,
+                onClick:(e)=>{ e.stopPropagation(); returnCustomer(c.phone); } }, returningPhone===c.phone ? "Đang trả..." : "Trả lại khách"),
+            ]),
           ]))),
         ]),
         // ===== Điều hướng trang — bảng chỉ vẽ 1 trang (~50 khách) mỗi lần cho nhẹ, thay vì vẽ cứng
@@ -4829,10 +4941,19 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
 
         React.createElement("div", { key:"asg", style:{ marginBottom:14 } }, [
           React.createElement("div", { key:"l", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:4 } }, "Người phụ trách"),
-          React.createElement("select", { key:"sel", value:selected.assignedStaffId||"", onChange:e=>assignStaff(selected.phone, e.target.value), style:{ width:"100%", padding:"6px 8px", fontSize:12.5, border:"1px solid var(--line)", borderRadius:8 } }, [
-            React.createElement("option", { key:"none", value:"" }, "— Chưa phân công —"),
-            ...staffOptions.map(s=>React.createElement("option", { key:s.id, value:s.id }, s.name)),
-          ]),
+          // Admin (Quản lý khu vực) vẫn có thể gán/đổi tay cho bất kỳ khách nào như trước — nhân
+          // viên thường (23/9/2026) không còn thấy dropdown này nữa, chỉ có nút "Nhận chăm
+          // sóc"/"Trả lại khách" đúng mô hình tự nhận.
+          isAdmin
+            ? React.createElement("select", { key:"sel", value:selected.assignedStaffId||"", onChange:e=>assignStaff(selected.phone, e.target.value), style:{ width:"100%", padding:"6px 8px", fontSize:12.5, border:"1px solid var(--line)", borderRadius:8 } }, [
+                React.createElement("option", { key:"none", value:"" }, "— Chưa phân công —"),
+                ...staffOptions.map(s=>React.createElement("option", { key:s.id, value:s.id }, s.name)),
+              ])
+            : React.createElement("div", { key:"row", style:{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" } }, [
+                React.createElement("span", { key:"nm", style:{ fontSize:12.5, fontWeight:600 } }, selected.assignedStaffName || "Chưa phân công"),
+                !selected.assignedStaffId && React.createElement("button", { key:"claim", type:"button", className:"btn btnPrimary", style:{ padding:"4px 10px", fontSize:12 }, onClick:()=>openClaim(selected.phone) }, "Nhận chăm sóc"),
+                myStaff && selected.assignedStaffId===myStaff.id && React.createElement("button", { key:"return", type:"button", className:"btn btnGhost", style:{ padding:"4px 10px", fontSize:12 }, disabled:returningPhone===selected.phone, onClick:()=>returnCustomer(selected.phone) }, returningPhone===selected.phone ? "Đang trả..." : "Trả lại khách"),
+              ]),
         ]),
 
         // Giao việc thủ công cho khách này (thay tính năng tự động đã tắt).
