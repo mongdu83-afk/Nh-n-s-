@@ -4373,6 +4373,21 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
   }
   const [autoAssigning, setAutoAssigning] = useState(false);
   const [autoAssignMsg, setAutoAssignMsg] = useState(null);
+  const [clearingAssign, setClearingAssign] = useState(false);
+  async function runClearAllAssign(){
+    if(!window.confirm("Xoá HẾT người phụ trách đã gắn sẵn cho toàn bộ khách hàng (kể cả gán tay/đã nhận chăm sóc)? Tất cả khách sẽ về trạng thái \"Chưa phân công\". Không thể hoàn tác.")) return;
+    setClearingAssign(true); setAutoAssignMsg(null);
+    try{
+      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/clearAllCrmAssignmentsNow");
+      const d = await resp.json();
+      if(d && d.ok===false){ setAutoAssignMsg("Lỗi: " + (d.error || "không rõ nguyên nhân")); }
+      else{
+        setAutoAssignMsg(`Đã xoá người phụ trách của ${d.cleared ?? 0} khách — tất cả về "Chưa phân công".`);
+        if(isAdmin) loadCustomersOnce();
+      }
+    } catch(err){ setAutoAssignMsg("Lỗi kết nối, thử lại."); }
+    setClearingAssign(false);
+  }
   async function runAutoAssign(){
     setAutoAssigning(true); setAutoAssignMsg(null);
     try{
@@ -4706,6 +4721,10 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
         key:"autoassign", className:"btn btnGhost", disabled:autoAssigning, onClick:runAutoAssign,
         style:{ fontSize:12, padding:"4px 10px" },
       }, autoAssigning ? "Đang gán..." : "👤 Gán tự động theo Nhà thuốc"),
+      isAdmin && React.createElement("button", {
+        key:"clearassign", className:"btn btnGhost", disabled:clearingAssign, onClick:runClearAllAssign,
+        style:{ fontSize:12, padding:"4px 10px", color:"var(--clay)" },
+      }, clearingAssign ? "Đang xoá..." : "🗑️ Xoá hết người phụ trách"),
       crmSubTab === "khach" && React.createElement("button", {
         key:"exportxlsx", className:"btn btnGhost", disabled:!filtered || filtered.length===0, onClick:exportFilteredCustomers,
         style:{ fontSize:12, padding:"4px 10px" },
