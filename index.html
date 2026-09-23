@@ -7190,7 +7190,13 @@ function PrescriptionLibraryView({ isAdmin, myStaff }){
       const data = await resp.json();
       if(data && data.ok){
         setProductOrders(data.orders || []);
-        if(!data.orders || data.orders.length===0) setProductSearchMsg("Không tìm thấy đơn nào chứa sản phẩm này trong 180 ngày gần đây.");
+        if(!data.orders || data.orders.length===0){
+          setProductSearchMsg("Không tìm thấy đơn nào có ảnh đơn thuốc khớp sản phẩm này trong 180 ngày gần đây.");
+        } else if(data.imageCheckSkipped){
+          // Server không kiểm tra được ảnh trước (hệ thống ngoài lỗi/đăng nhập thất bại) — danh
+          // sách dưới đây CHƯA được lọc, có thể còn đơn không có ảnh, cần báo rõ cho nhân viên biết.
+          setProductSearchMsg("Lưu ý: không kiểm tra trước được đơn nào có ảnh (hệ thống ngoài đang lỗi) — danh sách dưới đây có thể còn đơn KHÔNG có ảnh, cần thử từng đơn.");
+        }
       } else {
         setProductSearchMsg("Lỗi: " + ((data && data.error) || "không rõ nguyên nhân"));
       }
@@ -7244,7 +7250,7 @@ function PrescriptionLibraryView({ isAdmin, myStaff }){
           productSearching ? "Đang tìm..." : "Tìm đơn"),
       ]),
       React.createElement("p", { key:"hint", style:{ margin:"0 0 10px", fontSize:11.5, color:"var(--inkSoft)", lineHeight:1.5 } },
-        "Hệ thống dò trong đơn bán 180 ngày gần đây của " + (shopCode ? ("nhà thuốc " + shopCode) : "toàn bộ khu vực") + " để tìm đơn có sản phẩm khớp — chọn đúng đơn của khách rồi bấm \"Lấy & lưu ảnh\"."),
+        "Hệ thống dò trong đơn bán 180 ngày gần đây của " + (shopCode ? ("nhà thuốc " + shopCode) : "toàn bộ khu vực") + " để tìm đơn có sản phẩm khớp, rồi tự kiểm tra trước từng đơn để chỉ hiện đơn THẬT SỰ có ảnh đơn thuốc — chọn đúng đơn của khách rồi bấm \"Lấy & lưu ảnh\". Có kiểm tra trước nên tìm có thể mất vài chục giây nếu nhiều đơn khớp."),
       productSearchMsg && React.createElement("div", { key:"psmsg", style:{ marginBottom:10, fontSize:13, color:"var(--clay)" } }, productSearchMsg),
       productOrders && productOrders.length>0 && React.createElement("div", { key:"plist",
         style:{ display:"flex", flexDirection:"column", gap:8, marginTop:4 } },
