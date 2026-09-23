@@ -7091,13 +7091,24 @@ function DayRevenueBoard({ meta, leftRows, rightRows }){
 // hệ thống bán hàng, tải ảnh đơn thuốc gốc về và lưu lâu dài vào Firebase Storage của mình (link gốc
 // trên hệ thống ngoài chỉ dùng được với Token phiên đăng nhập, tự hết hạn).
 function PrescriptionLibraryView({ isAdmin, myStaff }){
-  const [shopCode, setShopCode] = useState((myStaff && myStaff.shop) || DEFAULT_SHOPS[0]);
-  const [headerId, setHeaderId] = useState("");
-  const [dhdCode, setDhdCode] = useState("");
-  const [saving, setSaving] = useState(false);
+  const CF_BASE = "https://asia-southeast1-upharma-176d5.cloudfunctions.net";
+  // 23/9/2026: đây là KHO DÙNG CHUNG CHO CẢ KHU VỰC — mặc định "" (Toàn khu vực) để nhân viên ở
+  // bất kỳ nhà thuốc nào cũng tìm/lấy được ảnh đơn của TẤT CẢ nhà thuốc, không riêng nhà thuốc
+  // mình đang đứng. Chỉ cần chọn đúng 1 nhà thuốc khi muốn thu hẹp phạm vi tìm, hoặc khi nhập tay
+  // mã DHD (trường hợp duy nhất hệ thống không tự dò được nhà thuốc thật của đơn).
+  const [shopCode, setShopCode] = useState("");
   const [saveMsg, setSaveMsg] = useState(null);
   const [saveOk, setSaveOk] = useState(false);
   const [savedResult, setSavedResult] = useState(null);
+
+  // 23/9/2026: bỏ hẳn cách nhập tay mã đơn (DXB/DHD) — không khả thi vì nhân viên đứng quầy
+  // không có sẵn các mã này. Giờ CHỈ CÒN 1 cách duy nhất để lấy & lưu ảnh đơn thuốc: tìm theo
+  // TÊN hoặc MÃ SẢN PHẨM khách đã mua, hệ thống tự dò ra đơn tương ứng.
+  const [productTerm, setProductTerm] = useState("");
+  const [productSearching, setProductSearching] = useState(false);
+  const [productSearchMsg, setProductSearchMsg] = useState(null);
+  const [productOrders, setProductOrders] = useState(null);
+  const [savingHeaderId, setSavingHeaderId] = useState(null); // headerID của dòng đang lấy ảnh (loading riêng từng dòng)
 
   const [searchTerm, setSearchTerm] = useState("");
   const [searching, setSearching] = useState(false);
@@ -7127,24 +7138,30 @@ function PrescriptionLibraryView({ isAdmin, myStaff }){
   }
   useEffect(()=>{ runSearch(); }, []);
 
-  async function doSave(){
-    if(!shopCode || (!headerId.trim() && !dhdCode.trim())){
+  // Gọi khi bấm "Lấy & lưu ảnh" trên 1 dòng kết quả tìm theo sản phẩm — trả về data để nơi gọi tự
+  // cập nhật lại đúng dòng đó (thành đã lưu + có ảnh) mà không cần tìm lại từ đầu.
+  // shopCodeOverride: nhà thuốc THẬT đọc được từ dữ liệu đơn (kết quả tìm kiếm) — chỉ là dự
+  // phòng, vì có mã đơn thì server tự dò lại nhà thuốc thật từ dữ liệu đã đồng bộ.
+  async function saveOrderImage(hIdRaw, shopCodeOverride){
+    const hVal = (hIdRaw||"").trim();
+    const shopVal = shopCodeOverride!==undefined ? shopCodeOverride : shopCode;
+    if(!hVal){
       setSaveOk(false);
-      setSaveMsg("Cần chọn nhà thuốc và nhập ít nhất Mã đơn (DXB...) hoặc Mã DHD.");
-      return;
+      setSaveMsg("Thiếu mã đơn.");
+      return null;
     }
-    setSaving(true); setSaveMsg(null); setSavedResult(null);
+    setSaveMsg(null); setSavedResult(null);
+    let data = null;
     try{
-      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/savePrescriptionImageNow", {
+      const resp = await fetch(CF_BASE + "/savePrescriptionImageNow", {
         method:"POST", headers:{ "Content-Type":"application/json" },
-        body: JSON.stringify({ shopCode, headerID:headerId.trim(), dhdCode:dhdCode.trim(), staffName:(myStaff && myStaff.name) || "" }),
+        body: JSON.stringify({ shopCode:shopVal, headerID:hVal, dhdCode:"", staffName:(myStaff && myStaff.name) || "" }),
       });
-      const data = await resp.json();
+      data = await resp.json();
       if(data && data.ok){
         setSaveOk(true);
-        setSaveMsg("Đã lưu ảnh đơn thuốc vào thư viện.");
+        setSaveMsg("Đã lưu ảnh đơn thuốc vào thư viện" + (data.shopCode ? " (nhà thuốc " + data.shopCode + ")." : "."));
         setSavedResult(data);
-        setHeaderId(""); setDhdCode("");
         runSearch();
       } else {
         setSaveOk(false);
@@ -7154,8 +7171,47 @@ function PrescriptionLibraryView({ isAdmin, myStaff }){
       console.error("savePrescriptionImageNow lỗi:", err);
       setSaveOk(false);
       setSaveMsg("Lỗi kết nối, thử lại.");
+      data = { ok:false, error:"Lỗi kết nối" };
     }
-    setSaving(false);
+    return data;
+  }
+
+  // Quét dữ liệu đơn hàng đã đồng bộ để tìm mọi đơn có chứa đúng sản phẩm (theo tên hoặc mã) —
+  // xem hàm searchOrdersByProductNow (index.js) để biết cách quét (mặc định 180 ngày gần nhất).
+  async function runProductSearch(){
+    const term = productTerm.trim();
+    if(!term){ setProductSearchMsg("Nhập tên hoặc mã sản phẩm cần tìm."); setProductOrders(null); return; }
+    setProductSearching(true); setProductSearchMsg(null); setProductOrders(null);
+    try{
+      const resp = await fetch(CF_BASE + "/searchOrdersByProductNow", {
+        method:"POST", headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ shopCode, term }),
+      });
+      const data = await resp.json();
+      if(data && data.ok){
+        setProductOrders(data.orders || []);
+        if(!data.orders || data.orders.length===0) setProductSearchMsg("Không tìm thấy đơn nào chứa sản phẩm này trong 180 ngày gần đây.");
+      } else {
+        setProductSearchMsg("Lỗi: " + ((data && data.error) || "không rõ nguyên nhân"));
+      }
+    }catch(err){
+      console.error("searchOrdersByProductNow lỗi:", err);
+      setProductSearchMsg("Lỗi kết nối, thử lại.");
+    }
+    setProductSearching(false);
+  }
+
+  // Bấm "Lấy & lưu ảnh" ngay trên 1 dòng kết quả tìm theo sản phẩm — cập nhật lại ĐÚNG dòng đó
+  // (thành đã lưu + có ảnh) thay vì bắt tìm lại từ đầu. Truyền kèm order.shopCode (nhà thuốc THẬT
+  // đọc được từ dữ liệu đơn) làm dự phòng — dù server vẫn tự dò lại từ mã đơn là chính.
+  async function saveFromProductRow(order){
+    setSavingHeaderId(order.headerID);
+    const data = await saveOrderImage(order.headerID, order.shopCode);
+    if(data && data.ok){
+      setProductOrders(prev => (prev||[]).map(o => o.headerID===order.headerID
+        ? { ...o, alreadySaved:true, imageUrl:data.imageUrl } : o));
+    }
+    setSavingHeaderId(null);
   }
 
   const inputStyle = { flex:"1 1 200px", padding:"9px 12px", border:"1px solid var(--line)", borderRadius:8, fontSize:13 };
@@ -7164,24 +7220,53 @@ function PrescriptionLibraryView({ isAdmin, myStaff }){
     React.createElement("div", { key:"h", style:{ marginBottom:16 } }, [
       React.createElement("h2", { key:"t", style:{ margin:"0 0 4px" } }, "Thư viện đơn thuốc"),
       React.createElement("p", { key:"d", style:{ margin:0, color:"var(--inkSoft)", fontSize:13 } },
-        "Lưu ảnh đơn thuốc gắn với sản phẩm trong đơn bán, để tra lại sau này nếu khách quay lại mà quên mang đơn."),
+        "Kho ảnh đơn thuốc dùng CHUNG cho cả khu vực — nhân viên ở bất kỳ nhà thuốc nào cũng tìm và lấy được ảnh đơn của mọi nhà thuốc, để tra lại khi khách quay lại mà quên mang đơn."),
     ]),
 
     React.createElement("div", { key:"save", className:"card", style:{ marginBottom:20 } }, [
-      React.createElement("h3", { key:"t", style:{ margin:"0 0 10px", fontSize:15 } }, "Lưu đơn thuốc mới"),
-      React.createElement("div", { key:"row", style:{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:8 } }, [
-        React.createElement("select", { key:"shop", value:shopCode, onChange:e=>setShopCode(e.target.value),
-          style:{ padding:"9px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } },
-          DEFAULT_SHOPS.map(s => React.createElement("option", { key:s, value:s }, s))),
-        React.createElement("input", { key:"hid", type:"text", value:headerId, onChange:e=>setHeaderId(e.target.value),
-          placeholder:"Mã đơn dạng DXB... (nếu có)", style:inputStyle }),
-        React.createElement("input", { key:"dhd", type:"text", value:dhdCode, onChange:e=>setDhdCode(e.target.value),
-          placeholder:"Mã đơn dạng DHD... (nếu biết sẵn)", style:inputStyle }),
+      React.createElement("h3", { key:"t", style:{ margin:"0 0 10px", fontSize:15 } }, "Lấy & lưu ảnh đơn thuốc mới"),
+
+      React.createElement("div", { key:"shoprow", style:{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:8, alignItems:"center" } },
+        React.createElement("select", { key:"shop", value:shopCode, onChange:e=>{ setShopCode(e.target.value); setProductOrders(null); },
+          style:{ padding:"9px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } }, [
+          React.createElement("option", { key:"all", value:"" }, "Toàn khu vực (mọi nhà thuốc)"),
+          ...DEFAULT_SHOPS.map(s => React.createElement("option", { key:s, value:s }, s)),
+        ]),
+      ),
+      React.createElement("p", { key:"scopehint", style:{ margin:"0 0 10px", fontSize:11.5, color:"var(--inkSoft)" } },
+        "Chọn \"Toàn khu vực\" để tìm ở mọi nhà thuốc, hoặc chọn đúng 1 nhà thuốc để thu hẹp kết quả."),
+
+      React.createElement("div", { key:"row", style:{ display:"flex", gap:8, marginBottom:8 } }, [
+        React.createElement("input", { key:"pterm", type:"text", value:productTerm, onChange:e=>setProductTerm(e.target.value),
+          onKeyDown:e=>{ if(e.key==="Enter") runProductSearch(); },
+          placeholder:"Nhập tên hoặc mã sản phẩm khách đã mua...", style:{ flex:1, ...inputStyle } }),
+        React.createElement("button", { key:"go", type:"button", className:"btn btnPrimary", disabled:productSearching, onClick:runProductSearch },
+          productSearching ? "Đang tìm..." : "Tìm đơn"),
       ]),
       React.createElement("p", { key:"hint", style:{ margin:"0 0 10px", fontSize:11.5, color:"var(--inkSoft)", lineHeight:1.5 } },
-        "Mã DHD... hiển thị ngay dưới mã đơn trên trang \"Đơn hàng bán\" của hệ thống upharma.com.vn. Nếu chỉ nhập mã DXB, hệ thống sẽ tự dò mã DHD từ dữ liệu đã đồng bộ."),
-      React.createElement("button", { key:"btn", type:"button", className:"btn btnPrimary", disabled:saving, onClick:doSave },
-        saving ? "Đang lấy ảnh..." : "Lấy & lưu ảnh đơn thuốc"),
+        "Hệ thống dò trong đơn bán 180 ngày gần đây của " + (shopCode ? ("nhà thuốc " + shopCode) : "toàn bộ khu vực") + " để tìm đơn có sản phẩm khớp — chọn đúng đơn của khách rồi bấm \"Lấy & lưu ảnh\"."),
+      productSearchMsg && React.createElement("div", { key:"psmsg", style:{ marginBottom:10, fontSize:13, color:"var(--clay)" } }, productSearchMsg),
+      productOrders && productOrders.length>0 && React.createElement("div", { key:"plist",
+        style:{ display:"flex", flexDirection:"column", gap:8, marginTop:4 } },
+        productOrders.map(o => React.createElement("div", { key:o.headerID,
+          style:{ display:"flex", alignItems:"center", gap:10, border:"1px solid var(--line)", borderRadius:8, padding:"8px 10px" } }, [
+          o.alreadySaved && o.imageUrl
+            ? React.createElement("img", { key:"thumb", src:o.imageUrl, style:{ width:44, height:44, objectFit:"cover", borderRadius:6, flex:"none" } })
+            : React.createElement("div", { key:"thumb", style:{ width:44, height:44, borderRadius:6, background:"var(--paper)", flex:"none" } }),
+          React.createElement("div", { key:"info", style:{ flex:1, minWidth:0 } }, [
+            React.createElement("div", { key:"code", style:{ fontWeight:700, fontSize:12.5 } },
+              o.headerID + " · " + (o.shopCode || "?") + (o.orderDate ? " · " + o.orderDate : "")),
+            React.createElement("div", { key:"prod", style:{ fontSize:11.5, color:"var(--inkSoft)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" } },
+              (o.matchedProducts||[]).join(", ")),
+          ]),
+          o.alreadySaved
+            ? React.createElement("span", { key:"done", style:{ fontSize:12, fontWeight:700, color:"var(--pine)", flex:"none" } }, "Đã lưu")
+            : React.createElement("button", { key:"btn", type:"button", className:"btn btnPrimary", style:{ flex:"none" },
+                disabled:savingHeaderId===o.headerID, onClick:()=>saveFromProductRow(o) },
+                savingHeaderId===o.headerID ? "Đang lấy..." : "Lấy & lưu ảnh"),
+        ]))
+      ),
+
       saveMsg && React.createElement("div", { key:"msg", style:{ marginTop:10, fontSize:13, color: saveOk ? "var(--pine)" : "var(--clay)" } }, saveMsg),
       savedResult && savedResult.imageUrl && React.createElement("div", { key:"prev", style:{ marginTop:10, display:"flex", gap:12, alignItems:"flex-start" } }, [
         React.createElement("a", { key:"a", href:savedResult.imageUrl, target:"_blank", rel:"noopener noreferrer" },
@@ -7193,6 +7278,8 @@ function PrescriptionLibraryView({ isAdmin, myStaff }){
 
     React.createElement("div", { key:"search", className:"card" }, [
       React.createElement("h3", { key:"t", style:{ margin:"0 0 10px", fontSize:15 } }, "Tra cứu đơn thuốc cũ"),
+      React.createElement("p", { key:"d", style:{ margin:"0 0 12px", fontSize:11.5, color:"var(--inkSoft)" } },
+        "Tra trên toàn bộ đơn thuốc đã lưu của cả khu vực, không riêng nhà thuốc nào."),
       React.createElement("div", { key:"row", style:{ display:"flex", gap:8, marginBottom:14 } }, [
         React.createElement("input", { key:"q", type:"text", value:searchTerm, onChange:e=>setSearchTerm(e.target.value),
           onKeyDown:e=>{ if(e.key==="Enter") runSearch(); },
