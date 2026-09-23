@@ -9209,7 +9209,10 @@ function BaoCaoTuanView({ isAdmin, myStaff }){
 // cáo quản lý (kế hoạch tuần) + Báo cáo nhà thuốc — mỗi tab gộp có thanh tab con bên trong (xem
 // HangHoaView/NhanVienView/BaoCaoTuanView). Bỏ hẳn tab "Báo cáo doanh số" (sales) — đã có tab
 // "Doanh thu" tự động tính từ dữ liệu API thay thế.
-const STAFF_TABS = ["checklist","homnay","photos","hanghoa","donthuoc","tasks","kpi","crm","training","kudos","temgia","revenueAnalytics","nhanvien","ctkm","baocaotuan","sales","kinhnghiem"];
+// 23/9/2026: ẩn tab "Thư viện đơn thuốc" (donthuoc) khỏi menu — bỏ khỏi STAFF_TABS + lọc thêm ở
+// leafTabs bên dưới (Dashboard()) cho cả quản lý. Code màn hình (PrescriptionLibraryView) và route
+// render vẫn giữ nguyên, chỉ ẩn khỏi điều hướng nên có thể bật lại dễ dàng sau này nếu cần.
+const STAFF_TABS = ["checklist","homnay","photos","hanghoa","tasks","kpi","crm","training","kudos","temgia","revenueAnalytics","nhanvien","ctkm","baocaotuan","sales","kinhnghiem"];
 const OPS_TABS = [
   { id:"command", label:"Tổng quan điều hành" },
   { id:"shop360", label:"Hồ sơ nhà thuốc" },
@@ -13860,7 +13863,7 @@ function SystemHubView(){
 function Dashboard({ user, isAdmin, myStaff }){
   // 19/9/2026: tab "sales" (Báo cáo doanh số ngày) chỉ dành cho nhân viên nhập theo nhà thuốc mình —
   // tài khoản quản lý không gắn nhà thuốc nên không có gì để nhập/xem, ẩn hẳn khỏi menu quản lý.
-  const leafTabs = isAdmin ? OPS_TABS.filter(t => t.id!=="sales") : OPS_TABS.filter(t => STAFF_TABS.includes(t.id));
+  const leafTabs = isAdmin ? OPS_TABS.filter(t => t.id!=="sales" && t.id!=="donthuoc") : OPS_TABS.filter(t => STAFF_TABS.includes(t.id));
   // 20/9/2026: quản lý thấy sidebar GOM NHÓM theo mẫu mockup (7 nhóm thay vì 14 tab phẳng); nhân
   // viên KHÔNG đổi gì — mỗi tab của nhân viên coi như 1 "nhóm" chỉ có đúng 1 tab bên trong, để dùng
   // chung 1 đoạn code render sidebar/topnav/lưới điện thoại cho cả 2 vai trò.
