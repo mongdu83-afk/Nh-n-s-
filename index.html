@@ -7085,6 +7085,143 @@ function DayRevenueBoard({ meta, leftRows, rightRows }){
   ]);
 }
 
+// ================= THƯ VIỆN ĐƠN THUỐC (yêu cầu 23/9/2026) =================
+// Lưu ảnh đơn thuốc gắn với sản phẩm trong đơn bán, để tra lại sau này theo mã đơn hoặc theo tên/mã
+// sản phẩm nếu khách quay lại mà quên mang đơn cũ. Backend (savePrescriptionImageNow) tự đăng nhập
+// hệ thống bán hàng, tải ảnh đơn thuốc gốc về và lưu lâu dài vào Firebase Storage của mình (link gốc
+// trên hệ thống ngoài chỉ dùng được với Token phiên đăng nhập, tự hết hạn).
+function PrescriptionLibraryView({ isAdmin, myStaff }){
+  const [shopCode, setShopCode] = useState((myStaff && myStaff.shop) || DEFAULT_SHOPS[0]);
+  const [headerId, setHeaderId] = useState("");
+  const [dhdCode, setDhdCode] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState(null);
+  const [saveOk, setSaveOk] = useState(false);
+  const [savedResult, setSavedResult] = useState(null);
+
+  const [searchTerm, setSearchTerm] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [searchMsg, setSearchMsg] = useState(null);
+  const [results, setResults] = useState(null);
+
+  function normVN(s){
+    return (s||"").toString().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/đ/g,"d").replace(/Đ/g,"D").toLowerCase();
+  }
+
+  async function runSearch(){
+    setSearching(true); setSearchMsg(null);
+    try{
+      const snap = await db.collection("prescriptionImages").orderBy("createdAtTs","desc").limit(500).get();
+      const all = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+      const term = normVN(searchTerm.trim());
+      const filtered = !term ? all : all.filter(r => {
+        const hay = normVN([r.headerID, r.dhdCode, r.shopCode, ...(r.productIds||[]), ...(r.productNames||[])].filter(Boolean).join(" "));
+        return hay.includes(term);
+      });
+      setResults(filtered);
+    }catch(err){
+      console.error("Tra cứu thư viện đơn thuốc lỗi:", err);
+      setSearchMsg("Lỗi tải dữ liệu, thử lại.");
+    }
+    setSearching(false);
+  }
+  useEffect(()=>{ runSearch(); }, []);
+
+  async function doSave(){
+    if(!shopCode || (!headerId.trim() && !dhdCode.trim())){
+      setSaveOk(false);
+      setSaveMsg("Cần chọn nhà thuốc và nhập ít nhất Mã đơn (DXB...) hoặc Mã DHD.");
+      return;
+    }
+    setSaving(true); setSaveMsg(null); setSavedResult(null);
+    try{
+      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/savePrescriptionImageNow", {
+        method:"POST", headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ shopCode, headerID:headerId.trim(), dhdCode:dhdCode.trim(), staffName:(myStaff && myStaff.name) || "" }),
+      });
+      const data = await resp.json();
+      if(data && data.ok){
+        setSaveOk(true);
+        setSaveMsg("Đã lưu ảnh đơn thuốc vào thư viện.");
+        setSavedResult(data);
+        setHeaderId(""); setDhdCode("");
+        runSearch();
+      } else {
+        setSaveOk(false);
+        setSaveMsg("Lỗi: " + ((data && data.error) || "không rõ nguyên nhân"));
+      }
+    }catch(err){
+      console.error("savePrescriptionImageNow lỗi:", err);
+      setSaveOk(false);
+      setSaveMsg("Lỗi kết nối, thử lại.");
+    }
+    setSaving(false);
+  }
+
+  const inputStyle = { flex:"1 1 200px", padding:"9px 12px", border:"1px solid var(--line)", borderRadius:8, fontSize:13 };
+
+  return React.createElement("div", { style:{ maxWidth:960, margin:"0 auto" } }, [
+    React.createElement("div", { key:"h", style:{ marginBottom:16 } }, [
+      React.createElement("h2", { key:"t", style:{ margin:"0 0 4px" } }, "Thư viện đơn thuốc"),
+      React.createElement("p", { key:"d", style:{ margin:0, color:"var(--inkSoft)", fontSize:13 } },
+        "Lưu ảnh đơn thuốc gắn với sản phẩm trong đơn bán, để tra lại sau này nếu khách quay lại mà quên mang đơn."),
+    ]),
+
+    React.createElement("div", { key:"save", className:"card", style:{ marginBottom:20 } }, [
+      React.createElement("h3", { key:"t", style:{ margin:"0 0 10px", fontSize:15 } }, "Lưu đơn thuốc mới"),
+      React.createElement("div", { key:"row", style:{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:8 } }, [
+        React.createElement("select", { key:"shop", value:shopCode, onChange:e=>setShopCode(e.target.value),
+          style:{ padding:"9px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } },
+          DEFAULT_SHOPS.map(s => React.createElement("option", { key:s, value:s }, s))),
+        React.createElement("input", { key:"hid", type:"text", value:headerId, onChange:e=>setHeaderId(e.target.value),
+          placeholder:"Mã đơn dạng DXB... (nếu có)", style:inputStyle }),
+        React.createElement("input", { key:"dhd", type:"text", value:dhdCode, onChange:e=>setDhdCode(e.target.value),
+          placeholder:"Mã đơn dạng DHD... (nếu biết sẵn)", style:inputStyle }),
+      ]),
+      React.createElement("p", { key:"hint", style:{ margin:"0 0 10px", fontSize:11.5, color:"var(--inkSoft)", lineHeight:1.5 } },
+        "Mã DHD... hiển thị ngay dưới mã đơn trên trang \"Đơn hàng bán\" của hệ thống upharma.com.vn. Nếu chỉ nhập mã DXB, hệ thống sẽ tự dò mã DHD từ dữ liệu đã đồng bộ."),
+      React.createElement("button", { key:"btn", type:"button", className:"btn btnPrimary", disabled:saving, onClick:doSave },
+        saving ? "Đang lấy ảnh..." : "Lấy & lưu ảnh đơn thuốc"),
+      saveMsg && React.createElement("div", { key:"msg", style:{ marginTop:10, fontSize:13, color: saveOk ? "var(--pine)" : "var(--clay)" } }, saveMsg),
+      savedResult && savedResult.imageUrl && React.createElement("div", { key:"prev", style:{ marginTop:10, display:"flex", gap:12, alignItems:"flex-start" } }, [
+        React.createElement("a", { key:"a", href:savedResult.imageUrl, target:"_blank", rel:"noopener noreferrer" },
+          React.createElement("img", { src:savedResult.imageUrl, style:{ width:110, height:110, objectFit:"cover", borderRadius:8, border:"1px solid var(--line)" } })),
+        savedResult.productNames && savedResult.productNames.length>0 && React.createElement("div", { key:"prods", style:{ fontSize:12.5, color:"var(--inkSoft)" } },
+          "Sản phẩm trong đơn: " + savedResult.productNames.join(", ")),
+      ]),
+    ]),
+
+    React.createElement("div", { key:"search", className:"card" }, [
+      React.createElement("h3", { key:"t", style:{ margin:"0 0 10px", fontSize:15 } }, "Tra cứu đơn thuốc cũ"),
+      React.createElement("div", { key:"row", style:{ display:"flex", gap:8, marginBottom:14 } }, [
+        React.createElement("input", { key:"q", type:"text", value:searchTerm, onChange:e=>setSearchTerm(e.target.value),
+          onKeyDown:e=>{ if(e.key==="Enter") runSearch(); },
+          placeholder:"Tìm theo mã đơn, mã sản phẩm hoặc tên sản phẩm...",
+          style:{ flex:1, padding:"9px 12px", border:"1px solid var(--line)", borderRadius:8, fontSize:13 } }),
+        React.createElement("button", { key:"go", type:"button", className:"btn btnPrimary", onClick:runSearch, disabled:searching },
+          searching ? "Đang tìm..." : "Tìm"),
+      ]),
+      searchMsg && React.createElement("div", { key:"err", style:{ color:"var(--clay)", fontSize:13, marginBottom:10 } }, searchMsg),
+      (!results || results.length===0) && !searching && !searchMsg && React.createElement("div", { key:"empty", style:{ color:"var(--inkSoft)", fontSize:13 } },
+        "Chưa có đơn thuốc nào khớp."),
+      results && results.length>0 && React.createElement("div", { key:"list",
+        style:{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(210px, 1fr))", gap:12 } },
+        results.map(r => React.createElement("a", { key:r.id, href:r.imageUrl, target:"_blank", rel:"noopener noreferrer",
+          style:{ display:"block", border:"1px solid var(--line)", borderRadius:10, overflow:"hidden", textDecoration:"none", color:"inherit", background:"#fff" } }, [
+          React.createElement("img", { key:"img", src:r.imageUrl, loading:"lazy",
+            style:{ width:"100%", height:140, objectFit:"cover", display:"block", background:"var(--paper)" } }),
+          React.createElement("div", { key:"body", style:{ padding:8 } }, [
+            React.createElement("div", { key:"code", style:{ fontWeight:700, fontSize:12.5 } }, r.headerID || r.dhdCode || "—"),
+            React.createElement("div", { key:"shop", style:{ fontSize:11, color:"var(--inkSoft)" } }, [r.shopCode, r.orderDate].filter(Boolean).join(" · ")),
+            r.productNames && r.productNames.length>0 && React.createElement("div", { key:"prod", style:{ fontSize:11, color:"var(--inkSoft)", marginTop:4, lineHeight:1.4 } },
+              r.productNames.slice(0,3).join(", ") + (r.productNames.length>3 ? "…" : "")),
+          ]),
+        ]))
+      ),
+    ]),
+  ]);
+}
+
 function SalesReportView({ isAdmin, myStaff }){
   const [reportsMap, setReportsMap] = useState({});
   const [checkpoints, setCheckpoints] = useState(DEFAULT_SALES_CHECKPOINTS);
@@ -8839,7 +8976,7 @@ function BaoCaoTuanView({ isAdmin, myStaff }){
 // cáo quản lý (kế hoạch tuần) + Báo cáo nhà thuốc — mỗi tab gộp có thanh tab con bên trong (xem
 // HangHoaView/NhanVienView/BaoCaoTuanView). Bỏ hẳn tab "Báo cáo doanh số" (sales) — đã có tab
 // "Doanh thu" tự động tính từ dữ liệu API thay thế.
-const STAFF_TABS = ["checklist","homnay","photos","hanghoa","tasks","kpi","crm","training","kudos","temgia","revenueAnalytics","nhanvien","ctkm","baocaotuan","sales","kinhnghiem"];
+const STAFF_TABS = ["checklist","homnay","photos","hanghoa","donthuoc","tasks","kpi","crm","training","kudos","temgia","revenueAnalytics","nhanvien","ctkm","baocaotuan","sales","kinhnghiem"];
 const OPS_TABS = [
   { id:"command", label:"Tổng quan điều hành" },
   { id:"shop360", label:"Hồ sơ nhà thuốc" },
@@ -8851,6 +8988,7 @@ const OPS_TABS = [
   { id:"homnay", label:"Hôm nay nhà thuốc" },
   { id:"photos", label:"Báo cáo hình ảnh" },
   { id:"hanghoa", label:"Hàng hoá" },
+  { id:"donthuoc", label:"Thư viện đơn thuốc" },
   { id:"revenueAnalytics", label:"Doanh thu" },
   { id:"baocaotuan", label:"Báo cáo tuần" },
   { id:"sales", label:"Báo cáo doanh số ngày" },
@@ -8880,7 +9018,7 @@ const OPS_GROUPS_ADMIN = [
   { id:"command", label:"Tổng quan điều hành", tabs:["command","shop360"] },
   { id:"nhansu", label:"Nhân sự", tabs:["emp360","tasks","kpi","nhanvien","training","kudos"] },
   { id:"khachhang", label:"Khách hàng", tabs:["cust360","crm","ctkm"] },
-  { id:"hanghoagroup", label:"Hàng hoá", tabs:["prod360","hanghoa","temgia"] },
+  { id:"hanghoagroup", label:"Hàng hoá", tabs:["prod360","hanghoa","donthuoc","temgia"] },
   { id:"vanhanh", label:"Vận hành", tabs:["checklist","homnay","photos","revenueAnalytics","baocaotuan","kinhnghiem"] },
   { id:"action", label:"Công việc cần xử lý", tabs:["action"] },
   { id:"ai", label:"AI", tabs:["ai"] },
@@ -13669,6 +13807,7 @@ function Dashboard({ user, isAdmin, myStaff }){
         activeTab==="homnay" && React.createElement(TodayShopTasksView, { key:viewResetKey, isAdmin, myStaff, onNavigate:setActiveTab }),
         activeTab==="photos" && React.createElement(ImageReportView, { key:viewResetKey, isAdmin, myStaff }),
         activeTab==="hanghoa" && React.createElement(HangHoaView, { key:viewResetKey, isAdmin, myStaff, navParam }),
+        activeTab==="donthuoc" && React.createElement(PrescriptionLibraryView, { key:viewResetKey, isAdmin, myStaff }),
         activeTab==="tasks" && React.createElement(TaskAssignView, { key:viewResetKey, isAdmin, myStaff, navParam }),
         activeTab==="kpi" && React.createElement(KpiView, { key:viewResetKey, isAdmin, myStaff }),
         activeTab==="crm" && React.createElement(CrmView, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab }),
