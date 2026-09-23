@@ -4405,8 +4405,13 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
   const LEVEL_NAMES = ["Loyal","Silver","Titan","Gold","Platinum","Diamond"];
   // CDP — phân khúc do computeCustomerSegmentsDaily tính mỗi ngày, ghi thẳng vào field "segments"
   // của từng khách trong crmCustomers (xem index.js).
+  // 23/9/2026: bỏ "VIP (chăm sóc tự động)" khỏi danh sách hiển thị/lọc — trùng tập khách với
+  // "Khách VIP" (mọi khách VIP đều có cả 2 nhãn), gây trùng lặp không cần thiết trên UI; nhãn này
+  // vẫn được backend gắn ngầm để phục vụ tự động hoá (Nhóm 1 trong "Cần chăm sóc"...), chỉ ẩn khỏi
+  // đây. Cũng bỏ "VIP hay đổi nhà thuốc" (tính năng đã gỡ, xem index.js) và bỏ icon 🎂 khỏi
+  // "Sinh nhật hôm nay" (đổi tên chuỗi tương ứng bên index.js).
   const SEGMENT_NAMES = ["Khách mới", "Khách VIP", "Sắp đến kỳ mua lại", "Có nguy cơ rời bỏ", "Giá trị cao im lặng", "Chưa phân công",
-    "VIP (chăm sóc tự động)", "Thân thiết (chăm sóc tự động)", "Thân thiết tăng trưởng — tiềm năng lên VIP", "🎂 Sinh nhật hôm nay", "⚠️ VIP hay đổi nhà thuốc"];
+    "Thân thiết (chăm sóc tự động)", "Thân thiết tăng trưởng — tiềm năng lên VIP", "Sinh nhật hôm nay"];
 
   // Chỉ hiện khách thuộc ĐÚNG 9 nhà thuốc trong chuỗi (DEFAULT_SHOPS) — trước đây admin thấy CẢ
   // những mã shop lạ (VD "SHOP0044", "SHOP0049") lẫn trong dữ liệu đồng bộ từ hệ thống ngoài (có
@@ -4626,11 +4631,13 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
   // CDP — nhãn phân khúc (tính mỗi ngày bởi computeCustomerSegmentsDaily, xem index.js).
   function segmentBadge(name){
     const colors = { "Khách mới":"#16A34A", "Khách VIP":"#C9A227", "Sắp đến kỳ mua lại":"#0891b2", "Có nguy cơ rời bỏ":"#D98A1F", "Giá trị cao im lặng":"#B0483A", "Chưa phân công":"#6b7280",
-      "VIP (chăm sóc tự động)":"#C9A227", "Thân thiết (chăm sóc tự động)":"#0891b2", "Thân thiết tăng trưởng — tiềm năng lên VIP":"#16A34A", "🎂 Sinh nhật hôm nay":"#B0483A",
-      "⚠️ VIP hay đổi nhà thuốc":"#B0483A" };
+      "Thân thiết (chăm sóc tự động)":"#0891b2", "Thân thiết tăng trưởng — tiềm năng lên VIP":"#16A34A", "Sinh nhật hôm nay":"#B0483A" };
     const c = colors[name] || "#6b7280";
     return React.createElement("span", { key:name, style:{ background:c+"1A", color:c, fontWeight:600, fontSize:10.5, padding:"2px 7px", borderRadius:999, marginRight:4, display:"inline-block", marginBottom:3 } }, name);
   }
+  // 23/9/2026: "VIP (chăm sóc tự động)" không còn hiển thị làm badge riêng — trùng tập khách với
+  // "Khách VIP" (backend vẫn gắn ngầm nhãn này để phục vụ sắp xếp/nhóm nội bộ, xem index.js).
+  function visibleSegments(segs){ return (segs||[]).filter(s => s!=="VIP (chăm sóc tự động)"); }
 
   function formatLastPurchase(stats){
     if(!stats || !stats.lastPurchaseAt) return "Chưa có dữ liệu";
@@ -4842,7 +4849,7 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
             React.createElement("td", { key:"n", style:{ padding:"8px 10px" } }, [
               React.createElement("div", { key:"nm", style:{ fontWeight:600 } }, c.name||"(chưa có tên)"),
               React.createElement("div", { key:"ph", style:{ color:"var(--inkSoft)" } }, c.phone),
-              (c.segments||[]).length>0 && React.createElement("div", { key:"seg", style:{ marginTop:3 } }, (c.segments||[]).map(segmentBadge)),
+              visibleSegments(c.segments).length>0 && React.createElement("div", { key:"seg", style:{ marginTop:3 } }, visibleSegments(c.segments).map(segmentBadge)),
             ]),
             React.createElement("td", { key:"l", style:{ padding:"8px 10px" } }, levelBadge(c.levelName)),
             React.createElement("td", { key:"sh", style:{ padding:"8px 10px" } }, c.shop),
@@ -4878,12 +4885,12 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
             React.createElement("div", { key:"ph", style:{ color:"var(--inkSoft)", fontSize:12.5 } }, selected.phone),
           ]),
           React.createElement("div", { key:"acts", style:{ display:"flex", gap:6 } }, [
-            isAdmin && onNavigate && React.createElement("button", { key:"c360", type:"button", className:"btn", style:{ padding:"3px 9px", fontSize:11.5 }, onClick:()=>onNavigate("cust360", { phone:selected.phone }) }, "Customer 360 ›"),
+            onNavigate && React.createElement("button", { key:"c360", type:"button", className:"btn", style:{ padding:"3px 9px", fontSize:11.5 }, onClick:()=>onNavigate("cust360", { phone:selected.phone }) }, "Customer 360 ›"),
             React.createElement("button", { key:"x", type:"button", className:"btn", style:{ padding:"3px 9px" }, onClick:()=>setSelectedPhone(null) }, "×"),
           ]),
         ]),
         React.createElement("div", { key:"lvl", style:{ margin:"8px 0" } }, levelBadge(selected.levelName)),
-        (selected.segments||[]).length>0 && React.createElement("div", { key:"segs", style:{ marginBottom:8 } }, (selected.segments||[]).map(segmentBadge)),
+        visibleSegments(selected.segments).length>0 && React.createElement("div", { key:"segs", style:{ marginBottom:8 } }, visibleSegments(selected.segments).map(segmentBadge)),
         React.createElement("div", { key:"stats", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:4 } },
           // "invoiceRank" đến từ đồng bộ hồ sơ 6 tháng (chạy hàng ngày) — khách VỪA mua lần đầu có
           // thể đã có sự kiện mua hàng (real-time) nhưng invoiceRank CHƯA kịp cập nhật, gây hiện
@@ -9212,7 +9219,9 @@ function BaoCaoTuanView({ isAdmin, myStaff }){
 // 23/9/2026: ẩn tab "Thư viện đơn thuốc" (donthuoc) khỏi menu — bỏ khỏi STAFF_TABS + lọc thêm ở
 // leafTabs bên dưới (Dashboard()) cho cả quản lý. Code màn hình (PrescriptionLibraryView) và route
 // render vẫn giữ nguyên, chỉ ẩn khỏi điều hướng nên có thể bật lại dễ dàng sau này nếu cần.
-const STAFF_TABS = ["checklist","homnay","photos","hanghoa","tasks","kpi","crm","training","kudos","temgia","revenueAnalytics","nhanvien","ctkm","baocaotuan","sales","kinhnghiem"];
+// 23/9/2026: thêm "cust360" (Customer 360) vào STAFF_TABS — trước đây chỉ quản lý (isAdmin) mới
+// thấy tab này; xem Customer360View bên dưới (đã tự lọc theo nhà thuốc của nhân viên khi !isAdmin).
+const STAFF_TABS = ["checklist","homnay","photos","hanghoa","tasks","kpi","crm","cust360","training","kudos","temgia","revenueAnalytics","nhanvien","ctkm","baocaotuan","sales","kinhnghiem"];
 const OPS_TABS = [
   { id:"command", label:"Tổng quan điều hành" },
   { id:"shop360", label:"Hồ sơ nhà thuốc" },
@@ -11993,7 +12002,10 @@ async function prefixQuery360(col, field, q, lim){
   const snap = await db.collection(col).where(field, ">=", q).where(field, "<=", q + "\uf8ff").limit(lim).get();
   return snap.docs.map(d => ({ id:d.id, ...d.data() }));
 }
-async function searchCustomers360(q){
+// 23/9/2026: thêm tham số shopScope (truyền shop của nhân viên khi !isAdmin trong Customer360View)
+// — lọc kết quả CLIENT-SIDE sau khi tra (không thêm điều kiện shop vào query Firestore để tránh
+// cần thêm composite index cho các query prefix theo phone/name vốn đang chạy ổn định).
+async function searchCustomers360(q, shopScope){
   const s = q.trim(); if(s.length < 2) return [];
   const digits = s.replace(/\D/g, "");
   const looksPhone = digits.length >= 3 && digits.length === s.replace(/[\s.\-+]/g, "").length;
@@ -12007,7 +12019,8 @@ async function searchCustomers360(q){
   const res = await Promise.all(jobs.map(p => p.catch(() => [])));
   const map = new Map();
   res.flat().forEach(c => { if(!map.has(c.id)) map.set(c.id, c); });
-  return Array.from(map.values()).slice(0, 20);
+  const all = Array.from(map.values());
+  return (shopScope ? all.filter(c => c.shop===shopScope) : all).slice(0, 20);
 }
 async function searchProducts360(q){
   const s = q.trim(); if(s.length < 2) return [];
@@ -12913,14 +12926,19 @@ function Customer360View({ isAdmin, myStaff, navParam, onNavigate }){
 
   useEffect(()=>{ if(navParam && navParam.phone){ setPhone(navParam.phone); setTab("overview"); } }, [navParam]);
   // Danh sách gợi ý khi chưa chọn khách: 2 nhóm cần chăm sóc nhất (đọc giới hạn 8 khách/nhóm).
+  // 23/9/2026: nhân viên (!isAdmin) chỉ thấy khách thuộc ĐÚNG nhà thuốc của mình — giống cách
+  // scopedCustomers lọc ở tab "Khách hàng" — quản lý (isAdmin) vẫn thấy toàn chuỗi như cũ.
   useEffect(()=>{
     if(phone) return;
     let cancelled = false;
-    const get = (seg) => db.collection("crmCustomers").where("segments", "array-contains", seg).limit(8).get()
-      .then(s => s.docs.map(d => ({ id:d.id, ...d.data() }))).catch(() => []);
+    const get = (seg) => {
+      let q = db.collection("crmCustomers").where("segments", "array-contains", seg);
+      if(!isAdmin && myStaff && myStaff.shop) q = q.where("shop", "==", myStaff.shop);
+      return q.limit(8).get().then(s => s.docs.map(d => ({ id:d.id, ...d.data() }))).catch(() => []);
+    };
     Promise.all([get("Giá trị cao im lặng"), get("Có nguy cơ rời bỏ")]).then(([a, b]) => { if(!cancelled) setLists({ silent:a, risk:b }); });
     return ()=>{ cancelled = true; };
-  }, [phone]);
+  }, [phone, isAdmin, myStaff]);
   useEffect(()=>{
     if(!phone){ setCust(null); setEvents([]); setInter([]); setSegHist([]); return undefined; }
     setCustLoading(true);
@@ -12946,9 +12964,11 @@ function Customer360View({ isAdmin, myStaff, navParam, onNavigate }){
     return ()=>{ cancelled = true; };
   }, [phone, tick]);
 
+  // 23/9/2026: nhân viên (!isAdmin) chỉ tìm/thấy khách thuộc nhà thuốc của mình (xem
+  // searchCustomers360 — lọc CLIENT-SIDE theo shopScope truyền vào).
   async function runSearch(){
     setSearching(true);
-    try{ setResults(await searchCustomers360(q)); } catch(err){ logSystemError("searchCustomers360", err); setResults([]); }
+    try{ setResults(await searchCustomers360(q, !isAdmin && myStaff ? myStaff.shop : null)); } catch(err){ logSystemError("searchCustomers360", err); setResults([]); }
     setSearching(false);
   }
   const header = rc("div", { key:"head", style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", flexWrap:"wrap", gap:10, marginBottom:14 } }, [
@@ -14037,7 +14057,7 @@ function Dashboard({ user, isAdmin, myStaff }){
         activeTab==="shop360" && isAdmin && React.createElement(ShopProfileView, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab }),
         activeTab==="action" && isAdmin && React.createElement(ActionCenterView, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab, openTasks:openTasks360 }),
         activeTab==="emp360" && isAdmin && React.createElement(Employee360View, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab }),
-        activeTab==="cust360" && isAdmin && React.createElement(Customer360View, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab }),
+        activeTab==="cust360" && React.createElement(Customer360View, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab }),
         activeTab==="prod360" && isAdmin && React.createElement(Product360View, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab }),
         activeTab==="checklist" && React.createElement(DailyChecklistView, { key:viewResetKey, isAdmin, myStaff }),
         activeTab==="homnay" && React.createElement(TodayShopTasksView, { key:viewResetKey, isAdmin, myStaff, onNavigate:setActiveTab }),
