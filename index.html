@@ -447,6 +447,10 @@ async function uploadTaskAttachmentFile(file, path, onProgress){
 
 let DEFAULT_SHOPS = ["SHOP0058","SHOP0059","SHOP0072","SHOP0074","SHOP0089","SHOP0095","SHOP0121","SHOP0122","SHOP0163"];
 const STAFF_ROLES = ["Nhân viên học việc","Nhân viên bán hàng","Cửa hàng trưởng"];
+// Thêm 23/9/2026: "Khu vực" (tỉnh/thành nơi nhà thuốc/nhân viên làm việc) — dùng làm cơ sở để lấy
+// đúng dữ liệu thời tiết theo vùng cho báo cáo kinh doanh sau này; và "Level nhân viên" (khớp với
+// các mục chấm điểm "Số nhân viên đạt level 1..4" đã có sẵn trong KPI, xem ns_level1..ns_level4).
+const STAFF_LEVELS = ["Chưa xếp level","Level 1","Level 2","Level 3","Level 4"];
 
 function uid(){ return "id" + Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
 function todayISO(){ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
@@ -6849,18 +6853,19 @@ function StaffView(){
   const [staff, setStaff] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const [form, setForm] = useState({ name:"", shop:DEFAULT_SHOPS[0], role:STAFF_ROLES[1], ngayVaoLam:"" });
+  const [form, setForm] = useState({ name:"", shop:DEFAULT_SHOPS[0], role:STAFF_ROLES[1], ngayVaoLam:"", khuVuc:"", level:STAFF_LEVELS[0] });
   const [creatingFor, setCreatingFor] = useState(null);
   useEffect(()=>{ const u = subscribeCol("staff", setStaff); return u; }, []);
 
-  function openAdd(){ setEditingId(null); setForm({ name:"", shop:DEFAULT_SHOPS[0], role:STAFF_ROLES[1], ngayVaoLam:"" }); setShowForm(true); }
-  function openEdit(s){ setEditingId(s.id); setForm({ name:s.name, shop:s.shop, role:s.role, ngayVaoLam:s.ngayVaoLam||"" }); setShowForm(true); }
+  function openAdd(){ setEditingId(null); setForm({ name:"", shop:DEFAULT_SHOPS[0], role:STAFF_ROLES[1], ngayVaoLam:"", khuVuc:"", level:STAFF_LEVELS[0] }); setShowForm(true); }
+  function openEdit(s){ setEditingId(s.id); setForm({ name:s.name, shop:s.shop, role:s.role, ngayVaoLam:s.ngayVaoLam||"", khuVuc:s.khuVuc||"", level:s.level||STAFF_LEVELS[0] }); setShowForm(true); }
   async function submit(e){
     e.preventDefault();
     if(!form.name.trim()) return;
     // P1-1 (mục X, "Thời gian làm việc"): trường "ngayVaoLam" là bổ sung, không bắt buộc — nhân viên cũ
     // chưa có dữ liệu này vẫn hoạt động bình thường, Employee 360 sẽ hiện "chưa cập nhật".
-    const payload = { name:form.name.trim(), shop:form.shop, role:form.role, ngayVaoLam:form.ngayVaoLam||null };
+    // 23/9/2026: "khuVuc" và "level" cũng là bổ sung, không bắt buộc — nhân viên cũ chưa có sẽ hiện "—".
+    const payload = { name:form.name.trim(), shop:form.shop, role:form.role, ngayVaoLam:form.ngayVaoLam||null, khuVuc:form.khuVuc.trim()||null, level:form.level||null };
     if(editingId) await updateDoc("staff", editingId, payload);
     else await addDoc("staff", payload);
     setShowForm(false); setEditingId(null);
@@ -6876,11 +6881,13 @@ function StaffView(){
   const table = staff.length===0
     ? React.createElement("div", { className:"emptyState" }, "Chưa có nhân viên nào — thêm để dùng cho Buddy và Tặng sao.")
     : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
-        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Tên","Nhà thuốc","Vai trò","Vào làm","Tài khoản",""].map((h,i)=>React.createElement("th",{key:i},h)))),
+        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Tên","Nhà thuốc","Khu vực","Vai trò","Level","Vào làm","Tài khoản",""].map((h,i)=>React.createElement("th",{key:i},h)))),
         React.createElement("tbody",{key:"b"}, staff.map(s => React.createElement("tr",{key:s.id}, [
           React.createElement("td",{key:"n"}, s.name),
           React.createElement("td",{key:"sh"}, s.shop),
+          React.createElement("td",{key:"kv"}, s.khuVuc || "—"),
           React.createElement("td",{key:"r"}, s.role),
+          React.createElement("td",{key:"lv"}, s.level || "—"),
           React.createElement("td",{key:"jd"}, s.ngayVaoLam ? s.ngayVaoLam.split("-").reverse().join("/") : "—"),
           React.createElement("td",{key:"acc"}, s.uid ? StatusPill(s.email || "Đã có", "good") : StatusPill("Chưa có", "warn")),
           React.createElement("td",{key:"a", style:{whiteSpace:"nowrap"}}, [
@@ -6899,6 +6906,10 @@ function StaffView(){
         React.createElement("div", { key:"r", className:"fieldRow", style:{ display:"flex", gap:10, marginBottom:16 } }, [
           React.createElement("div", { key:"a", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Nhà thuốc"), React.createElement("select",{key:"i",value:form.shop,onChange:e=>setForm({...form,shop:e.target.value})}, DEFAULT_SHOPS.map(s=>React.createElement("option",{key:s,value:s},s))) ]),
           React.createElement("div", { key:"b", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Vai trò"), React.createElement("select",{key:"i",value:form.role,onChange:e=>setForm({...form,role:e.target.value})}, STAFF_ROLES.map(r=>React.createElement("option",{key:r,value:r},r))) ]),
+        ]),
+        React.createElement("div", { key:"r2", className:"fieldRow", style:{ display:"flex", gap:10, marginBottom:16 } }, [
+          React.createElement("div", { key:"a", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Khu vực (tỉnh/thành — dùng để lấy thời tiết)"), React.createElement("input",{key:"i",type:"text",value:form.khuVuc,onChange:e=>setForm({...form,khuVuc:e.target.value}),placeholder:"VD: Hà Nội, TP.HCM, Đà Nẵng..."}) ]),
+          React.createElement("div", { key:"b", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Level nhân viên"), React.createElement("select",{key:"i",value:form.level,onChange:e=>setForm({...form,level:e.target.value})}, STAFF_LEVELS.map(lv=>React.createElement("option",{key:lv,value:lv},lv))) ]),
         ]),
         React.createElement("div", { key:"jd", className:"field", style:{ marginBottom:16 } }, [ React.createElement("label",{key:"l"},"Ngày vào làm (không bắt buộc)"), React.createElement("input",{key:"i",type:"date",value:form.ngayVaoLam,onChange:e=>setForm({...form,ngayVaoLam:e.target.value})}) ]),
         React.createElement("div", { key:"btns", className:"btnRow", style:{ justifyContent:"flex-end" } }, [
