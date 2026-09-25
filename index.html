@@ -9256,6 +9256,14 @@ function PromoAnalyticsView({ isAdmin, myStaff }){
 // hệ thống giao việc nào) — lưu liên kết productKey -> assignedTaskId vào collection nhỏ mới
 // "promoProductTags" để biết SP nào đã giao việc và xem lại đúng task đó bất cứ lúc nào.
 function promoProductKey(name){ return slugifyPromoName(name); }
+// 25/9/2026 (3): "name" ở đây giờ là TÊN CHƯƠNG TRÌNH (đã gộp theo promoProgramKeyOf() ở backend),
+// không còn là tên từng sản phẩm — hiển thị gọn danh sách cửa hàng và khoảng ngày thực tế có phát
+// sinh, tất cả lấy thẳng từ dữ liệu trả về, không tự suy diễn thêm.
+function promoShopsLabel(shops){
+  if(!shops || !shops.length) return "—";
+  if(shops.length<=3) return shops.map(shopLabel).join(", ");
+  return `${shops.slice(0,3).map(shopLabel).join(", ")} +${shops.length-3}`;
+}
 function usePromoProductTags(){
   const [tags, setTags] = useState({});
   useEffect(()=>{
@@ -9283,20 +9291,33 @@ function PromoProductTagCell({ productKey, productName, tag, isAdmin, shopFilter
       key:"c",
       preset:{
         heading:`Giao việc — ${productName}`,
-        title:`Rà soát sản phẩm khuyến mãi: ${productName}`,
-        mota:`Sản phẩm có tên trông giống chương trình khuyến mãi, cần rà soát hiệu quả/tồn kho/giá.`,
+        title:`Rà soát chương trình khuyến mãi: ${productName}`,
+        mota:`Chương trình/sản phẩm có tên trông giống khuyến mãi, cần rà soát hiệu quả/tồn kho/giá.`,
         module:"Khác", ...( shopFilter && shopFilter!=="Tất cả" ? { shopOnly:true, shop:shopFilter } : {} ),
       },
       onClose:()=>setShowCompose(false), onSaved:onTaskSaved,
     }),
   ]);
 }
-function promoConcentrationNote(topProducts, totalRevenue){
-  if(!topProducts.length || !totalRevenue) return null;
-  const top1 = topProducts[0];
-  const share = totalRevenue>0 ? (top1.revenue||0)/totalRevenue : 0;
-  if(share >= 0.4) return { level:"warn", text:`"${top1.name}" chiếm ${(share*100).toFixed(0)}% doanh số liên quan khuyến mãi — phụ thuộc khá nhiều vào 1 sản phẩm, nên rà soát nếu chương trình này dừng/hết hàng.` };
-  return null;
+// 25/9/2026 (2): quản lý phản ánh giao diện bản đầu "xấu", muốn giống HẲN bố cục bảng của app
+// Dashboard (thẻ trắng viền màu theo mức cảnh báo, nhiều dòng "Phương án hành động" chứ không chỉ 1,
+// bảng chi tiết đầy đủ cột Đề xuất + Giao việc thay vì list rời rạc) — làm lại theo đúng mẫu đó,
+// CL360/Pill360 (tông màu sẵn có của app này) thay cho COLORS của app Dashboard.
+function promoProductRecommendation(p, totalRevenue, avgRevenue){
+  const share = totalRevenue>0 ? (p.revenue||0)/totalRevenue : 0;
+  if(share >= 0.25) return { level:"warn", text:`Chiếm ${(share*100).toFixed(0)}% doanh số liên quan khuyến mãi — phụ thuộc khá nhiều vào 1 chương trình, nên rà soát nếu chương trình/nguồn hàng này dừng.` };
+  if(avgRevenue>0 && (p.revenue||0) >= avgRevenue*1.5) return { level:"good", text:`Doanh thu cao hơn trung bình nhóm — đang bán tốt, có thể cân nhắc đẩy mạnh thêm.` };
+  return { level:"normal", text:"Ở mức trung bình, chưa có dấu hiệu bất thường." };
+}
+// Hàm (không phải const object) — vì CL360 khai báo PHÍA SAU trong file, gọi ngay ở scope module
+// (như 1 object literal const) sẽ lỗi "Cannot access 'CL360' before initialization" (temporal dead
+// zone của const). Gọi bên trong thân hàm component thì luôn an toàn vì lúc đó cả file đã chạy xong.
+function promoRecStyleOps(level){
+  return {
+    warn: { fg:CL360.bad, bg:"#FBE3E1", icon:"⚠️" },
+    good: { fg:CL360.good, bg:"var(--pineSoft)", icon:"✅" },
+    normal: { fg:CL360.gray, bg:"var(--paper)", icon:"•" },
+  }[level];
 }
 function PromoAutoDetectSection({ isAdmin, myStaff }){
   const { stats, refreshing, refresh } = useRevenueAnalytics();
@@ -9308,43 +9329,70 @@ function PromoAutoDetectSection({ isAdmin, myStaff }){
   const topProducts = promo ? promo.topProducts||[] : [];
   const totalRevenueShown = (isAll ? promo && promo.revenue30 : (shopVal && shopVal.revenue)) || 0;
   const tags = usePromoProductTags();
-  const concentration = promoConcentrationNote(topProducts, isAll ? totalRevenueShown : topProducts.reduce((s,p)=>s+(p.revenue||0),0));
+  const totalForShare = isAll ? totalRevenueShown : topProducts.reduce((s,p)=>s+(p.revenue||0),0);
+  const avgRevenue = topProducts.length ? topProducts.reduce((s,p)=>s+(p.revenue||0),0)/topProducts.length : 0;
+  const productsWithRec = topProducts.map(p => ({ ...p, rec: promoProductRecommendation(p, totalForShare, avgRevenue) }));
+  const attentionList = productsWithRec.filter(p => p.rec.level==="warn");
   return React.createElement("div", { style:{ marginTop:24 } }, [
-    React.createElement("div", { key:"title", style:{ fontWeight:700, fontSize:14, marginBottom:4 } }, "Ước tính tự động theo tên hàng (bổ sung)"),
-    React.createElement("p", { key:"sub", className:"pagesub", style:{ marginTop:0 } }, "Nhận diện tự động theo tên hàng có dấu hiệu khuyến mãi (Combo, Tặng kèm, Giảm giá...) trong 30 ngày gần nhất — chưa có cột \"loại khuyến mãi\" riêng trong dữ liệu đồng bộ nên đây là ước tính, không phải số tuyệt đối, không thay thế báo cáo theo chương trình ở trên. Doanh số ở đây là doanh thu bán THỰC TẾ của các sản phẩm này (số dương), khác với \"so sánh theo kỳ\" — không phải chi phí khuyến mãi."),
+    React.createElement("div", { key:"title", style:{ fontWeight:700, fontSize:14, marginBottom:4 } }, "Ước tính tự động theo chương trình (bổ sung)"),
+    React.createElement("p", { key:"sub", className:"pagesub", style:{ marginTop:0 } }, "Nhận diện tự động theo tên hàng có dấu hiệu khuyến mãi (Combo, Tặng kèm, Giảm giá...) trong 30 ngày gần nhất, rồi GỘP theo tên chương trình (phần trong ngoặc vuông ở đầu tên hàng, nếu có) — chưa có cột \"loại khuyến mãi\" riêng trong dữ liệu đồng bộ nên đây là ước tính, không phải số tuyệt đối, không thay thế báo cáo theo chương trình ở trên. Doanh số ở đây là doanh thu bán THỰC TẾ của các sản phẩm thuộc chương trình (số dương), khác với \"so sánh theo kỳ\" — không phải chi phí khuyến mãi."),
     React.createElement(RevenueRefreshButton, { key:"rb", refreshing, onRefresh:refresh, computedAt: stats && stats.computedAt }),
     !stats || !promo ? React.createElement("div", { key:"empty", className:"card", style:{ fontSize:13, color:"var(--inkSoft)" } }, "Chưa có dữ liệu — bấm \"Tính lại\" ở trên.")
     : React.createElement(React.Fragment, { key:"body" }, [
         React.createElement(ShopFilterBar, { key:"filter", isAdmin, adminShop, setAdminShop, shopFilter }),
         React.createElement("div", { key:"grid", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10, marginBottom:16 } }, [
-          React.createElement(StatTile, { key:"rev", label:"Doanh số liên quan KM (30 ngày)", value: fmtVND(totalRevenueShown) }),
+          React.createElement(StatTile, { key:"cnt", label:"Số chương trình phát hiện", value: fmtNum(topProducts.length) }),
           React.createElement(StatTile, { key:"qty", label:"Số lượng bán (30 ngày)", value: fmtNum((isAll ? promo.qty30 : (shopVal && shopVal.qty)) || 0) }),
-          React.createElement(StatTile, { key:"cnt", label:"Số sản phẩm phát hiện", value: fmtNum(topProducts.length) }),
+          React.createElement(StatTile, { key:"rev", label:"Doanh số liên quan KM (30 ngày)", value: fmtVND(totalRevenueShown), tint: totalRevenueShown>0 ? "var(--pineSoft)" : undefined }),
+          React.createElement(StatTile, { key:"avg", label:"Doanh thu TB / chương trình", value: avgRevenue ? fmtVND(Math.round(avgRevenue)) : "—" }),
         ]),
         topProducts.length>0 && React.createElement("div", { key:"chartcard", className:"card", style:{ marginBottom:16 } }, [
-          React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:4 } }, `Doanh thu theo sản phẩm (top ${Math.min(20,topProducts.length)}${isAll?" — toàn chuỗi":""})`),
+          React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:4 } }, `Doanh thu theo chương trình (top ${Math.min(20,topProducts.length)}${isAll?" — toàn chuỗi":""})`),
           React.createElement(EmployeeRevenueBarChart, { key:"chart", items: topProducts.slice(0,20).map(p=>({ name:p.name, revenue:p.revenue })) }),
         ]),
-        concentration && React.createElement("div", { key:"action", className:"card", style:{ marginBottom:16, background:"#FBE3E1" } }, [
-          React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:6 } }, "📋 Phương án hành động (tự động theo số liệu)"),
-          React.createElement("div", { key:"b", style:{ fontSize:12.5, color:"#7A2E2E" } }, concentration.text),
-        ]),
-        React.createElement("div", { key:"card", className:"card" }, [
-          React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, "Top sản phẩm có dấu hiệu khuyến mãi (toàn chuỗi, 30 ngày)"),
-          topProducts.length===0
-            ? React.createElement("div", { key:"e", style:{ fontSize:12.5, color:"var(--inkSoft)" } }, "Chưa phát hiện sản phẩm nào.")
-            : React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:10 } },
-                topProducts.map(p => {
-                  const key = promoProductKey(p.name);
-                  return React.createElement("div", { key:p.name, style:{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap", borderBottom:"1px solid #F0EEE2", paddingBottom:8 } }, [
-                    React.createElement("div", { key:"l", style:{ flex:"1 1 220px", minWidth:160 } }, [
-                      React.createElement("div", { key:"n", style:{ fontSize:12.5, fontWeight:600 } }, p.name),
-                      React.createElement("div", { key:"v", style:{ fontSize:11.5, color:"var(--inkSoft)" } }, `${fmtVND(p.revenue||0)} · SL ${fmtNum(p.qty||0)}`),
-                    ]),
-                    React.createElement(PromoProductTagCell, { key:"tag", productKey:key, productName:p.name, tag:tags[key], isAdmin, shopFilter }),
-                  ]);
-                })
+        React.createElement("div", { key:"action", className:"card", style:{ marginBottom:16 } }, [
+          React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, "📋 Phương án hành động (tự động theo số liệu)"),
+          attentionList.length===0
+            ? React.createElement("div", { key:"e", style:{ fontSize:12.5, color:"var(--inkSoft)" } }, "Chưa có sản phẩm nào chiếm tỷ trọng cao bất thường.")
+            : React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8 } },
+                attentionList.map(p => React.createElement("div", { key:p.name, style:{
+                  display:"flex", gap:10, alignItems:"flex-start", fontSize:12.5,
+                  background:promoRecStyleOps(p.rec.level).bg, borderRadius:8, padding:"8px 12px",
+                } }, [
+                  React.createElement("span", { key:"i" }, promoRecStyleOps(p.rec.level).icon),
+                  React.createElement("div", { key:"b" }, [
+                    React.createElement("b", { key:"n" }, p.name),
+                    React.createElement("div", { key:"d", style:{ color:promoRecStyleOps(p.rec.level).fg, marginTop:2 } }, p.rec.text),
+                  ]),
+                ]))
               ),
+        ]),
+        React.createElement("div", { key:"card", className:"card", style:{ overflowX:"auto" } }, [
+          React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, `Top chương trình có dấu hiệu khuyến mãi (${isAll?"toàn chuỗi":shopFilter}, 30 ngày)`),
+          topProducts.length===0
+            ? React.createElement("div", { key:"e", style:{ fontSize:12.5, color:"var(--inkSoft)" } }, "Chưa phát hiện chương trình nào.")
+            : React.createElement("table", { key:"tbl", style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5 } }, [
+                React.createElement("thead", { key:"h" },
+                  React.createElement("tr", { style:{ borderBottom:"1.5px solid var(--line)" } },
+                    ["Tên chương trình","Doanh thu","SL bán","Số lượt","Từ ngày","Đến ngày","Cửa hàng","Đề xuất","Giao việc"].map((h,i) =>
+                      React.createElement("th", { key:i, style:{ textAlign: (i>=1&&i<=3)?"right":"left", padding:"6px 8px", color:"var(--inkSoft)", fontWeight:700, fontSize:11, textTransform:"uppercase", letterSpacing:.02, whiteSpace:"nowrap" } }, h)))),
+                React.createElement("tbody", { key:"b" }, productsWithRec.map(p => {
+                  const key = promoProductKey(p.name);
+                  return React.createElement("tr", { key:p.name, style:{ borderBottom:"1px solid #F0EEE2" } }, [
+                    React.createElement("td", { key:"n", style:{ padding:"9px 8px", fontWeight:600, maxWidth:280 } }, p.name),
+                    React.createElement("td", { key:"r", style:{ padding:"9px 8px", textAlign:"right" } }, fmtVND(p.revenue||0)),
+                    React.createElement("td", { key:"q", style:{ padding:"9px 8px", textAlign:"right" } }, fmtNum(p.qty||0)),
+                    React.createElement("td", { key:"l", style:{ padding:"9px 8px", textAlign:"right" } }, fmtNum(p.lines||0)),
+                    React.createElement("td", { key:"f", style:{ padding:"9px 8px", whiteSpace:"nowrap" } }, fmtDayFull(p.fromDate)),
+                    React.createElement("td", { key:"to", style:{ padding:"9px 8px", whiteSpace:"nowrap" } }, fmtDayFull(p.toDate)),
+                    React.createElement("td", { key:"sh", style:{ padding:"9px 8px", whiteSpace:"nowrap" } }, promoShopsLabel(p.shops)),
+                    React.createElement("td", { key:"rec", style:{ padding:"9px 8px", fontSize:11.5, maxWidth:220, color:promoRecStyleOps(p.rec.level).fg } }, [
+                      React.createElement("span", { key:"i" }, promoRecStyleOps(p.rec.level).icon+" "), p.rec.text,
+                    ]),
+                    React.createElement("td", { key:"tag", style:{ padding:"9px 8px" } }, React.createElement(PromoProductTagCell, { productKey:key, productName:p.name, tag:tags[key], isAdmin, shopFilter })),
+                  ]);
+                })),
+              ]),
         ]),
       ]),
   ]);
