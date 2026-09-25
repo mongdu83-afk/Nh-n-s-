@@ -713,6 +713,33 @@ function StatusPill(text, tone){
   return React.createElement("span", { className:"pill", style:{ color:c.fg, background:c.bg } }, text);
 }
 
+// 25/9/2026: PHÂN TRANG dùng chung cho mọi bảng báo cáo nhiều dòng (yêu cầu của Phương — bảng
+// nhiều dữ liệu tự ngắt thành nhiều trang cho dễ đọc, thay vì 1 danh sách dài cuộn mãi). Dùng
+// trong TỪNG component bảng (gọi như 1 hook bình thường, tuân thủ đúng Rules of Hooks — luôn gọi ở
+// đầu component, không gọi trong điều kiện/vòng lặp). Tự reset về trang 1 khi bộ lọc đổi khiến số
+// dòng đổi, để không bị kẹt ở 1 trang rỗng.
+function usePagedRows(rows, pageSize){
+  const size = pageSize || 50;
+  const [page, setPage] = useState(1);
+  const total = (rows||[]).length;
+  const totalPages = Math.max(1, Math.ceil(total/size));
+  useEffect(()=>{ if(page>totalPages) setPage(1); }, [totalPages]);
+  const safePage = Math.min(Math.max(1,page), totalPages);
+  const pageRows = (rows||[]).slice((safePage-1)*size, safePage*size);
+  return { pageRows, page:safePage, setPage, totalPages, total, pageSize:size };
+}
+// Thanh điều hướng trang — chỉ hiện khi có nhiều hơn 1 trang, không chiếm chỗ khi danh sách ngắn.
+function TablePager({ page, setPage, totalPages, total, pageSize }){
+  if(totalPages<=1) return null;
+  return React.createElement("div", { style:{ display:"flex", justifyContent:"center", alignItems:"center", gap:10, padding:"12px 0 4px", fontSize:12.5, flexWrap:"wrap" } }, [
+    React.createElement("button", { key:"first", type:"button", className:"btn btnGhost", disabled:page<=1, onClick:()=>setPage(1), style:{padding:"4px 9px",fontSize:12} }, "« Đầu"),
+    React.createElement("button", { key:"prev", type:"button", className:"btn btnGhost", disabled:page<=1, onClick:()=>setPage(p=>Math.max(1,p-1)), style:{padding:"4px 9px",fontSize:12} }, "‹ Trước"),
+    React.createElement("span", { key:"lbl", style:{ color:"var(--inkSoft)" } }, `Trang ${page}/${totalPages} · ${fmtNum(total)} dòng`),
+    React.createElement("button", { key:"next", type:"button", className:"btn btnGhost", disabled:page>=totalPages, onClick:()=>setPage(p=>Math.min(totalPages,p+1)), style:{padding:"4px 9px",fontSize:12} }, "Sau ›"),
+    React.createElement("button", { key:"last", type:"button", className:"btn btnGhost", disabled:page>=totalPages, onClick:()=>setPage(totalPages), style:{padding:"4px 9px",fontSize:12} }, "Cuối »"),
+  ]);
+}
+
 // ================= P0-3 (21/9/2026): 6 TRẠNG THÁI CÔNG VIỆC =================
 // Mở rộng "tasks" từ 2 trạng thái (Đang giao/Đã hoàn thành) thành 6 trạng thái hiển thị theo đúng
 // đặc tả mục XX, mà KHÔNG đổi field "trangThai" gốc (vẫn chỉ 2 giá trị như cũ) — tránh phải sửa lại
@@ -2098,12 +2125,14 @@ function CustomerOrderView({ isAdmin, myStaff }){
     });
     return Object.values(map).sort((a,b)=> b.count-a.count);
   })();
+  // 25/9/2026: phân trang thay vì cắt cứng 50 dòng đầu (trước đây ẩn luôn phần còn lại, không có cách xem tiếp).
+  const productGroupsPaged = usePagedRows(allProductGroups, 50);
   const statsCard = isAdmin && allProductGroups.length>0 && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
     React.createElement("div", { key:"t", className:"cardTitle" }, `Thống kê hàng khách hỏi không đáp ứng được (${dateRangeLabel})`),
     React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } }, "Gộp theo tên hàng, xếp theo số lượt hỏi nhiều nhất — dùng để rà soát mặt hàng hay hết/hay bị hỏi mà không đáp ứng được."),
-    React.createElement("div", { className:"tableWrap", style:{ marginBottom:0 } }, React.createElement("table",{className:"data"}, [
+    React.createElement("div", { key:"tw", className:"tableWrap", style:{ marginBottom:0 } }, React.createElement("table",{className:"data"}, [
       React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Tên hàng","Công dụng","Số lượt hỏi","Số nhà thuốc","Hết tồn","Hệ thống không có"].map((h,i)=>React.createElement("th",{key:i},h)))),
-      React.createElement("tbody",{key:"b"}, allProductGroups.slice(0,50).map((g,i) => React.createElement("tr",{key:i}, [
+      React.createElement("tbody",{key:"b"}, productGroupsPaged.pageRows.map((g,i) => React.createElement("tr",{key:i}, [
         React.createElement("td",{key:"n"}, g.productName),
         React.createElement("td",{key:"cd"}, g.congDung || "—"),
         React.createElement("td",{key:"c"}, fmtNum(g.count)),
@@ -2112,6 +2141,7 @@ function CustomerOrderView({ isAdmin, myStaff }){
         React.createElement("td",{key:"kc"}, fmtNum(g.khongCoHeThong)),
       ]))),
     ])),
+    React.createElement(TablePager, { key:"pager", ...productGroupsPaged }),
   ]);
 
   function exportOrdersExcel(rows, filename){
@@ -2137,11 +2167,13 @@ function CustomerOrderView({ isAdmin, myStaff }){
     React.createElement("button", { key:"exp", type:"button", className:"btn btnGhost", onClick:()=>exportOrdersExcel(filteredOrders, `Khach_dat_hang_${todayISO()}.xlsx`) }, "Tải thống kê Excel"),
   ]);
 
+  const ordersPaged = usePagedRows(filteredOrders, 50);
   const adminTable = isAdmin && (filteredOrders.length===0
     ? React.createElement("div",{className:"emptyState"}, "Không có khách nào trong bộ lọc này.")
-    : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+    : React.createElement(React.Fragment, null, [
+      React.createElement("div", { key:"tw", className:"tableWrap" }, React.createElement("table",{className:"data"}, [
         React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Loại đơn","Khách hàng","SĐT","Hàng cần","Nhà thuốc","Ngày dự kiến giao","Trạng thái","Người ghi","Ghi chú thêm",""].map((h,i)=>React.createElement("th",{key:i},h)))),
-        React.createElement("tbody",{key:"b"}, filteredOrders.map(o => {
+        React.createElement("tbody",{key:"b"}, ordersPaged.pageRows.map(o => {
           const overdue = isOverdue(o);
           const isShip = o.loaiDon==="shipHang";
           const isHenLay = orderKind(o)==="henLay";
@@ -2168,7 +2200,9 @@ function CustomerOrderView({ isAdmin, myStaff }){
             ]),
           ]);
         })),
-      ])));
+      ])),
+      React.createElement(TablePager, { key:"pager", ...ordersPaged }),
+    ]));
 
   const isShipForm = form.loaiDon==="shipHang";
   const isHenLayForm = form.loaiDon==="henLay";
@@ -2897,19 +2931,24 @@ function WeeklyReportView({ isAdmin, myStaff }){
   );
 
   const sortedReports = [...shopReports].sort((a,b)=> a.tuanNgay<b.tuanNgay?1:-1);
+  // 25/9/2026: phân trang — báo cáo tuần cộng dồn theo thời gian, có thể lên tới hàng trăm dòng.
+  const reportsPaged = usePagedRows(sortedReports, 50);
   const adminTable = sortedReports.length===0
     ? React.createElement("div",{className:"emptyState"}, "Chưa có báo cáo tuần nào trong bộ lọc này.")
-    : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
-        React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Nhà thuốc","Tuần","Người báo cáo","AI","Điểm chủ chấm",""].map((h,i)=>React.createElement("th",{key:i},h)))),
-        React.createElement("tbody",{key:"b"}, sortedReports.map(r => React.createElement("tr",{key:r.id}, [
-          React.createElement("td",{key:"sh"}, r.shop),
-          React.createElement("td",{key:"w"}, r.tuanNgay),
-          React.createElement("td",{key:"n"}, r.nguoiBaoCao || "—"),
-          React.createElement("td",{key:"ai"}, r.aiFlag ? StatusPill(r.aiFlag, aiFlagTone(r.aiFlag)) : StatusPill("Chưa có","neutral")),
-          React.createElement("td",{key:"d"}, r.diemChu!=null ? "★".repeat(r.diemChu) : "—"),
-          React.createElement("td",{key:"a"}, React.createElement("button",{className:"btn", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>setReviewId(r.id)}, "Xem & chấm")),
-        ]))),
-      ]));
+    : React.createElement(React.Fragment, null, [
+        React.createElement("div", { key:"tw", className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+          React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Nhà thuốc","Tuần","Người báo cáo","AI","Điểm chủ chấm",""].map((h,i)=>React.createElement("th",{key:i},h)))),
+          React.createElement("tbody",{key:"b"}, reportsPaged.pageRows.map(r => React.createElement("tr",{key:r.id}, [
+            React.createElement("td",{key:"sh"}, r.shop),
+            React.createElement("td",{key:"w"}, r.tuanNgay),
+            React.createElement("td",{key:"n"}, r.nguoiBaoCao || "—"),
+            React.createElement("td",{key:"ai"}, r.aiFlag ? StatusPill(r.aiFlag, aiFlagTone(r.aiFlag)) : StatusPill("Chưa có","neutral")),
+            React.createElement("td",{key:"d"}, r.diemChu!=null ? "★".repeat(r.diemChu) : "—"),
+            React.createElement("td",{key:"a"}, React.createElement("button",{className:"btn", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>setReviewId(r.id)}, "Xem & chấm")),
+          ]))),
+        ])),
+        React.createElement(TablePager, { key:"pager", ...reportsPaged }),
+      ]);
 
   const reviewingReport = reviewId ? reportsMap[reviewId] : null;
   const reviewingPrev = reviewingReport ? reportsMap[weeklyReportId(reviewingReport.shop, addDays(reviewingReport.tuanNgay,-7))] : null;
@@ -3276,11 +3315,14 @@ function TaskAssignView({ isAdmin, myStaff, navParam }){
       ["Tất cả","Đang giao","Chờ kiểm tra","Không đạt","Quá hạn","Đã hoàn thành"].map(s => React.createElement("option",{key:s,value:s},s))),
   ]);
 
+  // 25/9/2026: phân trang — công việc cộng dồn theo thời gian, có thể rất nhiều dòng.
+  const tasksPaged = usePagedRows(filteredTasks, 50);
   const adminTable = isAdmin && (filteredTasks.length===0
     ? React.createElement("div",{className:"emptyState"}, "Không có công việc nào trong bộ lọc này.")
-    : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+    : React.createElement(React.Fragment, null, [
+      React.createElement("div", { key:"tw", className:"tableWrap" }, React.createElement("table",{className:"data"}, [
         React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Công việc","Giao cho","Giao bởi","Hạn chót","Trạng thái",""].map((h,i)=>React.createElement("th",{key:i},h)))),
-        React.createElement("tbody",{key:"b"}, filteredTasks.map(t => {
+        React.createElement("tbody",{key:"b"}, tasksPaged.pageRows.map(t => {
           const overdue = isOverdue(t);
           const sub = taskSubStatus(t);
           const status = overdue && sub!=="Đã hoàn thành" ? { text:"Quá hạn", tone:"warn" } : { text:`${taskSubStatusIcon(sub)} ${sub}`, tone:taskSubStatusTone(sub) };
@@ -3304,7 +3346,9 @@ function TaskAssignView({ isAdmin, myStaff, navParam }){
             ]),
           ]);
         })),
-      ])));
+      ])),
+      React.createElement(TablePager, { key:"pager", ...tasksPaged }),
+    ]));
 
   const [feedbackText, setFeedbackText] = useState("");
   const [rejectText, setRejectText] = useState("");
@@ -4336,7 +4380,7 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
           React.createElement("button", { key:"refresh", className:"btn btnGhost", disabled:campaignRefreshing, onClick:refreshCampaignStats, style:{ fontSize:12, padding:"4px 10px" } }, campaignRefreshing ? "Đang tính..." : "↻ Tính lại"),
         ]),
       ]),
-      React.createElement("div", { key:"byrule", className:"card", style:{ marginBottom:16, padding:0, overflow:"hidden" } },
+      React.createElement("div", { key:"byrule", className:"card", style:{ marginBottom:16, padding:0, overflowX:"auto" } },
         React.createElement("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5 } }, [
           React.createElement("thead", { key:"h" }, React.createElement("tr", { style:{ background:"#f8f8f6" } }, [
             React.createElement("th", { key:"r", style:{ textAlign:"left", padding:"8px 10px" } }, "Chiến dịch"),
@@ -4389,7 +4433,7 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
           ]),
           React.createElement("button", { key:"refresh", className:"btn btnGhost", disabled:staffEffRefreshing, onClick:refreshStaffEffectiveness, style:{ fontSize:12, padding:"4px 10px" } }, staffEffRefreshing ? "Đang tính..." : "↻ Tính lại"),
         ]),
-        staffEffectiveness && (staffEffectiveness.byStaff||[]).length>0 && React.createElement("table", { key:"tbl", style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5 } }, [
+        staffEffectiveness && (staffEffectiveness.byStaff||[]).length>0 && React.createElement("div", { key:"tblwrap", style:{ overflowX:"auto" } }, React.createElement("table", { key:"tbl", style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5 } }, [
           React.createElement("thead", { key:"h" }, React.createElement("tr", { style:{ background:"#f8f8f6" } }, [
             React.createElement("th", { key:"n", style:{ textAlign:"left", padding:"8px 10px" } }, "Nhân viên"),
             // 23/9/2026: "Đang nhận" — số khách đang được phân công theo mô hình tự nhận (không
@@ -4406,7 +4450,7 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
             React.createElement("td", { key:"r", style:{ padding:"8px 10px", textAlign:"right" } }, s.returned),
             React.createElement("td", { key:"p", style:{ padding:"8px 10px", textAlign:"right", fontWeight:600, color: s.returnRate>=50 ? "var(--pine)" : "var(--clay)" } }, `${s.returnRate}%`),
           ]))),
-        ]),
+        ])),
       ]),
     ]);
   }
@@ -4875,7 +4919,7 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
     ]),
 
     React.createElement("div", { key:"body", style:{ display:"flex", gap:16, alignItems:"flex-start", flexWrap:"wrap" } }, [
-      React.createElement("div", { key:"list", className:"card", style:{ flex:"2 1 500px", padding:0, overflow:"hidden" } },
+      React.createElement("div", { key:"list", className:"card", style:{ flex:"2 1 500px", padding:0, overflowX:"auto" } },
         React.createElement("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5 } }, [
           React.createElement("thead", { key:"h" }, React.createElement("tr", { style:{ background:"#f8f8f6" } }, [
             React.createElement("th", { key:"chk", style:{ padding:"8px 6px" } },
@@ -9025,7 +9069,7 @@ function PromoImportPanel({ myStaff, monthKey, setMonthKey, onSaved }){
     ]),
     msg && React.createElement("div", { key:"msg", style:{ fontSize:12.5, color:"var(--pine)", background:"var(--pineSoft)", borderRadius:8, padding:"8px 10px", marginBottom:10 } }, msg),
     planParsed && React.createElement("div", { key:"preview" }, [
-      React.createElement("table", { key:"tbl", style:{ width:"100%", borderCollapse:"collapse", fontSize:12 } }, [
+      React.createElement("div", { key:"tblwrap", style:{ overflowX:"auto" } }, React.createElement("table", { key:"tbl", style:{ width:"100%", borderCollapse:"collapse", fontSize:12 } }, [
         React.createElement("thead", { key:"h" }, React.createElement("tr", {}, ["Lưu?","Chương trình","Chi phí KH","Doanh thu KH","Ghép với sheet thực tế","Giá trị đơn TB","Ghi chú"].map(h=>
           React.createElement("th", { key:h, style:{ textAlign:"left", padding:"6px 8px", borderBottom:"2px solid var(--line)" } }, h)))),
         React.createElement("tbody", { key:"b" }, planParsed.rows.map(row=>
@@ -9046,12 +9090,12 @@ function PromoImportPanel({ myStaff, monthKey, setMonthKey, onSaved }){
             React.createElement("td", { key:"note", style:{ padding:"6px 8px", borderBottom:"1px solid var(--line)" } },
               React.createElement("input", { type:"text", value:notes[row.name]||"", onChange:e=>setNotes(n=>({ ...n, [row.name]:e.target.value })), placeholder:"VD: thời gian, phạm vi NT...", style:{ width:"100%", fontSize:11.5, padding:"4px 6px", borderRadius:6, border:"1px solid var(--line)" } })),
           ]))),
-      ]),
+      ])),
       Object.keys(planParsed.skusBySheet||{}).length>0 && React.createElement("div", { key:"skusec", style:{ marginTop:18 } }, [
         React.createElement("div", { key:"t2", style:{ fontWeight:700, fontSize:13, marginBottom:4 } }, "Chương trình tính theo SKU (đã có sẵn dữ liệu bán hàng đồng bộ)"),
         React.createElement("div", { key:"sub2", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:10 } },
           "Với các chương trình giảm giá trực tiếp trên SP, tặng quà theo giá trị hoá đơn, combo... đã khai báo sẵn trên hệ thống bán hàng — không cần file thực tế riêng, chỉ cần chọn đúng danh sách SKU (tự dò từ sheet kế hoạch) + khoảng thời gian chạy chương trình, app tự cộng doanh thu/số lượng bán thực tế từ dữ liệu đã đồng bộ sẵn (cùng nguồn tab \"Doanh thu\")."),
-        React.createElement("table", { key:"tbl2", style:{ width:"100%", borderCollapse:"collapse", fontSize:12 } }, [
+        React.createElement("div", { key:"tblwrap2", style:{ overflowX:"auto" } }, React.createElement("table", { key:"tbl2", style:{ width:"100%", borderCollapse:"collapse", fontSize:12 } }, [
           React.createElement("thead", { key:"h" }, React.createElement("tr", {}, ["Chương trình","Ghép với DS SKU kế hoạch","Từ ngày","Đến ngày","","Kết quả"].map(h=>
             React.createElement("th", { key:h, style:{ textAlign:"left", padding:"6px 8px", borderBottom:"2px solid var(--line)" } }, h)))),
           React.createElement("tbody", { key:"b" }, planParsed.rows.filter(row=>included[row.name]!==false).map(row=>{
@@ -9101,7 +9145,7 @@ function PromoImportPanel({ myStaff, monthKey, setMonthKey, onSaved }){
               ]),
             ]);
           })),
-        ]),
+        ])),
       ]),
       React.createElement("div", { key:"save", style:{ marginTop:12 } },
         React.createElement("button", { type:"button", className:"btn btnPrimary", disabled:busy, onClick:doSave, style:{ padding:"8px 16px", fontSize:13 } },
@@ -9477,6 +9521,8 @@ function InventoryHealthView({ isAdmin, myStaff }){
   }).sort((a,b) => (a.daysLeft==null?9999:a.daysLeft) - (b.daysLeft==null?9999:b.daysLeft));
   const q = normalizeName(search.trim());
   const expiryRowsShown = q ? expiryRows.filter(r => normalizeName(r.productId||"").includes(q) || normalizeName(r.productName||"").includes(q)) : expiryRows;
+  // 25/9/2026: phân trang thay vì cắt cứng 300 dòng đầu (trước đây ẩn luôn phần còn lại).
+  const expiryPaged = usePagedRows(expiryRowsShown, 50);
   const expiredRows = expiryRows.filter(r => r.daysLeft!=null && r.daysLeft<0);
   const near90Rows = expiryRows.filter(r => r.daysLeft!=null && r.daysLeft>=0 && r.daysLeft<=90);
   const expiredValue = expiredRows.reduce((s,r)=>s+(r.value||0),0);
@@ -9540,13 +9586,14 @@ function InventoryHealthView({ isAdmin, myStaff }){
           : "Đầy đủ 100% lô đã hết hạn hoặc cận hạn trong 90 ngày của các nhà thuốc đang xem (không giới hạn số lô)."),
       expiryRowsShown.length===0
         ? React.createElement("div", { key:"e", className:"emptyState" }, "Không có lô nào sắp hết hạn.")
-        : React.createElement("div", { key:"tbl", style:{ overflowX:"auto", maxHeight:420, overflowY:"auto" } },
+        : React.createElement(React.Fragment, { key:"tbl" }, [
+          React.createElement("div", { key:"tbl", style:{ overflowX:"auto" } },
             React.createElement("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5 } }, [
               React.createElement("thead", { key:"h" },
                 React.createElement("tr", { style:{ borderBottom:"1.5px solid var(--line)" } },
                   ["Nhà thuốc","Mã SP","Tên sản phẩm","Lô","SL","Giá trị","Còn (ngày)"].map((h,i) =>
                     React.createElement("th", { key:i, style:{ textAlign: i>=4?"right":"left", padding:"6px 8px", color:"var(--inkSoft)", fontWeight:700, fontSize:11, textTransform:"uppercase", letterSpacing:.02, whiteSpace:"nowrap", position:"sticky", top:0, background:"#fff" } }, h)))),
-              React.createElement("tbody", { key:"b" }, expiryRowsShown.slice(0,300).map((r,i) => {
+              React.createElement("tbody", { key:"b" }, expiryPaged.pageRows.map((r,i) => {
                 const expired = r.daysLeft!=null && r.daysLeft<0;
                 return React.createElement("tr", { key:(r.productId||"")+r.lotCode+i, style:{ borderBottom:"1px solid #F0EEE2", background: expired?"#fdecec":undefined } }, [
                   React.createElement("td", { key:"s", style:{ padding:"7px 8px", fontWeight:600 } }, r.shop),
@@ -9560,6 +9607,8 @@ function InventoryHealthView({ isAdmin, myStaff }){
                 ]);
               })),
             ])),
+          React.createElement(TablePager, { key:"pager", ...expiryPaged }),
+        ]),
     ]),
     // Top sản phẩm tồn kho theo giá trị (yêu cầu 25/9/2026) — toàn chuỗi, đọc từ opsConfig/inventoryTopValue.
     // Không có field "danh mục" trong dữ liệu tồn kho hiện có nên không đưa cột này vào bảng (tránh bịa dữ liệu).
@@ -10508,10 +10557,9 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
   const [errMsg, setErrMsg] = useState(null);
   const [filterShop, setFilterShop] = useState("Tất cả");
   const [catalogMeta, setCatalogMeta] = useState(null);
-  const [uploadingCatalog, setUploadingCatalog] = useState(false);
+  const [syncingCatalog, setSyncingCatalog] = useState(false);
   const [catalogMsg, setCatalogMsg] = useState(null);
-  const [catalogDragOver, setCatalogDragOver] = useState(false);
-  // "Xem danh mục" — tìm/xem lại những mã hàng đã tải lên, chỉ tải khi bấm mở (không tải sẵn cả
+  // "Xem danh mục" — tìm/xem lại danh mục đã đồng bộ, chỉ tải khi bấm mở (không tải sẵn cả
   // danh mục — có thể vài nghìn mã — mỗi lần vào trang).
   const [showCatalogList, setShowCatalogList] = useState(false);
   const [catalogSearch, setCatalogSearch] = useState("");
@@ -10622,14 +10670,15 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
     if(!showCatalogList || catalogItems) return; // đã tải rồi thì không tải lại mỗi lần gõ tìm
     setCatalogListLoading(true);
     db.collection("productCatalog").get()
-      .then(snap => setCatalogItems(snap.docs.map(d=>d.data())))
+      .then(snap => setCatalogItems(snap.docs.map(d=>({ id:d.id, ...d.data() }))))
       .catch(err => { console.error("Lỗi tải danh mục hàng hoá:", err); setCatalogItems([]); })
       .finally(() => setCatalogListLoading(false));
   }, [showCatalogList]);
   const filteredCatalogItems = (catalogItems||[]).filter(p => {
     if(!catalogSearch.trim()) return true;
     const q = catalogSearch.trim().toLowerCase();
-    return (p.productId||"").toLowerCase().includes(q) || (p.productName||"").toLowerCase().includes(q) || (p.category||"").toLowerCase().includes(q);
+    const name = p.apiProductName||p.productName||"", cat = p.apiProductType||p.category||"", grp = p.apiProductGroup||"";
+    return (p.productId||p.id||"").toLowerCase().includes(q) || name.toLowerCase().includes(q) || cat.toLowerCase().includes(q) || grp.toLowerCase().includes(q);
   }).slice(0, 200);
   // ===== Group A/B (Consumption Engine) — sub-tab riêng trong cùng trang Điều chuyển hàng hoá vì
   // dùng chung nguồn dữ liệu (tồn kho + doanh số). Đọc "opsConfig/inventoryConsumptionSummary"
@@ -10703,95 +10752,22 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
     } finally { setAnalyzing(false); }
   }
 
-  // Bỏ dấu tiếng Việt + viết thường để nhận diện tên cột trong file DMHH bất kể cách đặt tên
-  // (VD: "Mã hàng", "Mã SP", "Ma san pham" đều nhận ra được).
-  function normHeader(s){
-    return String(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/đ/g,"d").trim();
-  }
-  function findHeaderKey(rowKeys, keywords){
-    const normed = rowKeys.map(k => ({ raw:k, norm:normHeader(k) }));
-    for(const kw of keywords){
-      const hit = normed.find(x => x.norm === kw);
-      if(hit) return hit.raw;
-    }
-    for(const kw of keywords){
-      const hit = normed.find(x => x.norm.includes(kw));
-      if(hit) return hit.raw;
-    }
-    return null;
-  }
-  // Tạo sẵn file mẫu ngay trong app (dùng đúng thư viện XLSX app đã có, không cần tải file rời từ
-  // đâu khác) — đúng 4 cột app nhận diện được: Mã hàng, Tên hàng, Đơn vị tính, Nhóm hàng. Kèm vài
-  // dòng ví dụ để biết cách điền, quản lý xoá đi rồi điền dữ liệu thật của mình vào.
-  function downloadCatalogTemplate(){
-    const rows = [
-      ["Mã hàng", "Tên hàng", "Đơn vị tính", "Nhóm hàng"],
-      ["TH00889", "Tobrameson Eye drops 10ml", "Hộp", "Mắt"],
-      ["TB00923", "Laforin 100ml", "Lọ", "Tiêu hoá"],
-      ["TH00894", "Nebusal Nebu 6% 5ml H1x5", "Hộp", "Hô hấp"],
-    ];
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws["!cols"] = [{ wch:14 }, { wch:36 }, { wch:14 }, { wch:16 }];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "DMHH mẫu");
-    XLSX.writeFile(wb, "DMHH_mau.xlsx");
-  }
-
-  // Tải file DMHH (Excel/CSV) do quản lý xuất ra từ hệ thống — chỉ cần 2 cột "Mã hàng" và "Tên
-  // hàng" (đơn vị tính nếu có sẽ lưu kèm). Ghi đè toàn bộ danh mục theo lô 450 mã/lần (giới hạn
-  // batch của Firestore là 500) — DMHH dùng làm nguồn tra tên hàng ổn định, không phụ thuộc tồn
-  // kho hay tab Kiểm kê, kể cả khi mã hàng đang hết sạch ở mọi nhà thuốc.
-  async function uploadCatalogFile(file){
-    setUploadingCatalog(true); setCatalogMsg(null);
+  // 25/9/2026: bỏ hẳn nguồn nhập tay (upload file DMHH Excel/CSV) theo yêu cầu của Phương — toàn
+  // bộ "Danh mục hàng hoá" giờ đồng bộ tự động từ hệ thống ngoài (API Product/GetItemLst, xem
+  // runSyncProductCatalogFromApi trong index.js) qua nút "🔄 Đồng bộ từ hệ thống" bên dưới, không
+  // cần quản lý tự xuất/tải file lên nữa.
+  async function syncCatalogFromApi(){
+    setSyncingCatalog(true); setCatalogMsg(null);
     try{
-      const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type:"array" });
-      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval:"" });
-      if(rows.length===0){ setCatalogMsg("File rỗng — không có dòng dữ liệu nào."); return; }
-      const keys = Object.keys(rows[0]);
-      const codeKey = findHeaderKey(keys, ["ma hang","ma sp","ma san pham","ma"]);
-      const nameKey = findHeaderKey(keys, ["ten hang","ten sp","ten san pham","ten"]);
-      const unitKey = findHeaderKey(keys, ["dvt","don vi tinh","don vi"]);
-      // Cột "Nhóm hàng" — không bắt buộc, dùng cho Customer Action Engine (C07: khách VIP chỉ
-      // mua 1 nhóm hàng). Nếu file không có cột này, danh mục vẫn tải lên bình thường, chỉ là
-      // C07 sẽ không xét được các mã hàng thiếu nhóm.
-      const categoryKey = findHeaderKey(keys, ["nhom hang","nhom san pham","nhom sp","category","phan nhom","nhom"]);
-      if(!codeKey || !nameKey){
-        setCatalogMsg("Không nhận diện được cột \"Mã hàng\" và \"Tên hàng\" trong file — đổi tên tiêu đề cột cho rõ rồi thử lại.");
-        return;
-      }
-      const list = [];
-      const seen = new Set();
-      rows.forEach(r => {
-        const code = String(r[codeKey]||"").trim();
-        const name = String(r[nameKey]||"").trim();
-        if(!code || !name) return;
-        const docId = code.replace(/\//g,"_");
-        if(seen.has(docId)) return; // trùng mã trong file — chỉ giữ dòng đầu tiên
-        seen.add(docId);
-        list.push({ docId, productId:code, productName:name, unit: unitKey ? String(r[unitKey]||"").trim() : "", category: categoryKey ? String(r[categoryKey]||"").trim() : "" });
-      });
-      if(list.length===0){ setCatalogMsg("Không có dòng nào có đủ Mã hàng + Tên hàng."); return; }
-      const CHUNK = 450;
-      for(let i=0; i<list.length; i+=CHUNK){
-        const batch = db.batch();
-        list.slice(i, i+CHUNK).forEach(item => {
-          batch.set(db.collection("productCatalog").doc(item.docId), {
-            productId:item.productId, productName:item.productName, unit:item.unit, category:item.category,
-            updatedAt:new Date().toISOString(),
-          });
-        });
-        await batch.commit();
-      }
-      await db.collection("opsConfig").doc("productCatalogMeta").set({
-        count:list.length, updatedAt:new Date().toISOString(), fileName:file.name,
-        hasCategoryColumn: !!categoryKey,
-      });
-      setCatalogMsg(categoryKey ? `Đã cập nhật danh mục: ${list.length} mặt hàng (kèm Nhóm hàng).` : `Đã cập nhật danh mục: ${list.length} mặt hàng. (File không có cột "Nhóm hàng" — Rule C07 sẽ không xét được cho tới khi bổ sung.)`);
+      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncProductCatalogFromApiNow");
+      const json = await resp.json().catch(()=>null);
+      if(!json || !json.ok){ setCatalogMsg("Đồng bộ thất bại: " + (json && json.error ? json.error : "lỗi không rõ")); return; }
+      setCatalogMsg(`Đã đồng bộ ${fmtNum(json.productCount||0)} mặt hàng từ hệ thống.`);
+      setCatalogItems(null); // buộc tải lại danh sách nếu đang mở "Xem danh mục"
     } catch(err){
-      console.error("Tải DMHH lỗi:", err);
-      setCatalogMsg("Đọc file lỗi — kiểm tra đúng định dạng Excel/CSV.");
-    } finally { setUploadingCatalog(false); }
+      console.error("Đồng bộ danh mục từ API lỗi:", err);
+      setCatalogMsg("Lỗi kết nối khi đồng bộ — thử lại.");
+    } finally { setSyncingCatalog(false); }
   }
 
   const transfers = (data && data.transfers) || [];
@@ -10814,6 +10790,20 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
   ]);
   const allShops = [...allShopsSet].sort(byShop);
 
+  // 25/9/2026: nguyên tắc đặt hàng/điều chuyển dùng ĐƠN VỊ NGUYÊN (Phương xác nhận 25/9/2026) —
+  // hiện nguyên là chính (làm tròn lên, không thiếu), kèm số lẻ gốc trong ngoặc để đối chiếu. Mã
+  // nào chưa đồng bộ được hệ số quy đổi (orderUnitQty) thì vẫn hiện đơn vị lẻ như cũ, không vỡ giao diện.
+  function fmtOrderQty(row){
+    if(row.orderUnit && row.orderUnitQty!=null) return `${fmtNum(row.orderUnitQty)} ${row.orderUnit} (${fmtNum(row.qty)} ${row.unit||""})`;
+    return `${fmtNum(row.qty)} ${row.unit||""}`;
+  }
+  // 25/9/2026: đơn giá — row.price là đơn giá LẺ (lấy từ UnitPrice của tồn kho), row.priceOrder
+  // (nếu có) là đơn giá NGUYÊN tự tính = giá lẻ × hệ số quy đổi (Phương xác nhận 25/9/2026).
+  function fmtPrice(row){
+    if(!row.price) return "—";
+    if(row.orderUnit && row.priceOrder!=null) return `${fmtVND(row.priceOrder)}/${row.orderUnit} (${fmtVND(row.price)}/${row.unit||"lẻ"})`;
+    return `${fmtVND(row.price)}/${row.unit||"lẻ"}`;
+  }
   const sortedTransfers = transfers
     .filter(t => filterShop==="Tất cả" || t.fromShop===filterShop || t.toShop===filterShop)
     .slice().sort((a,b) => ((a.priority==="P1"?0:1) - (b.priority==="P1"?0:1)) || byShop(a.toShop, b.toShop) || byShop(a.fromShop, b.fromShop));
@@ -10823,6 +10813,10 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
   const sortedSurplus = leftoverSurplus
     .filter(s => filterShop==="Tất cả" || s.shopCode===filterShop)
     .slice().sort((a,b) => byShop(a.shopCode, b.shopCode));
+  // 25/9/2026: phân trang 3 bảng điều chuyển/đặt NCC/dư hàng — có thể rất nhiều dòng khi xem "Tất cả".
+  const transfersPaged = usePagedRows(sortedTransfers, 50);
+  const shortagePaged = usePagedRows(sortedShortage, 50);
+  const surplusPaged = usePagedRows(sortedSurplus, 50);
   const sortedExpiryTransfers = expiryTransfers
     .filter(e => filterShop==="Tất cả" || e.fromShop===filterShop || (e.candidateDestinations||[]).some(d=>d.shopCode===filterShop))
     .slice().sort((a,b) => a.daysToExpiry - b.daysToExpiry);
@@ -11037,7 +11031,7 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
       showThresholdEditor && React.createElement("div", { key:"threspanel", style:{ marginTop:14, borderTop:"1px solid var(--line)", paddingTop:14 } }, [
         React.createElement("div", { key:"t", style:{ fontSize:12.5, fontWeight:700, marginBottom:4 } }, "Ngưỡng dư/thiếu tuỳ chỉnh theo nhóm hàng"),
         React.createElement("div", { key:"s", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:10 } },
-          `Nhóm hàng không có dòng riêng bên dưới sẽ dùng mặc định chung: dư khi tồn >${(data && data.surplusDays) || 60} ngày bán, thiếu khi tồn <${(data && data.shortageDays) || 10} ngày bán. Tên nhóm hàng phải khớp đúng cột "Nhóm hàng" trong DMHH đã tải lên.`),
+          `Nhóm hàng không có dòng riêng bên dưới sẽ dùng mặc định chung: dư khi tồn >${(data && data.surplusDays) || 60} ngày bán, thiếu khi tồn <${(data && data.shortageDays) || 10} ngày bán. Tên nhóm hàng phải khớp đúng "Nhóm SP" đồng bộ từ hệ thống (xem cột "Nhóm SP (Nhóm hàng)" ở khung "Danh mục hàng hoá" bên dưới).`),
         thresholdRows.map((r,i) => React.createElement("div", { key:i, style:{ display:"flex", gap:8, marginBottom:8, flexWrap:"wrap", alignItems:"center" } }, [
           React.createElement("input", { key:"cat", type:"text", placeholder:"Tên nhóm hàng", value:r.category, onChange:e=>updateThresholdRow(i,"category",e.target.value),
             style:{ flex:"1 1 180px", padding:"6px 10px", fontSize:12.5, border:"1px solid var(--line)", borderRadius:8 } }),
@@ -11055,37 +11049,23 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
       ]),
     ]),
 
-    React.createElement("div", { key:"catalog", className:"card", style:{ marginBottom:20, border: catalogDragOver ? "2px dashed var(--pine)" : undefined, background: catalogDragOver ? "var(--pineSoft)" : undefined },
-      onDragOver:e=>{ e.preventDefault(); setCatalogDragOver(true); },
-      onDragLeave:()=>setCatalogDragOver(false),
-      onDrop:e=>{
-        e.preventDefault(); setCatalogDragOver(false);
-        const f = e.dataTransfer.files && e.dataTransfer.files[0];
-        if(f) uploadCatalogFile(f);
-      },
-    }, [
+    React.createElement("div", { key:"catalog", className:"card", style:{ marginBottom:20 } }, [
       React.createElement("div", { key:"h", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:12 } }, [
         React.createElement("div", { key:"info" }, [
-          React.createElement("div", { key:"t", className:"cardTitle", style:{ marginBottom:2 } }, "Danh mục hàng hoá (DMHH)"),
+          React.createElement("div", { key:"t", className:"cardTitle", style:{ marginBottom:2 } }, "Danh mục hàng hoá"),
           React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)" } },
             catalogMeta
-              ? `Hiện có ${fmtNum(catalogMeta.count||0)} mặt hàng · cập nhật lần cuối ${new Date(catalogMeta.updatedAt).toLocaleString("vi-VN")}`
-              : "Chưa có danh mục nào — tải file mẫu bên cạnh để biết đúng định dạng, điền dữ liệu thật rồi tải lên."),
+              ? `Hiện có ${fmtNum(catalogMeta.count||0)} mặt hàng · đồng bộ lần cuối ${new Date(catalogMeta.updatedAt).toLocaleString("vi-VN")}`
+              : "Chưa đồng bộ lần nào — bấm \"Đồng bộ từ hệ thống\" để lấy danh mục."),
         ]),
         React.createElement("div", { key:"btns", style:{ display:"flex", gap:8, flexWrap:"wrap" } }, [
-          React.createElement("button", { key:"tpl", type:"button", className:"btn btnGhost", onClick:downloadCatalogTemplate }, "📄 Tải file mẫu"),
           catalogMeta && React.createElement("button", { key:"view", type:"button", className:"btn btnGhost", onClick:()=>setShowCatalogList(v=>!v) }, showCatalogList ? "Ẩn danh mục" : "👁 Xem danh mục"),
-          React.createElement("label", { key:"btn", className:"btn btnPrimary", style:{ cursor:uploadingCatalog?"default":"pointer" } }, [
-            React.createElement("input", { key:"i", type:"file", accept:".xlsx,.xls,.csv", style:{ display:"none" }, disabled:uploadingCatalog,
-              onChange:e=>{ const f=e.target.files[0]; if(f) uploadCatalogFile(f); e.target.value=""; } }),
-            uploadingCatalog ? "Đang tải lên..." : "📥 Tải DMHH lên",
-          ]),
+          React.createElement("button", { key:"sync", type:"button", className:"btn btnPrimary", disabled:syncingCatalog, onClick:syncCatalogFromApi }, syncingCatalog ? "Đang đồng bộ..." : "🔄 Đồng bộ từ hệ thống"),
         ]),
       ]),
       catalogMsg && React.createElement("div", { key:"msg", style:{ marginTop:10, fontSize:12.5, color:"var(--inkSoft)" } }, catalogMsg),
-      React.createElement("div", { key:"draghint", style:{ marginTop:8, fontSize:11.5, color:"var(--inkSoft)" } }, catalogDragOver ? "📥 Thả file vào đây để tải lên..." : "Mẹo: có thể kéo-thả file Excel/CSV trực tiếp vào khung này."),
       showCatalogList && React.createElement("div", { key:"list", style:{ marginTop:14, borderTop:"1px solid var(--line)", paddingTop:14 } }, [
-        React.createElement("input", { key:"search", type:"text", placeholder:"Tìm theo mã hàng, tên hàng hoặc nhóm hàng...",
+        React.createElement("input", { key:"search", type:"text", placeholder:"Tìm theo mã hàng, tên hàng, loại SP hoặc nhóm SP...",
           value:catalogSearch, onChange:e=>setCatalogSearch(e.target.value),
           style:{ width:"100%", padding:"8px 12px", fontSize:13, border:"1px solid var(--line)", borderRadius:8, marginBottom:10 } }),
         catalogListLoading
@@ -11094,12 +11074,14 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
             ? React.createElement("div", { className:"emptyState" }, "Không tìm thấy mã hàng nào khớp.")
             : React.createElement("div", { className:"tableWrap", style:{ maxHeight:360, overflowY:"auto" } }, React.createElement("table",{className:"data"}, [
                 React.createElement("thead",{key:"h"}, React.createElement("tr",null,
-                  ["Mã hàng","Tên hàng","Đơn vị tính","Nhóm hàng"].map((h,i)=>React.createElement("th",{key:i},h)))),
+                  ["Mã hàng","Tên hàng","ĐVT lẻ (bán/kiểm kê)","ĐVT nguyên (đặt/chuyển)","Loại SP (Ngành hàng)","Nhóm SP (Nhóm hàng)"].map((h,i)=>React.createElement("th",{key:i},h)))),
                 React.createElement("tbody",{key:"b"}, filteredCatalogItems.map((p,i) => React.createElement("tr",{key:i}, [
-                  React.createElement("td",{key:"pid"}, p.productId),
-                  React.createElement("td",{key:"pn"}, p.productName),
-                  React.createElement("td",{key:"u"}, p.unit||"—"),
-                  React.createElement("td",{key:"c"}, p.category||"—"),
+                  React.createElement("td",{key:"pid"}, p.productId||p.id),
+                  React.createElement("td",{key:"pn"}, p.apiProductName||p.productName),
+                  React.createElement("td",{key:"u"}, p.apiRetailUnit||p.apiUnit||p.unit||"—"),
+                  React.createElement("td",{key:"ou"}, p.apiOrderUnit ? `${p.apiOrderUnit} (1 = ${fmtNum(p.apiOrderUnitFactor)} ${p.apiRetailUnit||p.apiUnit||""})` : "—"),
+                  React.createElement("td",{key:"c"}, p.apiProductType||p.category||"—"),
+                  React.createElement("td",{key:"g"}, p.apiProductGroup||"—"),
                 ]))),
               ])),
         (catalogItems||[]).length>200 && filteredCatalogItems.length===200 && React.createElement("div", { key:"more", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:6 } }, "Chỉ hiện 200 kết quả đầu — gõ tìm để thu hẹp."),
@@ -11112,17 +11094,19 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
       React.createElement("div", { key:"t", className:"cardTitle" }, `Đề xuất điều chuyển (${sortedTransfers.length})`),
       sortedTransfers.length===0
         ? React.createElement("div", { className:"emptyState" }, loaded ? "Không có đề xuất điều chuyển nào." : "Đang tải...")
-        : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+        : React.createElement(React.Fragment, null, [
+          React.createElement("div", { key:"tw", className:"tableWrap" }, React.createElement("table",{className:"data"}, [
             React.createElement("thead",{key:"h"}, React.createElement("tr",null,
-              ["Mã hàng","Tên hàng","Từ nhà thuốc","Đến nhà thuốc","Số lượng","Tồn nơi cho","Tồn nơi nhận","Ghi chú","Quyết định"].map((h,i)=>React.createElement("th",{key:i},h)))),
-            React.createElement("tbody",{key:"b"}, sortedTransfers.map((t,i) => {
+              ["Mã hàng","Tên hàng","Từ nhà thuốc","Đến nhà thuốc","Số lượng","Đơn giá","Tồn nơi cho","Tồn nơi nhận","Ghi chú","Quyết định"].map((h,i)=>React.createElement("th",{key:i},h)))),
+            React.createElement("tbody",{key:"b"}, transfersPaged.pageRows.map((t,i) => {
               const decision = decisionFor(t);
               return React.createElement("tr",{key:i}, [
               React.createElement("td",{key:"pid"}, t.productId),
               React.createElement("td",{key:"pn"}, t.productName),
               React.createElement("td",{key:"f"}, t.fromShop),
               React.createElement("td",{key:"to"}, t.toShop),
-              React.createElement("td",{key:"q"}, `${fmtNum(t.qty)} ${t.unit||""}`),
+              React.createElement("td",{key:"q"}, fmtOrderQty(t)),
+              React.createElement("td",{key:"price"}, fmtPrice(t)),
               React.createElement("td",{key:"fd"}, `${fmtNum(t.fromDaysStock)} ngày bán`),
               React.createElement("td",{key:"td"}, `${fmtNum(t.toDaysStock)} ngày bán`),
               React.createElement("td",{key:"note"}, [
@@ -11142,6 +11126,8 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
                     ])),
             ]);})),
           ])),
+          React.createElement(TablePager, { key:"pager", ...transfersPaged }),
+        ]),
     ]),
 
     sortedExpiryTransfers.length > 0 && React.createElement("div", { key:"secExpiry", className:"card", style:{ marginBottom:20, borderColor:"var(--clay)" } }, [
@@ -11168,36 +11154,47 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
         "Cột \"Đề xuất đặt NCC\" ước tính theo tốc độ bán 30 ngày (dùng tốc độ bán trung bình toàn chuỗi khi nhà thuốc chưa có lịch sử bán mã này) — chỉ là gợi ý, tự điều chỉnh theo quy cách đóng gói/đơn hàng tối thiểu của NCC."),
       sortedShortage.length===0
         ? React.createElement("div", { className:"emptyState" }, "Không có mục nào.")
-        : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+        : React.createElement(React.Fragment, null, [
+          React.createElement("div", { key:"tw", className:"tableWrap" }, React.createElement("table",{className:"data"}, [
             React.createElement("thead",{key:"h"}, React.createElement("tr",null,
-              ["Mã hàng","Tên hàng","Nhà thuốc","Số lượng cần","Đề xuất đặt NCC","Tồn hiện tại","Ghi chú"].map((h,i)=>React.createElement("th",{key:i},h)))),
-            React.createElement("tbody",{key:"b"}, sortedShortage.map((s,i) => React.createElement("tr",{key:i}, [
+              ["Mã hàng","Tên hàng","Nhà thuốc","Số lượng cần","Đề xuất đặt NCC","Đơn giá","Tồn hiện tại","Ghi chú"].map((h,i)=>React.createElement("th",{key:i},h)))),
+            React.createElement("tbody",{key:"b"}, shortagePaged.pageRows.map((s,i) => React.createElement("tr",{key:i}, [
               React.createElement("td",{key:"pid"}, s.productId),
               React.createElement("td",{key:"pn"}, s.productName),
               React.createElement("td",{key:"sh"}, s.shopCode),
               React.createElement("td",{key:"q"}, `${fmtNum(s.qty)} ${s.unit||""}`),
-              React.createElement("td",{key:"sug", style:{fontWeight:700}}, `${fmtNum(s.suggestedOrderQty ?? s.qty)} ${s.unit||""}`),
+              React.createElement("td",{key:"sug", style:{fontWeight:700}},
+                s.orderUnit && s.orderUnitQty!=null
+                  ? `${fmtNum(s.orderUnitQty)} ${s.orderUnit} (${fmtNum(s.suggestedOrderQty ?? s.qty)} ${s.unit||""})`
+                  : `${fmtNum(s.suggestedOrderQty ?? s.qty)} ${s.unit||""}`),
+              React.createElement("td",{key:"price"}, fmtPrice(s)),
               React.createElement("td",{key:"d"}, `${fmtNum(s.daysOfStock)} ngày bán`),
               React.createElement("td",{key:"note"}, s.isRequired ? StatusPill("Hàng thường trực","warn") : "—"),
             ]))),
           ])),
+          React.createElement(TablePager, { key:"pager", ...shortagePaged }),
+        ]),
     ]),
 
     React.createElement("div", { key:"secSurplus", className:"card" }, [
       React.createElement("div", { key:"t", className:"cardTitle" }, `Dư hàng, không nơi nào cần — cân nhắc xử lý khác (${sortedSurplus.length})`),
       sortedSurplus.length===0
         ? React.createElement("div", { className:"emptyState" }, "Không có mục nào.")
-        : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+        : React.createElement(React.Fragment, null, [
+          React.createElement("div", { key:"tw", className:"tableWrap" }, React.createElement("table",{className:"data"}, [
             React.createElement("thead",{key:"h"}, React.createElement("tr",null,
-              ["Mã hàng","Tên hàng","Nhà thuốc","Số lượng dư","Tồn hiện tại"].map((h,i)=>React.createElement("th",{key:i},h)))),
-            React.createElement("tbody",{key:"b"}, sortedSurplus.map((s,i) => React.createElement("tr",{key:i}, [
+              ["Mã hàng","Tên hàng","Nhà thuốc","Số lượng dư","Đơn giá","Tồn hiện tại"].map((h,i)=>React.createElement("th",{key:i},h)))),
+            React.createElement("tbody",{key:"b"}, surplusPaged.pageRows.map((s,i) => React.createElement("tr",{key:i}, [
               React.createElement("td",{key:"pid"}, s.productId),
               React.createElement("td",{key:"pn"}, s.productName),
               React.createElement("td",{key:"sh"}, s.shopCode),
-              React.createElement("td",{key:"q"}, `${fmtNum(s.qty)} ${s.unit||""}`),
+              React.createElement("td",{key:"q"}, fmtOrderQty(s)),
+              React.createElement("td",{key:"price"}, fmtPrice(s)),
               React.createElement("td",{key:"d"}, `${fmtNum(s.daysOfStock)} ngày bán`),
             ]))),
           ])),
+          React.createElement(TablePager, { key:"pager", ...surplusPaged }),
+        ]),
     ]),
     ]),
     transferComposer && React.createElement(TaskComposer360, { key:"tcomp", preset:transferComposer, onClose:()=>setTransferComposer(null), onSaved:onTransferComposerSaved }),
