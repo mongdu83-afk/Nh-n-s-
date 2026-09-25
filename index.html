@@ -468,7 +468,21 @@ function isIOSNotInstalled(){
   const isStandalone = window.navigator.standalone === true || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
   return isIOS && !isStandalone;
 }
-function addDays(iso, n){ const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
+// 25/9/2026: SỬA LỖI NGHIÊM TRỌNG — bản cũ dựng Date ở giờ ĐỊA PHƯƠNG (new Date(iso+"T00:00:00"))
+// rồi lại đọc ra bằng .toISOString() (giờ UTC). Với múi giờ Việt Nam (UTC+7), nửa đêm giờ VN của
+// ngày kế tiếp = 17:00 UTC của NGÀY HIỆN TẠI, nên .toISOString().slice(0,10) bị lùi lại đúng 1
+// ngày — khiến addDays(iso, 1) trả về CHÍNH iso, không hề tăng. Hậu quả: mọi vòng lặp dùng
+// `d = addDays(d,1)` để duyệt từng ngày (vd sumDayRange/buildDaySeries ở "So sánh theo kỳ") bị kẹt
+// mãi ở ngày bắt đầu, chạy đến giới hạn an toàn (guard<400) rồi cộng dồn ĐÚNG 1 NGÀY x 400 LẦN —
+// đây chính là nguyên nhân doanh thu "So sánh theo kỳ" hiện sai gấp nhiều lần số thật. Bản sửa:
+// tính hoàn toàn bằng UTC (Date.UTC + getUTCDate/setUTCDate), không đi qua giờ địa phương nữa nên
+// không còn phụ thuộc múi giờ trình duyệt.
+function addDays(iso, n){
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + n);
+  return dt.toISOString().slice(0, 10);
+}
 function daysBetween(a, b){ return Math.round((new Date(b+"T00:00:00") - new Date(a+"T00:00:00")) / 86400000); }
 function fmtNum(n){ if(n==null||isNaN(n)) return "0"; return Math.round(n).toLocaleString("vi-VN"); }
 function fmtVND(n){ return fmtNum(n) + "đ"; }
