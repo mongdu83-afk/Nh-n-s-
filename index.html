@@ -2323,12 +2323,15 @@ function CustomerOrderReminderBanner({ myStaff, onOpen }){
 }
 
 // ================= MODULE 4: BÁO CÁO CÔNG VIỆC TUẦN =================
+// 25/9/2026: sửa cùng lỗi múi giờ như addDays() ở trên — chuyển sang tính thuần UTC để
+// .toISOString() không bị lùi 1 ngày với múi giờ Việt Nam (UTC+7).
 function mondayOf(iso){
-  const d = new Date(iso + "T00:00:00");
-  const day = d.getDay();
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const day = dt.getUTCDay();
   const diff = day===0 ? -6 : 1-day;
-  d.setDate(d.getDate()+diff);
-  return d.toISOString().slice(0,10);
+  dt.setUTCDate(dt.getUTCDate()+diff);
+  return dt.toISOString().slice(0,10);
 }
 
 function weeklyReportId(shop, monday){ return shop + "_" + monday; }
