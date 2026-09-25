@@ -9243,6 +9243,61 @@ function PromoAnalyticsView({ isAdmin, myStaff }){
     subTab==="report" && React.createElement(PromoAutoDetectSection, { key:"auto", isAdmin, myStaff }),
   ]);
 }
+// ===== Làm lại giao diện phần "Ước tính tự động theo tên hàng" giống mẫu app Dashboard
+// (nhathuocupharma.netlify.app, 25/9/2026: thẻ KPI + biểu đồ + phương án hành động + tag giao việc)
+// — quản lý yêu cầu ĐÚNG TAB "Khuyến Mại" trong app này (không phải sửa app Dashboard riêng như lần
+// đầu hiểu nhầm). Khác với app Dashboard (nơi "doanh thu" là số ÂM = tiền giảm giá/voucher), ở ĐÂY
+// promo.topProducts là DOANH THU BÁN THỰC TẾ của các sản phẩm có tên trông giống khuyến mãi (số
+// dương, từ computeRevenueAnalytics ở index.js) — không có khái niệm "chi phí khuyến mãi" nên không
+// áp dụng đúng công thức "chi phí/lượt" như app Dashboard; thay vào đó cảnh báo THEO MỨC ĐỘ TẬP
+// TRUNG doanh thu vào 1 sản phẩm (rủi ro phụ thuộc quá nhiều vào 1 chương trình/SP).
+// "Tag giao việc": TÁI DÙNG thẳng hệ thống Giao việc CÓ SẴN của app (collection "tasks" qua
+// TaskComposer360) thay vì làm 1 hệ thống trạng thái riêng như app Dashboard (app đó không có sẵn
+// hệ thống giao việc nào) — lưu liên kết productKey -> assignedTaskId vào collection nhỏ mới
+// "promoProductTags" để biết SP nào đã giao việc và xem lại đúng task đó bất cứ lúc nào.
+function promoProductKey(name){ return slugifyPromoName(name); }
+function usePromoProductTags(){
+  const [tags, setTags] = useState({});
+  useEffect(()=>{
+    return db.collection("promoProductTags").onSnapshot(snap=>{
+      const m = {}; snap.forEach(d=>{ m[d.id]=d.data(); }); setTags(m);
+    });
+  }, []);
+  return tags;
+}
+function PromoProductTagCell({ productKey, productName, tag, isAdmin, shopFilter }){
+  const [showCompose, setShowCompose] = useState(false);
+  const [linkedTask, setLinkedTask] = useState(null);
+  useEffect(()=>{
+    if(!tag || !tag.assignedTaskId){ setLinkedTask(null); return; }
+    return db.collection("tasks").doc(tag.assignedTaskId).onSnapshot(d=>setLinkedTask(d.exists ? { id:d.id, ...d.data() } : null));
+  }, [tag && tag.assignedTaskId]);
+  async function onTaskSaved(taskId){
+    try{ await db.collection("promoProductTags").doc(productKey).set({ productName, assignedTaskId:taskId, updatedAtTs: firebase.firestore.FieldValue.serverTimestamp() }, { merge:true }); }
+    catch(err){ logSystemError("promoProductTags", err); }
+  }
+  return React.createElement("div", { style:{ display:"flex", alignItems:"center", gap:8 } }, [
+    linkedTask && React.createElement(Pill360, { key:"p", text: linkedTask.trangThai==="Đang giao" ? "Đang xử lý" : (linkedTask.trangThai||"—"), color: linkedTask.trangThai==="Đang giao" ? CL360.info : CL360.good }),
+    isAdmin && React.createElement("button", { key:"b", type:"button", className:"btn btnGhost", style:{ fontSize:11, padding:"4px 9px" }, onClick:()=>setShowCompose(true) }, linkedTask ? "Giao lại" : "Giao việc"),
+    showCompose && React.createElement(TaskComposer360, {
+      key:"c",
+      preset:{
+        heading:`Giao việc — ${productName}`,
+        title:`Rà soát sản phẩm khuyến mãi: ${productName}`,
+        mota:`Sản phẩm có tên trông giống chương trình khuyến mãi, cần rà soát hiệu quả/tồn kho/giá.`,
+        module:"Khác", ...( shopFilter && shopFilter!=="Tất cả" ? { shopOnly:true, shop:shopFilter } : {} ),
+      },
+      onClose:()=>setShowCompose(false), onSaved:onTaskSaved,
+    }),
+  ]);
+}
+function promoConcentrationNote(topProducts, totalRevenue){
+  if(!topProducts.length || !totalRevenue) return null;
+  const top1 = topProducts[0];
+  const share = totalRevenue>0 ? (top1.revenue||0)/totalRevenue : 0;
+  if(share >= 0.4) return { level:"warn", text:`"${top1.name}" chiếm ${(share*100).toFixed(0)}% doanh số liên quan khuyến mãi — phụ thuộc khá nhiều vào 1 sản phẩm, nên rà soát nếu chương trình này dừng/hết hàng.` };
+  return null;
+}
 function PromoAutoDetectSection({ isAdmin, myStaff }){
   const { stats, refreshing, refresh } = useRevenueAnalytics();
   const [adminShop, setAdminShop] = useState("Tất cả");
@@ -9251,37 +9306,44 @@ function PromoAutoDetectSection({ isAdmin, myStaff }){
   const promo = stats && stats.promo;
   const shopVal = promo && !isAll && promo.byShop && promo.byShop[shopFilter];
   const topProducts = promo ? promo.topProducts||[] : [];
-  const maxRev = Math.max(...topProducts.map(p=>p.revenue||0), 1);
+  const totalRevenueShown = (isAll ? promo && promo.revenue30 : (shopVal && shopVal.revenue)) || 0;
+  const tags = usePromoProductTags();
+  const concentration = promoConcentrationNote(topProducts, isAll ? totalRevenueShown : topProducts.reduce((s,p)=>s+(p.revenue||0),0));
   return React.createElement("div", { style:{ marginTop:24 } }, [
     React.createElement("div", { key:"title", style:{ fontWeight:700, fontSize:14, marginBottom:4 } }, "Ước tính tự động theo tên hàng (bổ sung)"),
-    React.createElement("p", { key:"sub", className:"pagesub", style:{ marginTop:0 } }, "Nhận diện tự động theo tên hàng có dấu hiệu khuyến mãi (Combo, Tặng kèm, Giảm giá...) trong 30 ngày gần nhất — chưa có cột \"loại khuyến mãi\" riêng trong dữ liệu đồng bộ nên đây là ước tính, không phải số tuyệt đối, không thay thế báo cáo theo chương trình ở trên."),
+    React.createElement("p", { key:"sub", className:"pagesub", style:{ marginTop:0 } }, "Nhận diện tự động theo tên hàng có dấu hiệu khuyến mãi (Combo, Tặng kèm, Giảm giá...) trong 30 ngày gần nhất — chưa có cột \"loại khuyến mãi\" riêng trong dữ liệu đồng bộ nên đây là ước tính, không phải số tuyệt đối, không thay thế báo cáo theo chương trình ở trên. Doanh số ở đây là doanh thu bán THỰC TẾ của các sản phẩm này (số dương), khác với \"so sánh theo kỳ\" — không phải chi phí khuyến mãi."),
     React.createElement(RevenueRefreshButton, { key:"rb", refreshing, onRefresh:refresh, computedAt: stats && stats.computedAt }),
     !stats || !promo ? React.createElement("div", { key:"empty", className:"card", style:{ fontSize:13, color:"var(--inkSoft)" } }, "Chưa có dữ liệu — bấm \"Tính lại\" ở trên.")
     : React.createElement(React.Fragment, { key:"body" }, [
         React.createElement(ShopFilterBar, { key:"filter", isAdmin, adminShop, setAdminShop, shopFilter }),
         React.createElement("div", { key:"grid", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10, marginBottom:16 } }, [
-          React.createElement("div", { key:"rev", className:"card", style:{ padding:"12px 14px" } }, [
-            React.createElement("div", { key:"l", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:4 } }, "Doanh số liên quan KM (30 ngày)"),
-            React.createElement("div", { key:"v", style:{ fontSize:18, fontWeight:700 } }, fmtVND((isAll ? promo.revenue30 : (shopVal && shopVal.revenue)) || 0)),
-          ]),
-          React.createElement("div", { key:"qty", className:"card", style:{ padding:"12px 14px" } }, [
-            React.createElement("div", { key:"l", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:4 } }, "Số lượng bán (30 ngày)"),
-            React.createElement("div", { key:"v", style:{ fontSize:18, fontWeight:700 } }, fmtNum((isAll ? promo.qty30 : (shopVal && shopVal.qty)) || 0)),
-          ]),
+          React.createElement(StatTile, { key:"rev", label:"Doanh số liên quan KM (30 ngày)", value: fmtVND(totalRevenueShown) }),
+          React.createElement(StatTile, { key:"qty", label:"Số lượng bán (30 ngày)", value: fmtNum((isAll ? promo.qty30 : (shopVal && shopVal.qty)) || 0) }),
+          React.createElement(StatTile, { key:"cnt", label:"Số sản phẩm phát hiện", value: fmtNum(topProducts.length) }),
+        ]),
+        topProducts.length>0 && React.createElement("div", { key:"chartcard", className:"card", style:{ marginBottom:16 } }, [
+          React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:4 } }, `Doanh thu theo sản phẩm (top ${Math.min(20,topProducts.length)}${isAll?" — toàn chuỗi":""})`),
+          React.createElement(EmployeeRevenueBarChart, { key:"chart", items: topProducts.slice(0,20).map(p=>({ name:p.name, revenue:p.revenue })) }),
+        ]),
+        concentration && React.createElement("div", { key:"action", className:"card", style:{ marginBottom:16, background:"#FBE3E1" } }, [
+          React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:6 } }, "📋 Phương án hành động (tự động theo số liệu)"),
+          React.createElement("div", { key:"b", style:{ fontSize:12.5, color:"#7A2E2E" } }, concentration.text),
         ]),
         React.createElement("div", { key:"card", className:"card" }, [
           React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:10 } }, "Top sản phẩm có dấu hiệu khuyến mãi (toàn chuỗi, 30 ngày)"),
           topProducts.length===0
             ? React.createElement("div", { key:"e", style:{ fontSize:12.5, color:"var(--inkSoft)" } }, "Chưa phát hiện sản phẩm nào.")
-            : React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:6 } },
-                topProducts.map(p => React.createElement("div", { key:p.name }, [
-                  React.createElement("div", { key:"lbl", style:{ display:"flex", justifyContent:"space-between", fontSize:12, marginBottom:2 } }, [
-                    React.createElement("span", { key:"n" }, p.name),
-                    React.createElement("span", { key:"q", style:{ color:"var(--inkSoft)" } }, `${fmtVND(p.revenue||0)} · SL ${fmtNum(p.qty||0)}`),
-                  ]),
-                  React.createElement("div", { key:"bar", style:{ height:6, borderRadius:3, background:"var(--pineSoft)" } },
-                    React.createElement("div", { style:{ height:"100%", width:`${((p.revenue||0)/maxRev)*100}%`, background:"#b4720a", borderRadius:3 } })),
-                ]))
+            : React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:10 } },
+                topProducts.map(p => {
+                  const key = promoProductKey(p.name);
+                  return React.createElement("div", { key:p.name, style:{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap", borderBottom:"1px solid #F0EEE2", paddingBottom:8 } }, [
+                    React.createElement("div", { key:"l", style:{ flex:"1 1 220px", minWidth:160 } }, [
+                      React.createElement("div", { key:"n", style:{ fontSize:12.5, fontWeight:600 } }, p.name),
+                      React.createElement("div", { key:"v", style:{ fontSize:11.5, color:"var(--inkSoft)" } }, `${fmtVND(p.revenue||0)} · SL ${fmtNum(p.qty||0)}`),
+                    ]),
+                    React.createElement(PromoProductTagCell, { key:"tag", productKey:key, productName:p.name, tag:tags[key], isAdmin, shopFilter }),
+                  ]);
+                })
               ),
         ]),
       ]),
