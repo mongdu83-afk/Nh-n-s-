@@ -8366,6 +8366,13 @@ function DailyLineChart({ title, days, vals, fmt, color }){
   const path = pts.map((p,i)=> (i===0?"M":"L")+p[0].toFixed(1)+","+p[1].toFixed(1)).join(" ");
   const maxV = vals.length ? Math.max(...vals) : 0;
   const [hoverIdx, setHoverIdx] = React.useState(null);
+  // 25/9/2026: Phương phản ánh vẫn "không rõ số" dù đã có tooltip khi rê chuột (23/9/2026) — thêm
+  // nhãn số LUÔN HIỂN THỊ (không cần rê chuột) tại 3 điểm quan trọng nhất: điểm đầu, điểm CAO NHẤT,
+  // điểm cuối (mới nhất/quan trọng nhất) — có chủ đích CHỈ 3 điểm, không ghi số ở mọi điểm (30 điểm
+  // số chi chít sẽ rối hơn là rõ).
+  let maxIdx = 0;
+  vals.forEach((v,i)=>{ if(v>vals[maxIdx]) maxIdx = i; });
+  const staticLabelIdx = pts.length ? [...new Set([0, maxIdx, pts.length-1])] : [];
   function nearestIdxFromEvent(e){
     if(pts.length===0) return null;
     const rect = e.currentTarget.getBoundingClientRect();
@@ -8391,9 +8398,28 @@ function DailyLineChart({ title, days, vals, fmt, color }){
             onMouseLeave: ()=>setHoverIdx(null),
           }, [
             React.createElement("path", { key:"ln", d:path, fill:"none", stroke:color, strokeWidth:2, vectorEffect:"non-scaling-stroke" }),
+            ...staticLabelIdx.map(idx => React.createElement("circle", { key:"sdot"+idx, cx:pts[idx][0], cy:pts[idx][1], r:2.5, fill:color, stroke:"#fff", strokeWidth:1, vectorEffect:"non-scaling-stroke" })),
             hv && React.createElement("line", { key:"vg", x1:hv.pt[0], x2:hv.pt[0], y1:0, y2:H, stroke:"var(--line)", strokeWidth:1, vectorEffect:"non-scaling-stroke" }),
             hv && React.createElement("circle", { key:"dot", cx:hv.pt[0], cy:hv.pt[1], r:3.5, fill:color, stroke:"#fff", strokeWidth:1, vectorEffect:"non-scaling-stroke" }),
           ]),
+          // Nhãn số cố định (không cần rê chuột) tại điểm đầu/cao nhất/cuối — dùng % vị trí theo đúng
+          // toạ độ SVG (viewBox W×H, stretch preserveAspectRatio="none") nên khớp chính xác vị trí điểm.
+          ...staticLabelIdx.map(idx => {
+            const p = pts[idx];
+            const leftPct = (p[0]/W)*100, topPct = (p[1]/H)*100;
+            const isFirst = idx===0, isLast = idx===pts.length-1;
+            const transformX = isFirst ? "0" : (isLast ? "-100%" : "-50%");
+            // Đặt nhãn PHÍA TRÊN điểm theo mặc định; nếu điểm nằm quá gần mép trên biểu đồ (dễ bị cắt)
+            // thì đặt phía DƯỚI thay vào đó.
+            const putBelow = topPct < 22;
+            return React.createElement("div", { key:"slbl"+idx, style:{
+              position:"absolute", left:`${leftPct}%`, top:`${topPct}%`,
+              transform: `translate(${transformX}, ${putBelow ? "6px" : "calc(-100% - 6px)"})`,
+              fontSize:10.5, fontWeight:700, color:"var(--ink)", background:"var(--paper)",
+              padding:"1px 5px", borderRadius:5, border:"1px solid var(--line)",
+              pointerEvents:"none", whiteSpace:"nowrap", zIndex:1,
+            } }, fmt(vals[idx]));
+          }),
           hv && React.createElement("div", { key:"tip", style:{
             position:"absolute", top:0, [hv.pt[0] > W/2 ? "right" : "left"]: 4,
             background:"#1f2937", color:"#fff", fontSize:11, fontWeight:600, padding:"4px 8px", borderRadius:6,
