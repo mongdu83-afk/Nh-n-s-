@@ -4375,37 +4375,24 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
       setSelectedPhones(new Set()); setBulkAssignStaffId("");
     } finally { setBulkAssigning(false); }
   }
-  const [autoAssigning, setAutoAssigning] = useState(false);
-  const [autoAssignMsg, setAutoAssignMsg] = useState(null);
+  // 25/9/2026: gỡ tính năng "Gán tự động theo Nhà thuốc" — bỏ state autoAssigning, đổi tên
+  // autoAssignMsg -> crmActionMsg (giờ chỉ còn dùng cho nút "Xoá hết người phụ trách" bên dưới).
+  const [crmActionMsg, setCrmActionMsg] = useState(null);
   const [clearingAssign, setClearingAssign] = useState(false);
   async function runClearAllAssign(){
     if(!window.confirm("Xoá HẾT người phụ trách đã gắn sẵn cho toàn bộ khách hàng (kể cả gán tay/đã nhận chăm sóc)? Tất cả khách sẽ về trạng thái \"Chưa phân công\". Không thể hoàn tác.")) return;
-    setClearingAssign(true); setAutoAssignMsg(null);
+    setClearingAssign(true); setCrmActionMsg(null);
     try{
       const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/clearAllCrmAssignmentsNow");
       const d = await resp.json();
-      if(d && d.ok===false){ setAutoAssignMsg("Lỗi: " + (d.error || "không rõ nguyên nhân")); }
+      if(d && d.ok===false){ setCrmActionMsg("Lỗi: " + (d.error || "không rõ nguyên nhân")); }
       else{
-        setAutoAssignMsg(`Đã xoá người phụ trách của ${d.cleared ?? 0} khách — tất cả về "Chưa phân công".`);
+        setCrmActionMsg(`Đã xoá người phụ trách của ${d.cleared ?? 0} khách — tất cả về "Chưa phân công".`);
         if(isAdmin) loadCustomersOnce();
       }
-    } catch(err){ setAutoAssignMsg("Lỗi kết nối, thử lại."); }
+    } catch(err){ setCrmActionMsg("Lỗi kết nối, thử lại."); }
     setClearingAssign(false);
   }
-  async function runAutoAssign(){
-    setAutoAssigning(true); setAutoAssignMsg(null);
-    try{
-      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/autoAssignCrmCustomersNow");
-      const d = await resp.json();
-      if(d && d.ok===false){ setAutoAssignMsg("Lỗi: " + (d.error || "không rõ nguyên nhân")); }
-      else{
-        setAutoAssignMsg(`Đã gán ${d.assigned ?? 0} khách (${d.assignedViaCHT ?? 0} theo Cửa hàng trưởng, ${d.assignedViaFallback ?? 0} theo nhân viên tạm thời ở shop chưa có CHT)${d.skippedNoStaffAtAll ? ` — ${d.skippedNoStaffAtAll} khách thuộc shop chưa có NHÂN VIÊN nào trong hệ thống, chưa gán được` : ""}.`);
-        if(isAdmin) loadCustomersOnce(); // tải lại để thấy ngay kết quả (không còn real-time nữa)
-      }
-    } catch(err){ setAutoAssignMsg("Lỗi kết nối, thử lại."); }
-    setAutoAssigning(false);
-  }
-
   const LEVEL_NAMES = ["Loyal","Silver","Titan","Gold","Platinum","Diamond"];
   // CDP — phân khúc do computeCustomerSegmentsDaily tính mỗi ngày, ghi thẳng vào field "segments"
   // của từng khách trong crmCustomers (xem index.js).
@@ -4729,10 +4716,6 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
         style:{ fontSize:12, padding:"4px 10px" },
       }, customersLoading ? "Đang tải..." : "↻ Làm mới"),
       isAdmin && React.createElement("button", {
-        key:"autoassign", className:"btn btnGhost", disabled:autoAssigning, onClick:runAutoAssign,
-        style:{ fontSize:12, padding:"4px 10px" },
-      }, autoAssigning ? "Đang gán..." : "👤 Gán tự động theo Nhà thuốc"),
-      isAdmin && React.createElement("button", {
         key:"clearassign", className:"btn btnGhost", disabled:clearingAssign, onClick:runClearAllAssign,
         style:{ fontSize:12, padding:"4px 10px", color:"var(--clay)" },
       }, clearingAssign ? "Đang xoá..." : "🗑️ Xoá hết người phụ trách"),
@@ -4752,7 +4735,7 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
     crmSubTab === "chiendich" ? renderCrmCampaignTab() :
     crmSubTab === "hanhvi" ? renderBehaviorAnalyticsTab() :
     React.createElement(React.Fragment, { key:"khachtab" }, [
-    isAdmin && autoAssignMsg && React.createElement("div", { key:"aamsg", style:{ fontSize:12.5, color:"var(--pine)", marginBottom:8 } }, autoAssignMsg),
+    isAdmin && crmActionMsg && React.createElement("div", { key:"aamsg", style:{ fontSize:12.5, color:"var(--pine)", marginBottom:8 } }, crmActionMsg),
     React.createElement("div", { key:"sub", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:16 } },
       isAdmin
         ? `${filtered.length} khách hàng · dữ liệu ${customersLoadedAt ? "tải lúc "+customersLoadedAt.toLocaleTimeString("vi-VN") : "đang tải..."} — bấm "Làm mới" để xem cập nhật mới nhất`
