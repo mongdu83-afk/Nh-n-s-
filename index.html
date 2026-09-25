@@ -9746,7 +9746,7 @@ function BaoCaoTuanView({ isAdmin, myStaff }){
 // render vẫn giữ nguyên, chỉ ẩn khỏi điều hướng nên có thể bật lại dễ dàng sau này nếu cần.
 // 23/9/2026: thêm "cust360" (Customer 360) vào STAFF_TABS — trước đây chỉ quản lý (isAdmin) mới
 // thấy tab này; xem Customer360View bên dưới (đã tự lọc theo nhà thuốc của nhân viên khi !isAdmin).
-const STAFF_TABS = ["checklist","homnay","photos","hanghoa","tasks","kpi","crm","cust360","training","kudos","temgia","revenueAnalytics","nhanvien","ctkm","baocaotuan","sales","kinhnghiem"];
+const STAFF_TABS = ["checklist","homnay","photos","hanghoa","tasks","kpi","crm","cust360","training","kudos","temgia","revenueAnalytics","ketquangay","nhanvien","ctkm","baocaotuan","sales","kinhnghiem"];
 const OPS_TABS = [
   { id:"command", label:"Tổng quan điều hành" },
   { id:"shop360", label:"Hồ sơ nhà thuốc" },
@@ -9760,6 +9760,7 @@ const OPS_TABS = [
   { id:"hanghoa", label:"Hàng hoá" },
   { id:"donthuoc", label:"Thư viện đơn thuốc" },
   { id:"revenueAnalytics", label:"Doanh thu" },
+  { id:"ketquangay", label:"Kết quả ngày" },
   { id:"baocaotuan", label:"Báo cáo tuần" },
   { id:"sales", label:"Báo cáo doanh số ngày" },
   { id:"tasks", label:"Giao việc" },
@@ -9789,7 +9790,7 @@ const OPS_GROUPS_ADMIN = [
   { id:"nhansu", label:"Nhân sự", tabs:["emp360","tasks","kpi","nhanvien","training","kudos"] },
   { id:"khachhang", label:"Khách hàng", tabs:["cust360","crm","ctkm"] },
   { id:"hanghoagroup", label:"Hàng hoá", tabs:["prod360","hanghoa","donthuoc","temgia"] },
-  { id:"vanhanh", label:"Vận hành", tabs:["checklist","homnay","photos","revenueAnalytics","baocaotuan","kinhnghiem"] },
+  { id:"vanhanh", label:"Vận hành", tabs:["checklist","homnay","photos","revenueAnalytics","ketquangay","baocaotuan","kinhnghiem"] },
   { id:"action", label:"Công việc cần xử lý", tabs:["action"] },
   { id:"ai", label:"AI", tabs:["ai"] },
   { id:"hethong", label:"Hệ thống", tabs:["hethong"] },
@@ -10830,6 +10831,14 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
     if(row.orderUnit && row.priceOrder!=null) return `${fmtVND(row.priceOrder)}/${row.orderUnit} (${fmtVND(row.price)}/${row.unit||"lẻ"})`;
     return `${fmtVND(row.price)}/${row.unit||"lẻ"}`;
   }
+  // 25/9/2026: hiện HẠN DÙNG (lô gần hết hạn nhất còn tồn tại nơi cho/nơi dư) để dễ quyết định hơn
+  // (vd tránh chuyển lô cận hạn đi xa, hoặc ưu tiên chuyển đi bán trước khi hết hạn) — Phương yêu
+  // cầu 25/9/2026. Cảnh báo màu khi còn ≤ 90 ngày, không có dữ liệu thì hiện "—".
+  function fmtExpiry(dateStr){
+    if(!dateStr) return "—";
+    const days = Math.round((new Date(dateStr) - new Date()) / 86400000);
+    return StatusPill(`${dateStr}${Number.isFinite(days) ? ` (${days} ngày)` : ""}`, days<=180 ? "warn" : "good");
+  }
   const sortedTransfers = transfers
     .filter(t => filterShop==="Tất cả" || t.fromShop===filterShop || t.toShop===filterShop)
     .slice().sort((a,b) => ((a.priority==="P1"?0:1) - (b.priority==="P1"?0:1)) || byShop(a.toShop, b.toShop) || byShop(a.fromShop, b.fromShop));
@@ -11123,7 +11132,7 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
         : React.createElement(React.Fragment, null, [
           React.createElement("div", { key:"tw", className:"tableWrap" }, React.createElement("table",{className:"data"}, [
             React.createElement("thead",{key:"h"}, React.createElement("tr",null,
-              ["Mã hàng","Tên hàng","Từ nhà thuốc","Đến nhà thuốc","Số lượng","Đơn giá","Tồn nơi cho","Tồn nơi nhận","Ghi chú","Quyết định"].map((h,i)=>React.createElement("th",{key:i},h)))),
+              ["Mã hàng","Tên hàng","Từ nhà thuốc","Đến nhà thuốc","Số lượng","Đơn giá","Hạn dùng (nơi cho)","Tồn nơi cho","Tồn nơi nhận","Ghi chú","Quyết định"].map((h,i)=>React.createElement("th",{key:i},h)))),
             React.createElement("tbody",{key:"b"}, transfersPaged.pageRows.map((t,i) => {
               const decision = decisionFor(t);
               return React.createElement("tr",{key:i}, [
@@ -11133,6 +11142,7 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
               React.createElement("td",{key:"to"}, t.toShop),
               React.createElement("td",{key:"q"}, fmtOrderQty(t)),
               React.createElement("td",{key:"price"}, fmtPrice(t)),
+              React.createElement("td",{key:"exp"}, fmtExpiry(t.fromExpiryDate)),
               React.createElement("td",{key:"fd"}, `${fmtNum(t.fromDaysStock)} ngày bán`),
               React.createElement("td",{key:"td"}, `${fmtNum(t.toDaysStock)} ngày bán`),
               React.createElement("td",{key:"note"}, [
@@ -11209,13 +11219,14 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
         : React.createElement(React.Fragment, null, [
           React.createElement("div", { key:"tw", className:"tableWrap" }, React.createElement("table",{className:"data"}, [
             React.createElement("thead",{key:"h"}, React.createElement("tr",null,
-              ["Mã hàng","Tên hàng","Nhà thuốc","Số lượng dư","Đơn giá","Tồn hiện tại"].map((h,i)=>React.createElement("th",{key:i},h)))),
+              ["Mã hàng","Tên hàng","Nhà thuốc","Số lượng dư","Đơn giá","Hạn dùng","Tồn hiện tại"].map((h,i)=>React.createElement("th",{key:i},h)))),
             React.createElement("tbody",{key:"b"}, surplusPaged.pageRows.map((s,i) => React.createElement("tr",{key:i}, [
               React.createElement("td",{key:"pid"}, s.productId),
               React.createElement("td",{key:"pn"}, s.productName),
               React.createElement("td",{key:"sh"}, s.shopCode),
               React.createElement("td",{key:"q"}, fmtOrderQty(s)),
               React.createElement("td",{key:"price"}, fmtPrice(s)),
+              React.createElement("td",{key:"exp"}, fmtExpiry(s.expiryDate)),
               React.createElement("td",{key:"d"}, `${fmtNum(s.daysOfStock)} ngày bán`),
             ]))),
           ])),
@@ -11308,6 +11319,7 @@ const TAB_STYLE = {
   hanghoa:          { icon:"📦", color:"#0f6b5c" },
   nhanvien:         { icon:"👥", color:"#475569" },
   baocaotuan:       { icon:"📅", color:"#4f46e5" },
+  ketquangay:       { icon:"📈", color:"#c8503a" },
 };
 
 // SVG nét rõ, thay cho icon emoji (emoji hiển thị mờ/vỡ nét trên nhiều máy — nhất là ở kích
@@ -11344,6 +11356,7 @@ const TAB_ICON_SVG = {
   hanghoa: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5V8z"/><path d="M3 8l9 5 9-5"/><path d="M12 13v8"/></svg>',
   nhanvien: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><circle cx="18" cy="9" r="2.6"/><path d="M16 14.3c2.7.3 4.9 2.3 4.9 5.2"/></svg>',
   baocaotuan: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
+  ketquangay: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>',
 };
 function renderTabIcon(id, sizePx, extraProps){
   const markup = (TAB_ICON_SVG[id] || TAB_ICON_SVG.staff).replace("<svg ", '<svg width="' + sizePx + '" height="' + sizePx + '" ');
@@ -15021,6 +15034,7 @@ function Dashboard({ user, isAdmin, myStaff }){
         activeTab==="baocaotuan" && React.createElement(BaoCaoTuanView, { key:viewResetKey, isAdmin, myStaff }),
         activeTab==="kinhnghiem" && React.createElement(KinhNghiemVanHanhView, { key:viewResetKey, myStaff, navParam }),
         activeTab==="revenueAnalytics" && React.createElement(RevenueAnalyticsView, { key:viewResetKey, isAdmin, myStaff }),
+        activeTab==="ketquangay" && React.createElement(DailyResultsView, { key:viewResetKey, isAdmin, myStaff }),
         // Khôi phục lại "Báo cáo doanh số ngày" cho nhân viên (form nhập doanh số/hệ số theo khung
         // giờ) — CHỈ ẩn phần tổng hợp của quản lý bên trong (isAdmin luôn truyền false ở đây) vì
         // quản lý đã xem tổng hợp doanh thu ở tab "Doanh thu" mới rồi, không cần trùng 2 nơi.
