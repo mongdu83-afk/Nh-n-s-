@@ -9731,10 +9731,6 @@ function DailyResultsView({ isAdmin, myStaff }){
   const [loaded, setLoaded] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [errMsg, setErrMsg] = useState(null);
-  const [locations, setLocations] = useState({});
-  const [showLocSetup, setShowLocSetup] = useState(false);
-  const [locDraft, setLocDraft] = useState({});
-  const [savingLoc, setSavingLoc] = useState(false);
 
   useEffect(()=>{
     setLoaded(false);
@@ -9742,52 +9738,21 @@ function DailyResultsView({ isAdmin, myStaff }){
     return unsub;
   }, [date]);
 
-  useEffect(()=>{
-    const unsub = subscribeConfigDoc("shopLocations", d=>{ setLocations(d.shops||{}); });
-    return unsub;
-  }, []);
-
-  useEffect(()=>{
-    if (showLocSetup) {
-      const next = {};
-      DEFAULT_SHOPS.forEach(s => { next[s] = (locations[s] && locations[s].province) || ""; });
-      setLocDraft(next);
-    }
-  }, [showLocSetup]);
-
   async function runAnalyze(){
     setAnalyzing(true); setErrMsg(null);
     try{
       const resp = await fetch(`https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeDailyResultsNow?date=${date}`);
       const json = await resp.json();
-      if(!json.ok) setErrMsg(json.error || "Phân tích thất bại — xem lại đã khai báo tỉnh/thành cho nhà thuốc chưa.");
+      if(!json.ok) setErrMsg(json.error || "Phân tích thất bại.");
     } catch(err){
       console.error("Phân tích Kết quả ngày lỗi:", err);
       setErrMsg(err && err.message ? err.message : String(err));
     } finally { setAnalyzing(false); }
   }
 
-  async function saveLocations(){
-    setSavingLoc(true);
-    try{
-      const shopsOut = {};
-      DEFAULT_SHOPS.forEach(s => {
-        const province = (locDraft[s]||"").trim();
-        if (!province) return;
-        // Giữ lại toạ độ đã geocode trước đó NẾU tỉnh/thành không đổi — đổi tỉnh/thành thì phải
-        // geocode lại (backend tự làm ở lần "Phân tích ngay" kế tiếp khi thấy thiếu lat/lon).
-        const prev = locations[s];
-        shopsOut[s] = (prev && prev.province===province) ? prev : { province };
-      });
-      await saveConfigDoc("shopLocations", { shops: shopsOut });
-      setShowLocSetup(false);
-    } catch(err){ alert("Lỗi lưu tỉnh/thành: " + (err && err.message ? err.message : String(err))); }
-    finally { setSavingLoc(false); }
-  }
-
   const shops = (DEFAULT_SHOPS||[]).filter(s => isAdmin || s===(myStaff&&myStaff.shop));
   const byShop = (data && data.byShop) || {};
-  const missingLocation = DEFAULT_SHOPS.filter(s => !(locations[s] && locations[s].province));
+  const missingWeather = shops.filter(s => byShop[s] && !byShop[s].weather);
 
   return React.createElement("div", {}, [
     React.createElement("div", { key:"top", className:"card", style:{ marginBottom:16, display:"flex", flexWrap:"wrap", gap:12, alignItems:"center", justifyContent:"space-between" } }, [
@@ -9798,34 +9763,26 @@ function DailyResultsView({ isAdmin, myStaff }){
         data && data.generatedAtTs && React.createElement("span", { key:"gen", style:{ fontSize:11.5, color:"var(--inkSoft)" } }, `Tính lúc ${new Date(data.generatedAtTs).toLocaleString("vi-VN")}`),
       ]),
       React.createElement("div", { key:"r", style:{ display:"flex", gap:8 } }, [
-        isAdmin && React.createElement("button", { key:"loc", type:"button", className:"btn btnGhost", onClick:()=>setShowLocSetup(v=>!v) }, "📍 Khai báo tỉnh/thành"),
         isAdmin && React.createElement("button", { key:"run", type:"button", className:"btn btnPrimary", disabled:analyzing, onClick:runAnalyze }, analyzing ? "Đang phân tích..." : "🔄 Phân tích ngay"),
       ]),
     ]),
 
-    isAdmin && missingLocation.length>0 && !showLocSetup && React.createElement("div", { key:"warnLoc", className:"card", style:{ marginBottom:16, borderColor:"var(--clay)" } },
-      React.createElement("div", { style:{ fontSize:12.5, color:"var(--clay)" } }, `Chưa khai báo tỉnh/thành cho ${missingLocation.length} nhà thuốc (${missingLocation.map(shopLabel).join(", ")}) — sẽ thiếu dữ liệu thời tiết cho các nhà thuốc này. Bấm "📍 Khai báo tỉnh/thành" để thêm.`)),
-
-    isAdmin && showLocSetup && React.createElement("div", { key:"locSetup", className:"card", style:{ marginBottom:16 } }, [
-      React.createElement("div", { key:"t", className:"cardTitle" }, "Tỉnh/thành từng nhà thuốc (dùng để lấy thời tiết thật)"),
-      React.createElement("div", { key:"grid", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))", gap:10, marginTop:10 } },
-        DEFAULT_SHOPS.map(s => React.createElement("div", { key:s, style:{ display:"flex", flexDirection:"column", gap:4 } }, [
-          React.createElement("span", { key:"l", style:{ fontSize:11.5, color:"var(--inkSoft)", fontWeight:600 } }, shopLabel(s)),
-          React.createElement("input", { key:"i", type:"text", placeholder:"VD: Hà Nội", value:locDraft[s]||"",
-            onChange:e=>setLocDraft(d=>({ ...d, [s]:e.target.value })),
-            style:{ padding:"7px 10px", fontSize:13, border:"1px solid var(--line)", borderRadius:8 } }),
-        ]))),
-      React.createElement("div", { key:"btns", style:{ marginTop:12, display:"flex", gap:8 } }, [
-        React.createElement("button", { key:"save", type:"button", className:"btn btnPrimary", disabled:savingLoc, onClick:saveLocations }, savingLoc ? "Đang lưu..." : "Lưu"),
-        React.createElement("button", { key:"cancel", type:"button", className:"btn btnGhost", onClick:()=>setShowLocSetup(false) }, "Đóng"),
-      ]),
-    ]),
+    isAdmin && missingWeather.length>0 && React.createElement("div", { key:"warnLoc", className:"card", style:{ marginBottom:16, borderColor:"var(--clay)" } },
+      React.createElement("div", { style:{ fontSize:12.5, color:"var(--clay)" } }, `Thiếu dữ liệu thời tiết cho ${missingWeather.length} nhà thuốc (${missingWeather.map(shopLabel).join(", ")}) — do chưa có nhân viên nào của nhà thuốc đó khai báo "Khu vực" ở tab Nhân sự. Vào Nhân sự → Sửa nhân viên → điền Khu vực (tỉnh/thành) rồi bấm "Phân tích ngay" lại.`)),
 
     errMsg && React.createElement("div", { key:"err", className:"card", style:{ marginBottom:16, borderColor:"var(--clay)", color:"var(--clay)", fontSize:12.5 } }, errMsg),
 
     !loaded ? React.createElement("div", { className:"emptyState" }, "Đang tải...")
     : !data ? React.createElement("div", { className:"emptyState" }, isAdmin ? `Chưa có phân tích cho ngày ${date} — bấm "Phân tích ngay".` : `Chưa có phân tích cho ngày ${date}.`)
     : React.createElement(React.Fragment, null, [
+      data.summary && React.createElement("div", { key:"sum", className:"card", style:{ marginBottom:16, display:"flex", flexWrap:"wrap", gap:20, alignItems:"center" } }, [
+        React.createElement("div", { key:"h", style:{ fontSize:14, fontWeight:700 } }, `📋 Đánh giá kết quả ngày ${date}`),
+        React.createElement("div", { key:"hit", style:{ fontSize:13 } }, [
+          React.createElement("b", {key:"n"}, `${data.summary.hitCount}/${data.summary.ratedShops}`), " nhà thuốc đạt target ngày",
+        ]),
+        data.summary.bestShop && React.createElement("div", { key:"best", style:{ fontSize:13 } }, ["🏆 Tốt nhất: ", React.createElement("b",{key:"b"}, shopLabel(data.summary.bestShop))]),
+        data.summary.worstShop && data.summary.worstShop!==data.summary.bestShop && React.createElement("div", { key:"worst", style:{ fontSize:13 } }, ["⚠️ Cần lưu ý: ", React.createElement("b",{key:"b"}, shopLabel(data.summary.worstShop))]),
+      ]),
       data.aiSummary && React.createElement("div", { key:"ai", className:"card", style:{ marginBottom:16, background:"var(--goldSoft)" } }, [
         React.createElement("div", { key:"t", className:"cardTitle" }, "🤖 Phân tích AI"),
         React.createElement("div", { key:"txt", style:{ fontSize:13, lineHeight:1.6, whiteSpace:"pre-wrap", marginTop:6 } }, data.aiSummary),
@@ -9838,19 +9795,21 @@ function DailyResultsView({ isAdmin, myStaff }){
             React.createElement("div", { key:"e", className:"emptyState" }, "Chưa có dữ liệu."),
           ]);
           const w = s.weather;
+          const ratingTone = { "Xuất sắc":"gold", "Tốt":"good", "Cần cố gắng":"warn", "Yếu":"warn", "Chưa có target":"neutral" }[s.rating] || "neutral";
           return React.createElement("div", { key:shopCode, className:"card" }, [
             React.createElement("div", { key:"hd", style:{ display:"flex", justifyContent:"space-between", alignItems:"center" } }, [
               React.createElement("div", { key:"t", className:"cardTitle" }, shopLabel(shopCode)),
-              s.hitTarget!=null && StatusPill(s.hitTarget ? "✓ Đạt target ngày" : "✕ Chưa đạt target ngày", s.hitTarget ? "good" : "warn"),
+              s.rating && StatusPill(s.rating, ratingTone),
             ]),
             React.createElement("div", { key:"rev", style:{ fontSize:13, margin:"8px 0" } }, [
               React.createElement("b", {key:"a"}, fmtVND(s.actual)), ` / target ${fmtVND(s.dailyTarget)}`,
               s.pctOfTarget!=null && ` (${s.pctOfTarget}%)`,
               React.createElement("span", { key:"o", style:{ color:"var(--inkSoft)" } }, ` — ${fmtNum(s.orderCount)} khách mua`),
             ]),
+            s.ratingNote && React.createElement("div", { key:"note", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:8, fontStyle:"italic" } }, s.ratingNote),
             w && React.createElement("div", { key:"w", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:8 } },
               `${WEATHER_CODE_ICON[w.code]||"🌡️"} ${w.desc}, ${Math.round(w.tempMin)}-${Math.round(w.tempMax)}°C${w.rainMm>0?`, mưa ${w.rainMm}mm`:""} (${w.province})`),
-            !w && React.createElement("div", { key:"w", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:8 } }, "Chưa có dữ liệu thời tiết (chưa khai báo tỉnh/thành)."),
+            !w && React.createElement("div", { key:"w", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:8 } }, "Chưa có dữ liệu thời tiết (chưa có nhân viên nào khai báo Khu vực cho nhà thuốc này)."),
             s.topProducts && s.topProducts.length>0 && React.createElement("div", { key:"tp", style:{ marginBottom:8 } }, [
               React.createElement("div", { key:"l", style:{ fontSize:11.5, fontWeight:700, color:"var(--inkSoft)", marginBottom:4 } }, "Bán chạy nhất hôm nay"),
               React.createElement("div", { key:"list", style:{ fontSize:12.5, lineHeight:1.6 } },
@@ -9858,11 +9817,21 @@ function DailyResultsView({ isAdmin, myStaff }){
             ]),
             (s.vipCustomers.length>0 || s.loyalCustomers.length>0 || s.birthdayCustomers.length>0) && React.createElement("div", { key:"cust" }, [
               React.createElement("div", { key:"l", style:{ fontSize:11.5, fontWeight:700, color:"var(--inkSoft)", marginBottom:4 } }, "Khách nổi bật đã mua"),
-              React.createElement("div", { key:"list", style:{ display:"flex", flexWrap:"wrap", gap:6 } }, [
-                ...s.vipCustomers.map((c,i)=>StatusPill(`👑 ${c.name}${c.wellCared?"":" — chưa được chăm sóc gần đây"}`, c.wellCared?"gold":"warn")),
-                ...s.loyalCustomers.map((c,i)=>StatusPill(`💚 ${c.name}${c.wellCared?"":" — chưa được chăm sóc gần đây"}`, c.wellCared?"good":"warn")),
-                ...s.birthdayCustomers.map((c,i)=>StatusPill(`🎂 ${c.name}`, "gold")),
-              ]),
+              React.createElement("div", { key:"list", style:{ display:"flex", flexWrap:"wrap", gap:6 } }, (()=>{
+                // 26/9/2026: Phương yêu cầu THU GỌN — chỉ hiện TỔNG SỐ (không liệt kê từng tên), tập
+                // trung phần phân tích chi tiết (tên khách cụ thể) vào đoạn "🤖 Phân tích AI" ở trên.
+                const pills = [];
+                if (s.vipCustomers.length>0){
+                  const notCared = s.vipCustomers.filter(c=>!c.wellCared).length;
+                  pills.push(StatusPill(`👑 ${s.vipCustomers.length} khách VIP${notCared>0?` (${notCared} chưa chăm sóc)`:""}`, notCared>0?"warn":"gold"));
+                }
+                if (s.loyalCustomers.length>0){
+                  const notCared = s.loyalCustomers.filter(c=>!c.wellCared).length;
+                  pills.push(StatusPill(`💚 ${s.loyalCustomers.length} khách thân thiết${notCared>0?` (${notCared} chưa chăm sóc)`:""}`, notCared>0?"warn":"good"));
+                }
+                if (s.birthdayCustomers.length>0) pills.push(StatusPill(`🎂 ${s.birthdayCustomers.length} khách sinh nhật`, "gold"));
+                return pills;
+              })()),
             ]),
           ]);
         })),
