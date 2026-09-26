@@ -5366,6 +5366,87 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
 }
 
 
+// ================= CHI TIẾT KHÁCH HÀNG NÂNG HẠNG (tab KPI, 26/9/2026 — yêu cầu Phương) =================
+// Bảng liệt kê TỪNG khách được nâng hạng trong tháng đang chọn (collection externalCustomerUpgrades,
+// do Cloud Function syncCustomerLevelUpgrades ghi) — đúng dữ liệu dùng để đếm chỉ tiêu cs_nangHang
+// (NVBH: khách mà ĐƠN GẦN NHẤT trong tháng do người đó bán) và ds_cskh (CHT: toàn nhà thuốc).
+// Phạm vi xem: quản lý xem tất cả; CHT xem nhà thuốc mình; NVBH chỉ xem khách được tính cho mình.
+const TIER_COLOR = { Loyal:"#64748b", Silver:"#7c8a99", Titan:"#475569", Gold:"#b7791f", Platinum:"#2b6cb0", Diamond:"#6b46c1" };
+function CustomerUpgradeDetail({ upgrades, staff, thang, isAdmin, myStaff, forStaff, compact }){
+  // forStaff: chỉ hiện khách được tính KPI cho ĐÚNG 1 nhân viên (dùng trong phần chi tiết KPI từng người).
+  const myIsCHT = myStaff && myStaff.role==="Cửa hàng trưởng";
+  const [shopF, setShopF] = useState("Tất cả");
+  const [staffF, setStaffF] = useState("Tất cả");
+  const [q, setQ] = useState("");
+  const staffByNorm = useMemo(()=>{ const m = {}; (staff||[]).forEach(st => { if(st.name) m[normalizeStaffName(st.name)] = st; }); return m; }, [staff]);
+  const rows = useMemo(()=>{
+    return (upgrades||[]).filter(u => u.monthKey===thang).map(u => {
+      let st = u.salesName ? staffByNorm[normalizeStaffName(u.salesName)] : null;
+      if(!st && forStaff && normalizeStaffName(u.salesName)===normalizeStaffName(forStaff.name)) st = forStaff;
+      if(!st && myStaff && normalizeStaffName(u.salesName)===normalizeStaffName(myStaff.name)) st = myStaff;
+      return { ...u, staffObj:st||null, staffLabel: st ? st.name : (u.salesName ? `${u.salesName} (chưa khớp nhân viên)` : "(không rõ người bán)") };
+    }).filter(u => {
+      if(forStaff){
+        if(forStaff.role==="Cửa hàng trưởng") return u.shopCode===forStaff.shop;
+        return normalizeStaffName(u.salesName)===normalizeStaffName(forStaff.name);
+      }
+      if(isAdmin) return true;
+      if(!myStaff) return false;
+      if(myIsCHT) return u.shopCode===myStaff.shop;
+      return normalizeStaffName(u.salesName)===normalizeStaffName(myStaff.name);
+    }).sort((a,b) => String(b.detectedAtTs||"").localeCompare(String(a.detectedAtTs||"")));
+  }, [upgrades, thang, staffByNorm, isAdmin, myStaff && myStaff.id, forStaff && forStaff.id]);
+  const shopOptions = ["Tất cả", ...Array.from(new Set(rows.map(r=>r.shopCode).filter(Boolean))).sort()];
+  const shown = rows.filter(r => (shopF==="Tất cả" || r.shopCode===shopF))
+    .filter(r => staffF==="Tất cả" || r.staffLabel===staffF)
+    .filter(r => { const k = q.trim().toLowerCase(); return !k || `${r.buyerName||""} ${r.phone||""} ${r.staffLabel}`.toLowerCase().includes(k); });
+  const staffOptions = ["Tất cả", ...Array.from(new Set(rows.filter(r => shopF==="Tất cả" || r.shopCode===shopF).map(r=>r.staffLabel))).sort((a,b)=>a.localeCompare(b,"vi"))];
+  // 26/9/2026: bỏ dãy liệt kê từng nhân viên (Phương yêu cầu) — lọc theo nhân viên dùng ô chọn phía trên.
+  const paged = usePagedRows(shown, 20);
+  useEffect(()=>{ paged.setPage(1); }, [shopF, staffF, q, thang]); // đổi bộ lọc → về trang 1
+  const fmtDate = ts => { if(!ts) return "—"; const d = new Date(ts); return isNaN(d) ? String(ts).slice(0,10) : `${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")}/${d.getFullYear()}`; };
+  const tierPill = (name, key) => React.createElement("span", { key, style:{ fontWeight:700, color:TIER_COLOR[name]||"var(--ink)" } }, name||"—");
+  function exportCsv(){
+    const head = ["Ngày ghi nhận","Khách hàng","SĐT","Nhà thuốc","Hạng cũ","Hạng mới","Doanh số 6 tháng","Số đơn 6 tháng","Nhân viên được tính","Mã đơn gần nhất"];
+    const esc = v => `"${String(v==null?"":v).replace(/"/g,'""')}"`;
+    const lines = [head.map(esc).join(",")].concat(shown.map(r => [fmtDate(r.detectedAtTs), r.buyerName, r.phone, r.shopCode, r.oldTierName, r.newTierName, Math.round(r.amountRank||0), r.invoiceRank||0, r.staffLabel, r.orderHeaderID].map(esc).join(",")));
+    const blob = new Blob(["﻿"+lines.join("\n")], { type:"text/csv;charset=utf-8" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `khach-nang-hang-${thang}.csv`; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+  }
+  const sel = (value, onChange, opts) => React.createElement("select", { value, onChange:e=>{ onChange(e.target.value); }, style:{ padding:"7px 10px", border:"1px solid var(--line)", borderRadius:8, fontSize:13 } }, opts.map(o => React.createElement("option", { key:o, value:o }, o)));
+  return React.createElement("div", compact ? { style:{ marginTop:16 } } : { className:"card", style:{ marginTop:20, marginBottom:20 } }, [
+    React.createElement("div", { key:"t", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:4 } }, [
+      React.createElement("div", { key:"a", style:{ fontWeight:700, fontSize: compact ? 15 : 16.5 } }, `⭐ ${forStaff ? `Khách hàng nâng hạng được tính cho ${forStaff.name}` : "Chi tiết khách hàng nâng hạng"} — tháng ${thang} (${shown.length})`),
+      shown.length>0 && React.createElement("button", { key:"b", type:"button", className:"btn btnGhost", style:{ fontSize:12, padding:"5px 11px" }, onClick:exportCsv }, "⬇ Tải CSV"),
+    ]),
+    !compact && React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } },
+      "Mỗi dòng là 1 khách lên hạng trong tháng (xét theo doanh số & số đơn 6 tháng). Khách được tính cho nhân viên bán ĐƠN GẦN NHẤT của khách trong tháng (chỉ tiêu \"Khách nâng hạng\" của NVBH); cửa hàng trưởng được tính toàn bộ khách của nhà thuốc. Dòng \"chưa khớp nhân viên\" = tên người bán trên hệ thống bán hàng không trùng tên nhân viên trong app nên CHƯA được cộng KPI cho ai."),
+    React.createElement("div", { key:"f", style:{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12 } }, [
+      (isAdmin && !forStaff) && React.createElement("span", { key:"sh" }, sel(shopF, v=>{ setShopF(v); setStaffF("Tất cả"); }, shopOptions)),
+      ((isAdmin || myIsCHT) && !forStaff) && React.createElement("span", { key:"st" }, sel(staffF, setStaffF, staffOptions)),
+      React.createElement("input", { key:"q", value:q, onChange:e=>{ setQ(e.target.value); }, placeholder:"Tìm tên / SĐT khách...", style:{ flex:"1 1 200px", padding:"7px 10px", border:"1px solid var(--line)", borderRadius:8, fontSize:13 } }),
+    ]),
+    shown.length===0
+      ? React.createElement("div", { key:"e", className:"emptyState" }, rows.length ? "Không có khách nào khớp bộ lọc." : "Chưa ghi nhận khách nào nâng hạng trong tháng này (dữ liệu đồng bộ từ hệ thống bán hàng — Cloud Function syncCustomerLevelUpgradesNow).")
+      : React.createElement("div", { key:"tb", className:"tableWrap" }, React.createElement("table", { className:"data" }, [
+          React.createElement("thead", { key:"h" }, React.createElement("tr", null,
+            ["Ngày ghi nhận","Khách hàng","SĐT","Nhà thuốc","Hạng cũ → mới","Doanh số 6 tháng","Số đơn 6 tháng","Nhân viên được tính","Mã đơn gần nhất"].map((h,i)=>React.createElement("th",{key:i},h)))),
+          React.createElement("tbody", { key:"b" }, paged.pageRows.map((r,i) => React.createElement("tr", { key:(r.id||r.phone)+"_"+i }, [
+            React.createElement("td",{key:"d"}, fmtDate(r.detectedAtTs)),
+            React.createElement("td",{key:"n", style:{ fontWeight:600 }}, r.buyerName || "—"),
+            React.createElement("td",{key:"p"}, r.phone || "—"),
+            React.createElement("td",{key:"s"}, r.shopCode || "—"),
+            React.createElement("td",{key:"t", style:{ whiteSpace:"nowrap" }}, [ tierPill(r.oldTierName,"o"), React.createElement("span",{key:"x"}," → "), tierPill(r.newTierName,"n") ]),
+            React.createElement("td",{key:"a"}, fmtVND(r.amountRank||0)),
+            React.createElement("td",{key:"o"}, fmtNum(r.invoiceRank||0)),
+            React.createElement("td",{key:"st", style:{ color: r.staffObj ? "inherit" : "var(--clay)", fontWeight: r.staffObj ? 400 : 600 }}, r.staffLabel),
+            React.createElement("td",{key:"h", style:{ fontSize:11.5, color:"var(--inkSoft)" }}, r.orderHeaderID || "—"),
+          ]))),
+        ])),
+    React.createElement(TablePager, { key:"pager", ...paged }),
+  ]);
+}
+
 function KpiView({ isAdmin, myStaff }){
   const [staff, setStaff] = useState([]);
   const [assignments, setAssignments] = useState({});
@@ -5712,6 +5793,7 @@ function KpiView({ isAdmin, myStaff }){
         key:"g", groups:chtPickedGroups, targets:(chtPickedAssign&&chtPickedAssign.targets)||{}, actuals:(chtPickedAssign&&chtPickedAssign.actuals)||{}, thang, wdInfo:wdInfoOf(chtPickedStaff),
         canEditTarget:false, canEditActual:false, onTargetChange:()=>{}, onActualChange:()=>{},
       }),
+      chtPickedStaff && React.createElement(CustomerUpgradeDetail, { key:"up", upgrades:customerUpgrades, staff, thang, isAdmin, myStaff, forStaff:chtPickedStaff, compact:true }),
       (chtPickedAssign && chtPickedAssign.linkKetQua) && React.createElement("div", { key:"lk", style:{ fontSize:12.5, marginTop:10 } }, [ React.createElement("b",null,"Link minh chứng: "), React.createElement("a",{href:chtPickedAssign.linkKetQua,target:"_blank",rel:"noreferrer"},chtPickedAssign.linkKetQua) ]),
       (chtPickedAssign && chtPickedAssign.anhKetQua && chtPickedAssign.anhKetQua.length>0) && React.createElement("div", { key:"ph", className:"photoGrid", style:{ marginTop:8 } }, chtPickedAssign.anhKetQua.map((url,i)=>
         React.createElement("a",{key:i,href:url,target:"_blank",rel:"noreferrer",className:"photoThumb"}, React.createElement("img",{src:url})))),
@@ -6150,17 +6232,18 @@ function KpiView({ isAdmin, myStaff }){
               ]),
             ];
             if(detailStaffId===r.staff.id){
-              rowEls.push(React.createElement("tr",{key:r.staff.id+"_detail"}, React.createElement("td",{colSpan:9, style:{background:"var(--paper)",padding:"14px 16px"}}, [
+              rowEls.push(React.createElement("tr",{key:r.staff.id+"_detail"}, React.createElement("td",{colSpan:10, style:{background:"var(--paper)",padding:"14px 16px"}}, [
                 React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15.5, marginBottom:10 } }, `Chi tiết KPI đã chấm — ${r.staff.name}`),
                 React.createElement(KpiGroups, {
                   key:"g", groups:r.groups, targets:r.targets, actuals:r.actuals, thang, wdInfo:wdInfoOf(r.staff),
                   canEditTarget:false, canEditActual:false,
                   onTargetChange:()=>{}, onActualChange:()=>{},
                 }),
+                React.createElement(CustomerUpgradeDetail, { key:"up", upgrades:customerUpgrades, staff, thang, isAdmin, myStaff, forStaff:r.staff, compact:true }),
               ])));
             }
             if(isOpen){
-              rowEls.push(React.createElement("tr",{key:r.staff.id+"_ctah"}, React.createElement("td",{colSpan:9, style:{background:"var(--paper)",padding:"14px 16px"}}, ctahInlineForm)));
+              rowEls.push(React.createElement("tr",{key:r.staff.id+"_ctah"}, React.createElement("td",{colSpan:10, style:{background:"var(--paper)",padding:"14px 16px"}}, ctahInlineForm)));
             }
             return rowEls;
           })),
@@ -6331,6 +6414,10 @@ function KpiView({ isAdmin, myStaff }){
     } finally { setImportingQlkv(false); }
   }
 
+  // 26/9/2026: bảng chi tiết khách hàng nâng hạng theo tháng đang chọn (xem CustomerUpgradeDetail).
+  // Nhân viên bán hàng: chỉ thấy danh sách khách được tính cho chính mình; CHT/quản lý: cả nhà thuốc/khu vực.
+  const upgradeDetailSection = React.createElement(CustomerUpgradeDetail, { key:"upgradeDetail", upgrades:customerUpgrades, staff, thang, isAdmin, myStaff,
+    forStaff: (!isAdmin && myStaff && myStaff.role!=="Cửa hàng trưởng") ? myStaff : null });
   const adminPersonalSection = isAdmin && React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
     React.createElement("div", { key:"th", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:10 } }, [
       React.createElement("div", { key:"t", className:"cardTitle", style:{ marginBottom:0 } }, `KPI Quản lý địa bàn (tự đăng ký & tự chấm) — tháng ${thang}`),
@@ -6384,7 +6471,7 @@ function KpiView({ isAdmin, myStaff }){
   return React.createElement(React.Fragment, null, [
     React.createElement("p", { key:"s", className:"pagesub" }, isAdmin ? "Giao chỉ tiêu KPI cho từng nhân viên theo tháng, theo dõi kết quả toàn khu vực." : "Chỉ tiêu KPI được quản lý giao cho bạn — tự cập nhật kết quả thực tế đạt được."),
     kpiSyncBanner,
-    isAdmin ? React.createElement(React.Fragment, null, [ kpiSyncHealthCard, adminAssignSection, comprehensiveSection, adminSummarySection, adminPersonalSection, adminQlkvCtahSection ]) : React.createElement(React.Fragment, null, [ staffSection, chtReviewSection ]),
+    isAdmin ? React.createElement(React.Fragment, null, [ kpiSyncHealthCard, adminAssignSection, comprehensiveSection, adminSummarySection, upgradeDetailSection, adminPersonalSection, adminQlkvCtahSection ]) : React.createElement(React.Fragment, null, [ staffSection, upgradeDetailSection, chtReviewSection ]),
   ]);
 }
 
@@ -10316,7 +10403,7 @@ function BaoCaoTuanView({ isAdmin, myStaff }){
 // render vẫn giữ nguyên, chỉ ẩn khỏi điều hướng nên có thể bật lại dễ dàng sau này nếu cần.
 // 23/9/2026: thêm "cust360" (Customer 360) vào STAFF_TABS — trước đây chỉ quản lý (isAdmin) mới
 // thấy tab này; xem Customer360View bên dưới (đã tự lọc theo nhà thuốc của nhân viên khi !isAdmin).
-const STAFF_TABS = ["checklist","homnay","photos","hanghoa","tasks","kpi","crm","cust360","training","kudos","temgia","revenueAnalytics","ketquangay","nhanvien","ctkm","baocaotuan","sales","kinhnghiem"];
+const STAFF_TABS = ["checklist","homnay","photos","hanghoa","tasks","kpi","crm","cust360","training","kudos","temgia","revenueAnalytics","nhanvien","ctkm","baocaotuan","sales","kinhnghiem"];
 const OPS_TABS = [
   { id:"command", label:"Tổng quan điều hành" },
   { id:"shop360", label:"Hồ sơ nhà thuốc" },
