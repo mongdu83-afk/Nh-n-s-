@@ -11475,6 +11475,38 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
   // bộ "Danh mục hàng hoá" giờ đồng bộ tự động từ hệ thống ngoài (API Product/GetItemLst, xem
   // runSyncProductCatalogFromApi trong index.js) qua nút "🔄 Đồng bộ từ hệ thống" bên dưới, không
   // cần quản lý tự xuất/tải file lên nữa.
+  // 26/9/2026: nút đồng bộ QUY CÁCH ĐÓNG GÓI (đơn vị lẻ / đơn vị nguyên đã duyệt, API GetProductInfo)
+  // — thay cho việc mở link tay syncProductPackagingUnitsNow (link giờ bắt buộc đăng nhập nên không mở
+  // thẳng được). Mỗi lượt xử lý 1.000 mã chưa đồng bộ; "Chạy tới khi xong" tự gọi lặp lại tới khi hết.
+  const [packSyncing, setPackSyncing] = useState(false);
+  const [packMsg, setPackMsg] = useState(null);
+  const [packForce, setPackForce] = useState(false);
+  const packStopRef = useRef(false);
+  async function syncPackaging(loop){
+    setPackSyncing(true); packStopRef.current = false;
+    let round = 0, totalOk = 0, totalNo = 0, totalErr = 0;
+    // Làm lại toàn bộ: mọi lượt dùng CHUNG mốc "since" = lúc bấm nút → server chỉ lấy mã chưa đồng bộ
+    // kể từ mốc này, các lượt nối tiếp nhau tới hết danh mục.
+    const since = packForce ? new Date().toISOString() : null;
+    try{
+      while(true){
+        round++;
+        setPackMsg(`Đang đồng bộ quy cách — lượt ${round}...`);
+        const url = `https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncProductPackagingUnitsNow?limit=1000${since ? "&since="+encodeURIComponent(since) : ""}`;
+        const resp = await fetch(url, { headers: await authHeader() });
+        const j = await resp.json().catch(()=>null);
+        if(!resp.ok || !j || j.ok===false){ setPackMsg(`Lỗi đồng bộ quy cách (mã ${resp.status}): ${(j && j.error) || "không rõ"}`); break; }
+        totalOk += j.withPackaging||0; totalNo += j.noPackageInfo||0; totalErr += j.errors||0;
+        setPackMsg(`Lượt ${round}: xử lý ${fmtNum(j.processed||0)} mã · có đơn vị nguyên ${fmtNum(j.withPackaging||0)} · không có quy cách riêng ${fmtNum(j.noPackageInfo||0)} · lỗi ${fmtNum(j.errors||0)} — CÒN LẠI ${fmtNum(j.remainingPending||0)} mã chưa đồng bộ.`);
+        // Dừng khi: không lặp, đã hết, bấm dừng, hoặc lượt này không đồng bộ được mã nào (toàn lỗi — tránh lặp vô hạn).
+        if(!loop || !(j.remainingPending>0) || packStopRef.current || ((j.withPackaging||0)+(j.noPackageInfo||0))===0) break;
+      }
+      if(loop) setPackMsg(m => `${m}  (Tổng: ${fmtNum(totalOk)} mã có đơn vị nguyên, ${fmtNum(totalNo)} không có quy cách riêng, ${fmtNum(totalErr)} lỗi.)`);
+    } catch(err){
+      console.error("Đồng bộ quy cách lỗi:", err);
+      setPackMsg("Lỗi kết nối khi đồng bộ quy cách — thử lại. (" + (err && err.message ? err.message : err) + ")");
+    } finally { setPackSyncing(false); }
+  }
   async function syncCatalogFromApi(){
     setSyncingCatalog(true); setCatalogMsg(null);
     try{
@@ -11791,6 +11823,19 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
         ]),
       ]),
       catalogMsg && React.createElement("div", { key:"msg", style:{ marginTop:10, fontSize:12.5, color:"var(--inkSoft)" } }, catalogMsg),
+      React.createElement("div", { key:"pack", style:{ marginTop:12, paddingTop:12, borderTop:"1px solid var(--line)" } }, [
+        React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:14, marginBottom:4 } }, "📦 Quy cách đóng gói (đơn vị lẻ / đơn vị nguyên đã duyệt)"),
+        React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:8 } }, "Lấy từ API hệ thống bán hàng, mỗi lượt 1.000 mã chưa đồng bộ. Điều chuyển & đặt NCC chỉ đề xuất theo đơn vị nguyên đã duyệt nên cần đồng bộ đủ trước khi bấm Phân tích. “Làm lại toàn bộ” = đồng bộ lại cả những mã đã có (dùng khi quy cách trên hệ thống vừa được sửa/duyệt)."),
+        React.createElement("div", { key:"b", style:{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" } }, [
+          React.createElement("button", { key:"one", type:"button", className:"btn btnGhost", disabled:packSyncing, onClick:()=>syncPackaging(false) }, "Đồng bộ 1 lượt (1.000 mã)"),
+          React.createElement("button", { key:"all", type:"button", className:"btn btnPrimary", disabled:packSyncing, onClick:()=>syncPackaging(true) }, packSyncing ? "Đang đồng bộ..." : "📦 Chạy tới khi xong"),
+          packSyncing && React.createElement("button", { key:"stop", type:"button", className:"btn btnGhost", onClick:()=>{ packStopRef.current = true; } }, "Dừng sau lượt này"),
+          React.createElement("label", { key:"f", style:{ fontSize:12.5, display:"flex", alignItems:"center", gap:5, cursor:"pointer" } }, [
+            React.createElement("input", { key:"c", type:"checkbox", checked:packForce, disabled:packSyncing, onChange:e=>setPackForce(e.target.checked) }), "Làm lại toàn bộ",
+          ]),
+        ]),
+        packMsg && React.createElement("div", { key:"m", style:{ marginTop:8, fontSize:12.5, color:"var(--ink)" } }, packMsg),
+      ]),
       showCatalogList && React.createElement("div", { key:"list", style:{ marginTop:14, borderTop:"1px solid var(--line)", paddingTop:14 } }, [
         React.createElement("input", { key:"search", type:"text", placeholder:"Tìm theo mã hàng, tên hàng, loại SP hoặc nhóm SP...",
           value:catalogSearch, onChange:e=>setCatalogSearch(e.target.value),
@@ -11819,6 +11864,14 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
 
     React.createElement("div", { key:"secT", className:"card", style:{ marginBottom:20 } }, [
       React.createElement("div", { key:"t", className:"cardTitle" }, `Đề xuất điều chuyển (${sortedTransfers.length})`),
+      // 26/9/2026: nguyên tắc chỉ điều chuyển/đặt NCC theo ĐƠN VỊ NGUYÊN — mã chưa xác định được đơn vị
+      // nguyên bị loại khỏi đề xuất; liệt kê để quản lý biết mà bổ sung quy cách trên hệ thống.
+      data && data.excludedNoWholeUnitCount>0 && React.createElement("details", { key:"excl", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } }, [
+        React.createElement("summary", { key:"s", style:{ cursor:"pointer" } }, `Chỉ đề xuất theo đơn vị nguyên (quy cách đã duyệt trên API) — đã loại ${fmtNum(data.excludedNoWholeUnitCount)} mã chưa có đơn vị nguyên đã duyệt (bấm để xem)`),
+        React.createElement("div", { key:"l", style:{ marginTop:6, maxHeight:220, overflowY:"auto", lineHeight:1.6 } },
+          (data.excludedNoWholeUnit||[]).map((x,i) => React.createElement("div", { key:i }, `${x.productId} · ${x.productName} — thiếu tại ${(x.shops||[]).join(", ")}${x.reason ? ` · ${x.reason}` : ""}`))),
+        React.createElement("div", { key:"h", style:{ marginTop:6 } }, "Cách khắc phục: khai báo & DUYỆT quy cách đóng gói (Hộp/Chai...) cho mã này trên hệ thống upharma.com.vn, lần phân tích sau sẽ tự đưa vào đề xuất."),
+      ]),
       sortedTransfers.length===0
         ? React.createElement("div", { className:"emptyState" }, loaded ? "Không có đề xuất điều chuyển nào." : "Đang tải...")
         : React.createElement(React.Fragment, null, [
