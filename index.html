@@ -104,8 +104,7 @@
   .wrap{ max-width:1280px; margin:0 auto; padding:20px 24px 90px; }
   .pagetitle{ font-family:'Fraunces', serif; font-size:31px; font-weight:700; margin:0 0 4px; line-height:1.2; }
   .pageTitleBlock{ min-width:0; }
-  .pageBackBtn{ font-size:13px; padding:5px 12px; margin:4px 0 8px; }
-  .wrap:has(.pageTitleBlock) .pageBackFallback{ display:none; }
+  .pageBackBtn{ font-size:13px; padding:5px 12px; margin:0 0 12px; }
   .pagesub{ display:none; } /* 19/9/2026: bỏ dòng mô tả phụ dưới tiêu đề ở TẤT CẢ các tab (yêu cầu) */
 
   .card{ background:#fff; border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
@@ -283,7 +282,7 @@
       border-bottom:1px solid var(--line); z-index:25; padding:0 26px;
     }
     .topbarTitle{ display:flex; flex-direction:column; gap:1px; min-width:0; }
-    .topbarTitle .t{ font-family:'Fraunces',serif; font-weight:700; font-size:17.5px; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .topbarTitle .t{ font-family:'Fraunces',serif; font-weight:700; font-size:26px; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .topbarTitle .s{ display:none; }
     .topbarRight{ display:flex; align-items:center; gap:16px; flex:none; }
     .topbarBell{ position:relative; width:36px; height:36px; border-radius:9px; border:1px solid var(--line); background:#fff; display:flex; align-items:center; justify-content:center; font-size:16px; cursor:default; }
@@ -13144,13 +13143,9 @@ function Row360({ color, title, sub, right, onClick }){
 }
 // 26/9/2026: tiêu đề trang dùng chung — nút "← Quay lại" nằm ngay DƯỚI tiêu đề (trước đây ở thanh trên cùng).
 const NavBackContext = React.createContext(null);
-function PageTitle(props){
-  const back = React.useContext(NavBackContext);
-  const { children, ...rest } = props;
-  return React.createElement("div", { className:"pageTitleBlock" }, [
-    React.createElement("h2", Object.assign({}, rest, { key:"h", className:"pagetitle" }), children),
-    back && back.canGoBack && React.createElement("button", { key:"back", type:"button", className:"btn btnGhost pageBackBtn", onClick:back.goBack }, "← Quay lại"),
-  ]);
+function PageTitle(){
+  // 26/9/2026: tiêu đề trong trang đã bỏ (trùng với tiêu đề trên thanh trên cùng).
+  return null;
 }
 function Head360({ title, right }){
   return rc("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8, gap:8 } },
@@ -16804,8 +16799,10 @@ function Dashboard({ user, isAdmin, myStaff }){
     ]),
     // ===== Thanh trên cùng — chỉ hiện trên máy tính, song song với sidebar =====
     React.createElement("div", { key:"topbardesktop", className:"topbarDesktop" }, [
-      // 26/9/2026: bỏ tiêu đề trên thanh trên cùng (trùng với tiêu đề trang); nút "← Quay lại" chuyển xuống ngay dưới tiêu đề trang (PageTitle).
-      React.createElement("div", { key:"title" }),
+      // 26/9/2026: giữ tiêu đề ở thanh trên cùng (cỡ lớn), bỏ tiêu đề lặp lại trong trang; nút "← Quay lại" nằm ngay dưới, đầu phần nội dung.
+      React.createElement("div", { key:"title", className:"topbarTitle" }, [
+        React.createElement("span", { key:"t", className:"t" }, activeGroup ? activeGroup.label : "Upharma Ops"),
+      ]),
       React.createElement("div", { key:"right", className:"topbarRight" }, [
         isAdmin && React.createElement("div", { key:"acts360", style:{ display:"flex", gap:8, alignItems:"center" } }, [
           React.createElement("button", { key:"s", type:"button", className:"btn", style:{ fontSize:12, padding:"6px 11px" }, onClick:()=>setShowSearch360(true) }, "⌕ Tìm kiếm"),
@@ -16876,7 +16873,7 @@ function Dashboard({ user, isAdmin, myStaff }){
       // xuyên suốt mọi tab, gây trùng lặp/chiếm chỗ khi đang xem các tab khác không liên quan.
       !isAdmin && activeTab==="checklist" && React.createElement(DailyKpiPaceBanner, { key:"kpipace", myStaff, onOpen:()=>setActiveTab("kpi") }),
       React.createElement(NavBackContext.Provider, { key:"wrapctx", value:{ canGoBack:navHistory.length>0, goBack:goBackTab } }, React.createElement("div", { key:"wrap", className:"wrap mobileContentArea" + (showMobileHome ? " isHiddenMobile" : "") }, [
-        // Trang nào không có tiêu đề chung (PageTitle) thì vẫn hiện nút "← Quay lại" ở đầu nội dung (CSS :has tự ẩn khi đã có).
+        // Nút "← Quay lại" ngay dưới tiêu đề trên thanh trên cùng — chỉ hiện khi có màn trước đó để quay về.
         navHistory.length>0 && React.createElement("button", { key:"backFallback", type:"button", className:"btn btnGhost pageBackBtn pageBackFallback", onClick:goBackTab }, "← Quay lại"),
         // Nhóm nào có từ 2 tab con trở lên (VD "Hàng hoá" gồm Hàng hoá + Tem giá) mới hiện thêm 1
         // thanh tab con ở đây — nhóm chỉ có đúng 1 tab (Tổng quan, AI, Hệ thống...) thì khỏi cần.
