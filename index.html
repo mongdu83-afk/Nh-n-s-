@@ -15974,6 +15974,15 @@ function Customer360View({ isAdmin, myStaff, navParam, onNavigate }){
   const cycle = intel.avgCycleDays || null;
   const overCycle = cycle && daysLast!=null && daysLast > cycle * 1.3;
   const trend = prevSum > 0 ? (curSum - prevSum) / prevSum : null;
+  // 26/9/2026 (Phương): thẻ tóm tắt đầu hồ sơ tính theo 180 NGÀY. Ưu tiên số CHÍNH THỨC 6 tháng từ hệ
+  // thống bán hàng (amountRank/invoiceRank — cũng là số dùng xét hạng), vì lịch sử đơn trong app có thể
+  // thiếu đơn cũ; không có thì cộng từ lịch sử đơn đã ghi nhận.
+  const p180 = purchases.filter(p => p.timestamp > d180);
+  const hasOfficial180 = cust.amountRank != null && Number(cust.amountRank) > 0;
+  const sum180 = hasOfficial180 ? Number(cust.amountRank) : sum(p180);
+  const orders180 = (cust.invoiceRank != null && Number(cust.invoiceRank) > 0) ? Number(cust.invoiceRank) : p180.length;
+  const aov180 = orders180 ? sum180 / orders180 : (intel.avgOrderValue || null);
+  const freq180 = orders180 / 6;
   const risk = intel.churnRisk;
   const riskPill = risk==="cao" ? { text:"RỦI RO CAO", color:CL360.bad } : (risk==="trung bình" ? { text:"CẦN THEO DÕI", color:CL360.warn } : { text:"ỔN ĐỊNH", color:CL360.good });
   const scoreColor = (s) => s==null ? CL360.gray : (s>=3 ? CL360.good : (s===2 ? CL360.warn : CL360.bad));
@@ -16011,9 +16020,9 @@ function Customer360View({ isAdmin, myStaff, navParam, onNavigate }){
       rc("button", { key:"back", type:"button", className:"btn", style:{ fontSize:12 }, onClick:()=>{ setPhone(""); onNavigate && onNavigate("cust360", null); } }, "← Danh sách"),
     ]),
     rc("div", { key:"m", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:10, marginTop:14 } }, [
-      rc(MiniStat360, { key:"a", label:"90 ngày", value:fmtVNDCompact(curSum), sub:`Giá trị mua (${cur.length} đơn)` }),
-      rc(MiniStat360, { key:"b", label:"Đơn hàng TB", value: aov ? fmtVNDCompact(aov) : "—", sub:"Giá trị đơn trung bình" }),
-      rc(MiniStat360, { key:"c", label:"Tần suất", value:freq.toLocaleString("vi-VN", { maximumFractionDigits:1 }), sub:"Đơn/tháng (90 ngày)" }),
+      rc(MiniStat360, { key:"a", label:"180 ngày", value:fmtVNDCompact(sum180), sub:`Giá trị mua (${fmtNum(orders180)} đơn)${hasOfficial180 ? "" : " · theo lịch sử app"}` }),
+      rc(MiniStat360, { key:"b", label:"Đơn hàng TB", value: aov180 ? fmtVNDCompact(aov180) : "—", sub:"Giá trị đơn trung bình (180 ngày)" }),
+      rc(MiniStat360, { key:"c", label:"Tần suất", value:freq180.toLocaleString("vi-VN", { maximumFractionDigits:1 }), sub:"Đơn/tháng (180 ngày)" }),
       rc(MiniStat360, { key:"d", label:"Lần cuối mua", value: daysLast==null ? "—" : (daysLast===0 ? "Hôm nay" : `${daysLast} ngày trước`), valueColor: overCycle ? CL360.bad : undefined, sub: overCycle ? `Vượt chu kỳ (TB ${cycle} ngày)` : (cycle ? `Trong chu kỳ (TB ${cycle} ngày)` : "Chưa đủ dữ liệu chu kỳ"), subColor: overCycle ? CL360.bad : undefined }),
     ]),
   ]);
