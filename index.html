@@ -9825,6 +9825,21 @@ function PromoDocDetectSection({ myStaff, monthKey, onTracked }){
   const [busy, setBusy] = useState(false);
   const [trackingId, setTrackingId] = useState(null);
   const [msg, setMsg] = useState(null);
+  // SỬA LỖI "theo dõi tự động không ra kết quả" (27/9/2026): trước đây bấm "Theo dõi tự động" ở
+  // đây luôn tạo 1 chương trình MỚI đặt tên theo API/DocumentID, không cộng vào đúng chương trình
+  // đã có sẵn từ file kế hoạch (tên khác nhau nên không khớp) — quản lý thấy các thẻ quen thuộc
+  // ("Combo HS1", "CTKM giảm giá"...) vẫn "Chưa tính được doanh thu" dù đã lấy API. Giờ tải sẵn
+  // danh sách chương trình đã có trong tháng để quản lý CHỌN ĐÚNG chương trình cần ghép vào.
+  const [existingCampaigns, setExistingCampaigns] = useState([]);
+  const [linkChoice, setLinkChoice] = useState({});
+  useEffect(()=>{
+    const unsub = db.collection("promoCampaigns").where("monthKey","==",monthKey).onSnapshot(snap=>{
+      const list = []; snap.forEach(d=>list.push({ id:d.id, ...d.data() }));
+      list.sort((a,b)=>a.name.localeCompare(b.name,"vi"));
+      setExistingCampaigns(list);
+    });
+    return unsub;
+  }, [monthKey]);
   async function scan(){
     setBusy(true); setMsg(null); setRows(null);
     try{
@@ -9841,13 +9856,16 @@ function PromoDocDetectSection({ myStaff, monthKey, onTracked }){
   async function trackRow(row){
     setTrackingId(row.documentId);
     try{
+      const targetCampaignId = linkChoice[row.documentId] || null;
       const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/trackPromoByDocumentIdNow", {
         method:"POST", headers:{ "Content-Type":"application/json", ...(await authHeader()) },
-        body: JSON.stringify({ documentId: row.documentId, shopCode: row.shops[0], updatedBy: (myStaff && myStaff.name) || "" }),
+        body: JSON.stringify({ documentId: row.documentId, shopCode: row.shops[0], updatedBy: (myStaff && myStaff.name) || "", targetCampaignId }),
       });
       const data = await resp.json();
       if(!data.ok) throw new Error(data.error||"Lỗi không rõ.");
-      setMsg(`✓ Đã bắt đầu theo dõi tự động "${data.name}".`);
+      setMsg(targetCampaignId
+        ? `✓ Đã ghép doanh thu thực tế vào chương trình "${data.name}".`
+        : `✓ Đã tạo chương trình mới "${data.name}" và bắt đầu theo dõi tự động.`);
       if(onTracked) onTracked();
     } catch(err){
       console.error("Theo dõi từ danh sách quét lỗi:", err);
@@ -9862,7 +9880,7 @@ function PromoDocDetectSection({ myStaff, monthKey, onTracked }){
       busy ? "Đang quét..." : "Quét ngay"),
     msg && React.createElement("div", { key:"msg", style:{ fontSize:12.5, color: msg.startsWith("Lỗi")?"#b3261e":"var(--pine)", background: msg.startsWith("Lỗi")?"#fbe9e7":"var(--pineSoft)", borderRadius:8, padding:"8px 10px", marginBottom:10 } }, msg),
     rows && rows.length>0 && React.createElement("div", { key:"tblwrap", style:{ overflowX:"auto" } }, React.createElement("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5 } }, [
-      React.createElement("thead", { key:"h" }, React.createElement("tr", { style:{ background:"#f8f8f6" } }, ["DocumentID","Doanh thu thực tế","SL","Số đơn","Nhà thuốc",""].map(h=>
+      React.createElement("thead", { key:"h" }, React.createElement("tr", { style:{ background:"#f8f8f6" } }, ["DocumentID","Doanh thu thực tế","SL","Số đơn","Nhà thuốc","Ghép với chương trình đã có (khuyến nghị)",""].map(h=>
         React.createElement("th", { key:h, style:{ textAlign:"left", padding:"6px 8px", borderBottom:"2px solid var(--line)" } }, h)))),
       React.createElement("tbody", { key:"b" }, rows.map(r=>
         React.createElement("tr", { key:r.documentId, style:{ borderTop:"1px solid var(--line)" } }, [
@@ -9871,6 +9889,13 @@ function PromoDocDetectSection({ myStaff, monthKey, onTracked }){
           React.createElement("td", { key:"qty", style:{ padding:"6px 8px" } }, fmtNum(r.totalQty)),
           React.createElement("td", { key:"oc", style:{ padding:"6px 8px" } }, fmtNum(r.orderCount)),
           React.createElement("td", { key:"sh", style:{ padding:"6px 8px", fontSize:11 } }, promoShopsLabel(r.shops)),
+          React.createElement("td", { key:"link", style:{ padding:"6px 8px" } },
+            React.createElement("select", { value:linkChoice[r.documentId]||"", onChange:e=>setLinkChoice(m=>({ ...m, [r.documentId]:e.target.value })),
+              style:{ fontSize:11.5, padding:"4px 6px", borderRadius:6, border:"1px solid var(--line)", maxWidth:220 } }, [
+              React.createElement("option", { key:"none", value:"" }, "— Tạo chương trình mới —"),
+              ...existingCampaigns.map(c=>React.createElement("option", { key:c.id, value:c.id },
+                `${c.name}${c.actualRevenueSku!=null||c.autoTrackSku?" (đã có DL thực tế)":""}`)),
+            ])),
           React.createElement("td", { key:"a", style:{ padding:"6px 8px" } },
             React.createElement("button", { type:"button", className:"btn btnGhost", style:{ fontSize:11.5, padding:"4px 10px" },
               disabled: trackingId===r.documentId, onClick:()=>trackRow(r) }, trackingId===r.documentId ? "Đang lưu..." : "Theo dõi tự động")),
