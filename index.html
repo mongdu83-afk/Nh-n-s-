@@ -285,6 +285,9 @@
       font-size:10.5px; font-weight:800; display:flex; align-items:center; justify-content:center; flex:none;
     }
     .sideSubNav{ display:none; margin:2px 0 8px 22px; padding-left:8px; border-left:2px solid rgba(255,255,255,.28); }
+    .clickTile{ transition:transform .12s, box-shadow .12s; }
+    .clickTile:hover{ transform:translateY(-2px); box-shadow:0 4px 14px rgba(35,49,41,.12); }
+    .ovLine:hover{ background:var(--pineSoft); }
     .sideSubNav.hasItems{ display:flex; flex-direction:column; gap:1px; }
     .sideSubGroup{ display:contents; }
     .sideSubGroup .sideSubItem{ margin-left:calc(var(--lvl,0) * 12px); width:calc(100% - var(--lvl,0) * 12px); }
@@ -2401,6 +2404,41 @@ function CustomerOrderView({ isAdmin, myStaff }){
 // phụ thuộc việc thông báo đẩy có thực sự đến được máy hay không (điện thoại có thể chặn ngầm do
 // tối ưu hoá pin). Chỉ hiện nếu có dữ liệu tính cho ĐÚNG HÔM NAY (staff không có ca hôm nay sẽ
 // không có dữ liệu, banner tự ẩn).
+// 27/9/2026 (Phương): banner "Nhắc tái mua" trên trang đầu của nhân viên/CHT — số khách của nhà thuốc
+// đang đến lúc dùng hết sản phẩm mà chưa ai liên hệ, bấm là mở thẳng tab Nhắc tái mua.
+function ReplenishBanner({ myStaff, onOpen }){
+  const [st, setSt] = useState(null);
+  useEffect(()=>{
+    if(!myStaff) return undefined;
+    let alive = true;
+    (async ()=>{
+      try{
+        const r = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/replenishmentList?shop=all", { headers: await authHeader() });
+        const d = await r.json(); if(!d.ok || !alive) return;
+        let now = 0, mine = 0, unclaimed = 0, soon = 0;
+        (d.customers||[]).forEach(c => {
+          const its = (c.items||[]).filter(it => !it.contact);
+          const isNow = its.some(it => it.daysLeft>=-3 && it.daysLeft<=3);
+          if(isNow){ now++; if(c.assignedStaffId===myStaff.id) mine++; if(!c.assignedStaffId) unclaimed++; }
+          else if(its.some(it => it.daysLeft>3)) soon++;
+        });
+        setSt({ now, mine, unclaimed, soon });
+      } catch(e){ /* bỏ qua — banner phụ */ }
+    })();
+    return ()=>{ alive = false; };
+  }, [myStaff && myStaff.id]);
+  if(!st || (st.now===0 && st.soon===0)) return null;
+  return React.createElement("div", { onClick:onOpen, style:{ cursor:"pointer", display:"flex", alignItems:"center", gap:12, flexWrap:"wrap", margin:"0 0 14px", padding:"12px 16px", borderRadius:12,
+      background:"linear-gradient(135deg,#ecfdf5,#fff)", border:"1px solid #86efac" } }, [
+    React.createElement("span", { key:"i", style:{ fontSize:24 } }, "🔁"),
+    React.createElement("div", { key:"t", style:{ flex:1, minWidth:200 } }, [
+      React.createElement("div", { key:"a", style:{ fontWeight:700, fontSize:14.5 } }, `${fmtNum(st.now)} khách đang đến lúc dùng hết sản phẩm — cần nhắc tái mua`),
+      React.createElement("div", { key:"b", style:{ fontSize:12, color:"var(--inkSoft)", marginTop:2 } },
+        `${st.mine ? `${fmtNum(st.mine)} khách bạn phụ trách · ` : ""}${fmtNum(st.unclaimed)} khách chưa ai nhận chăm sóc · ${fmtNum(st.soon)} khách sắp hết trong 14 ngày`),
+    ]),
+    React.createElement("span", { key:"b", className:"btn btnPrimary", style:{ fontSize:12.5 } }, "Mở Nhắc tái mua ›"),
+  ]);
+}
 function DailyKpiPaceBanner({ myStaff, onOpen }){
   // ===== SỬA HIỆU NĂNG (9/2026): trước đây tải TOÀN BỘ collection "dailyKpiPace" (1 dòng/nhân
   // viên/ngày, tích luỹ mãi mãi không giới hạn) rồi mới lọc ra đúng người + đúng hôm nay — giống
@@ -4525,6 +4563,38 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
     return unsub;
   }, [selectedPhone]);
   useEffect(()=>{ setRangeResult(null); setRangeError(null); }, [selectedPhone]);
+  // 27/9/2026 (Phương): "Sản phẩm khách đã mua" ngay trong chi tiết khách (giao diện nhân viên) —
+  // gộp theo mã hàng từ lịch sử mua (customerEvents.items): số lần mua, tổng SL, lần gần nhất,
+  // nhịp mua lại → nhân viên biết khách đang dùng gì để tư vấn/nhắc tái mua.
+  const [custProducts, setCustProducts] = useState({ phone:null, loading:false, rows:[] });
+  const [showAllProducts, setShowAllProducts] = useState(false);
+  useEffect(()=>{
+    setShowAllProducts(false);
+    if(!selectedPhone){ setCustProducts({ phone:null, loading:false, rows:[] }); return undefined; }
+    let alive = true;
+    setCustProducts({ phone:selectedPhone, loading:true, rows:[] });
+    db.collection("customerEvents").where("customerId","==",selectedPhone).where("type","==","purchase").get().then(snap => {
+      const by = {};
+      snap.forEach(d => {
+        const e = d.data(); const day = String(e.timestamp||"").slice(0,10);
+        (e.items||[]).forEach(it => {
+          const k = it.productId || it.productName; if(!k) return;
+          const r = by[k] || (by[k] = { id:it.productId||"", name:it.productName||k, unit:it.unit||"", qty:0, amount:0, days:new Set(), last:"", lastQty:0 });
+          r.qty += Number(it.quantity)||0; r.amount += Number(it.amount)||0; if(day) r.days.add(day);
+          if(day > r.last){ r.last = day; r.lastQty = Number(it.quantity)||0; r.unit = it.unit || r.unit; } else if(day===r.last){ r.lastQty += Number(it.quantity)||0; }
+        });
+      });
+      const rows = Object.values(by).map(r => {
+        const ds = Array.from(r.days).sort(); const gaps = [];
+        for(let i=1;i<ds.length;i++){ const g = Math.round((Date.parse(ds[i])-Date.parse(ds[i-1]))/86400000); if(g>=5) gaps.push(g); }
+        const cycle = gaps.length ? Math.round(gaps.reduce((a,b)=>a+b,0)/gaps.length) : null;
+        const next = cycle && r.last ? addDays(r.last, cycle) : null;
+        return { ...r, times:ds.length, cycle, next, daysLeft: next ? Math.round((Date.parse(next)-Date.parse(todayISO()))/86400000) : null };
+      }).sort((a,b) => (b.times>1) - (a.times>1) || (b.last||"").localeCompare(a.last||""));
+      if(alive) setCustProducts({ phone:selectedPhone, loading:false, rows });
+    }).catch(err => { console.error("custProducts lỗi:", err); if(alive) setCustProducts({ phone:selectedPhone, loading:false, rows:[], error:err.message||String(err) }); });
+    return ()=>{ alive = false; };
+  }, [selectedPhone]);
   // ===== Đề xuất bổ sung (9/2026) — Lịch sử thay đổi phân khúc: đọc từ collection
   // "customerSegmentHistory" (ghi bởi computeCustomerSegments mỗi khi phân khúc của khách thay
   // đổi), chỉ của ĐÚNG khách đang xem, mới nhất trước — để thấy được quá trình khách di chuyển
@@ -5367,6 +5437,30 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
             "Nguy cơ rời bỏ: ",
             React.createElement("span", { key:"v", style:{ fontWeight:700, color: selected.intelligence.churnRisk==="cao" ? "var(--clay)" : (selected.intelligence.churnRisk==="trung bình" ? "var(--amber)" : "var(--pine)") } }, selected.intelligence.churnRisk),
           ]),
+        ]),
+
+        // ===== 27/9/2026: Sản phẩm khách đã mua (gộp theo mã) =====
+        React.createElement("div", { key:"prodbox", className:"card", style:{ padding:10, marginBottom:12, fontSize:12 } }, [
+          React.createElement("div", { key:"t", style:{ fontWeight:700, marginBottom:6, fontSize:12.5, display:"flex", justifyContent:"space-between", gap:8 } }, [
+            React.createElement("span", { key:"a" }, `💊 Sản phẩm khách đã mua${custProducts.rows.length ? ` (${custProducts.rows.length} mã)` : ""}`),
+            onNavigate && React.createElement("span", { key:"b", style:{ fontWeight:600, color:"#0a6bb4", cursor:"pointer", fontSize:11.5 }, onClick:()=>onNavigate("taimua") }, "Nhắc tái mua ›"),
+          ]),
+          custProducts.loading ? React.createElement("div", { key:"l", style:{ color:"var(--inkSoft)" } }, "Đang tải...")
+          : custProducts.error ? React.createElement("div", { key:"e", style:{ color:"var(--clay)" } }, `Lỗi: ${custProducts.error}`)
+          : custProducts.rows.length===0 ? React.createElement("div", { key:"n", style:{ color:"var(--inkSoft)" } }, "Chưa có dữ liệu sản phẩm cho khách này.")
+          : React.createElement("div", { key:"tb", style:{ overflowX:"auto" } }, React.createElement("table", { className:"tblCompact", style:{ width:"100%", fontSize:11.5 } }, [
+              React.createElement("thead", { key:"h" }, React.createElement("tr", null, ["Sản phẩm","Số lần","Lần gần nhất","Nhịp mua lại"].map((h,i)=>React.createElement("th", { key:i, style:{ textAlign:i?"right":"left", whiteSpace:"normal" } }, h)))),
+              React.createElement("tbody", { key:"b" }, (showAllProducts ? custProducts.rows : custProducts.rows.slice(0, 8)).map(r => {
+                const st = r.daysLeft==null ? null : (r.daysLeft>3 ? { t:`hết ~${r.daysLeft}n nữa`, c:"#2563eb" } : r.daysLeft>=-3 ? { t:"sắp/đã hết", c:"#b45309" } : { t:`quá ${-r.daysLeft}n`, c:"#b91c1c" });
+                return React.createElement("tr", { key:r.id||r.name }, [
+                  React.createElement("td", { key:"n" }, [React.createElement("div", { key:"a", style:{ fontWeight:600 } }, r.name), React.createElement("div", { key:"b", style:{ color:"var(--inkSoft)", fontSize:10.5 } }, `${r.id||""}${r.qty ? ` · tổng ${fmtNum(r.qty)} ${r.unit||""}` : ""}`)]),
+                  React.createElement("td", { key:"t", style:{ textAlign:"right" } }, r.times),
+                  React.createElement("td", { key:"l", style:{ textAlign:"right", whiteSpace:"nowrap" } }, [r.last ? r.last.slice(8,10)+"/"+r.last.slice(5,7)+"/"+r.last.slice(2,4) : "—", React.createElement("div", { key:"q", style:{ color:"var(--inkSoft)", fontSize:10.5 } }, `${fmtNum(r.lastQty)} ${r.unit||""}`)]),
+                  React.createElement("td", { key:"c", style:{ textAlign:"right", whiteSpace:"nowrap" } }, r.cycle ? [`~${r.cycle} ngày`, st && React.createElement("div", { key:"s", style:{ color:st.c, fontWeight:700, fontSize:10.5 } }, st.t)] : "—"),
+                ]);
+              })),
+            ])),
+          custProducts.rows.length>8 && React.createElement("button", { key:"more", type:"button", className:"btn btnGhost", style:{ marginTop:6, padding:"3px 10px", fontSize:11.5 }, onClick:()=>setShowAllProducts(v=>!v) }, showAllProducts ? "Thu gọn" : `Xem tất cả ${custProducts.rows.length} mã`),
         ]),
 
         // ===== Tra cứu giá trị mua hàng theo khoảng ngày tự chọn (đọc từ customerEvents) =====
@@ -8540,8 +8634,8 @@ function ShopFilterBar({ isAdmin, adminShop, setAdminShop, shopFilter }){
 // liệu nền xanh nhạt, chọn nhanh khoảng thời gian, 3 tab con "Theo kỳ / So sánh theo kỳ / Theo
 // ngành" — nhưng số liệu vẫn tính từ dữ liệu API đã đồng bộ (opsConfig/revenueAnalytics +
 // opsConfig/behaviorAnalytics), KHÔNG dùng file Excel tải lên như app Dashboard cũ.
-function StatTile({ label, value, sub, tint }){
-  return React.createElement("div", { className:"card", style:{ padding:"14px 16px", background: tint||"var(--pineSoft)", border:"none" } }, [
+function StatTile({ label, value, sub, tint, onClick }){
+  return React.createElement("div", { className:"card" + (onClick ? " clickTile" : ""), onClick, title: onClick ? "Bấm để xem chi tiết" : undefined, style:{ padding:"14px 16px", background: tint||"var(--pineSoft)", border:"none", cursor: onClick ? "pointer" : "default" } }, [
     React.createElement("div", { key:"l", style:{ fontSize:11, fontWeight:700, color:"var(--inkSoft)", textTransform:"uppercase", letterSpacing:.03, marginBottom:6 } }, label),
     React.createElement("div", { key:"v", style:{ fontSize:22, fontWeight:700, fontFamily:"'Fraunces',serif" } }, value),
     sub && React.createElement("div", { key:"s", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:4 } }, sub),
@@ -10546,30 +10640,30 @@ const STAFF_TABS = ["checklist","homnay","photos","hanghoa","tasks","kpi","crm",
 const OPS_TABS = [
   { id:"command", label:"Tổng quan điều hành" },
   { id:"shop360", label:"Hồ sơ nhà thuốc" },
-  { id:"risk", label:"Rủi ro & Tuân thủ" },
-  { id:"action", label:"Công việc cần xử lý" },
-  { id:"emp360", label:"Hồ sơ nhân viên" },
-  { id:"cust360", label:"Hồ sơ khách hàng" },
-  { id:"taimua", label:"🔁 Nhắc tái mua" },
-  { id:"prod360", label:"Hồ sơ hàng hoá" },
+  { id:"risk", label:"Danh sách rủi ro & cảnh báo" },
+  { id:"action", label:"Việc cần xử lý" },
+  { id:"emp360", label:"Employee 360" },
+  { id:"cust360", label:"Customer 360" },
+  { id:"taimua", label:"🔁 Chăm sóc tái mua" },
+  { id:"prod360", label:"Product 360" },
   { id:"checklist", label:"Checklist ngày" },
-  { id:"homnay", label:"Hôm nay nhà thuốc" },
-  { id:"photos", label:"Báo cáo hình ảnh" },
-  { id:"hanghoa", label:"Hàng hoá" },
+  { id:"homnay", label:"Tình hình hôm nay" },
+  { id:"photos", label:"Minh chứng hình ảnh" },
+  { id:"hanghoa", label:"Hàng hoá & tồn kho" },
   { id:"donthuoc", label:"Thư viện đơn thuốc" },
   { id:"revenueAnalytics", label:"Doanh thu" },
   { id:"ketquangay", label:"Kết quả ngày" },
   { id:"baocaotuan", label:"Báo cáo tuần" },
   { id:"sales", label:"Báo cáo doanh số ngày" },
-  { id:"tasks", label:"Giao việc" },
+  { id:"tasks", label:"Danh sách & giao việc" },
   { id:"kpi", label:"KPI" },
-  { id:"crm", label:"Khách hàng" },
-  { id:"nhanvien", label:"Nhân viên" },
-  { id:"ctkm", label:"Khuyến Mại" },
+  { id:"crm", label:"Danh sách khách hàng" },
+  { id:"nhanvien", label:"Danh sách nhân viên" },
+  { id:"ctkm", label:"Khuyến mại" },
   { id:"training", label:"Đào tạo & Buddy" },
   { id:"kudos", label:"Ghi nhận & Quà" },
   { id:"temgia", label:"Tem giá" },
-  { id:"kinhnghiem", label:"Kinh nghiệm vận hành" },
+  { id:"kinhnghiem", label:"Lịch sử & kinh nghiệm xử lý" },
   { id:"ai", label:"AI" },
   { id:"hethong", label:"Hệ thống" },
 ];
@@ -10583,14 +10677,42 @@ const OPS_TABS = [
 // 21/9/2026 (nâng cấp Upharma Ops — mục II đặc tả): đổi tên + xếp lại thứ tự menu theo đúng đặc tả
 // (Tổng quan điều hành → Nhân sự → Khách hàng → Hàng hoá → Vận hành → Công việc cần xử lý → AI → Hệ thống).
 // Chỉ đổi NHÃN và THỨ TỰ — id nhóm/tab giữ nguyên nên icon, badge, điều hướng cũ đều chạy như trước.
-const OPS_GROUPS_STAFF = [
+// ===== 27/9/2026 — TÁI CẤU TRÚC MENU theo tài liệu "Yêu cầu AI Dev – Tái cấu trúc menu Upharma Ops" v1.0.
+// Chỉ đổi CÁCH GOM NHÓM + NHÃN hiển thị. Id tab giữ nguyên 100% → mọi điều hướng (thông báo đẩy
+// appLink, nút "Mở ..." trong các màn, badge chưa đọc, navParam) chạy như cũ. Không đổi dữ liệu,
+// công thức hay phân quyền (danh sách tab được phép của nhân viên vẫn là STAFF_TABS).
+// Bản trước khi tái cấu trúc: xem MENU_LEGACY_* bên dưới (hoàn nguyên = đổi USE_LEGACY_MENU = true).
+const OPS_GROUPS_ADMIN_V2 = [
+  { id:"command",      label:"Tổng quan điều hành",   tabs:["command"] },
+  { id:"nhathuoc",     label:"Quản trị nhà thuốc",    tabs:["shop360","homnay","checklist","photos"] },
+  { id:"congviec",     label:"Quản trị công việc",    tabs:["action","tasks"] },
+  { id:"nhansu",       label:"Quản trị nhân sự",      tabs:["nhanvien","emp360","kpi","training","kudos"] },
+  { id:"khachhang",    label:"Quản trị khách hàng",   tabs:["crm","cust360","taimua"] },
+  { id:"hanghoagroup", label:"Quản trị hàng hoá",     tabs:["hanghoa","prod360","donthuoc"] },
+  { id:"kinhdoanh",    label:"Kinh doanh & Marketing", tabs:["revenueAnalytics","ctkm","temgia"] },
+  { id:"baocao",       label:"Báo cáo & Phân tích",   tabs:["ketquangay","baocaotuan"] },
+  { id:"ruiro",        label:"Rủi ro & Tuân thủ",     tabs:["risk","kinhnghiem"] },
+  { id:"ai",           label:"AI Commander",          tabs:["ai"] },
+  { id:"hethong",      label:"Hệ thống",              tabs:["hethong"] },
+];
+const OPS_GROUPS_STAFF_V2 = [
+  { id:"nhathuoc",     label:"Quản trị nhà thuốc",    tabs:["checklist","homnay","photos"] },
+  { id:"congviec",     label:"Quản trị công việc",    tabs:["tasks"] },
+  { id:"nhansu",       label:"Quản trị nhân sự",      tabs:["kpi","nhanvien","training","kudos"] },
+  { id:"khachhang",    label:"Quản trị khách hàng",   tabs:["taimua","crm","cust360"] },
+  { id:"hanghoagroup", label:"Quản trị hàng hoá",     tabs:["hanghoa"] },
+  { id:"kinhdoanh",    label:"Kinh doanh & Marketing", tabs:["revenueAnalytics","ctkm","temgia"] },
+  { id:"baocao",       label:"Báo cáo & Phân tích",   tabs:["sales","baocaotuan"] },
+];
+// ----- Menu cũ (giữ nguyên để hoàn nguyên nhanh nếu cần) -----
+const MENU_LEGACY_STAFF = [
   { id:"vanhanh", label:"Vận hành", tabs:["checklist","homnay","photos","sales","revenueAnalytics","baocaotuan","kinhnghiem"] },
   { id:"tasks", label:"Công việc & KPI", tabs:["tasks","kpi"] },
   { id:"khachhang", label:"Khách hàng", tabs:["taimua","crm","cust360","ctkm"] },
   { id:"hanghoagroup", label:"Hàng hoá", tabs:["hanghoa","temgia"] },
   { id:"nhansu", label:"Nhân sự", tabs:["nhanvien","training","kudos"] },
 ];
-const OPS_GROUPS_ADMIN = [
+const MENU_LEGACY_ADMIN = [
   { id:"command", label:"Tổng quan điều hành", tabs:["command","risk","shop360"] },
   { id:"nhansu", label:"Nhân sự", tabs:["emp360","tasks","kpi","nhanvien","training","kudos"] },
   { id:"khachhang", label:"Khách hàng", tabs:["taimua","cust360","crm","ctkm"] },
@@ -10600,6 +10722,9 @@ const OPS_GROUPS_ADMIN = [
   { id:"ai", label:"AI", tabs:["ai"] },
   { id:"hethong", label:"Hệ thống", tabs:["hethong"] },
 ];
+const USE_LEGACY_MENU = false;
+const OPS_GROUPS_STAFF = USE_LEGACY_MENU ? MENU_LEGACY_STAFF : OPS_GROUPS_STAFF_V2;
+const OPS_GROUPS_ADMIN = USE_LEGACY_MENU ? MENU_LEGACY_ADMIN : OPS_GROUPS_ADMIN_V2;
 
 function LoginScreen(){
   const [email, setEmail] = useState("");
@@ -12244,6 +12369,11 @@ const TAB_STYLE = {
   cust360:        { icon:"❤️", color:"#7c3aed" },
   prod360:        { icon:"📦", color:"#0f6b5c" },
   vanhanh:        { icon:"⚡", color:"#2563eb" },
+  nhathuoc:       { icon:"🏪", color:"#2563eb" },
+  congviec:       { icon:"📌", color:"#dc2626" },
+  kinhdoanh:      { icon:"💵", color:"#0d9488" },
+  baocao:         { icon:"📅", color:"#4f46e5" },
+  ruiro:          { icon:"🛡️", color:"#b3261e" },
   nhansu:         { icon:"👥", color:"#475569" },
   khachhang:      { icon:"❤️", color:"#7c3aed" },
   hanghoagroup:   { icon:"📦", color:"#0f6b5c" },
@@ -12278,6 +12408,7 @@ const TAB_STYLE = {
 // thước nhỏ trên điện thoại). Mỗi icon dùng stroke="currentColor" nên tự đổi màu theo nơi đặt
 // (trắng trên nền màu ở lưới điện thoại, màu chữ sidebar trên máy tính).
 const TAB_ICON_SVG = {
+  nhathuoc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l1.5-5h15L21 9"/><path d="M3 9h18v2a3 3 0 0 1-6 0 3 3 0 0 1-6 0 3 3 0 0 1-6 0z"/><path d="M5 13v7h14v-7"/><path d="M12 15v4M10 17h4"/></svg>',
   risk: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6l8-3z"/><path d="M12 8v5"/><circle cx="12" cy="16.5" r=".6" fill="currentColor"/></svg>',
   action: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16 9.5"/></svg>',
   command: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>',
@@ -12311,8 +12442,9 @@ const TAB_ICON_SVG = {
   baocaotuan: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
   ketquangay: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>',
 };
+const TAB_ICON_ALIAS = { congviec:"tasks", kinhdoanh:"revenueAnalytics", baocao:"baocaotuan", ruiro:"risk" };
 function renderTabIcon(id, sizePx, extraProps){
-  const markup = (TAB_ICON_SVG[id] || TAB_ICON_SVG.staff).replace("<svg ", '<svg width="' + sizePx + '" height="' + sizePx + '" ');
+  const markup = (TAB_ICON_SVG[id] || TAB_ICON_SVG[TAB_ICON_ALIAS[id]] || TAB_ICON_SVG.staff).replace("<svg ", '<svg width="' + sizePx + '" height="' + sizePx + '" ');
   return React.createElement("span", Object.assign({
     style: { display:"inline-flex", width:sizePx, height:sizePx, flex:"none" },
     dangerouslySetInnerHTML: { __html: markup },
@@ -12622,9 +12754,12 @@ function OverviewGroupCard({ title, color, headline, headlineSub, lines, onClick
     rc("div", { key:"t", style:{ fontSize:11, fontWeight:700, color:"var(--inkSoft)", textTransform:"uppercase", letterSpacing:.03, marginBottom:4 } }, title),
     rc("div", { key:"h", style:{ fontSize:24, fontWeight:800, fontFamily:"'Fraunces',serif", color } }, headline),
     headlineSub && rc("div", { key:"hs", style:{ fontSize:11, color:"var(--inkSoft)", marginBottom:6 } }, headlineSub),
-    ...lines.map((l, i) => rc("div", { key:"l"+i, style:{ display:"flex", justifyContent:"space-between", gap:8, fontSize:12, padding:"3px 0", borderTop: i===0 ? "1px solid var(--line)" : "none", marginTop: i===0 ? 6 : 0 } }, [
+    // 27/9/2026: từng dòng chỉ số bấm được → mở đúng màn chi tiết của dòng đó (không chỉ cả thẻ).
+    ...lines.map((l, i) => rc("div", { key:"l"+i, className: l.onClick ? "ovLine" : undefined, title: l.onClick ? "Bấm để xem chi tiết" : undefined,
+        onClick: l.onClick ? (e => { e.stopPropagation(); l.onClick(); }) : undefined,
+        style:{ display:"flex", justifyContent:"space-between", gap:8, fontSize:12, padding:"3px 4px", margin: i===0 ? "6px -4px 0" : "0 -4px", borderRadius:5, borderTop: i===0 ? "1px solid var(--line)" : "none", cursor: l.onClick ? "pointer" : "inherit" } }, [
       rc("span", { key:"a", style:{ color:"var(--inkSoft)" } }, l.label),
-      rc("b", { key:"b", style:{ color:l.color||"var(--ink)" } }, l.value),
+      rc("b", { key:"b", style:{ color:l.color||"var(--ink)" } }, [l.value, l.onClick && rc("span", { key:"ar", style:{ marginLeft:4, color:"var(--inkSoft)", fontWeight:400 } }, "›")]),
     ])),
   ]);
 }
@@ -12768,25 +12903,25 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate }){
   const n = v => v==null ? "—" : fmtNum(v);
   const cards = [
     { key:"rev", title:"Doanh thu tháng", color:revColor, headline: pctHead==null ? "—" : `${pctHead}%`, headlineSub:"Dự kiến đạt cả tháng", tab:["revenueAnalytics"], lines:[
-      { label:"Thực hiện", value: revenueBlock ? fmtVNDCompact(revenueBlock.actual||0) : "—" },
-      { label:"Chỉ tiêu", value: revenueBlock ? fmtVNDCompact(revenueBlock.target||0) : "—" },
-      { label:"Đạt lũy kế", value: revenueBlock && revenueBlock.pct!=null ? `${revenueBlock.pct}%` : "—" } ] },
+      { label:"Thực hiện", value: revenueBlock ? fmtVNDCompact(revenueBlock.actual||0) : "—", onClick:()=>go("revenueAnalytics") },
+      { label:"Chỉ tiêu", value: revenueBlock ? fmtVNDCompact(revenueBlock.target||0) : "—", onClick:()=>go("revenueAnalytics") },
+      { label:"Đạt lũy kế", value: revenueBlock && revenueBlock.pct!=null ? `${revenueBlock.pct}%` : "—", onClick:()=>go("revenueAnalytics") } ] },
     { key:"hr", title:"Nhân sự", color: overdueTasks.length>0 ? CL360.warn : CL360.good, headline:n(staffScoped.length), headlineSub:"Tổng nhân viên", tab:["emp360"], lines:[
-      { label:"Đã nộp checklist hôm qua", value: checklistEligibleSum>0 ? `${n(checklistSubmittedSum)}/${n(checklistEligibleSum)}` : "—" },
-      { label:"KPI dự kiến dưới 85%", value:n(staffNeedingAttention), color:(staffNeedingAttention||0)>0?CL360.warn:undefined },
-      { label:"Công việc quá hạn", value:n(overdueTasks.length), color:overdueTasks.length>0?CL360.bad:undefined } ] },
+      { label:"Đã nộp checklist hôm qua", value: checklistEligibleSum>0 ? `${n(checklistSubmittedSum)}/${n(checklistEligibleSum)}` : "—", onClick:()=>go("checklist") },
+      { label:"KPI dự kiến dưới 85%", value:n(staffNeedingAttention), color:(staffNeedingAttention||0)>0?CL360.warn:undefined, onClick:()=>go("kpi") },
+      { label:"Công việc quá hạn", value:n(overdueTasks.length), color:overdueTasks.length>0?CL360.bad:undefined, onClick:()=>go("action", { tab:"overdue" }) } ] },
     { key:"cust", title:"Khách hàng", color: cust && cust.silentVip>0 ? CL360.warn : CL360.good, headline:n(cust && cust.total), headlineSub:"Tổng khách hàng", tab:["crm"], lines:[
-      { label:"Khách cần chăm sóc", value:n(cust && cust.needCare), color:cust && cust.needCare>0?CL360.warn:undefined },
-      { label:"Nguy cơ không quay lại", value:n(cust && cust.atRisk) },
-      { label:"Khách VIP / VIP im lặng", value:`${n(cust && cust.vip)} / ${n(cust && cust.silentVip)}`, color:cust && cust.silentVip>0?CL360.bad:undefined } ] },
-    { key:"goods", title:"Hàng hoá", color: goods && goods.urgent>0 ? CL360.bad : CL360.good, headline:n(goods && goods.urgent), headlineSub:"Hàng thiếu (bán nhanh, tồn thấp)", tab:["hanghoa",{ sub:"transfer", invSubTab:"tocdo" }], lines:[
-      { label:"Tồn cao / Bán chậm", value:`${n(goods && goods.overstock)} / ${n(goods && goods.slow)}` },
-      { label:"Không bán / Nguy cơ thiếu", value:`${n(goods && goods.dead)} / ${n(goods && goods.soon)}` },
-      { label:"Sắp hết hạn (6 tháng)", value: isAll ? `${shopsNearExpiry} NT ≥5%` : `${thisShopExpiryPct6}% tồn`, color:(isAll ? shopsNearExpiry>0 : thisShopExpiryPct6>=5)?CL360.warn:undefined } ] },
+      { label:"Khách cần chăm sóc", value:n(cust && cust.needCare), color:cust && cust.needCare>0?CL360.warn:undefined, onClick:()=>go("taimua") },
+      { label:"Nguy cơ không quay lại", value:n(cust && cust.atRisk), onClick:()=>go("crm", { segment:"Có nguy cơ rời bỏ" }) },
+      { label:"Khách VIP / VIP im lặng", value:`${n(cust && cust.vip)} / ${n(cust && cust.silentVip)}`, color:cust && cust.silentVip>0?CL360.bad:undefined, onClick:()=>go("crm", { segment: cust && cust.silentVip>0 ? "Giá trị cao im lặng" : "Khách VIP" }) } ] },
+    { key:"goods", title:"Hàng hoá", color: goods && goods.urgent>0 ? CL360.bad : CL360.good, headline:n(goods && goods.urgent), headlineSub:"Hàng thiếu (bán nhanh, tồn thấp)", tab:["hanghoa",{ sub:"transfer", invSubTab:"tocdo", flaggedStatus:"URGENT_REPLENISH" }], lines:[
+      { label:"Tồn cao / Bán chậm", value:`${n(goods && goods.overstock)} / ${n(goods && goods.slow)}`, onClick:()=>go("hanghoa", { sub:"transfer", invSubTab:"tocdo", flaggedStatus:"OVERSTOCK" }) },
+      { label:"Không bán / Nguy cơ thiếu", value:`${n(goods && goods.dead)} / ${n(goods && goods.soon)}`, onClick:()=>go("hanghoa", { sub:"transfer", invSubTab:"tocdo", flaggedStatus:"DEAD_STOCK" }) },
+      { label:"Sắp hết hạn (6 tháng)", value: isAll ? `${shopsNearExpiry} NT ≥5%` : `${thisShopExpiryPct6}% tồn`, color:(isAll ? shopsNearExpiry>0 : thisShopExpiryPct6>=5)?CL360.warn:undefined, onClick:()=>go("hanghoa", { sub:"transfer", invSubTab:"tocdo", flaggedStatus:"NEAR_EXPIRY" }) } ] },
     { key:"ops", title:"Vận hành hôm nay", color: overdueTasks.length>0 ? CL360.bad : CL360.good, headline:n(dueTodayOpen+doneTodayN), headlineSub:"Việc đến hạn hôm nay", tab:["action"], lines:[
-      { label:"Đã hoàn thành", value:n(doneTodayN), color:CL360.good },
-      { label:"Chưa hoàn thành", value:n(dueTodayOpen) },
-      { label:"Quá hạn", value:n(overdueTasks.length), color:overdueTasks.length>0?CL360.bad:undefined } ] },
+      { label:"Đã hoàn thành", value:n(doneTodayN), color:CL360.good, onClick:()=>go("action", { tab:"done" }) },
+      { label:"Chưa hoàn thành", value:n(dueTodayOpen), onClick:()=>go("action", { tab:"team" }) },
+      { label:"Quá hạn", value:n(overdueTasks.length), color:overdueTasks.length>0?CL360.bad:undefined, onClick:()=>go("action", { tab:"overdue" }) } ] },
   ];
 
   // ---- Điểm sức khoẻ + nguyên nhân ----
@@ -12828,15 +12963,15 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate }){
 
     // AREA OVERVIEW — 5 KPI khu vực (mục A đặc tả Module 6)
     rc("div", { key:"areaOverview", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10, marginBottom:16 } }, [
-      rc(StatTile, { key:"t1", label:"Nhà thuốc trong phạm vi", value:fmtNum(totalShopsInScope), sub:isAll?"Toàn bộ chuỗi":shopLabel(adminShop), tint:"var(--pineSoft)" }),
-      rc(StatTile, { key:"t2", label:"Đạt KPI (điểm > 85)", value:shopsAtKpiCount==null?"—":fmtNum(shopsAtKpiCount), sub:shopsAtKpiCount==null?"Chưa có dữ liệu":`/${totalShopsInScope} nhà thuốc`, tint:"var(--pineSoft)" }),
-      rc(StatTile, { key:"t3", label:"Nhà thuốc có cảnh báo", value:shopsWithAlertCount==null?"—":fmtNum(shopsWithAlertCount), sub:shopsWithAlertCount==null?"Chưa có dữ liệu":`/${totalShopsInScope} nhà thuốc`, tint:(shopsWithAlertCount||0)>0?"#fdecec":"var(--pineSoft)" }),
-      rc(StatTile, { key:"t4", label:"Vấn đề đang mở", value:fmtNum(issues.length), sub:"Toàn phạm vi đang xem", tint:issues.length>0?"#fff4e0":"var(--pineSoft)" }),
-      rc(StatTile, { key:"t5", label:"Hoàn thành đúng hạn (hôm nay)", value:onTimeTodayPct==null?"—":`${onTimeTodayPct}%`, sub:onTimeTodayPct==null?"Chưa có việc hoàn thành hôm nay":`${onTimeTodayCount}/${doneTodayN} việc`, tint:"var(--pineSoft)" }),
+      rc(StatTile, { key:"t1", label:"Nhà thuốc trong phạm vi", value:fmtNum(totalShopsInScope), sub:isAll?"Toàn bộ chuỗi":shopLabel(adminShop), tint:"var(--pineSoft)", onClick:()=>go("shop360", isAll ? undefined : { shop:adminShop }) }),
+      rc(StatTile, { key:"t2", label:"Đạt KPI (điểm > 85)", value:shopsAtKpiCount==null?"—":fmtNum(shopsAtKpiCount), sub:shopsAtKpiCount==null?"Chưa có dữ liệu":`/${totalShopsInScope} nhà thuốc`, tint:"var(--pineSoft)", onClick:()=>go("shop360", isAll ? undefined : { shop:adminShop }) }),
+      rc(StatTile, { key:"t3", label:"Nhà thuốc có cảnh báo", value:shopsWithAlertCount==null?"—":fmtNum(shopsWithAlertCount), sub:shopsWithAlertCount==null?"Chưa có dữ liệu":`/${totalShopsInScope} nhà thuốc`, tint:(shopsWithAlertCount||0)>0?"#fdecec":"var(--pineSoft)", onClick:()=>go("risk") }),
+      rc(StatTile, { key:"t4", label:"Vấn đề đang mở", value:fmtNum(issues.length), sub:"Toàn phạm vi đang xem", tint:issues.length>0?"#fff4e0":"var(--pineSoft)", onClick:()=>go("risk") }),
+      rc(StatTile, { key:"t5", label:"Hoàn thành đúng hạn (hôm nay)", value:onTimeTodayPct==null?"—":`${onTimeTodayPct}%`, sub:onTimeTodayPct==null?"Chưa có việc hoàn thành hôm nay":`${onTimeTodayCount}/${doneTodayN} việc`, tint:"var(--pineSoft)", onClick:()=>go("action", { tab:"done" }) }),
     ]),
 
     // PERFORMANCE ANALYTICS — xu hướng doanh thu theo ngày trong kỳ đang xem (mục E đặc tả Module 6)
-    rc("div", { key:"revtrend", style:{ marginBottom:16 } },
+    rc("div", { key:"revtrend", title:"Bấm để mở tab Doanh thu", onClick:()=>go("revenueAnalytics"), style:{ marginBottom:16, cursor:"pointer" } },
       !revStats ? rc("div", { key:"e", className:"card emptyState" }, "Chưa có dữ liệu doanh thu theo ngày.")
         : rc(DailyLineChart, { key:"c", title:`Doanh thu theo ngày · ${isAll ? "Toàn chuỗi" : shopLabel(adminShop)} · tháng ${monthKey.slice(5)}/${monthKey.slice(0,4)}`, days:revTrendSeries.days, vals:revTrendSeries.vals, fmt:fmtVNDCompact, color:"var(--pine)" })),
 
@@ -16808,6 +16943,13 @@ function ReplenishView({ isAdmin, myStaff }){
           rc("div", { key:"a" }, [
             rc("div", { key:"n", style:{ fontWeight:700, fontSize:15 } }, [c.name || c.phone, c.levelName && rc("span", { key:"l", style:{ fontSize:10.5, fontWeight:700, marginLeft:8, padding:"2px 7px", borderRadius:9, background:"var(--goldSoft)", color:"#8a5a00" } }, c.levelName)]),
             rc(TaskPhoneLine, { key:"p", task:{ crmCustomerPhone:c.phone }, style:{ marginTop:2 } }),
+            c.lastVisit && (()=>{ const ago = Math.round((Date.parse(todayISO())-Date.parse(c.lastVisit.date))/86400000);
+              return rc("div", { key:"lv", style:{ fontSize:12, marginTop:4, color:"var(--ink)" } }, [
+                rc("span", { key:"l", style:{ color:"var(--inkSoft)" } }, "🧾 Lần mua gần nhất: "),
+                rc("b", { key:"d" }, `${replDmy(c.lastVisit.date)}/${String(c.lastVisit.date).slice(2,4)}`),
+                ` (${ago<=0 ? "hôm nay" : ago+" ngày trước"}) · ${fmtVND(c.lastVisit.amount)}${c.lastVisit.shop && c.lastVisit.shop!==c.shop ? " · tại "+String(c.lastVisit.shop).replace(/^SHOP/,"NT") : ""}`,
+                (c.lastVisit.items||[]).length>0 && rc("div", { key:"i", style:{ fontSize:11, color:"var(--inkSoft)" } }, `Mua: ${c.lastVisit.items.slice(0,4).join(", ")}${c.lastVisit.items.length>4 ? "…" : ""}`),
+              ]); })(),
           ]),
           rc("div", { key:"b", style:{ fontSize:11.5, color:"var(--inkSoft)", textAlign:"right" } }, [
             rc("div", { key:"s" }, String(c.shop||"").replace(/^SHOP/,"NT")),
@@ -16822,6 +16964,11 @@ function ReplenishView({ isAdmin, myStaff }){
               rc("div", { key:"n", style:{ fontWeight:600, fontSize:13.5 } }, ["💊 ", it.productName, rc("span", { key:"st", style:{ marginLeft:8, fontSize:11, fontWeight:700, padding:"2px 8px", borderRadius:10, color:st.color, background:st.bg } }, st.text)]),
               rc("div", { key:"d", style:{ fontSize:12, color:"var(--inkSoft)", marginTop:2 } },
                 `Mua ${replDmy(it.lastDate)} · ${fmtNum(it.lastQty)} ${it.unit||""} · ${fmtVND(it.lastAmount)} · đã mua ${it.timesBought} lần → dự kiến hết ${replDmy(it.runOutDate)} (dùng ~${it.expectedDays} ngày)`),
+              (it.history||[]).length>0 && rc("div", { key:"h", style:{ fontSize:11.5, marginTop:2 } }, [
+                rc("span", { key:"l", style:{ color:"var(--inkSoft)" } }, "Các lần mua gần nhất: "),
+                ...it.history.map((h, i) => rc("span", { key:i, style:{ display:"inline-block", marginRight:6, padding:"1px 7px", borderRadius:8, background: i===0 ? "var(--pineSoft)" : "var(--paper)", fontWeight: i===0 ? 700 : 500 } },
+                  `${replDmy(h.date)}/${String(h.date).slice(2,4)} · ${fmtNum(h.qty)} ${h.unit||""}`)),
+              ]),
               rc("div", { key:"c", style:{ fontSize:11, color:"var(--inkSoft)" } }, `Độ tin cậy: ${it.confidence} — ${it.basis}`),
               it.contact && rc("div", { key:"ct", style:{ fontSize:12, marginTop:4, color: it.contact.converted ? "#15803d" : "var(--pine)", fontWeight:600 } },
                 `${it.contact.converted ? "🛒 Đã mua lại" : "✓ Đã liên hệ"} · ${it.contact.result} · ${it.contact.staffName} ${replDmy(it.contact.contactAt)}${it.contact.note ? ` — ${it.contact.note}` : ""}`),
@@ -17712,7 +17859,7 @@ function Dashboard({ user, isAdmin, myStaff }){
   const whoLabel = isAdmin ? "Quản lý" : (myStaff ? `${myStaff.name} · ${myStaff.shop}` : "");
   const activeTabInfo = leafTabs.find(t=>t.id===activeTab);
   const activeGroup = navGroups.find(g => g.tabs.includes(activeTab)) || navGroups[0];
-  function groupUnread(g){ return g.tabs.reduce((s,id)=>s+(unreadCount[id]||0),0) + (g.id==="action" ? needAction360 : 0); }
+  function groupUnread(g){ return g.tabs.reduce((s,id)=>s+(unreadCount[id]||0),0) + (g.tabs.includes("action") ? needAction360 : 0); }
   const totalUnread = Object.values(unreadCount).reduce((a,b)=>a+(b||0), 0);
   const userInitial = (isAdmin ? "Q" : (myStaff && myStaff.name ? myStaff.name.trim().charAt(0) : "N")).toUpperCase();
   return React.createElement(React.Fragment, null, [
@@ -17815,6 +17962,7 @@ function Dashboard({ user, isAdmin, myStaff }){
       // 19/9/2026: banner tiến độ doanh số chỉ hiện ở trang đầu (Checklist ngày) — trước đây hiện
       // xuyên suốt mọi tab, gây trùng lặp/chiếm chỗ khi đang xem các tab khác không liên quan.
       !isAdmin && activeTab==="checklist" && React.createElement(DailyKpiPaceBanner, { key:"kpipace", myStaff, onOpen:()=>setActiveTab("kpi") }),
+      !isAdmin && activeTab==="checklist" && React.createElement(ReplenishBanner, { key:"replban", myStaff, onOpen:()=>setActiveTab("taimua") }),
       React.createElement(NavBackContext.Provider, { key:"wrapctx", value:{ canGoBack:navHistory.length>0, goBack:goBackTab } }, React.createElement("div", { key:"wrap", className:"wrap mobileContentArea" + (showMobileHome ? " isHiddenMobile" : "") }, [
         // Nút "← Quay lại" ngay dưới tiêu đề trên thanh trên cùng — chỉ hiện khi có màn trước đó để quay về.
         navHistory.length>0 && React.createElement("button", { key:"backFallback", type:"button", className:"btn btnGhost pageBackBtn pageBackFallback", onClick:goBackTab }, "← Quay lại"),
