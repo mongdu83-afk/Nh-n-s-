@@ -16540,9 +16540,10 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks })
     { id:"awaiting", label:`Chờ kiểm tra (${lists.awaiting.length})` },
     { id:"review", label:`Chưa nhận xét (${lists.review.length})` }, { id:"overdue", label:`Quá hạn (${lists.overdue.length})` },
     { id:"done", label:`Đã hoàn tất (${lists.done.length})` },
+    { id:"progress", label:"📊 Tiến độ nhân viên" },
   ];
   const s = search.trim().toLowerCase();
-  const list = lists[tab].filter(t => {
+  const list = (lists[tab] || []).filter(t => {
     if(fLevel!=="Tất cả" && t._level!==fLevel) return false;
     if(fModule!=="Tất cả" && taskModule360(t)!==fModule) return false;
     if(!s) return true;
@@ -16677,7 +16678,91 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks })
     list.length>60 && rc("div", { key:"more", style:{ fontSize:11, color:"var(--inkSoft)", marginTop:6 } }, "Chỉ hiện 60 việc đầu — dùng ô tìm kiếm/bộ lọc để thu hẹp."),
   ]);
 
+  // ===== 27/9/2026 (Phương): TIẾN ĐỘ THỰC HIỆN THEO NHÂN VIÊN — cập nhật trực tiếp (openTasks + done
+  // đều là listener realtime). Mỗi dòng = 1 người phụ trách (việc giao riêng) hoặc "Cả nhà thuốc" (việc
+  // giao chung). Bấm 1 dòng → mở danh sách "Đội nhóm" lọc sẵn theo người đó.
   const selStyle = { padding:"7px 9px", border:"1px solid var(--line)", borderRadius:8, fontSize:12 };
+  const [progShop, setProgShop] = useState("Tất cả");
+  const [progSort, setProgSort] = useState("overdue");
+  let progressCard = null;
+  if(tab==="progress"){
+    const rows = {};
+    const keyOf = t => t.assignType==="staff" ? `s|${t.staffId||t.staffName}` : t.assignType==="shop" ? `shop|${t.shop}` : null;
+    const ensure = (t) => {
+      const k = keyOf(t); if(!k) return null;
+      if(!rows[k]) rows[k] = { key:k, name: t.assignType==="staff" ? (t.staffName||"(không tên)") : `Cả nhà thuốc ${String(t.shop||"").replace(/^SHOP/i,"NT")}`, shop:t.shop||"", staffId:t.staffId||null,
+        open:0, moi:0, dang:0, cho:0, vuong:0, khongdat:0, overdue:0, done:0, doneOnTime:0, last:"" };
+      return rows[k];
+    };
+    const bump = (r, d) => { if(d && String(d) > r.last) r.last = String(d); };
+    open.filter(t => t.assignType!=="admin").forEach(t => {
+      const r = ensure(t); if(!r) return;
+      r.open++;
+      const st = taskSubStatus(t);
+      if(st==="Mới giao") r.moi++; else if(st==="Chờ kiểm tra") r.cho++; else if(st==="Bị vướng") r.vuong++; else if(st==="Không đạt") r.khongdat++; else r.dang++;
+      if(t.deadline && taskDeadlineTs360(t) < nowTs) r.overdue++;
+      bump(r, t.ngayNopKetQua); bump(r, t.ngayGiao);
+    });
+    done.forEach(t => {
+      const r = ensure(t); if(!r) return;
+      r.done++;
+      if(!t.deadline || (t.ngayHoanThanh||"") <= t.deadline) r.doneOnTime++;
+      bump(r, t.ngayHoanThanh);
+    });
+    const shopsP = Array.from(new Set(Object.values(rows).map(r=>r.shop).filter(Boolean))).sort();
+    let arr = Object.values(rows).filter(r => progShop==="Tất cả" || r.shop===progShop);
+    const sorters = {
+      overdue:(a,b)=>(b.overdue-a.overdue)||(b.open-a.open),
+      open:(a,b)=>(b.open-a.open),
+      progress:(a,b)=>((a.done/Math.max(1,a.done+a.open))-(b.done/Math.max(1,b.done+b.open))),
+      name:(a,b)=>a.name.localeCompare(b.name,"vi"),
+    };
+    arr.sort(sorters[progSort]||sorters.overdue);
+    const tot = arr.reduce((a,r)=>({ open:a.open+r.open, cho:a.cho+r.cho, overdue:a.overdue+r.overdue, done:a.done+r.done, onTime:a.onTime+r.doneOnTime }), { open:0, cho:0, overdue:0, done:0, onTime:0 });
+    const bar = (pct, color) => rc("div", { style:{ display:"flex", alignItems:"center", gap:6, minWidth:120 } }, [
+      rc("div", { key:"b", style:{ flex:1, height:7, background:"#EEF1EF", borderRadius:4, overflow:"hidden" } }, rc("div", { style:{ width:`${Math.round(pct*100)}%`, height:"100%", background:color } })),
+      rc("span", { key:"t", style:{ fontSize:11.5, fontWeight:700, width:34, textAlign:"right" } }, `${Math.round(pct*100)}%`),
+    ]);
+    const num = (v, color) => v ? rc("b", { style:{ color } }, v) : rc("span", { style:{ color:"var(--inkSoft)" } }, "0");
+    progressCard = rc("div", { key:"prog", className:"card" }, [
+      rc(Head360, { key:"h", title:"Tiến độ thực hiện theo nhân viên", right: rc("span", { style:{ fontSize:11, color:"var(--inkSoft)" } }, "Cập nhật trực tiếp · hoàn thành tính 30 ngày gần nhất") }),
+      rc("div", { key:"sum", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:10, marginBottom:12 } }, [
+        rc(MiniStat360, { key:"a", label:"Đang mở", value:fmtNum(tot.open) }),
+        rc(MiniStat360, { key:"b", label:"Chờ quản lý kiểm tra", value:fmtNum(tot.cho), valueColor:tot.cho?CL360.warn:undefined }),
+        rc(MiniStat360, { key:"c", label:"Quá hạn", value:fmtNum(tot.overdue), valueColor:tot.overdue?CL360.bad:undefined }),
+        rc(MiniStat360, { key:"d", label:"Hoàn thành 30 ngày", value:fmtNum(tot.done), sub: tot.done ? `Đúng hạn ${Math.round(tot.onTime/tot.done*100)}%` : "" , valueColor:CL360.good }),
+      ]),
+      rc("div", { key:"f", style:{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center", marginBottom:10 } }, [
+        rc("select", { key:"sh", value:progShop, onChange:e=>setProgShop(e.target.value), style:selStyle }, ["Tất cả", ...shopsP].map(x => rc("option", { key:x, value:x }, x==="Tất cả" ? "Tất cả nhà thuốc" : x.replace(/^SHOP/i,"NT")))),
+        rc("select", { key:"so", value:progSort, onChange:e=>setProgSort(e.target.value), style:selStyle }, [["overdue","Sắp xếp: quá hạn nhiều nhất"],["open","Sắp xếp: nhiều việc đang mở"],["progress","Sắp xếp: tiến độ thấp nhất"],["name","Sắp xếp: theo tên"]].map(([v,l]) => rc("option", { key:v, value:v }, l))),
+      ]),
+      arr.length===0 ? rc("div", { key:"e", className:"emptyState" }, "Chưa có việc nào được giao cho nhân viên.")
+      : rc("div", { key:"tw", className:"tableWrap" }, rc("table", { className:"data tblCompact" }, [
+          rc("thead", { key:"h" }, rc("tr", null, ["Nhân viên","NT","Đang mở","Mới giao","Đang làm","Chờ kiểm tra","Vướng / Không đạt","Quá hạn","Hoàn thành (30 ngày)","Tiến độ","Đúng hạn","Cập nhật gần nhất"].map((h,i)=>rc("th",{ key:i, style:{ whiteSpace:"normal" } }, h)))),
+          rc("tbody", { key:"b" }, arr.map(r => {
+            const prog = r.done/Math.max(1, r.done+r.open);
+            const onTime = r.done ? r.doneOnTime/r.done : null;
+            return rc("tr", { key:r.key, style:{ cursor:"pointer" }, title:"Bấm để xem danh sách việc của người này",
+              onClick:()=>{ setSearch(r.staffId ? r.name : r.shop); setTab("team"); setSelId(null); } }, [
+              rc("td", { key:"n", style:{ fontWeight:600 } }, r.name),
+              rc("td", { key:"s", className:"nw" }, String(r.shop||"").replace(/^SHOP/i,"NT")),
+              rc("td", { key:"o", className:"num" }, num(r.open)),
+              rc("td", { key:"m", className:"num" }, num(r.moi)),
+              rc("td", { key:"d", className:"num" }, num(r.dang)),
+              rc("td", { key:"c", className:"num" }, num(r.cho, CL360.warn)),
+              rc("td", { key:"v", className:"num" }, num(r.vuong + r.khongdat, CL360.bad)),
+              rc("td", { key:"q", className:"num" }, num(r.overdue, CL360.bad)),
+              rc("td", { key:"h", className:"num" }, num(r.done, CL360.good)),
+              rc("td", { key:"p" }, bar(prog, prog>=0.8 ? CL360.good : prog>=0.5 ? CL360.warn : CL360.bad)),
+              rc("td", { key:"t", className:"num" }, onTime==null ? "—" : rc("b", { style:{ color: onTime>=0.85 ? CL360.good : onTime>=0.6 ? CL360.warn : CL360.bad } }, `${Math.round(onTime*100)}%`)),
+              rc("td", { key:"l", className:"nw" }, r.last ? dmy360(String(r.last).slice(0,10)) : "—"),
+            ]);
+          })),
+        ])),
+      rc("div", { key:"note", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:8 } }, "Tiến độ = việc đã hoàn thành (30 ngày) ÷ (hoàn thành + đang mở). Đúng hạn = hoàn thành trước/đúng ngày hạn. \"Cập nhật gần nhất\" = lần giao/nộp kết quả/hoàn thành gần nhất."),
+    ]);
+  }
+
   return rc("div", { style:{ maxWidth:1160, margin:"0 auto", padding:16 } }, [
     rc("div", { key:"head", style:{ marginBottom:14 } }, [
       rc(PageTitle, { key:"h", style:{ marginBottom:2 } }, "Công việc cần xử lý"),
@@ -16693,7 +16778,7 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks })
       rc(MiniStat360, { key:"a", label:"Cần chú ý", value:attnN, valueColor:CL360.warn, sub:"Hạn trong 1 ngày hoặc ưu tiên vừa" }),
       rc(MiniStat360, { key:"d", label:"Đã hoàn tất hôm nay", value:doneToday, valueColor:CL360.good }),
     ]),
-    rc("div", { key:"grid", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))", gap:12, alignItems:"start" } }, [ queue, detail ]),
+    tab==="progress" ? progressCard : rc("div", { key:"grid", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))", gap:12, alignItems:"start" } }, [ queue, detail ]),
     rc("div", { key:"foot", style:{ position:"sticky", bottom:8, marginTop:14, background:"#fff", border:"1px solid var(--line)", padding:"10px 12px", borderRadius:9, display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap", boxShadow:"0 2px 10px rgba(35,49,41,.08)" } }, [
       rc("span", { key:"t", style:{ fontSize:11.5 } }, [ rc("b", { key:"b" }, "Nguyên tắc: "), "Detection → Issue → Owner → Deadline → Action → Evidence → Verify → KPI" ]),
       rc("button", { key:"b", type:"button", className:"btn", onClick:()=>setComposer({ heading:"Tạo task thủ công" }) }, "＋ Tạo task thủ công"),
