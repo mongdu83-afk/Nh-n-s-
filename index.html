@@ -16589,6 +16589,37 @@ function ReplenishView({ isAdmin, myStaff }){
   const [computing, setComputing] = useState(false);
   const [copied, setCopied] = useState(null);
   const [showHow, setShowHow] = useState(false);
+  const [claiming, setClaiming] = useState(null);     // phone đang xử lý
+  const [assignFor, setAssignFor] = useState(null);   // khách đang chọn NV để giao (QL/CHT)
+  const [assignStaffId, setAssignStaffId] = useState("");
+  const [staffList, setStaffList] = useState([]);
+  const isCHT = !isAdmin && myStaff && myStaff.role==="Cửa hàng trưởng";
+  useEffect(()=>{ if(!(isAdmin || isCHT)) return undefined; return subscribeCol("staff", setStaffList); }, [isAdmin, isCHT]);
+  async function claim(c, staffId){
+    setClaiming(c.phone);
+    try{
+      const r = await fetch(`${REPL_FN}replenishmentClaim`, { method:"POST", headers:{ ...(await authHeader()), "Content-Type":"application/json" }, body: JSON.stringify({ phone:c.phone, staffId: staffId || undefined }) });
+      const d = await r.json();
+      if(!d.ok) throw new Error(d.error || "Không nhận được");
+      setData(prev => ({ ...prev, customers: prev.customers.map(x => x.phone!==c.phone ? x : { ...x, assignedStaffId:d.staffId, assignedStaffName:d.staffName,
+        openTask: x.openTask || { id:d.taskId, staffName:d.staffName, sub:"Mới giao" } }) }));
+      setAssignFor(null);
+    } catch(e){ window.alert(e.message || String(e)); }
+    setClaiming(null);
+  }
+  function claimControls(c){
+    if(c.openTask) return rc("span", { key:"ot", style:{ display:"inline-block", marginTop:5, fontSize:11.5, fontWeight:700, color:"var(--pine)", background:"var(--pineSoft)", borderRadius:10, padding:"3px 9px" } },
+      `📌 Đã có việc · ${c.openTask.staffName}${c.openTask.sub ? " · "+c.openTask.sub : ""}`);
+    const busy = claiming===c.phone;
+    const btn = (label, onClick, primary) => rc("button", { key:"cb", type:"button", className: primary ? "btn btnPrimary" : "btn btnGhost", disabled:busy, style:{ fontSize:12, padding:"5px 10px", marginTop:5 }, onClick }, busy ? "Đang xử lý..." : label);
+    const mine = myStaff && c.assignedStaffId===myStaff.id;
+    if(isAdmin || isCHT){
+      return btn(c.assignedStaffId ? `📌 Giao việc nhắc tái mua` : "🙋 Giao nhận chăm sóc & tạo việc", ()=>{ setAssignFor(c); setAssignStaffId(c.assignedStaffId || (isCHT ? myStaff.id : "")); }, !c.assignedStaffId);
+    }
+    if(!c.assignedStaffId) return btn("🙋 Nhận chăm sóc & tạo việc", ()=>claim(c), true);
+    if(mine) return btn("📌 Tạo công việc nhắc tái mua", ()=>claim(c), false);
+    return null;
+  }
 
   async function load(){
     setLoading(true); setErr(null);
@@ -16652,6 +16683,7 @@ function ReplenishView({ isAdmin, myStaff }){
   }).filter(Boolean).filter(c => {
     if(staffF==="mine" && !(myStaff && c.assignedStaffId===myStaff.id)) return false;
     if(staffF==="unassigned" && c.assignedStaffId) return false;
+    if(staffF==="notask" && c.openTask) return false;
     if(staffF==="todo" && c.its.every(it => it.contact)) return false;
     if(!s) return true;
     return [c.name, c.phone, ...c.its.map(it => it.productName), ...c.its.map(it => it.productId)].some(x => x && vnSearchNorm(x).includes(s));
@@ -16726,7 +16758,7 @@ function ReplenishView({ isAdmin, myStaff }){
     rc("div", { key:"v", style:{ display:"flex", border:"1px solid var(--line)", borderRadius:9, overflow:"hidden" } }, [["cust","👤 Theo khách"],["prod","💊 Theo sản phẩm"],["eff","📈 Hiệu quả"]].map(([id,l]) =>
       rc("button", { key:id, type:"button", onClick:()=>setView(id), style:{ padding:"7px 12px", fontSize:12.5, fontWeight:700, border:"none", cursor:"pointer", background: view===id ? "var(--pine)" : "#fff", color: view===id ? "#fff" : "var(--ink)" } }, l))),
     rc("select", { key:"t", value:timeF, onChange:e=>setTimeF(e.target.value), style:selStyle }, [["now","Cần nhắc ngay (±3 ngày)"],["soon","Sắp hết (4–14 ngày)"],["overdue","Quá hạn chưa mua lại"],["all","Tất cả mốc"]].map(o => rc("option", { key:o[0], value:o[0] }, o[1]))),
-    rc("select", { key:"st", value:staffF, onChange:e=>setStaffF(e.target.value), style:selStyle }, [["all","Mọi khách"],["todo","Chưa liên hệ"],...(!isAdmin ? [["mine","Khách tôi phụ trách"]] : []),["unassigned","Chưa phân công"]].map(o => rc("option", { key:o[0], value:o[0] }, o[1]))),
+    rc("select", { key:"st", value:staffF, onChange:e=>setStaffF(e.target.value), style:selStyle }, [["all","Mọi khách"],["todo","Chưa liên hệ"],...(!isAdmin ? [["mine","Khách tôi phụ trách"]] : []),["unassigned","Chưa ai nhận chăm sóc"],["notask","Chưa có công việc"]].map(o => rc("option", { key:o[0], value:o[0] }, o[1]))),
     view!=="eff" && rc("input", { key:"q", value:q, onChange:e=>setQ(e.target.value), placeholder: view==="prod" ? "⌕ Tên sản phẩm / mã sản phẩm" : "⌕ Tên khách / SĐT / tên SP / mã SP", style:{ ...selStyle, flex:"1 1 220px" } }),
     prodF && rc("span", { key:"pf", style:{ fontSize:12.5, background:"var(--pineSoft)", borderRadius:14, padding:"5px 10px", display:"inline-flex", gap:6, alignItems:"center" } }, [
       "💊 ", rc("b", { key:"b" }, prodF.name), rc("button", { key:"x", type:"button", onClick:()=>setProdF(null), style:{ border:"none", background:"none", cursor:"pointer", fontWeight:700 } }, "✕"),
@@ -16779,7 +16811,8 @@ function ReplenishView({ isAdmin, myStaff }){
           ]),
           rc("div", { key:"b", style:{ fontSize:11.5, color:"var(--inkSoft)", textAlign:"right" } }, [
             rc("div", { key:"s" }, String(c.shop||"").replace(/^SHOP/,"NT")),
-            rc("div", { key:"p" }, c.assignedStaffName ? `Phụ trách: ${c.assignedStaffName}` : "Chưa phân công"),
+            rc("div", { key:"p", style:{ color: c.assignedStaffName ? "var(--inkSoft)" : "#b45309", fontWeight: c.assignedStaffName ? 400 : 700 } }, c.assignedStaffName ? `Phụ trách: ${c.assignedStaffName}` : "Chưa ai nhận chăm sóc"),
+            claimControls(c),
           ]),
         ]),
         ...c.its.map(it => {
@@ -16828,7 +16861,21 @@ function ReplenishView({ isAdmin, myStaff }){
       border: on ? "1px solid var(--pine)" : "1px solid var(--line)", background: on ? "var(--pine)" : "#fff", color: on ? "#fff" : "var(--ink)" } },
       [x==="all" ? "Tất cả NT" : x.replace(/^SHOP/,"NT"), rc("span", { key:"n", style:{ marginLeft:6, fontSize:11, opacity:.85 } }, fmtNum(n))]);
   }));
-  return rc("div", {}, [ head, shopChips, tiles, filters, body, modalEl ]);
+  const assignStaffOpts = assignFor ? staffList.filter(st => st.shop===assignFor.shop && st.role!=="Quản lý khu vực").sort((a,b)=>(a.name||"").localeCompare(b.name||"","vi")) : [];
+  const assignEl = assignFor && rc("div", { key:"assign", className:"modalOverlay", onClick:()=>setAssignFor(null) },
+    rc("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
+      rc("div", { key:"t", style:{ fontWeight:700, fontSize:17, marginBottom:2 } }, `Giao chăm sóc & việc nhắc tái mua — ${assignFor.name || assignFor.phone}`),
+      rc("div", { key:"s", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } }, `${String(assignFor.shop||"").replace(/^SHOP/,"NT")} · ${assignFor.assignedStaffName ? "đang phụ trách: "+assignFor.assignedStaffName : "chưa ai nhận chăm sóc"}. Người được chọn sẽ thành người phụ trách khách và nhận 1 công việc (kèm danh sách sản phẩm sắp hết), có thông báo đẩy.`),
+      rc("select", { key:"sel", value:assignStaffId, onChange:e=>setAssignStaffId(e.target.value), style:{ width:"100%", padding:"9px 10px", border:"1px solid var(--line)", borderRadius:8, fontSize:13.5, marginBottom:12 } }, [
+        rc("option", { key:"", value:"" }, "— Chọn nhân viên —"),
+        ...assignStaffOpts.map(st => rc("option", { key:st.id, value:st.id }, `${st.name}${st.role ? " · "+st.role : ""}`)),
+      ]),
+      rc("div", { key:"b", className:"btnRow" }, [
+        rc("button", { key:"c", type:"button", className:"btn btnGhost", onClick:()=>setAssignFor(null) }, "Huỷ"),
+        rc("button", { key:"s", type:"button", className:"btn btnPrimary", disabled:!assignStaffId || claiming===assignFor.phone, onClick:()=>claim(assignFor, assignStaffId) }, claiming===assignFor.phone ? "Đang giao..." : "Giao & tạo việc"),
+      ]),
+    ]));
+  return rc("div", {}, [ head, shopChips, tiles, filters, body, modalEl, assignEl ]);
 }
 
 function StaffProgressPanel({ openTasks, doneTasks, roster, fixedShop, onPick, title }){
