@@ -16593,14 +16593,14 @@ function ReplenishView({ isAdmin, myStaff }){
   async function load(){
     setLoading(true); setErr(null);
     try{
-      const r = await fetch(`${REPL_FN}replenishmentList?shop=${encodeURIComponent(isAdmin ? shop : "")}`, { headers: await authHeader() });
+      const r = await fetch(`${REPL_FN}replenishmentList?shop=all`, { headers: await authHeader() });
       const d = await r.json();
       if(!d.ok) throw new Error(d.error || "Lỗi tải dữ liệu");
       setData(d);
     } catch(e){ setErr(e.message || String(e)); }
     setLoading(false);
   }
-  useEffect(()=>{ load(); }, [shop]);
+  useEffect(()=>{ load(); }, []);
 
   async function recompute(){
     setComputing(true);
@@ -16640,7 +16640,11 @@ function ReplenishView({ isAdmin, myStaff }){
   }
 
   const selStyle = { padding:"7px 9px", border:"1px solid var(--line)", borderRadius:8, fontSize:12.5, background:"#fff" };
-  const customers = (data && data.customers) || [];
+  const allCustomers = (data && data.customers) || [];
+  // 27/9/2026: lọc theo nhà thuốc ngay trên máy (chip có số khách từng NT theo mốc thời gian đang chọn)
+  const shopCount = {};
+  allCustomers.forEach(c => { if((c.items||[]).some(it => replTimeOk(it.daysLeft, timeF))) shopCount[c.shop] = (shopCount[c.shop]||0) + 1; });
+  const customers = shop==="all" ? allCustomers : allCustomers.filter(c => c.shop===shop);
   const s = vnSearchNorm(q);
   const rows = customers.map(c => {
     const its = (c.items||[]).filter(it => replTimeOk(it.daysLeft, timeF) && (!prodF || it.productId===prodF.id));
@@ -16721,7 +16725,6 @@ function ReplenishView({ isAdmin, myStaff }){
   const filters = rc("div", { key:"flt", style:{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12, alignItems:"center" } }, [
     rc("div", { key:"v", style:{ display:"flex", border:"1px solid var(--line)", borderRadius:9, overflow:"hidden" } }, [["cust","👤 Theo khách"],["prod","💊 Theo sản phẩm"],["eff","📈 Hiệu quả"]].map(([id,l]) =>
       rc("button", { key:id, type:"button", onClick:()=>setView(id), style:{ padding:"7px 12px", fontSize:12.5, fontWeight:700, border:"none", cursor:"pointer", background: view===id ? "var(--pine)" : "#fff", color: view===id ? "#fff" : "var(--ink)" } }, l))),
-    isAdmin && rc("select", { key:"shop", value:shop, onChange:e=>{ setShop(e.target.value); setProdF(null); }, style:selStyle }, shopOpts.map(x => rc("option", { key:x, value:x }, x==="all" ? "Tất cả nhà thuốc" : x.replace(/^SHOP/,"NT")))),
     rc("select", { key:"t", value:timeF, onChange:e=>setTimeF(e.target.value), style:selStyle }, [["now","Cần nhắc ngay (±3 ngày)"],["soon","Sắp hết (4–14 ngày)"],["overdue","Quá hạn chưa mua lại"],["all","Tất cả mốc"]].map(o => rc("option", { key:o[0], value:o[0] }, o[1]))),
     rc("select", { key:"st", value:staffF, onChange:e=>setStaffF(e.target.value), style:selStyle }, [["all","Mọi khách"],["todo","Chưa liên hệ"],...(!isAdmin ? [["mine","Khách tôi phụ trách"]] : []),["unassigned","Chưa phân công"]].map(o => rc("option", { key:o[0], value:o[0] }, o[1]))),
     view==="cust" && rc("input", { key:"q", value:q, onChange:e=>setQ(e.target.value), placeholder:"⌕ Tên / SĐT / sản phẩm", style:{ ...selStyle, flex:"1 1 200px" } }),
@@ -16818,7 +16821,14 @@ function ReplenishView({ isAdmin, myStaff }){
       ]),
     ]));
 
-  return rc("div", {}, [ head, tiles, filters, body, modalEl ]);
+  const shopChips = isAdmin && rc("div", { key:"shops", style:{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:10 } }, shopOpts.map(x => {
+    const n = x==="all" ? Object.values(shopCount).reduce((a,b)=>a+b,0) : (shopCount[x]||0);
+    const on = shop===x;
+    return rc("button", { key:x, type:"button", onClick:()=>{ setShop(x); setProdF(null); }, style:{ padding:"6px 12px", borderRadius:18, fontSize:12.5, fontWeight:700, cursor:"pointer",
+      border: on ? "1px solid var(--pine)" : "1px solid var(--line)", background: on ? "var(--pine)" : "#fff", color: on ? "#fff" : "var(--ink)" } },
+      [x==="all" ? "Tất cả NT" : x.replace(/^SHOP/,"NT"), rc("span", { key:"n", style:{ marginLeft:6, fontSize:11, opacity:.85 } }, fmtNum(n))]);
+  }));
+  return rc("div", {}, [ head, shopChips, tiles, filters, body, modalEl ]);
 }
 
 function StaffProgressPanel({ openTasks, doneTasks, roster, fixedShop, onPick, title }){
