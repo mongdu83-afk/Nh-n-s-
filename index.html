@@ -11496,6 +11496,7 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
   // thái ở query (không phải quét toàn bộ inventoryMetrics rồi lọc ở trình duyệt).
   const [flaggedItems, setFlaggedItems] = useState([]);
   const [flaggedLoading, setFlaggedLoading] = useState(false);
+  const [consShop, setConsShop] = useState("Tất cả"); // 27/9/2026: bộ lọc nhà thuốc cho tab Tốc độ tiêu thụ
   const [flaggedStatus, setFlaggedStatus] = useState("URGENT_REPLENISH");
   // 20/9/2026: nhảy tới đúng "Tốc độ tiêu thụ" + đúng trạng thái khi được điều hướng từ tab Tổng
   // quan (VD bấm "SKU cần nhập gấp") — không thì trang này luôn mở mặc định ở "Điều chuyển".
@@ -11510,15 +11511,17 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
     // hỏi Firestore thêm lần nào nữa.
     if(invSubTab!=="tocdo" || flaggedStatus==="NEAR_EXPIRY") return;
     setFlaggedLoading(true);
-    db.collection("inventoryMetrics").where("stockStatus","==",flaggedStatus).limit(200).get()
+    let q = db.collection("inventoryMetrics").where("stockStatus","==",flaggedStatus);
+    if(consShop!=="Tất cả") q = q.where("shopCode","==",consShop);
+    q.limit(consShop!=="Tất cả" ? 1000 : 300).get()
       .then(snap => setFlaggedItems(snap.docs.map(d=>d.data()).sort((a,b)=>(a.shopCode||"").localeCompare(b.shopCode||""))))
       .catch(err => { console.error("Lỗi tải danh sách SKU theo trạng thái:", err); setFlaggedItems([]); })
       .finally(() => setFlaggedLoading(false));
-  }, [invSubTab, flaggedStatus]);
+  }, [invSubTab, flaggedStatus, consShop]);
   const SPEED_TREND_LABELS = { SURGE:"🔥 Tăng tốc mạnh", UP:"↑ Tăng", STABLE:"→ Ổn định", DOWN:"↓ Giảm", SHARP_DOWN:"🔻 Giảm mạnh", NO_SALE:"⚪ Không bán" };
   // Nhóm 6/6 theo đặc tả XVI: kết hợp tồn + tốc độ bán + số ngày còn hạn — dùng luôn "expiryTransfers"
   // (đã đúng cả 3 yếu tố: chỉ liệt kê SKU CÒN TỒN, SẮP HẾT HẠN, và nơi khác đang BÁN NHANH hơn).
-  const STOCK_STATUS_LABELS = { URGENT_REPLENISH:"🔴 Cần nhập gấp (H06)", REPLENISH_SOON:"🟠 Nên nhập sớm", OVERSTOCK:"🔴 Dư hàng (H09)", MONITOR_HIGH_STOCK:"🟠 Tồn cao, theo dõi", DEAD_STOCK:"⚫ Không bán 60 ngày (H10)", NEAR_EXPIRY:"🟣 Sắp hết hạn" };
+  const STOCK_STATUS_LABELS = { URGENT_REPLENISH:"🔴 Cần nhập gấp", REPLENISH_SOON:"🟠 Nên nhập sớm", OVERSTOCK:"🔴 Dư hàng", MONITOR_HIGH_STOCK:"🟠 Tồn cao, theo dõi", DEAD_STOCK:"⚫ Không bán 60 ngày", NEAR_EXPIRY:"🟣 Sắp hết hạn" };
 
   useEffect(()=>{
     const unsub = db.collection("opsConfig").doc("productCatalogMeta").onSnapshot(snap => {
@@ -11739,7 +11742,14 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
         React.createElement("button", { key:"btn", className:"btn btnPrimary", disabled:consumptionAnalyzing, onClick:runConsumptionAnalyze }, consumptionAnalyzing ? "Đang tính..." : "🔄 Tính ngay"),
       ]);
     }
-    const s = consumptionSummary;
+    const sAll = consumptionSummary;
+    // 27/9/2026: lọc theo nhà thuốc — dùng thống kê riêng của nhà thuốc (summary.byShop[x]) nếu đã có
+    // (cần bấm "Tính lại" 1 lần sau khi cập nhật), chưa có thì tạm dùng số toàn chuỗi và ghi chú rõ.
+    const shopStats = consShop!=="Tất cả" ? ((sAll.byShop||{})[consShop] || null) : null;
+    const shopHasDetail = !!(shopStats && shopStats.matrix);
+    const s = consShop==="Tất cả" || !shopHasDetail ? sAll : { ...sAll, totalSKU:shopStats.totalSKU, bySpeedTrend:shopStats.bySpeedTrend, byStatus:shopStats.byStatus, matrix:shopStats.matrix };
+    const consShops = Object.keys(sAll.byShop||{}).sort();
+    const expiryScoped = consShop==="Tất cả" ? expiryTransfers : expiryTransfers.filter(e => e.fromShop===consShop);
     const matrixRows = [["nhanh","Tốc độ nhanh"],["tb","Tốc độ trung bình"],["cham","Tốc độ chậm"]];
     const matrixCols = [["thap","Tồn thấp"],["vua","Tồn vừa"],["cao","Tồn cao"]];
     function matrixTone(tocKey, tonKey){
@@ -11752,8 +11762,13 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
     }
     return React.createElement("div", { key:"consumption" }, [
       React.createElement("div", { key:"head", className:"card", style:{ marginBottom:16, display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10 } }, [
-        React.createElement("div", { key:"info", style:{ fontSize:12.5, color:"var(--inkSoft)" } },
-          `${fmtNum(s.totalSKU||0)} SKU×nhà thuốc đang theo dõi · tính lúc ${s.computedAt ? new Date(s.computedAt).toLocaleString("vi-VN") : "—"}`),
+        React.createElement("div", { key:"info", style:{ fontSize:12.5, color:"var(--inkSoft)" } }, [
+          React.createElement("div", { key:"a" }, `${fmtNum(s.totalSKU||0)} mã×nhà thuốc đang theo dõi${consShop!=="Tất cả" ? ` tại ${nt(consShop)}` : ""} · tính lúc ${s.computedAt ? new Date(s.computedAt).toLocaleString("vi-VN") : "—"}`),
+          consShop!=="Tất cả" && !shopHasDetail && React.createElement("div", { key:"b", style:{ color:"var(--clay)" } }, "Dashboard & ma trận đang hiện số TOÀN CHUỖI — bấm \"Tính lại\" 1 lần để có số riêng từng nhà thuốc. Danh sách bên dưới đã lọc đúng nhà thuốc."),
+        ]),
+        React.createElement("div", { key:"flt", style:{ display:"flex", gap:6, flexWrap:"wrap" } },
+          ["Tất cả", ...consShops].map(x => React.createElement("button", { key:x, type:"button", onClick:()=>setConsShop(x),
+            style:{ padding:"4px 11px", borderRadius:16, border:"1px solid var(--line)", fontSize:12, fontWeight:600, cursor:"pointer", background: consShop===x ? "var(--pine)" : "#fff", color: consShop===x ? "#fff" : "var(--ink)" } }, x==="Tất cả" ? x : nt(x)))),
         React.createElement("button", { key:"btn", className:"btn btnGhost", disabled:consumptionAnalyzing, onClick:runConsumptionAnalyze, style:{ fontSize:12, padding:"5px 12px" } }, consumptionAnalyzing ? "Đang tính..." : "↻ Tính lại"),
       ]),
 
@@ -11784,22 +11799,22 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
         ])),
       ]),
 
-      // Danh sách SKU bị flag theo trạng thái (H06/H09/H10) — chọn trạng thái để tải danh sách.
+      // Danh sách SKU theo trạng thái — chọn trạng thái để tải danh sách (lọc theo nhà thuốc đang chọn).
       React.createElement("div", { key:"flagged", className:"card" }, [
         React.createElement("div", { key:"h", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10, marginBottom:10 } }, [
           React.createElement("div", { key:"t", className:"cardTitle" }, "Danh sách SKU theo trạng thái"),
           React.createElement("select", { key:"sel", value:flaggedStatus, onChange:e=>setFlaggedStatus(e.target.value), style:{ fontSize:12.5, padding:"5px 8px", border:"1px solid var(--line)", borderRadius:8 } },
-            Object.keys(STOCK_STATUS_LABELS).map(k => React.createElement("option",{key:k,value:k}, `${STOCK_STATUS_LABELS[k]} (${k==="NEAR_EXPIRY" ? expiryTransfers.length : ((s.byStatus||{})[k]||0)})`))),
+            Object.keys(STOCK_STATUS_LABELS).map(k => React.createElement("option",{key:k,value:k}, `${STOCK_STATUS_LABELS[k]} (${fmtNum(k==="NEAR_EXPIRY" ? expiryScoped.length : ((s.byStatus||{})[k]||0))})`))),
         ]),
         // Nhóm 6/6 "Sắp hết hạn": nguồn dữ liệu khác hẳn 5 nhóm kia (không phải inventoryMetrics) nên
         // bảng hiển thị dùng cột riêng (Còn hạn + Gợi ý chuyển tới) thay vì tốc độ bán/đủ bán.
         flaggedStatus==="NEAR_EXPIRY"
-          ? (expiryTransfers.length===0
+          ? (expiryScoped.length===0
               ? React.createElement("div", { className:"emptyState" }, "Không có SKU nào sắp hết hạn.")
               : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
                   React.createElement("thead",{key:"h"}, React.createElement("tr",null,
                     ["Mã hàng","Tên hàng","Nhà thuốc","Tồn","Còn hạn","Gợi ý chuyển tới (bán nhanh nhất)"].map((h,i)=>React.createElement("th",{key:i},h)))),
-                  React.createElement("tbody",{key:"b"}, expiryTransfers.slice().sort((a,b)=>a.daysToExpiry-b.daysToExpiry).map((e,i) => React.createElement("tr",{key:i}, [
+                  React.createElement("tbody",{key:"b"}, expiryScoped.slice().sort((a,b)=>a.daysToExpiry-b.daysToExpiry).map((e,i) => React.createElement("tr",{key:i}, [
                     React.createElement("td",{key:"pid"}, e.productId),
                     React.createElement("td",{key:"pn"}, e.productName),
                     React.createElement("td",{key:"sh"}, nt(e.fromShop)),
@@ -11813,12 +11828,14 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
               : flaggedItems.length===0
                 ? React.createElement("div", { className:"emptyState" }, "Không có SKU nào ở trạng thái này.")
                 : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+                    React.createElement("caption", { key:"cap", style:{ captionSide:"bottom", fontSize:11.5, color:"var(--inkSoft)", textAlign:"left", paddingTop:6 } },
+                      `Hiển thị ${fmtNum(flaggedItems.length)}/${fmtNum((s.byStatus||{})[flaggedStatus]||flaggedItems.length)} mã${flaggedItems.length < ((s.byStatus||{})[flaggedStatus]||0) ? " — chọn 1 nhà thuốc để xem đầy đủ hơn" : ""}.`),
                     React.createElement("thead",{key:"h"}, React.createElement("tr",null,
                       ["Mã hàng","Tên hàng","Nhà thuốc","Tồn","Bán TB/ngày (7 ngày)","Bán TB/ngày (30 ngày)","Đủ bán (ngày)"].map((h,i)=>React.createElement("th",{key:i},h)))),
                     React.createElement("tbody",{key:"b"}, flaggedItems.map((it,i) => React.createElement("tr",{key:i}, [
                       React.createElement("td",{key:"pid"}, it.productId),
                       React.createElement("td",{key:"pn"}, it.productName),
-                      React.createElement("td",{key:"sh"}, it.shopCode),
+                      React.createElement("td",{key:"sh"}, nt(it.shopCode)),
                       React.createElement("td",{key:"q"}, `${fmtNum(it.stockQty)} ${it.unit||""}`),
                       React.createElement("td",{key:"a7"}, it.ads7),
                       React.createElement("td",{key:"a30"}, it.ads30),
