@@ -285,10 +285,10 @@
       font-size:10.5px; font-weight:800; display:flex; align-items:center; justify-content:center; flex:none;
     }
     .sideSubNav{ display:none; margin:2px 0 8px 22px; padding-left:8px; border-left:2px solid rgba(255,255,255,.28); }
-    .sideSubNav.hasItems{ display:block; }
-    .sideSubGroup{ padding-left:calc(var(--lvl,0) * 10px); }
-    .sideSubGroup:empty{ display:none; }
-    .sideSubGroup + .sideSubGroup{ margin-top:4px; padding-top:4px; border-top:1px dashed rgba(255,255,255,.2); }
+    .sideSubNav.hasItems{ display:flex; flex-direction:column; gap:1px; }
+    .sideSubGroup{ display:contents; }
+    .sideSubGroup .sideSubItem{ margin-left:calc(var(--lvl,0) * 12px); width:calc(100% - var(--lvl,0) * 12px); }
+    .sideSubGroup + .sideSubGroup .sideSubItem{ font-size:12px; border-left:2px solid rgba(255,255,255,.3); border-radius:0 7px 7px 0; }
     .sideSubItem{ display:block; width:100%; text-align:left; font-family:inherit; font-size:12.5px; font-weight:600; color:rgba(255,255,255,.88); background:none; border:none; border-radius:7px; padding:6px 10px; cursor:pointer; line-height:1.3; }
     .sideSubItem:hover{ background:rgba(255,255,255,.1); color:#fff; }
     .sideSubItem.active{ background:#fff; color:#15803d; }
@@ -3127,6 +3127,19 @@ function TaskAssignView({ isAdmin, myStaff, navParam }){
   }, [isAdmin, myStaff && myStaff.shop]);
 
   const today = todayISO();
+  // Việc CRM đã nộp kết quả trước đây còn kẹt ở "Chờ kiểm tra" → tự chuyển thành Đã hoàn thành
+  // (ngày hoàn thành = ngày nhân viên nộp), để không làm chậm tiến độ của nhân viên.
+  const crmMigratedRef = useRef(new Set());
+  useEffect(()=>{
+    const canFix = isAdmin || (myStaff && myStaff.role==="Cửa hàng trưởng");
+    if(!canFix) return;
+    tasks.forEach(t => {
+      if(t.trangThai!=="Đang giao" || taskSubStatus(t)!=="Chờ kiểm tra" || taskModule360(t)!=="CRM" || !t.ketQua) return;
+      if(crmMigratedRef.current.has(t.id)) return;
+      crmMigratedRef.current.add(t.id);
+      updateDoc("tasks", t.id, { trangThai:"Đã hoàn thành", subTrangThai:"Đã hoàn thành", ngayHoanThanh:t.ngayNopKetQua || today }).catch(()=>{});
+    });
+  }, [tasks, isAdmin, myStaff && myStaff.role]);
   function deadlineTs(t){ return `${t.deadline}T${t.hanGio || "23:59"}`; }
   function isOverdue(t){ return t.trangThai==="Đang giao" && deadlineTs(t) < `${today}T${nowHM()}`; }
   function deadlineLabel(t){ return t.hanGio ? `${t.deadline} ${t.hanGio}` : t.deadline; }
@@ -3201,10 +3214,16 @@ function TaskAssignView({ isAdmin, myStaff, navParam }){
   }
   // ===== P0-3: nộp kết quả KHÔNG còn tự động = "Đã hoàn thành" nữa — chuyển sang "Chờ kiểm tra",
   // chờ quản lý duyệt (approveTask) hoặc từ chối kèm lý do (rejectTask) mới thật sự đóng việc.
+  // 27/9/2026 (Phương): việc CHĂM SÓC KHÁCH HÀNG (CRM) — nhân viên điền kết quả là HOÀN TẤT luôn,
+  // tính vào tiến độ/KPI của nhân viên ngay. Quản lý/CHT xác nhận (nhận xét) là bước sau, nằm ở
+  // mục "Chưa nhận xét", KHÔNG ảnh hưởng tiến độ. Việc thường vẫn qua bước "Chờ kiểm tra".
   async function submitResult(taskId){
     if(!resultText.trim()) return;
+    const tk = tasks.find(x => x.id===taskId);
+    const isCrmCare = !!tk && taskModule360(tk)==="CRM";
     await updateDoc("tasks", taskId, {
-      subTrangThai:"Chờ kiểm tra", ketQua:resultText.trim(), sauXuLy:sauXuLyText.trim(), ngayNopKetQua:today, lyDoKhongDat:"",
+      ...(isCrmCare ? { trangThai:"Đã hoàn thành", subTrangThai:"Đã hoàn thành", ngayHoanThanh:today } : { subTrangThai:"Chờ kiểm tra" }),
+      ketQua:resultText.trim(), sauXuLy:sauXuLyText.trim(), ngayNopKetQua:today, lyDoKhongDat:"",
       nguoiBaoCao: isAdmin ? "Quản lý khu vực" : (myStaff ? myStaff.name : ""),
     });
     setReportingId(null); setResultText(""); setSauXuLyText("");
@@ -10305,6 +10324,18 @@ function reorderSideSubNav(){
   });
   const changed = items.some((el, i) => box.children[i] !== el);
   items.forEach((el, i) => { if(changed) box.appendChild(el); el.style.setProperty("--lvl", i); });
+  // 27/9/2026 (Phương): tab con cấp trong nằm NGAY DƯỚI tab mẹ đang chọn (không dồn xuống cuối danh
+  // sách). Các nhóm dùng display:contents nên mọi nút là phần tử flex của khung → xếp bằng CSS "order".
+  let seq = [];
+  items.forEach((el, i) => {
+    const btns = Array.from(el.children);
+    if(i===0 || !seq.length){ seq = seq.concat(btns); return; }
+    const parentBtns = Array.from(items[i-1].children);
+    const act = parentBtns.find(b => b.classList.contains("active")) || parentBtns[parentBtns.length-1];
+    const at = act ? seq.indexOf(act) : -1;
+    if(at<0) seq = seq.concat(btns); else seq.splice(at+1, 0, ...btns);
+  });
+  seq.forEach((b, k) => { b.style.order = k; });
   box.classList.toggle("hasItems", items.length>0);
 }
 function SubTabBar({ tabs, active, onChange, style }){
