@@ -157,6 +157,18 @@
   table.data{ width:100%; border-collapse:collapse; font-size:12.5px; min-width:640px; }
   table.data th{ text-align:left; background:#F5F2E7; padding:9px 10px; font-weight:700; color:#5A5748; border-bottom:1px solid var(--line); white-space:nowrap; font-size:11px; text-transform:uppercase; }
   table.data td{ padding:8px 10px; border-bottom:1px solid #F0EEE2; vertical-align:middle; }
+  /* 27/9/2026: bảng gọn cho Phân tích hàng hoá (điều chuyển / đặt NCC / dư hàng) */
+  table.data.tblCompact th{ padding:8px 7px; font-size:10.5px; }
+  table.data.tblCompact td{ padding:7px 7px; }
+  table.data.tblCompact td.num{ text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+  table.data.tblCompact th.num{ text-align:right; }
+  table.data.tblCompact td.nw{ white-space:nowrap; }
+  table.data.tblCompact td.pname{ min-width:190px; max-width:260px; }
+  table.data.tblCompact td.pname .nm{ display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; line-height:1.35; }
+  table.data.tblCompact .sub{ font-size:10.5px; color:var(--inkSoft); white-space:nowrap; }
+  table.data.tblCompact .chip{ display:inline-block; font-size:10.5px; font-weight:700; padding:1px 7px; border-radius:10px; margin:1px 3px 1px 0; white-space:nowrap; background:#FBE9E3; color:#B3401E; }
+  table.data.tblCompact .chip.req{ background:#FFF4DB; color:#9A6700; }
+  table.data.tblCompact .chip.far{ background:#EEF2FF; color:#3B4CA8; }
   table.data tr:last-child td{ border-bottom:none; }
   table.data input, table.data select{ width:100%; border:1px solid transparent; background:transparent; padding:5px 6px; border-radius:5px; font-size:12.5px; }
   table.data input:hover, table.data select:hover{ border-color:var(--line); }
@@ -11612,6 +11624,38 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
     if(row.orderUnit && row.orderUnitQty!=null) return `${fmtNum(row.orderUnitQty)} ${row.orderUnit} (${le})`;
     return le;
   }
+  // ===== 27/9/2026 (Phương): bảng gọn — tách cột SL/ĐV nguyên & lẻ, thêm Giá trị, SHOPxxxx → NTxxxx =====
+  const nt = code => String(code||"").replace(/^SHOP/i, "NT");
+  function qtyCellsOf(row, qtyLe, orderQty){
+    const hasPack = row.orderUnit && orderQty!=null;
+    return hasPack
+      ? [ fmtNum(orderQty), row.orderUnit, fmtNum(qtyLe), row.unit||"" ]
+      : [ fmtNum(qtyLe), row.unit||"", "—", "" ];   // mã chỉ có 1 đơn vị (Chai, Tuýp...) — đơn vị đó là đơn vị nguyên
+  }
+  function priceCell(row){
+    if(!row.price) return "—";
+    if(row.orderUnit && row.priceOrder!=null) return React.createElement("div", null, [
+      React.createElement("div", { key:"a" }, `${fmtVND(row.priceOrder)}/${row.orderUnit}`),
+      React.createElement("div", { key:"b", className:"sub" }, `${fmtVND(row.price)}/${row.unit||"lẻ"}`),
+    ]);
+    return `${fmtVND(row.price)}/${row.unit||"lẻ"}`;
+  }
+  const valueOf = (row, qtyLe) => row.price ? Math.round(qtyLe * row.price) : null;
+  // Giá trị đặt NCC = số đơn vị nguyên × đơn giá nguyên (nếu có quy cách), không thì SL đề xuất × đơn giá lẻ.
+  const nccValue = s => !s.price ? null : (s.orderUnit && s.orderUnitQty!=null && s.priceOrder!=null ? Math.round(s.orderUnitQty * s.priceOrder) : Math.round((s.suggestedOrderQty ?? s.qty) * s.price));
+  function expiryCell(dateStr){
+    if(!dateStr) return "—";
+    const days = Math.round((new Date(dateStr) - new Date()) / 86400000);
+    const [y,m,d] = String(dateStr).slice(0,10).split("-");
+    return React.createElement("div", null, [
+      React.createElement("div", { key:"a", style:{ fontWeight:600, color: days<=180 ? "var(--clay)" : "var(--pine)" } }, `${d}/${m}/${String(y).slice(2)}`),
+      Number.isFinite(days) && React.createElement("div", { key:"b", className:"sub" }, `còn ${fmtNum(days)} ngày`),
+    ]);
+  }
+  const tdN = (key, v) => React.createElement("td", { key, className:"num" }, v);
+  // Tiêu đề cột có "\n" → ngắt dòng (cột hẹp lại), không bị ép 1 dòng.
+  const thC = (h, i, num) => React.createElement("th", { key:i, className: num ? "num" : undefined, style:{ whiteSpace:"normal", lineHeight:1.25, verticalAlign:"bottom" } },
+    String(h).split("\n").map((ln, j, arr) => React.createElement(React.Fragment, { key:j }, [ln, j<arr.length-1 && React.createElement("br", { key:"br" })])));
   // 25/9/2026: đơn giá — row.price là đơn giá LẺ (lấy từ UnitPrice của tồn kho), row.priceOrder
   // (nếu có) là đơn giá NGUYÊN tự tính = giá lẻ × hệ số quy đổi (Phương xác nhận 25/9/2026).
   function fmtPrice(row){
@@ -11758,10 +11802,10 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
                   React.createElement("tbody",{key:"b"}, expiryTransfers.slice().sort((a,b)=>a.daysToExpiry-b.daysToExpiry).map((e,i) => React.createElement("tr",{key:i}, [
                     React.createElement("td",{key:"pid"}, e.productId),
                     React.createElement("td",{key:"pn"}, e.productName),
-                    React.createElement("td",{key:"sh"}, e.fromShop),
+                    React.createElement("td",{key:"sh"}, nt(e.fromShop)),
                     React.createElement("td",{key:"q"}, `${fmtNum(e.qty)} ${e.unit||""}`),
                     React.createElement("td",{key:"exp"}, StatusPill(`${e.daysToExpiry} ngày`, "warn")),
-                    React.createElement("td",{key:"dest"}, (e.candidateDestinations||[]).map(d=>`${d.shopCode} (~${d.ads7}/ngày)`).join(", ")||"—"),
+                    React.createElement("td",{key:"dest"}, (e.candidateDestinations||[]).map(d=>`${nt(d.shopCode)} (~${d.ads7}/ngày)`).join(", ")||"—"),
                   ]))),
                 ])))
           : (flaggedLoading
@@ -11935,36 +11979,45 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
       sortedTransfers.length===0
         ? React.createElement("div", { className:"emptyState" }, loaded ? "Không có đề xuất điều chuyển nào." : "Đang tải...")
         : React.createElement(React.Fragment, null, [
-          React.createElement("div", { key:"tw", className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+          React.createElement("div", { key:"sum", style:{ fontSize:12.5, marginBottom:8 } }, [
+            "Tổng giá trị hàng đề xuất chuyển: ",
+            React.createElement("b", { key:"v" }, fmtVND(sortedTransfers.reduce((a,t)=>a+(valueOf(t, t.qty)||0),0))),
+            React.createElement("span", { key:"n", style:{ color:"var(--inkSoft)" } }, ` · ${fmtNum(sortedTransfers.length)} dòng`),
+          ]),
+          React.createElement("div", { key:"tw", className:"tableWrap" }, React.createElement("table",{className:"data tblCompact"}, [
             React.createElement("thead",{key:"h"}, React.createElement("tr",null,
-              ["Mã hàng","Tên hàng","Từ nhà thuốc","Đến nhà thuốc","Số lượng","Đơn giá","Hạn dùng (nơi cho)","Tồn nơi cho","Tồn nơi nhận","Ghi chú","Quyết định"].map((h,i)=>React.createElement("th",{key:i},h)))),
+              [["Mã hàng"],["Tên hàng"],["Từ"],["Đến"],["SL\nnguyên",1],["ĐV\nnguyên"],["SL\nlẻ",1],["ĐV\nlẻ"],["Đơn giá",1],["Giá trị",1],["Hạn dùng\n(nơi cho)"],["Tồn\ncho→nhận",1],["Ghi chú"],["Quyết\nđịnh"]].map(([h,n],i)=>thC(h,i,n)))),
             React.createElement("tbody",{key:"b"}, transfersPaged.pageRows.map((t,i) => {
               const decision = decisionFor(t);
+              const [qN, uN, qL, uL] = qtyCellsOf(t, t.qty, t.orderUnitQty);
               return React.createElement("tr",{key:i}, [
-              React.createElement("td",{key:"pid"}, t.productId),
-              React.createElement("td",{key:"pn"}, t.productName),
-              React.createElement("td",{key:"f"}, t.fromShop),
-              React.createElement("td",{key:"to"}, t.toShop),
-              React.createElement("td",{key:"q"}, fmtOrderQty(t)),
-              React.createElement("td",{key:"price"}, fmtPrice(t)),
-              React.createElement("td",{key:"exp"}, fmtExpiry(t.fromExpiryDate)),
-              React.createElement("td",{key:"fd"}, `${fmtNum(t.fromDaysStock)} ngày bán`),
-              React.createElement("td",{key:"td"}, `${fmtNum(t.toDaysStock)} ngày bán`),
-              React.createElement("td",{key:"note"}, [
-                t.priority==="P1" && StatusPill("🔥 Ưu tiên — nơi nhận bán nhanh","warn"),
-                t.toIsRequired && StatusPill("Hàng thường trực","warn"),
-                t.crossRegion && StatusPill("🚚 Khác khu vực","warn"),
-                !t.priority && !t.toIsRequired && !t.crossRegion && "—",
-              ]),
+              React.createElement("td",{key:"pid", className:"nw"}, t.productId),
+              React.createElement("td",{key:"pn", className:"pname"}, React.createElement("div", { className:"nm", title:t.productName }, t.productName)),
+              React.createElement("td",{key:"f", className:"nw"}, nt(t.fromShop)),
+              React.createElement("td",{key:"to", className:"nw"}, nt(t.toShop)),
+              tdN("qn", React.createElement("b", null, qN)),
+              React.createElement("td",{key:"un", className:"nw"}, uN),
+              tdN("ql", qL),
+              React.createElement("td",{key:"ul", className:"nw"}, uL),
+              tdN("price", priceCell(t)),
+              tdN("val", valueOf(t, t.qty)!=null ? fmtVND(valueOf(t, t.qty)) : "—"),
+              React.createElement("td",{key:"exp", className:"nw"}, expiryCell(t.fromExpiryDate)),
+              tdN("days", React.createElement("div", null, [ React.createElement("div",{key:"a"}, `${fmtNum(t.fromDaysStock)} → ${fmtNum(t.toDaysStock)}`), React.createElement("div",{key:"b", className:"sub"}, "ngày bán") ])),
+              React.createElement("td",{key:"note"}, (t.priority==="P1" || t.toIsRequired || t.crossRegion || t.toOutOfStock) ? [
+                t.priority==="P1" && React.createElement("span", { key:"p", className:"chip", title:"Nơi nhận đang bán nhanh" }, "🔥 Ưu tiên"),
+                t.toOutOfStock && React.createElement("span", { key:"o", className:"chip", title:"Nơi nhận đang hết hàng mã này" }, "Hết hàng"),
+                t.toIsRequired && React.createElement("span", { key:"r", className:"chip req" }, "Thường trực"),
+                t.crossRegion && React.createElement("span", { key:"c", className:"chip far" }, "🚚 Khác KV"),
+              ] : "—"),
               React.createElement("td",{key:"dec", style:{whiteSpace:"nowrap"}},
                 decision
                   ? React.createElement("div", null, [
                       StatusPill(decision.trangThai==="Đồng ý" ? "✓ Đã đồng ý" : "✕ Từ chối", decision.trangThai==="Đồng ý" ? "good" : "warn"),
                       decision.trangThai==="Từ chối" && decision.lyDo && React.createElement("div", { style:{ fontSize:11, color:"var(--inkSoft)", marginTop:3, maxWidth:180 } }, decision.lyDo),
                     ])
-                  : React.createElement("div", { style:{ display:"flex", gap:6 } }, [
-                      React.createElement("button",{key:"ok", type:"button", className:"btn btnPrimary", style:{padding:"4px 9px",fontSize:11.5}, onClick:()=>approveTransfer(t)}, "Đồng ý"),
-                      React.createElement("button",{key:"no", type:"button", className:"btn btnGhost", style:{padding:"4px 9px",fontSize:11.5}, onClick:()=>rejectTransfer(t)}, "Từ chối"),
+                  : React.createElement("div", { style:{ display:"flex", flexDirection:"column", gap:4 } }, [
+                      React.createElement("button",{key:"ok", type:"button", className:"btn btnPrimary", style:{padding:"3px 8px",fontSize:11, justifyContent:"center"}, onClick:()=>approveTransfer(t)}, "Đồng ý"),
+                      React.createElement("button",{key:"no", type:"button", className:"btn btnGhost", style:{padding:"3px 8px",fontSize:11, justifyContent:"center"}, onClick:()=>rejectTransfer(t)}, "Từ chối"),
                     ])),
             ]);})),
           ])),
@@ -11982,10 +12035,10 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
         React.createElement("tbody",{key:"b"}, sortedExpiryTransfers.map((e,i) => React.createElement("tr",{key:i}, [
           React.createElement("td",{key:"pid"}, e.productId),
           React.createElement("td",{key:"pn"}, e.productName),
-          React.createElement("td",{key:"sh"}, e.fromShop),
+          React.createElement("td",{key:"sh"}, nt(e.fromShop)),
           React.createElement("td",{key:"q"}, `${fmtNum(e.qty)} ${e.unit||""}`),
           React.createElement("td",{key:"exp"}, StatusPill(`${e.daysToExpiry} ngày`, "warn")),
-          React.createElement("td",{key:"dest"}, (e.candidateDestinations||[]).map(d=>`${d.shopCode} (~${d.ads7}/ngày)`).join(", ")),
+          React.createElement("td",{key:"dest"}, (e.candidateDestinations||[]).map(d=>`${nt(d.shopCode)} (~${d.ads7}/ngày)`).join(", ")),
         ]))),
       ])),
     ]),
@@ -11997,22 +12050,33 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
       sortedShortage.length===0
         ? React.createElement("div", { className:"emptyState" }, "Không có mục nào.")
         : React.createElement(React.Fragment, null, [
-          React.createElement("div", { key:"tw", className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+          React.createElement("div", { key:"sum", style:{ fontSize:12.5, marginBottom:8 } }, [
+            "Tổng giá trị đề xuất đặt NCC: ",
+            React.createElement("b", { key:"v" }, fmtVND(sortedShortage.reduce((a,s)=>a+(nccValue(s)||0),0))),
+          ]),
+          React.createElement("div", { key:"tw", className:"tableWrap" }, React.createElement("table",{className:"data tblCompact"}, [
             React.createElement("thead",{key:"h"}, React.createElement("tr",null,
-              ["Mã hàng","Tên hàng","Nhà thuốc","Số lượng cần","Đề xuất đặt NCC","Đơn giá","Tồn hiện tại","Ghi chú"].map((h,i)=>React.createElement("th",{key:i},h)))),
-            React.createElement("tbody",{key:"b"}, shortagePaged.pageRows.map((s,i) => React.createElement("tr",{key:i}, [
-              React.createElement("td",{key:"pid"}, s.productId),
-              React.createElement("td",{key:"pn"}, s.productName),
-              React.createElement("td",{key:"sh"}, s.shopCode),
-              React.createElement("td",{key:"q"}, `${fmtNum(s.qty)} ${s.unit||""}`),
-              React.createElement("td",{key:"sug", style:{fontWeight:700}},
-                s.orderUnit && s.orderUnitQty!=null
-                  ? `${fmtNum(s.orderUnitQty)} ${s.orderUnit} (${fmtNum(s.suggestedOrderQty ?? s.qty)}${s.unit ? " "+s.unit : ""})`
-                  : `${fmtNum(s.suggestedOrderQty ?? s.qty)} ${s.unit||""}`),
-              React.createElement("td",{key:"price"}, fmtPrice(s)),
-              React.createElement("td",{key:"d"}, `${fmtNum(s.daysOfStock)} ngày bán`),
-              React.createElement("td",{key:"note"}, s.isRequired ? StatusPill("Hàng thường trực","warn") : "—"),
-            ]))),
+              [["Mã hàng"],["Tên hàng"],["NT"],["Thiếu\n(lẻ)",1],["Đặt SL\nnguyên",1],["ĐV\nnguyên"],["SL\nlẻ",1],["ĐV\nlẻ"],["Đơn giá",1],["Giá trị",1],["Tồn\nhiện tại",1],["Ghi chú"]].map(([h,n],i)=>thC(h,i,n)))),
+            React.createElement("tbody",{key:"b"}, shortagePaged.pageRows.map((s,i) => {
+              const sugLe = s.orderUnit && s.orderUnitQty!=null && s.orderUnitFactor ? s.orderUnitQty * s.orderUnitFactor : (s.suggestedOrderQty ?? s.qty);
+              const [qN, uN, qL, uL] = qtyCellsOf(s, sugLe, s.orderUnitQty);
+              return React.createElement("tr",{key:i}, [
+              React.createElement("td",{key:"pid", className:"nw"}, s.productId),
+              React.createElement("td",{key:"pn", className:"pname"}, React.createElement("div", { className:"nm", title:s.productName }, s.productName)),
+              React.createElement("td",{key:"sh", className:"nw"}, nt(s.shopCode)),
+              tdN("q", `${fmtNum(s.qty)}${s.unit ? " "+s.unit : ""}`),
+              tdN("qn", React.createElement("b", null, qN)),
+              React.createElement("td",{key:"un", className:"nw"}, uN),
+              tdN("ql", qL),
+              React.createElement("td",{key:"ul", className:"nw"}, uL),
+              tdN("price", priceCell(s)),
+              tdN("val", nccValue(s)!=null ? fmtVND(nccValue(s)) : "—"),
+              tdN("d", `${fmtNum(s.daysOfStock)} ngày`),
+              React.createElement("td",{key:"note"}, (s.isRequired || s.isOutOfStock) ? [
+                s.isOutOfStock && React.createElement("span", { key:"o", className:"chip" }, "Hết hàng"),
+                s.isRequired && React.createElement("span", { key:"r", className:"chip req" }, "Thường trực"),
+              ] : "—"),
+            ]);})),
           ])),
           React.createElement(TablePager, { key:"pager", ...shortagePaged }),
         ]),
@@ -12023,18 +12087,29 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
       sortedSurplus.length===0
         ? React.createElement("div", { className:"emptyState" }, "Không có mục nào.")
         : React.createElement(React.Fragment, null, [
-          React.createElement("div", { key:"tw", className:"tableWrap" }, React.createElement("table",{className:"data"}, [
+          React.createElement("div", { key:"sum", style:{ fontSize:12.5, marginBottom:8 } }, [
+            "Tổng giá trị hàng dư: ",
+            React.createElement("b", { key:"v" }, fmtVND(sortedSurplus.reduce((a,s)=>a+(valueOf(s, s.qty)||0),0))),
+          ]),
+          React.createElement("div", { key:"tw", className:"tableWrap" }, React.createElement("table",{className:"data tblCompact"}, [
             React.createElement("thead",{key:"h"}, React.createElement("tr",null,
-              ["Mã hàng","Tên hàng","Nhà thuốc","Số lượng dư","Đơn giá","Hạn dùng","Tồn hiện tại"].map((h,i)=>React.createElement("th",{key:i},h)))),
-            React.createElement("tbody",{key:"b"}, surplusPaged.pageRows.map((s,i) => React.createElement("tr",{key:i}, [
-              React.createElement("td",{key:"pid"}, s.productId),
-              React.createElement("td",{key:"pn"}, s.productName),
-              React.createElement("td",{key:"sh"}, s.shopCode),
-              React.createElement("td",{key:"q"}, fmtOrderQty(s)),
-              React.createElement("td",{key:"price"}, fmtPrice(s)),
-              React.createElement("td",{key:"exp"}, fmtExpiry(s.expiryDate)),
-              React.createElement("td",{key:"d"}, `${fmtNum(s.daysOfStock)} ngày bán`),
-            ]))),
+              [["Mã hàng"],["Tên hàng"],["NT"],["SL\nnguyên",1],["ĐV\nnguyên"],["SL\nlẻ",1],["ĐV\nlẻ"],["Đơn giá",1],["Giá trị\ndư",1],["Hạn dùng"],["Tồn\nhiện tại",1]].map(([h,n],i)=>thC(h,i,n)))),
+            React.createElement("tbody",{key:"b"}, surplusPaged.pageRows.map((s,i) => {
+              const fullN = s.orderUnit && s.orderUnitFactor ? Math.floor(s.qty / s.orderUnitFactor) : s.orderUnitQty;
+              const [qN, uN, qL, uL] = qtyCellsOf(s, s.qty, fullN);
+              return React.createElement("tr",{key:i}, [
+              React.createElement("td",{key:"pid", className:"nw"}, s.productId),
+              React.createElement("td",{key:"pn", className:"pname"}, React.createElement("div", { className:"nm", title:s.productName }, s.productName)),
+              React.createElement("td",{key:"sh", className:"nw"}, nt(s.shopCode)),
+              tdN("qn", React.createElement("b", null, qN)),
+              React.createElement("td",{key:"un", className:"nw"}, uN),
+              tdN("ql", qL),
+              React.createElement("td",{key:"ul", className:"nw"}, uL),
+              tdN("price", priceCell(s)),
+              tdN("val", valueOf(s, s.qty)!=null ? fmtVND(valueOf(s, s.qty)) : "—"),
+              React.createElement("td",{key:"exp", className:"nw"}, expiryCell(s.expiryDate)),
+              tdN("d", `${fmtNum(s.daysOfStock)} ngày`),
+            ]);})),
           ])),
           React.createElement(TablePager, { key:"pager", ...surplusPaged }),
         ]),
