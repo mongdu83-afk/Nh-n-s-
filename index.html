@@ -2406,6 +2406,26 @@ function CustomerOrderView({ isAdmin, myStaff }){
 // không có dữ liệu, banner tự ẩn).
 // 27/9/2026 (Phương): banner "Nhắc tái mua" trên trang đầu của nhân viên/CHT — số khách của nhà thuốc
 // đang đến lúc dùng hết sản phẩm mà chưa ai liên hệ, bấm là mở thẳng tab Nhắc tái mua.
+// 27/9/2026 (Đề xuất AI Dev mục 5): tìm nhanh chức năng — gõ tên (không dấu cũng được) để nhảy thẳng tới tab.
+function FeatureSearch({ items, onPick, variant }){
+  const [q, setQ] = useState("");
+  const [focus, setFocus] = useState(false);
+  const n = vnSearchNorm(q.trim());
+  const res = n ? items.filter(it => vnSearchNorm(it.label + " " + it.group + " " + (it.keywords||"")).includes(n)).slice(0, 8) : [];
+  const dark = variant==="dark";
+  return React.createElement("div", { style:{ position:"relative", margin: dark ? "10px 10px 2px" : "0 0 12px" } }, [
+    React.createElement("input", { key:"i", value:q, onChange:e=>setQ(e.target.value), onFocus:()=>setFocus(true), onBlur:()=>setTimeout(()=>setFocus(false), 150),
+      onKeyDown:e=>{ if(e.key==="Enter" && res[0]){ onPick(res[0].id); setQ(""); } if(e.key==="Escape") setQ(""); },
+      placeholder:"⌕ Tìm chức năng...", style:{ width:"100%", boxSizing:"border-box", padding:"8px 11px", borderRadius:9, fontSize:13, fontFamily:"inherit",
+        border: dark ? "1px solid rgba(255,255,255,.25)" : "1px solid var(--line)", background: dark ? "rgba(255,255,255,.12)" : "#fff", color: dark ? "#fff" : "var(--ink)", outline:"none" } }),
+    focus && res.length>0 && React.createElement("div", { key:"r", style:{ position:"absolute", left:0, right:0, top:"calc(100% + 4px)", background:"#fff", borderRadius:10, boxShadow:"0 8px 24px rgba(0,0,0,.18)", zIndex:60, overflow:"hidden" } },
+      res.map(it => React.createElement("div", { key:it.id, onMouseDown:e=>{ e.preventDefault(); onPick(it.id); setQ(""); }, style:{ padding:"8px 12px", cursor:"pointer", borderBottom:"1px solid var(--line)", color:"var(--ink)" } }, [
+        React.createElement("div", { key:"a", style:{ fontWeight:700, fontSize:13 } }, it.label),
+        React.createElement("div", { key:"b", style:{ fontSize:11, color:"var(--inkSoft)" } }, it.group),
+      ]))),
+    focus && n && res.length===0 && React.createElement("div", { key:"e", style:{ position:"absolute", left:0, right:0, top:"calc(100% + 4px)", background:"#fff", borderRadius:10, padding:"8px 12px", fontSize:12, color:"var(--inkSoft)", boxShadow:"0 8px 24px rgba(0,0,0,.18)", zIndex:60 } }, "Không tìm thấy chức năng"),
+  ]);
+}
 function ReplenishBanner({ myStaff, onOpen }){
   const [st, setSt] = useState(null);
   useEffect(()=>{
@@ -4538,7 +4558,10 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
   // phình to vô hạn như crmInteractions) rồi lọc crmSourceType ở trình duyệt.
   const [openTasksRaw, setOpenTasksRaw] = useState([]);
   useEffect(()=>{
-    const unsub = db.collection("tasks").where("trangThai", "==", "Đang giao")
+    // 27/9/2026 (rà soát phân quyền): NV/CHT chỉ tải việc của nhà thuốc mình ngay ở truy vấn.
+    let q = db.collection("tasks").where("trangThai", "==", "Đang giao");
+    if(!isAdmin && myStaff && myStaff.shop) q = q.where("shop", "==", myStaff.shop);
+    const unsub = q
       .onSnapshot(snap => setOpenTasksRaw(snap.docs.map(d => ({ id:d.id, ...d.data() }))), err => logSystemError("tasks", err));
     return unsub;
   }, []);
@@ -12945,6 +12968,14 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate }){
   const monthEnd = `${monthKey}-${String(daysInMonthOf(monthStart)).padStart(2,"0")}`;
   const revChartTo = monthKey===todayStr.slice(0,7) ? todayStr : monthEnd; // tháng hiện tại: chặn ở hôm nay, tránh vẽ các ngày tương lai (=0) gây hiểu lầm sụt doanh thu
   const revTrendSeries = revMapScoped ? buildDaySeries(revMapScoped, monthStart, revChartTo) : { days:[], vals:[] };
+  // 27/9/2026 (Đề xuất AI Dev mục 4): phân biệt "0đ" với "CHƯA ĐỒNG BỘ" — ngày cuối chưa có dữ liệu
+  // (VD hôm nay, đơn chưa đồng bộ về) không vẽ thành 0đ gây hiểu lầm sụt doanh thu.
+  const revPendingDays = [];
+  if(revMapScoped){
+    while(revTrendSeries.days.length && revMapScoped[revTrendSeries.days[revTrendSeries.days.length-1]]==null){
+      revPendingDays.unshift(revTrendSeries.days.pop()); revTrendSeries.vals.pop();
+    }
+  }
 
   return rc("div", { style:{ maxWidth:1160, margin:"0 auto", padding:16 } }, [
     // 26/9/2026 (Risk & Compliance Center): dải tóm tắt rủi ro đang mở — bấm để vào màn Rủi ro & Tuân thủ.
@@ -12973,7 +13004,7 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate }){
     // PERFORMANCE ANALYTICS — xu hướng doanh thu theo ngày trong kỳ đang xem (mục E đặc tả Module 6)
     rc("div", { key:"revtrend", title:"Bấm để mở tab Doanh thu", onClick:()=>go("revenueAnalytics"), style:{ marginBottom:16, cursor:"pointer" } },
       !revStats ? rc("div", { key:"e", className:"card emptyState" }, "Chưa có dữ liệu doanh thu theo ngày.")
-        : rc(DailyLineChart, { key:"c", title:`Doanh thu theo ngày · ${isAll ? "Toàn chuỗi" : shopLabel(adminShop)} · tháng ${monthKey.slice(5)}/${monthKey.slice(0,4)}`, days:revTrendSeries.days, vals:revTrendSeries.vals, fmt:fmtVNDCompact, color:"var(--pine)" })),
+        : rc(DailyLineChart, { key:"c", title:`Doanh thu theo ngày · ${isAll ? "Toàn chuỗi" : shopLabel(adminShop)} · tháng ${monthKey.slice(5)}/${monthKey.slice(0,4)}${revPendingDays.length ? ` · ${revPendingDays.map(d=>d.slice(8,10)+"/"+d.slice(5,7)).join(", ")}: chưa đồng bộ` : ""}`, days:revTrendSeries.days, vals:revTrendSeries.vals, fmt:fmtVNDCompact, color:"var(--pine)" })),
 
     // 5 nhóm chỉ số
     rc("div", { key:"tiles", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:12, marginBottom:16 } },
@@ -15811,7 +15842,7 @@ const RISK_LEVEL_ORDER = ["CRITICAL","HIGH","MEDIUM","LOW"];
 const RISK_LEVEL_COLOR = { CRITICAL:"#7f1d1d", HIGH:SEVERITY.critical.color, MEDIUM:SEVERITY.warning.color, LOW:SEVERITY.neutral.color };
 const RISK_STATUS_META = { OPEN:{ vi:"Mới", color:"#B3261E" }, ACK:{ vi:"Đã nhận", color:"#0a6bb4" }, IN_PROGRESS:{ vi:"Đang xử lý", color:"#D98A1F" }, RESOLVED:{ vi:"Đã xử lý", color:"#16A34A" }, REOPENED:{ vi:"Tái phát", color:"#7c3aed" } };
 const RISK_RESOLUTION_VI = { FIXED:"Đã khắc phục", FALSE_POSITIVE:"Báo động giả", ACCEPTED:"Chấp nhận rủi ro", AUTO_CLEARED:"Tự đóng (điều kiện đã hết, chưa ai nhận)" };
-const RISK_EVENT_VI = { CREATED:"Phát hiện", REOPENED:"Tái phát", ESCALATED:"Tăng mức", CONDITION_CLEARED:"Điều kiện đã hết", CONDITION_RETURNED:"Điều kiện xuất hiện lại", AUTO_RESOLVED:"Tự đóng", ACK:"Nhận xử lý", IN_PROGRESS:"Bắt đầu xử lý", RESOLVED:"Xác nhận đã xử lý", REOPEN_MANUAL:"Mở lại thủ công", ASSIGN:"Đổi người phụ trách", SNOOZE:"Tạm hoãn", TASK_CREATED:"Tạo việc xử lý", TASK_DONE:"Việc xử lý đã xong" };
+const RISK_EVENT_VI = { CREATED:"Phát hiện", REOPENED:"Tái phát", ESCALATED:"Tăng mức", CONDITION_CLEARED:"Điều kiện đã hết", CONDITION_RETURNED:"Điều kiện xuất hiện lại", AUTO_RESOLVED:"Tự đóng", ACK:"Nhận xử lý", IN_PROGRESS:"Bắt đầu xử lý", RESOLVED:"Xác nhận đã xử lý", REOPEN_MANUAL:"Mở lại thủ công", ASSIGN:"Đổi người phụ trách", SNOOZE:"Tạm hoãn", TASK_CREATED:"Tạo việc xử lý", TASK_DONE:"Việc xử lý đã xong", AWAITING_CLOSE:"Chờ xác nhận đóng", CLOSE_REQUESTED:"CHT đề nghị đóng" };
 function riskLevelLabel(policy, l){ return (policy && policy.levels && policy.levels[l] && policy.levels[l].label) || l; }
 function riskIsOverdue(r, nowIso){ return r.isOpen && r.dueAt && r.dueAt < nowIso; }
 
@@ -15819,7 +15850,10 @@ async function logRiskEvent(riskId, action, extra){
   try{ await db.collection("riskEvents").add({ riskId, action, at:new Date().toISOString(), by: (extra && extra.by) || "Quản lý khu vực", ...(extra||{}) }); } catch(err){ logSystemError("riskEvents", err); }
 }
 
-function RiskDetailModal({ risk, policy, domainLabels, staffList, onClose, onNavigate, onCreateTask }){
+function RiskDetailModal({ risk, policy, domainLabels, staffList, onClose, onNavigate, onCreateTask, isAdmin, myStaff }){
+  // 27/9/2026 (Đề xuất AI Dev 2.5): CHỈ Quản lý khu vực được xác nhận ĐÓNG rủi ro. CHT được nhận xử lý,
+  // tạo việc khắc phục và "Đề nghị đóng" — quản lý duyệt. Hoàn thành việc KHÔNG tự đóng rủi ro.
+  const actorName = isAdmin ? "Quản lý khu vực" : `${(myStaff && myStaff.name) || "?"} (${(myStaff && myStaff.role) || "NV"})`;
   const [events, setEvents] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [resolution, setResolution] = useState(risk.conditionClearedAt ? "FIXED" : "FALSE_POSITIVE");
@@ -15842,7 +15876,16 @@ function RiskDetailModal({ risk, policy, domainLabels, staffList, onClose, onNav
   async function resolve(){
     if(resolution==="FIXED" && !canFix) return;
     if(needNote && !note.trim()) return;
-    const extra = { isOpen:false, resolvedAt:new Date().toISOString(), resolvedBy:"Quản lý khu vực", resolution, resolutionNote:note.trim() || null };
+    if(!isAdmin){
+      // Đề nghị đóng — chờ Quản lý khu vực xác nhận
+      setBusy(true);
+      try{
+        await ref.set({ closeRequest:{ by:actorName, at:new Date().toISOString(), resolution, note:note.trim() || null } }, { merge:true });
+        await logRiskEvent(risk.riskId, "CLOSE_REQUESTED", { resolution, note:note.trim() || null, by:actorName });
+      } catch(err){ window.alert("Không lưu được: " + (err && err.message ? err.message : err)); }
+      setBusy(false); onClose(); return;
+    }
+    const extra = { isOpen:false, resolvedAt:new Date().toISOString(), resolvedBy:"Quản lý khu vực", resolution, resolutionNote:note.trim() || null, awaitingCloseConfirm:false, closeRequest:null, closeApprovedFrom: risk.closeRequest ? risk.closeRequest.by : null };
     // Báo động giả: chặn phát hiện lại trong thời gian cooldown của rule (tránh báo lặp).
     if(resolution==="FALSE_POSITIVE") extra.suppressUntil = new Date(Date.now() + Math.max(24, codePolicy.cooldownHours || 72)*3600000).toISOString();
     await transition("RESOLVED", extra, "RESOLVED", { resolution, note:note.trim() || null, conditionCleared:canFix });
@@ -15858,6 +15901,7 @@ function RiskDetailModal({ risk, policy, domainLabels, staffList, onClose, onNav
         rc(Pill360, { key:"l", text:riskLevelLabel(policy, lvl), color:RISK_LEVEL_COLOR[lvl] || CL360.gray }),
         rc(Pill360, { key:"s", text:(RISK_STATUS_META[risk.status]||{}).vi || risk.status, color:(RISK_STATUS_META[risk.status]||{}).color || CL360.gray }),
         risk.conditionClearedAt && risk.isOpen && rc(Pill360, { key:"c", text:"Điều kiện đã hết", color:CL360.good }),
+        (risk.awaitingCloseConfirm || risk.closeRequest) && risk.isOpen && rc(Pill360, { key:"aw", text:"Chờ xác nhận đóng", color:CL360.warn }),
         rc("span", { key:"id", style:{ fontSize:10.5, color:"var(--inkSoft)" } }, risk.riskId),
       ]),
       rc("div", { key:"t", style:{ fontWeight:700, fontSize:18.5, marginBottom:2 } }, risk.title),
@@ -15900,14 +15944,17 @@ function RiskDetailModal({ risk, policy, domainLabels, staffList, onClose, onNav
             ]) ]),
         ]),
         rc("div", { key:"res", className:"field" }, [
-          rc("label", { key:"l" }, "Xác nhận đóng rủi ro"),
+          rc("label", { key:"l" }, isAdmin ? "Xác nhận đóng rủi ro (Quản lý khu vực)" : "Đề nghị đóng rủi ro (chờ Quản lý khu vực xác nhận)"),
+          risk.closeRequest && rc("div", { key:"cr", style:{ fontSize:12, background:"#fff4e0", borderRadius:8, padding:"6px 9px", marginBottom:6 } },
+            `📨 ${risk.closeRequest.by} đề nghị đóng lúc ${fmtTs360(risk.closeRequest.at)} — ${RISK_RESOLUTION_VI[risk.closeRequest.resolution] || risk.closeRequest.resolution}${risk.closeRequest.note ? `: ${risk.closeRequest.note}` : ""}`),
+          risk.awaitingCloseConfirm && rc("div", { key:"aw", style:{ fontSize:12, background:"var(--pineSoft)", borderRadius:8, padding:"6px 9px", marginBottom:6 } }, "⏳ Điều kiện rủi ro đã hết đủ lâu — hệ thống KHÔNG tự đóng, chờ xác nhận."),
           rc("select", { key:"s", value:resolution, onChange:e=>setResolution(e.target.value), style:{ marginBottom:6 } }, [
             rc("option", { key:"f", value:"FIXED", disabled:!canFix }, canFix ? "Đã khắc phục (điều kiện đã hết)" : "Đã khắc phục — CHƯA được: dữ liệu nguồn vẫn vượt ngưỡng"),
             rc("option", { key:"fp", value:"FALSE_POSITIVE" }, "Báo động giả (tạm ngừng phát hiện lại trong thời gian chờ của quy tắc)"),
             rc("option", { key:"ac", value:"ACCEPTED" }, "Chấp nhận rủi ro (ghi rõ lý do)"),
           ]),
           rc("textarea", { key:"n", rows:2, value:note, onChange:e=>setNote(e.target.value), placeholder: needNote ? "Lý do (bắt buộc)" : "Ghi chú cách xử lý (tuỳ chọn)" }),
-          rc("button", { key:"b", type:"button", className:"btn btnPrimary", style:{ marginTop:6 }, disabled:busy || (resolution==="FIXED" && !canFix) || (needNote && !note.trim()), onClick:resolve }, "Xác nhận đóng"),
+          rc("button", { key:"b", type:"button", className:"btn btnPrimary", style:{ marginTop:6 }, disabled:busy || (resolution==="FIXED" && !canFix) || (needNote && !note.trim()), onClick:resolve }, isAdmin ? "Xác nhận đóng" : "Gửi đề nghị đóng"),
         ]),
       ]),
       !risk.isOpen && rc("div", { key:"closed", style:{ fontSize:12.5, marginBottom:10, background:"var(--paper)", borderRadius:8, padding:"8px 10px" } }, [
@@ -15975,7 +16022,7 @@ function RiskPolicyEditor({ policy, onSaved }){
     rc("div", { key:"ot", className:"card", style:{ marginBottom:12 } }, [
       rc("div", { key:"g", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))", gap:12 } }, [
         rc("div", { key:"a", className:"field" }, [ rc("label", { key:"l" }, "Nhà thuốc mới mở — miễn cảnh báo doanh thu tới ngày (mỗi dòng: SHOPxxxx=YYYY-MM-DD)"), rc("textarea", { key:"i", rows:3, value:newShops, onChange:e=>setNewShops(e.target.value), placeholder:"SHOP0200=2026-11-30" }) ]),
-        rc("div", { key:"b", className:"field" }, [ rc("label", { key:"l" }, "Tự đóng rủi ro CHƯA AI NHẬN khi điều kiện đã hết sau (ngày)"), rc("input", { key:"i", type:"number", min:1, value:autoResolveDays, onChange:e=>setAutoResolveDays(e.target.value) }) ]),
+        rc("div", { key:"b", className:"field" }, [ rc("label", { key:"l" }, "Đưa vào \"Chờ xác nhận đóng\" khi điều kiện đã hết sau (ngày) — không tự đóng"), rc("input", { key:"i", type:"number", min:1, value:autoResolveDays, onChange:e=>setAutoResolveDays(e.target.value) }) ]),
       ]),
       rc("button", { key:"s", type:"button", className:"btn btnPrimary", style:{ marginTop:10 }, disabled:busy, onClick:save }, busy ? "Đang lưu..." : "Lưu chính sách rủi ro"),
       msg && rc("div", { key:"m", style:{ fontSize:12, marginTop:8, color:"var(--inkSoft)" } }, msg),
@@ -16008,9 +16055,15 @@ function RiskCenterView({ isAdmin, myStaff, navParam, onNavigate }){
   const [selId, setSelId] = useState(null);
   const [composer, setComposer] = useState(null);
   const [busy, setBusy] = useState(false), [msg, setMsg] = useState("");
-  const since7 = new Date(Date.now() - 7*86400000).toISOString();
-  useEffect(()=> db.collection("risks").where("isOpen","==",true).onSnapshot(s => setOpen(s.docs.map(d => ({ id:d.id, ...d.data() }))), err => logSystemError("risks", err)), []);
-  useEffect(()=> db.collection("risks").where("resolvedAt",">=",since7).onSnapshot(s => setRecent(s.docs.map(d => ({ id:d.id, ...d.data() })).filter(r => !r.isOpen)), err => logSystemError("risks-resolved", err)), []);
+  // 27/9/2026: lịch sử đã xử lý 90 ngày (trước 7 ngày). CHT chỉ TẢI rủi ro của nhà thuốc mình
+  // (lọc ngay ở truy vấn, không tải toàn chuỗi rồi ẩn ở trình duyệt).
+  const since7 = new Date(Date.now() - 90*86400000).toISOString();
+  const myShopR = !isAdmin && myStaff ? myStaff.shop : null;
+  useEffect(()=>{
+    if(myShopR) return db.collection("risks").where("shop","==",myShopR).onSnapshot(s => { const all = s.docs.map(d => ({ id:d.id, ...d.data() })); setOpen(all.filter(r => r.isOpen)); setRecent(all.filter(r => !r.isOpen && (r.resolvedAt||"") >= since7)); }, err => logSystemError("risks", err));
+    return db.collection("risks").where("isOpen","==",true).onSnapshot(s => setOpen(s.docs.map(d => ({ id:d.id, ...d.data() }))), err => logSystemError("risks", err));
+  }, [myShopR]);
+  useEffect(()=>{ if(myShopR) return undefined; return db.collection("risks").where("resolvedAt",">=",since7).onSnapshot(s => setRecent(s.docs.map(d => ({ id:d.id, ...d.data() })).filter(r => !r.isOpen)), err => logSystemError("risks-resolved", err)); }, [myShopR]);
   useEffect(()=> db.collection("opsConfig").doc("riskSummary").onSnapshot(d => setSummary(d.exists ? d.data() : null), err => logSystemError("riskSummary", err)), []);
   useEffect(()=> subscribeCol("staff", setStaffList), []);
   useEffect(()=>{ if(navParam && navParam.riskId) setSelId(navParam.riskId); }, [navParam]);
@@ -16025,7 +16078,7 @@ function RiskCenterView({ isAdmin, myStaff, navParam, onNavigate }){
   const cmp = (a, b) => { const x = rank(a), y = rank(b); for(let i=0;i<x.length;i++){ if(x[i]<y[i]) return -1; if(x[i]>y[i]) return 1; } return 0; };
   const s = q.trim().toLowerCase();
   const applyFilters = (list) => list.filter(r =>
-    (fLevel==="Tất cả" || r.level===fLevel) && (fDomain==="Tất cả" || r.domain===fDomain) && (fShop==="Tất cả" || r.shop===fShop) && (fStatus==="Tất cả" || r.status===fStatus) &&
+    (fLevel==="Tất cả" || r.level===fLevel) && (fDomain==="Tất cả" || r.domain===fDomain) && (fShop==="Tất cả" || r.shop===fShop) && (fStatus==="Tất cả" || (fStatus==="__await" ? (r.awaitingCloseConfirm || r.closeRequest) : r.status===fStatus)) &&
     (!s || [r.title, r.detail, r.code, r.shop, r.ownerName].some(x => x && String(x).toLowerCase().includes(s))));
   const list = (tab==="resolved" ? applyFilters(recent.filter(scope)).sort((a,b) => String(b.resolvedAt).localeCompare(String(a.resolvedAt))) : applyFilters(openScoped).sort(cmp));
   const sel = [...open, ...recent].find(r => r.id===selId) || null;
@@ -16060,14 +16113,15 @@ function RiskCenterView({ isAdmin, myStaff, navParam, onNavigate }){
     rc(MiniStat360, { key:"new", label:"Mới / tái phát hôm nay", value:fmtNum(newToday) }),
     rc(MiniStat360, { key:"od", label:"Quá hạn xử lý", value:fmtNum(overdue), valueColor:overdue>0 ? CL360.bad : CL360.good }),
     rc(MiniStat360, { key:"ua", label:"Chưa ai nhận", value:fmtNum(unacked), valueColor:unacked>0 ? CL360.warn : undefined, sub:`${fmtNum(cleared)} đã hết điều kiện — chờ xác nhận` }),
-    rc(MiniStat360, { key:"rs", label:"Đã xử lý 7 ngày", value:fmtNum(recent.filter(scope).length), onClick:()=>setTab("resolved") }),
+    rc(MiniStat360, { key:"rs", label:"Lịch sử đã xử lý (90 ngày)", value:fmtNum(recent.filter(scope).length), onClick:()=>setTab("resolved") }),
+    rc(MiniStat360, { key:"acc", label:"Chờ xác nhận đóng", value:fmtNum(openScoped.filter(r => r.awaitingCloseConfirm || r.closeRequest).length), valueColor:openScoped.some(r => r.awaitingCloseConfirm || r.closeRequest) ? CL360.warn : undefined, onClick:()=>{ setTab("today"); setFStatus("__await"); } }),
   ]);
   const shops = [...new Set([...open, ...recent].map(r => r.shop).filter(Boolean))].sort();
   const filterRow = rc("div", { key:"f", style:{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:10 } }, [
     rc("select", { key:"l", value:fLevel, onChange:e=>setFLevel(e.target.value) }, ["Tất cả", ...RISK_LEVEL_ORDER].map(x => rc("option", { key:x, value:x }, x==="Tất cả" ? "Mọi mức" : riskLevelLabel(policy, x)))),
     rc("select", { key:"d", value:fDomain, onChange:e=>setFDomain(e.target.value) }, ["Tất cả", "Revenue","Inventory","People","Task","Customer","Compliance"].map(x => rc("option", { key:x, value:x }, x==="Tất cả" ? "Mọi nhóm" : (domainLabels[x] || x)))),
     rc("select", { key:"s", value:fShop, onChange:e=>setFShop(e.target.value) }, ["Tất cả", ...shops].map(x => rc("option", { key:x, value:x }, x==="Tất cả" ? "Mọi nhà thuốc" : x))),
-    tab!=="resolved" && rc("select", { key:"st", value:fStatus, onChange:e=>setFStatus(e.target.value) }, ["Tất cả","OPEN","ACK","IN_PROGRESS","REOPENED"].map(x => rc("option", { key:x, value:x }, x==="Tất cả" ? "Mọi trạng thái" : RISK_STATUS_META[x].vi))),
+    tab!=="resolved" && rc("select", { key:"st", value:fStatus, onChange:e=>setFStatus(e.target.value) }, ["Tất cả","__await","OPEN","ACK","IN_PROGRESS","REOPENED"].map(x => rc("option", { key:x, value:x }, x==="Tất cả" ? "Mọi trạng thái" : x==="__await" ? "Chờ xác nhận đóng" : RISK_STATUS_META[x].vi))),
     rc("input", { key:"q", type:"text", value:q, onChange:e=>setQ(e.target.value), placeholder:"Tìm rủi ro, mã, nhà thuốc, người phụ trách...", style:{ flex:"1 1 200px" } }),
   ]);
   const table = rc("div", { key:"tbl", className:"card" }, [
@@ -16081,18 +16135,18 @@ function RiskCenterView({ isAdmin, myStaff, navParam, onNavigate }){
           tab==="resolved" ? rc(Pill360, { text:RISK_RESOLUTION_VI[r.resolution] || r.resolution || "—", color:CL360.good })
             : rc("span", null, [ rc(Pill360, { key:"s", text:st.vi, color:st.color }), r.conditionClearedAt && rc("span", { key:"c", style:{ marginLeft:5, fontSize:10.5, color:CL360.good } }, "✓ hết điều kiện") ]),
         ] }; }),
-      emptyText: tab==="resolved" ? "Chưa có rủi ro nào được đóng trong 7 ngày." : (summary ? "Không có rủi ro đang mở theo bộ lọc." : "Chưa quét rủi ro lần nào — bấm \"Quét ngay\".") }),
+      emptyText: tab==="resolved" ? "Chưa có rủi ro nào được đóng trong 90 ngày." : (summary ? "Không có rủi ro đang mở theo bộ lọc." : "Chưa quét rủi ro lần nào — bấm \"Quét ngay\".") }),
   ]);
   const errNote = summary && summary.ruleErrors && Object.keys(summary.ruleErrors).length>0 && rc("div", { key:"err", style:{ fontSize:11.5, color:CL360.warn, marginBottom:8 } },
     `Một số nguồn dữ liệu chưa sẵn sàng ở lượt quét gần nhất (rủi ro của các quy tắc này KHÔNG bị coi là đã hết): ${Object.entries(summary.ruleErrors).map(([k,v]) => `${k}: ${v}`).join(" · ")}`);
 
   return rc("div", { style:{ maxWidth:1200, margin:"0 auto", padding:16 } }, [
     header,
-    rc(SubTabBar, { key:"tabs", tabs:[{ id:"today", label:`Đang mở (${openScoped.length})` }, { id:"resolved", label:"Đã xử lý 7 ngày" }, ...(isAdmin ? [{ id:"policy", label:"Chính sách rủi ro" }] : [])], active:tab, onChange:setTab }),
+    rc(SubTabBar, { key:"tabs", tabs:[{ id:"today", label:`Đang mở (${openScoped.length})` }, { id:"resolved", label:"Lịch sử đã xử lý (90 ngày)" }, ...(isAdmin ? [{ id:"policy", label:"Chính sách rủi ro" }] : [])], active:tab, onChange:setTab }),
     tab==="policy"
       ? (summary && summary.policy ? rc(RiskPolicyEditor, { key:"pol", policy:{ ...summary.policy, domainLabels } }) : rc("div", { key:"np", className:"emptyState" }, "Cần quét rủi ro ít nhất 1 lần để tải chính sách đang áp dụng."))
       : rc(React.Fragment, { key:"main" }, [ tab==="today" && tiles, errNote, filterRow, table, msg && rc("div", { key:"m", style:{ fontSize:12, marginTop:8, color:"var(--inkSoft)" } }, msg) ]),
-    sel && rc(RiskDetailModal, { key:"d"+sel.id, risk:sel, policy, domainLabels, staffList, onClose:()=>setSelId(null), onNavigate, onCreateTask:(r)=>{ setSelId(null); createTaskFor(r); } }),
+    sel && rc(RiskDetailModal, { key:"d"+sel.id, isAdmin, myStaff, risk:sel, policy, domainLabels, staffList, onClose:()=>setSelId(null), onNavigate, onCreateTask:(r)=>{ setSelId(null); createTaskFor(r); } }),
     composer && rc(TaskComposer360, { key:"cmp", preset:composer, onClose:()=>setComposer(null) }),
   ]);
 }
@@ -16706,7 +16760,7 @@ function replStatus(d){
 }
 function replTimeOk(d, f){ return f==="all" || (f==="now" && d>=-3 && d<=3) || (f==="soon" && d>3) || (f==="overdue" && d<-3); }
 
-function ReplenishView({ isAdmin, myStaff }){
+function ReplenishView({ isAdmin, myStaff, onNavigate }){
   const rc = React.createElement;
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -16941,7 +16995,7 @@ function ReplenishView({ isAdmin, myStaff }){
       return rc("div", { key:c.phone, className:"card", style:{ marginBottom:10, borderLeft:`4px solid ${allDone ? "#86efac" : replStatus(Math.min(...c.its.map(x=>x.daysLeft))).color}`, opacity: allDone ? .8 : 1 } }, [
         rc("div", { key:"h", style:{ display:"flex", justifyContent:"space-between", gap:10, flexWrap:"wrap" } }, [
           rc("div", { key:"a" }, [
-            rc("div", { key:"n", style:{ fontWeight:700, fontSize:15 } }, [c.name || c.phone, c.levelName && rc("span", { key:"l", style:{ fontSize:10.5, fontWeight:700, marginLeft:8, padding:"2px 7px", borderRadius:9, background:"var(--goldSoft)", color:"#8a5a00" } }, c.levelName)]),
+            rc("div", { key:"n", style:{ fontWeight:700, fontSize:15 } }, [rc("span", { key:"nm", title:"Mở Customer 360", onClick:()=>onNavigate && onNavigate("cust360", { phone:c.phone }), style:{ cursor:"pointer", borderBottom:"1px dashed var(--inkSoft)" } }, c.name || c.phone), c.levelName && rc("span", { key:"l", style:{ fontSize:10.5, fontWeight:700, marginLeft:8, padding:"2px 7px", borderRadius:9, background:"var(--goldSoft)", color:"#8a5a00" } }, c.levelName)]),
             rc(TaskPhoneLine, { key:"p", task:{ crmCustomerPhone:c.phone }, style:{ marginTop:2 } }),
             c.lastVisit && (()=>{ const ago = Math.round((Date.parse(todayISO())-Date.parse(c.lastVisit.date))/86400000);
               return rc("div", { key:"lv", style:{ fontSize:12, marginTop:4, color:"var(--ink)" } }, [
@@ -17859,6 +17913,8 @@ function Dashboard({ user, isAdmin, myStaff }){
   const whoLabel = isAdmin ? "Quản lý" : (myStaff ? `${myStaff.name} · ${myStaff.shop}` : "");
   const activeTabInfo = leafTabs.find(t=>t.id===activeTab);
   const activeGroup = navGroups.find(g => g.tabs.includes(activeTab)) || navGroups[0];
+  const FEATURE_KEYWORDS = { taimua:"tai mua nhac het thuoc cham soc", crm:"crm khach hang phan khuc", cust360:"ho so khach", emp360:"ho so nhan vien", prod360:"ho so hang hoa san pham", hanghoa:"ton kho kiem ke dieu chuyen dat hang toc do tieu thu", action:"cong viec can xu ly cho kiem tra qua han tien do", tasks:"giao viec", risk:"rui ro canh bao tuan thu", kinhnghiem:"kinh nghiem", photos:"hinh anh minh chung", revenueAnalytics:"doanh thu", ctkm:"khuyen mai", temgia:"tem gia", kpi:"kpi chi tieu", ketquangay:"ket qua ngay", baocaotuan:"bao cao tuan", sales:"doanh so ngay", checklist:"checklist", homnay:"hom nay", shop360:"ho so nha thuoc" };
+  const featureItems = navGroups.flatMap(g => g.tabs.map(id => ({ id, label:(leafTabs.find(t=>t.id===id)||{}).label || id, group:g.label, keywords:FEATURE_KEYWORDS[id] || "" })));
   function groupUnread(g){ return g.tabs.reduce((s,id)=>s+(unreadCount[id]||0),0) + (g.tabs.includes("action") ? needAction360 : 0); }
   const totalUnread = Object.values(unreadCount).reduce((a,b)=>a+(b||0), 0);
   const userInitial = (isAdmin ? "Q" : (myStaff && myStaff.name ? myStaff.name.trim().charAt(0) : "N")).toUpperCase();
@@ -17872,6 +17928,7 @@ function Dashboard({ user, isAdmin, myStaff }){
           React.createElement("small", { key:"s" }, "Vận hành & Nhân sự"),
         ]),
       ]),
+      React.createElement(FeatureSearch, { key:"fsearch", variant:"dark", items:featureItems, onPick:id=>setActiveTab(id) }),
       React.createElement("div", { key:"nav", className:"sidebarNav" }, navGroups.flatMap(g => {
         const u = groupUnread(g);
         const item = React.createElement("button", { key:g.id, type:"button", className:"sidebarItem" + (activeGroup.id===g.id ? " active" : ""), onClick:()=>{ setActiveTab(g.tabs.includes(activeTab) ? activeTab : g.tabs[0]); } }, [
@@ -17935,8 +17992,9 @@ function Dashboard({ user, isAdmin, myStaff }){
     // ===== Cột nội dung chính — được đẩy sang phải để chừa chỗ cho sidebar trên máy tính =====
     React.createElement("div", { key:"maincol", className:"mainCol" }, [
       // ===== Trang chủ dạng lưới icon — chỉ hiện trên điện thoại (CSS @media), ẩn hẳn trên máy tính =====
-      React.createElement("div", { key:"mobilehome", className:"mobileHomeGrid" + (showMobileHome ? " isShown" : "") },
-        navGroups.map(g => {
+      React.createElement("div", { key:"mobilehome", className:"mobileHomeGrid" + (showMobileHome ? " isShown" : "") }, [
+        React.createElement("div", { key:"msearch", style:{ gridColumn:"1 / -1" } }, React.createElement(FeatureSearch, { items:featureItems, onPick:id=>setActiveTab(id) })),
+        ...navGroups.map(g => {
           const style = TAB_STYLE[g.id] || { icon:"•", color:"#64748b" };
           const u = groupUnread(g);
           return React.createElement("button", { key:g.id, type:"button", className:"mobileTile", onClick:()=>setActiveTab(g.tabs.includes(activeTab) ? activeTab : g.tabs[0]) }, [
@@ -17947,7 +18005,7 @@ function Dashboard({ user, isAdmin, myStaff }){
             React.createElement("span", { key:"l", className:"mobileTileLabel" }, g.label),
           ]);
         })
-      ),
+      ]),
       // ===== Thanh quay lại Trang chủ — chỉ hiện trên điện thoại khi đang xem 1 tab cụ thể =====
       // 22/9/2026: nếu có màn trước đó trong lịch sử điều hướng (navHistory), bấm mũi tên sẽ quay về
       // ĐÚNG màn đó thay vì luôn nhảy thẳng ra Trang chủ — thân thiện hơn khi đang xem sâu (VD từ
@@ -17987,7 +18045,7 @@ function Dashboard({ user, isAdmin, myStaff }){
         activeTab==="donthuoc" && React.createElement(PrescriptionLibraryView, { key:viewResetKey, isAdmin, myStaff }),
         activeTab==="tasks" && React.createElement(TaskAssignView, { key:viewResetKey, isAdmin, myStaff, navParam }),
         activeTab==="kpi" && React.createElement(KpiView, { key:viewResetKey, isAdmin, myStaff }),
-        activeTab==="taimua" && React.createElement(ReplenishView, { key:viewResetKey, isAdmin, myStaff }),
+        activeTab==="taimua" && React.createElement(ReplenishView, { key:viewResetKey, isAdmin, myStaff, onNavigate:setActiveTab }),
         activeTab==="crm" && React.createElement(CrmView, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab }),
         activeTab==="training" && React.createElement(TrainingView, { key:viewResetKey, isAdmin, myStaff }),
         activeTab==="kudos" && React.createElement(KudosView, { key:viewResetKey, isAdmin, myStaff }),
