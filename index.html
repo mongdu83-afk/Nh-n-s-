@@ -16654,7 +16654,7 @@ function ReplenishView({ isAdmin, myStaff }){
     if(staffF==="unassigned" && c.assignedStaffId) return false;
     if(staffF==="todo" && c.its.every(it => it.contact)) return false;
     if(!s) return true;
-    return [c.name, c.phone, ...c.its.map(it => it.productName)].some(x => x && vnSearchNorm(x).includes(s));
+    return [c.name, c.phone, ...c.its.map(it => it.productName), ...c.its.map(it => it.productId)].some(x => x && vnSearchNorm(x).includes(s));
   }).sort((a,b) => {
     const ma = Math.min(...a.its.map(x=>Math.abs(x.daysLeft))), mb = Math.min(...b.its.map(x=>Math.abs(x.daysLeft)));
     return (a.its.every(x=>x.contact)?1:0) - (b.its.every(x=>x.contact)?1:0) || ma - mb || (b.estValue||0) - (a.estValue||0);
@@ -16682,7 +16682,7 @@ function ReplenishView({ isAdmin, myStaff }){
     p.value += it.lastAmount||0; if(it.contact) p.contacted++;
   }));
   const metaProd = {}; ((meta && meta.products)||[]).forEach(p => { metaProd[p.productId] = p; });
-  const prodRows = Object.values(prodAgg).sort((a,b) => (b.now*3+b.soon+b.overdue) - (a.now*3+a.soon+a.overdue) || b.value - a.value);
+  const prodRows = Object.values(prodAgg).filter(p => !s || vnSearchNorm(p.name||"").includes(s) || vnSearchNorm(p.id||"").includes(s)).sort((a,b) => (b.now*3+b.soon+b.overdue) - (a.now*3+a.soon+a.overdue) || b.value - a.value);
   const prodPaged = usePagedRows(prodRows, 30);
 
   const tile = (label, value, sub, color, onClick, active) => rc("div", { key:label, onClick, style:{ border: active ? `2px solid ${color}` : "1px solid var(--line)", borderRadius:10, padding:"11px 13px", background:"#fff", cursor:onClick?"pointer":"default" } }, [
@@ -16727,7 +16727,7 @@ function ReplenishView({ isAdmin, myStaff }){
       rc("button", { key:id, type:"button", onClick:()=>setView(id), style:{ padding:"7px 12px", fontSize:12.5, fontWeight:700, border:"none", cursor:"pointer", background: view===id ? "var(--pine)" : "#fff", color: view===id ? "#fff" : "var(--ink)" } }, l))),
     rc("select", { key:"t", value:timeF, onChange:e=>setTimeF(e.target.value), style:selStyle }, [["now","Cần nhắc ngay (±3 ngày)"],["soon","Sắp hết (4–14 ngày)"],["overdue","Quá hạn chưa mua lại"],["all","Tất cả mốc"]].map(o => rc("option", { key:o[0], value:o[0] }, o[1]))),
     rc("select", { key:"st", value:staffF, onChange:e=>setStaffF(e.target.value), style:selStyle }, [["all","Mọi khách"],["todo","Chưa liên hệ"],...(!isAdmin ? [["mine","Khách tôi phụ trách"]] : []),["unassigned","Chưa phân công"]].map(o => rc("option", { key:o[0], value:o[0] }, o[1]))),
-    view==="cust" && rc("input", { key:"q", value:q, onChange:e=>setQ(e.target.value), placeholder:"⌕ Tên / SĐT / sản phẩm", style:{ ...selStyle, flex:"1 1 200px" } }),
+    view!=="eff" && rc("input", { key:"q", value:q, onChange:e=>setQ(e.target.value), placeholder: view==="prod" ? "⌕ Tên sản phẩm / mã sản phẩm" : "⌕ Tên khách / SĐT / tên SP / mã SP", style:{ ...selStyle, flex:"1 1 220px" } }),
     prodF && rc("span", { key:"pf", style:{ fontSize:12.5, background:"var(--pineSoft)", borderRadius:14, padding:"5px 10px", display:"inline-flex", gap:6, alignItems:"center" } }, [
       "💊 ", rc("b", { key:"b" }, prodF.name), rc("button", { key:"x", type:"button", onClick:()=>setProdF(null), style:{ border:"none", background:"none", cursor:"pointer", fontWeight:700 } }, "✕"),
     ]),
@@ -16741,7 +16741,7 @@ function ReplenishView({ isAdmin, myStaff }){
     rc("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } }, "Mã hàng khách đang dùng đều đặn và số khách sắp/đã dùng hết — bấm 1 dòng để xem đúng danh sách khách cần gọi cho mã đó. Gợi ý: chuẩn bị đủ tồn kho cho các mã có nhiều khách sắp hết."),
     prodRows.length===0 ? rc("div", { key:"e", className:"emptyState" }, "Chưa có dữ liệu.") : rc("div", { key:"tw", style:{ overflowX:"auto" } }, rc("table", { className:"tblCompact", style:{ width:"100%" } }, [
       rc("thead", { key:"h" }, rc("tr", null, ["Sản phẩm","Cần nhắc ngay","Sắp hết","Quá hạn","Đã liên hệ","Chu kỳ mua lại","Tỉ lệ khách mua lại","Giá trị lần trước"].map((h,i) => rc("th", { key:i, style:{ whiteSpace:"normal", textAlign:i?"right":"left" } }, h)))),
-      rc("tbody", { key:"b" }, prodPaged.pageRows.map(p => rc("tr", { key:p.id, onClick:()=>{ setProdF({ id:p.id, name:p.name }); setTimeF("all"); setView("cust"); }, style:{ cursor:"pointer" } }, [
+      rc("tbody", { key:"b" }, prodPaged.pageRows.map(p => rc("tr", { key:p.id, onClick:()=>{ setProdF({ id:p.id, name:p.name }); setTimeF("all"); setQ(""); setView("cust"); }, style:{ cursor:"pointer" } }, [
         rc("td", { key:"n" }, [rc("div", { key:"a", style:{ fontWeight:600 } }, p.name), rc("div", { key:"b", style:{ fontSize:11, color:"var(--inkSoft)" } }, `${p.id}${metaProd[p.id] ? ` · ${fmtNum(metaProd[p.id].buyers)} khách từng mua toàn chuỗi` : ""}`)]),
         rc("td", { key:"a", style:{ textAlign:"right", fontWeight:700, color:"#b45309" } }, fmtNum(p.now)),
         rc("td", { key:"b", style:{ textAlign:"right", color:"#2563eb" } }, fmtNum(p.soon)),
