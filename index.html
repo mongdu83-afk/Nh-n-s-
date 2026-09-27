@@ -10542,7 +10542,7 @@ function BaoCaoTuanView({ isAdmin, myStaff }){
 // render vẫn giữ nguyên, chỉ ẩn khỏi điều hướng nên có thể bật lại dễ dàng sau này nếu cần.
 // 23/9/2026: thêm "cust360" (Customer 360) vào STAFF_TABS — trước đây chỉ quản lý (isAdmin) mới
 // thấy tab này; xem Customer360View bên dưới (đã tự lọc theo nhà thuốc của nhân viên khi !isAdmin).
-const STAFF_TABS = ["checklist","homnay","photos","hanghoa","tasks","kpi","crm","cust360","training","kudos","temgia","revenueAnalytics","nhanvien","ctkm","baocaotuan","sales"]; // 27/9/2026: bỏ "Kinh nghiệm vận hành" khỏi giao diện nhân viên/CHT
+const STAFF_TABS = ["checklist","homnay","photos","hanghoa","tasks","kpi","crm","cust360","taimua","training","kudos","temgia","revenueAnalytics","nhanvien","ctkm","baocaotuan","sales"]; // 27/9/2026: bỏ "Kinh nghiệm vận hành" khỏi giao diện nhân viên/CHT
 const OPS_TABS = [
   { id:"command", label:"Tổng quan điều hành" },
   { id:"shop360", label:"Hồ sơ nhà thuốc" },
@@ -10550,6 +10550,7 @@ const OPS_TABS = [
   { id:"action", label:"Công việc cần xử lý" },
   { id:"emp360", label:"Hồ sơ nhân viên" },
   { id:"cust360", label:"Hồ sơ khách hàng" },
+  { id:"taimua", label:"🔁 Nhắc tái mua" },
   { id:"prod360", label:"Hồ sơ hàng hoá" },
   { id:"checklist", label:"Checklist ngày" },
   { id:"homnay", label:"Hôm nay nhà thuốc" },
@@ -10585,14 +10586,14 @@ const OPS_TABS = [
 const OPS_GROUPS_STAFF = [
   { id:"vanhanh", label:"Vận hành", tabs:["checklist","homnay","photos","sales","revenueAnalytics","baocaotuan","kinhnghiem"] },
   { id:"tasks", label:"Công việc & KPI", tabs:["tasks","kpi"] },
-  { id:"khachhang", label:"Khách hàng", tabs:["crm","cust360","ctkm"] },
+  { id:"khachhang", label:"Khách hàng", tabs:["taimua","crm","cust360","ctkm"] },
   { id:"hanghoagroup", label:"Hàng hoá", tabs:["hanghoa","temgia"] },
   { id:"nhansu", label:"Nhân sự", tabs:["nhanvien","training","kudos"] },
 ];
 const OPS_GROUPS_ADMIN = [
   { id:"command", label:"Tổng quan điều hành", tabs:["command","risk","shop360"] },
   { id:"nhansu", label:"Nhân sự", tabs:["emp360","tasks","kpi","nhanvien","training","kudos"] },
-  { id:"khachhang", label:"Khách hàng", tabs:["cust360","crm","ctkm"] },
+  { id:"khachhang", label:"Khách hàng", tabs:["taimua","cust360","crm","ctkm"] },
   { id:"hanghoagroup", label:"Hàng hoá", tabs:["prod360","hanghoa","donthuoc","temgia"] },
   { id:"vanhanh", label:"Vận hành", tabs:["checklist","homnay","photos","revenueAnalytics","ketquangay","baocaotuan","kinhnghiem"] },
   { id:"action", label:"Công việc cần xử lý", tabs:["action"] },
@@ -16553,6 +16554,273 @@ function Product360View({ isAdmin, myStaff, navParam, onNavigate }){
 // ===== 27/9/2026 (Phương): TIẾN ĐỘ THỰC HIỆN THEO NHÂN VIÊN — dùng chung cho Quản lý khu vực (Công việc
 // cần xử lý) và CỬA HÀNG TRƯỞNG (tab Giao việc, chỉ nhà thuốc mình). Dữ liệu truyền vào là listener
 // realtime nên bảng tự cập nhật. roster (tuỳ chọn) = danh sách nhân viên để hiện cả người chưa có việc.
+// ================= 27/9/2026 (Phương): NHẮC TÁI MUA THEO NHU CẦU DÙNG SẢN PHẨM =================
+// "Chiều ngược" của chăm sóc khách: từ sản phẩm khách đang dùng → ước tính ngày dùng hết → liên hệ
+// đúng lúc để khách quay lại mua. Dữ liệu do Cloud Function computeReplenishmentDaily tính mỗi sáng
+// (5:40) từ lịch sử mua thật; đọc/ghi qua 2 hàm replenishmentList / replenishmentContact.
+const REPL_FN = "https://asia-southeast1-upharma-176d5.cloudfunctions.net/";
+const REPL_RESULTS = [
+  { v:"Khách sẽ ghé mua", good:true }, { v:"Giữ hàng / giao tận nơi", good:true }, { v:"Còn thuốc, hẹn nhắc lại", good:null },
+  { v:"Không liên lạc được", good:null }, { v:"Đã mua nơi khác", good:false }, { v:"Ngưng dùng", good:false },
+];
+function replDmy(iso){ if(!iso) return "—"; const p = String(iso).slice(0,10).split("-"); return `${p[2]}/${p[1]}`; }
+function replStatus(d){
+  if(d>3) return { text:`Còn ~${d} ngày`, color:"#2563eb", bg:"#dbeafe" };
+  if(d>=-3) return { text: d===0 ? "Hết hôm nay" : (d>0 ? `Hết trong ${d} ngày` : `Đã hết ${-d} ngày`), color:"#b45309", bg:"#fef3c7" };
+  return { text:`Quá ${-d} ngày chưa mua lại`, color:"#b91c1c", bg:"#fee2e2" };
+}
+function replTimeOk(d, f){ return f==="all" || (f==="now" && d>=-3 && d<=3) || (f==="soon" && d>3) || (f==="overdue" && d<-3); }
+
+function ReplenishView({ isAdmin, myStaff }){
+  const rc = React.createElement;
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState(null);
+  const [shop, setShop] = useState("all");
+  const [view, setView] = useState("cust");
+  const [timeF, setTimeF] = useState("now");
+  const [staffF, setStaffF] = useState("all");
+  const [prodF, setProdF] = useState(null);
+  const [q, setQ] = useState("");
+  const [modal, setModal] = useState(null); // { c, it }
+  const [result, setResult] = useState(REPL_RESULTS[0].v);
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [computing, setComputing] = useState(false);
+  const [copied, setCopied] = useState(null);
+  const [showHow, setShowHow] = useState(false);
+
+  async function load(){
+    setLoading(true); setErr(null);
+    try{
+      const r = await fetch(`${REPL_FN}replenishmentList?shop=${encodeURIComponent(isAdmin ? shop : "")}`, { headers: await authHeader() });
+      const d = await r.json();
+      if(!d.ok) throw new Error(d.error || "Lỗi tải dữ liệu");
+      setData(d);
+    } catch(e){ setErr(e.message || String(e)); }
+    setLoading(false);
+  }
+  useEffect(()=>{ load(); }, [shop]);
+
+  async function recompute(){
+    setComputing(true);
+    try{
+      const r = await fetch(`${REPL_FN}computeReplenishmentNow`, { headers: await authHeader() });
+      const d = await r.json();
+      if(!d.ok) throw new Error(d.error || "Lỗi tính");
+      await load();
+    } catch(e){ window.alert("Tính lại thất bại: " + (e.message || e)); }
+    setComputing(false);
+  }
+  async function saveContact(){
+    if(!modal) return;
+    setSaving(true);
+    try{
+      const { c, it } = modal;
+      const r = await fetch(`${REPL_FN}replenishmentContact`, { method:"POST", headers:{ ...(await authHeader()), "Content-Type":"application/json" },
+        body: JSON.stringify({ phone:c.phone, productId:it.productId, productName:it.productName, lastDate:it.lastDate, result, note:note.trim() }) });
+      const d = await r.json();
+      if(!d.ok) throw new Error(d.error || "Không lưu được");
+      setData(prev => ({ ...prev, customers: prev.customers.map(x => x.phone!==c.phone ? x : {
+        ...x, ...(d.claimed ? { assignedStaffId:myStaff && myStaff.id, assignedStaffName:myStaff && myStaff.name } : {}),
+        items: x.items.map(y => y.productId===it.productId && y.lastDate===it.lastDate ? { ...y, contact:d.contact } : y) }) }));
+      setModal(null); setNote("");
+    } catch(e){ window.alert(e.message || String(e)); }
+    setSaving(false);
+  }
+  function script(c, it){
+    const ten = (c.name || "").trim() || "anh/chị";
+    const me = isAdmin ? "Upharma" : ((myStaff && myStaff.name) || "nhân viên");
+    return `Dạ chào ${ten}, em là ${me} bên nhà thuốc Upharma ạ. Lần trước ${ten} lấy ${it.productName} (${fmtNum(it.lastQty)} ${it.unit||""}) ngày ${replDmy(it.lastDate)}, theo liều dùng thì ${it.daysLeft>0 ? `khoảng ${it.daysLeft} ngày nữa là hết` : "chắc đã sắp hết/hết rồi"} ạ. Nhà thuốc vẫn có sẵn hàng, ${ten} cần em giữ sẵn để ghé lấy hoặc giao tận nhà không ạ?`;
+  }
+  async function copyScript(c, it){
+    const txt = script(c, it);
+    try{ await navigator.clipboard.writeText(txt); setCopied(c.phone+it.productId); setTimeout(()=>setCopied(null), 2000); }
+    catch(e){ window.prompt("Sao chép tin nhắn:", txt); }
+  }
+
+  const selStyle = { padding:"7px 9px", border:"1px solid var(--line)", borderRadius:8, fontSize:12.5, background:"#fff" };
+  const customers = (data && data.customers) || [];
+  const s = vnSearchNorm(q);
+  const rows = customers.map(c => {
+    const its = (c.items||[]).filter(it => replTimeOk(it.daysLeft, timeF) && (!prodF || it.productId===prodF.id));
+    return its.length ? { ...c, its } : null;
+  }).filter(Boolean).filter(c => {
+    if(staffF==="mine" && !(myStaff && c.assignedStaffId===myStaff.id)) return false;
+    if(staffF==="unassigned" && c.assignedStaffId) return false;
+    if(staffF==="todo" && c.its.every(it => it.contact)) return false;
+    if(!s) return true;
+    return [c.name, c.phone, ...c.its.map(it => it.productName)].some(x => x && vnSearchNorm(x).includes(s));
+  }).sort((a,b) => {
+    const ma = Math.min(...a.its.map(x=>Math.abs(x.daysLeft))), mb = Math.min(...b.its.map(x=>Math.abs(x.daysLeft)));
+    return (a.its.every(x=>x.contact)?1:0) - (b.its.every(x=>x.contact)?1:0) || ma - mb || (b.estValue||0) - (a.estValue||0);
+  });
+  const paged = usePagedRows(rows, 25);
+
+  // Đếm theo mốc thời gian (trên toàn danh sách của shop đang xem)
+  const cnt = { now:0, soon:0, overdue:0, contacted:0, value:0 };
+  customers.forEach(c => {
+    const its = c.items||[];
+    if(its.some(it => replTimeOk(it.daysLeft,"now"))) cnt.now++;
+    if(its.some(it => replTimeOk(it.daysLeft,"soon"))) cnt.soon++;
+    if(its.some(it => replTimeOk(it.daysLeft,"overdue"))) cnt.overdue++;
+    if(its.some(it => it.contact)) cnt.contacted++;
+    its.forEach(it => { if(replTimeOk(it.daysLeft,"now")) cnt.value += it.lastAmount||0; });
+  });
+  const eff = (data && data.effectiveness) || { contacts30:0, converted30:0, byStaff:{} };
+  const meta = data && data.meta;
+
+  // Nhu cầu theo sản phẩm (tính từ danh sách khách của shop đang xem + thông số chu kỳ toàn chuỗi)
+  const prodAgg = {};
+  customers.forEach(c => (c.items||[]).forEach(it => {
+    const p = prodAgg[it.productId] || (prodAgg[it.productId] = { id:it.productId, name:it.productName, unit:it.unit, now:0, soon:0, overdue:0, value:0, contacted:0, cycle:it.productCycle, rate:it.productRepeatRate });
+    if(replTimeOk(it.daysLeft,"now")) p.now++; else if(it.daysLeft>3) p.soon++; else p.overdue++;
+    p.value += it.lastAmount||0; if(it.contact) p.contacted++;
+  }));
+  const metaProd = {}; ((meta && meta.products)||[]).forEach(p => { metaProd[p.productId] = p; });
+  const prodRows = Object.values(prodAgg).sort((a,b) => (b.now*3+b.soon+b.overdue) - (a.now*3+a.soon+a.overdue) || b.value - a.value);
+  const prodPaged = usePagedRows(prodRows, 30);
+
+  const tile = (label, value, sub, color, onClick, active) => rc("div", { key:label, onClick, style:{ border: active ? `2px solid ${color}` : "1px solid var(--line)", borderRadius:10, padding:"11px 13px", background:"#fff", cursor:onClick?"pointer":"default" } }, [
+    rc("div", { key:"l", style:{ fontSize:11.5, color:"var(--inkSoft)", fontWeight:600 } }, label),
+    rc("div", { key:"v", style:{ fontSize:22, fontWeight:700, fontFamily:"'Fraunces',serif", margin:"3px 0", color } }, value),
+    sub && rc("div", { key:"s", style:{ fontSize:11, color:"var(--inkSoft)" } }, sub),
+  ]);
+
+  const head = rc("div", { key:"head", className:"card", style:{ marginBottom:12, background:"linear-gradient(135deg,#ecfdf5,#fff)" } }, [
+    rc("div", { key:"t", style:{ display:"flex", justifyContent:"space-between", gap:10, flexWrap:"wrap", alignItems:"flex-start" } }, [
+      rc("div", { key:"a" }, [
+        rc("div", { key:"h", style:{ fontWeight:700, fontSize:17 } }, "🔁 Nhắc tái mua theo nhu cầu dùng sản phẩm"),
+        rc("div", { key:"s", style:{ fontSize:12.5, color:"var(--inkSoft)", marginTop:3, maxWidth:720 } },
+          "Hệ thống ước tính ngày khách DÙNG HẾT sản phẩm từ lịch sử mua (số lượng × nhịp dùng), liệt kê khách sắp hết để nhân viên gọi/Zalo nhắc đúng lúc — khách quay lại mua thay vì tự mua nơi khác."),
+        rc("div", { key:"m", style:{ fontSize:11, color:"var(--inkSoft)", marginTop:4 } }, meta ? `Tính lúc ${new Date(meta.computedAt).toLocaleString("vi-VN")} · ${fmtNum(meta.replenishableProducts)} mã hàng dùng lặp lại` : "Chưa có dữ liệu tính — quản lý bấm \"Tính lại\"."),
+      ]),
+      rc("div", { key:"b", style:{ display:"flex", gap:8, flexWrap:"wrap" } }, [
+        rc("button", { key:"how", type:"button", className:"btn btnGhost", style:{ fontSize:12 }, onClick:()=>setShowHow(v=>!v) }, showHow ? "Ẩn cách tính" : "Cách tính?"),
+        rc("button", { key:"r", type:"button", className:"btn btnGhost", style:{ fontSize:12 }, disabled:loading, onClick:load }, loading ? "Đang tải..." : "↻ Tải lại"),
+        isAdmin && rc("button", { key:"c", type:"button", className:"btn btnPrimary", style:{ fontSize:12 }, disabled:computing, onClick:recompute }, computing ? "Đang tính (1–3 phút)..." : "⚙ Tính lại"),
+      ]),
+    ]),
+    showHow && rc("div", { key:"how", className:"readonlyBox", style:{ marginTop:10, fontSize:12.5, lineHeight:1.55 } }, [
+      "• Chỉ xét mã hàng DÙNG LẶP LẠI: ≥3 khách từng mua lại, tỉ lệ khách mua lại ≥ 8%, chu kỳ 7–150 ngày (thuốc mạn tính, TPCN, sữa, vật tư dùng hằng ngày…). Thuốc cấp tính tự bị loại.\n",
+      "• Ngày dùng hết = ngày mua gần nhất + số ngày dùng. Số ngày dùng ưu tiên: (1) nhịp riêng của khách (ngày/1 đơn vị × số lượng lần cuối) → độ tin cậy Cao/Khá; (2) khoảng cách các lần mua trước của khách; (3) nhịp chung của mã hàng trên toàn chuỗi → \"Theo SP\".\n",
+      "• Hiện khách từ 14 ngày TRƯỚC đến 45 ngày SAU ngày dùng hết, nếu khách chưa mua lại mã đó. Khách báo \"Ngưng dùng\" sẽ không bị nhắc lại mã đó.\n",
+      "• Sau khi liên hệ, nếu khách mua lại đúng mã → tự đánh dấu \"🛒 Đã mua lại\" để đo hiệu quả.",
+    ]),
+  ]);
+
+  const tiles = rc("div", { key:"tiles", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:10, marginBottom:12 } }, [
+    tile("🔔 Cần nhắc ngay (±3 ngày)", fmtNum(cnt.now), `Giá trị lần mua trước ${fmtVNDCompact(cnt.value)}`, "#b45309", ()=>{ setTimeF("now"); setView("cust"); }, timeF==="now"),
+    tile("⏳ Sắp hết (4–14 ngày)", fmtNum(cnt.soon), "Nhắc sớm, giữ hàng", "#2563eb", ()=>{ setTimeF("soon"); setView("cust"); }, timeF==="soon"),
+    tile("⚠️ Quá hạn chưa mua lại", fmtNum(cnt.overdue), "Nguy cơ đã mua nơi khác", "#b91c1c", ()=>{ setTimeF("overdue"); setView("cust"); }, timeF==="overdue"),
+    tile("📞 Đã liên hệ (30 ngày)", fmtNum(eff.contacts30), `${fmtNum(cnt.contacted)} khách trong danh sách hiện tại`, "var(--pine)"),
+    tile("🛒 Mua lại sau liên hệ", eff.contacts30 ? `${Math.round(eff.converted30*100/eff.contacts30)}%` : "—", `${fmtNum(eff.converted30)}/${fmtNum(eff.contacts30)} lượt nhắc (30 ngày)`, "#15803d"),
+  ]);
+
+  const shopOpts = ["all", ...DEFAULT_SHOPS];
+  const filters = rc("div", { key:"flt", style:{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12, alignItems:"center" } }, [
+    rc("div", { key:"v", style:{ display:"flex", border:"1px solid var(--line)", borderRadius:9, overflow:"hidden" } }, [["cust","👤 Theo khách"],["prod","💊 Theo sản phẩm"],["eff","📈 Hiệu quả"]].map(([id,l]) =>
+      rc("button", { key:id, type:"button", onClick:()=>setView(id), style:{ padding:"7px 12px", fontSize:12.5, fontWeight:700, border:"none", cursor:"pointer", background: view===id ? "var(--pine)" : "#fff", color: view===id ? "#fff" : "var(--ink)" } }, l))),
+    isAdmin && rc("select", { key:"shop", value:shop, onChange:e=>{ setShop(e.target.value); setProdF(null); }, style:selStyle }, shopOpts.map(x => rc("option", { key:x, value:x }, x==="all" ? "Tất cả nhà thuốc" : x.replace(/^SHOP/,"NT")))),
+    rc("select", { key:"t", value:timeF, onChange:e=>setTimeF(e.target.value), style:selStyle }, [["now","Cần nhắc ngay (±3 ngày)"],["soon","Sắp hết (4–14 ngày)"],["overdue","Quá hạn chưa mua lại"],["all","Tất cả mốc"]].map(o => rc("option", { key:o[0], value:o[0] }, o[1]))),
+    rc("select", { key:"st", value:staffF, onChange:e=>setStaffF(e.target.value), style:selStyle }, [["all","Mọi khách"],["todo","Chưa liên hệ"],...(!isAdmin ? [["mine","Khách tôi phụ trách"]] : []),["unassigned","Chưa phân công"]].map(o => rc("option", { key:o[0], value:o[0] }, o[1]))),
+    view==="cust" && rc("input", { key:"q", value:q, onChange:e=>setQ(e.target.value), placeholder:"⌕ Tên / SĐT / sản phẩm", style:{ ...selStyle, flex:"1 1 200px" } }),
+    prodF && rc("span", { key:"pf", style:{ fontSize:12.5, background:"var(--pineSoft)", borderRadius:14, padding:"5px 10px", display:"inline-flex", gap:6, alignItems:"center" } }, [
+      "💊 ", rc("b", { key:"b" }, prodF.name), rc("button", { key:"x", type:"button", onClick:()=>setProdF(null), style:{ border:"none", background:"none", cursor:"pointer", fontWeight:700 } }, "✕"),
+    ]),
+  ]);
+
+  let body;
+  if(err) body = rc("div", { key:"err", className:"card" }, rc("div", { className:"emptyState", style:{ color:"var(--clay)" } }, `Lỗi: ${err}`));
+  else if(loading && !data) body = rc("div", { key:"ld", className:"card" }, rc("div", { className:"emptyState" }, "Đang tải danh sách khách cần nhắc tái mua..."));
+  else if(view==="prod") body = rc("div", { key:"prod", className:"card" }, [
+    rc("div", { key:"h", style:{ fontWeight:700, fontSize:15, marginBottom:4 } }, "Nhu cầu tái mua theo sản phẩm"),
+    rc("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } }, "Mã hàng khách đang dùng đều đặn và số khách sắp/đã dùng hết — bấm 1 dòng để xem đúng danh sách khách cần gọi cho mã đó. Gợi ý: chuẩn bị đủ tồn kho cho các mã có nhiều khách sắp hết."),
+    prodRows.length===0 ? rc("div", { key:"e", className:"emptyState" }, "Chưa có dữ liệu.") : rc("div", { key:"tw", style:{ overflowX:"auto" } }, rc("table", { className:"tblCompact", style:{ width:"100%" } }, [
+      rc("thead", { key:"h" }, rc("tr", null, ["Sản phẩm","Cần nhắc ngay","Sắp hết","Quá hạn","Đã liên hệ","Chu kỳ mua lại","Tỉ lệ khách mua lại","Giá trị lần trước"].map((h,i) => rc("th", { key:i, style:{ whiteSpace:"normal", textAlign:i?"right":"left" } }, h)))),
+      rc("tbody", { key:"b" }, prodPaged.pageRows.map(p => rc("tr", { key:p.id, onClick:()=>{ setProdF({ id:p.id, name:p.name }); setTimeF("all"); setView("cust"); }, style:{ cursor:"pointer" } }, [
+        rc("td", { key:"n" }, [rc("div", { key:"a", style:{ fontWeight:600 } }, p.name), rc("div", { key:"b", style:{ fontSize:11, color:"var(--inkSoft)" } }, `${p.id}${metaProd[p.id] ? ` · ${fmtNum(metaProd[p.id].buyers)} khách từng mua toàn chuỗi` : ""}`)]),
+        rc("td", { key:"a", style:{ textAlign:"right", fontWeight:700, color:"#b45309" } }, fmtNum(p.now)),
+        rc("td", { key:"b", style:{ textAlign:"right", color:"#2563eb" } }, fmtNum(p.soon)),
+        rc("td", { key:"c", style:{ textAlign:"right", color:"#b91c1c" } }, fmtNum(p.overdue)),
+        rc("td", { key:"d", style:{ textAlign:"right" } }, fmtNum(p.contacted)),
+        rc("td", { key:"e", style:{ textAlign:"right" } }, p.cycle ? `~${p.cycle} ngày` : "—"),
+        rc("td", { key:"f", style:{ textAlign:"right" } }, p.rate!=null ? `${p.rate}%` : "—"),
+        rc("td", { key:"g", style:{ textAlign:"right" } }, fmtVNDCompact(p.value)),
+      ]))),
+    ])),
+    rc(TablePager, { key:"pg", ...prodPaged }),
+  ]);
+  else if(view==="eff") body = rc("div", { key:"eff", className:"card" }, [
+    rc("div", { key:"h", style:{ fontWeight:700, fontSize:15, marginBottom:4 } }, "Hiệu quả nhắc tái mua theo nhân viên (30 ngày)"),
+    rc("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } }, "\"Mua lại\" = sau khi được nhắc, khách đã mua lại ĐÚNG mã hàng đó (hệ thống tự đối chiếu mỗi sáng)."),
+    Object.keys(eff.byStaff).length===0 ? rc("div", { key:"e", className:"emptyState" }, "Chưa có lượt liên hệ nào trong 30 ngày.") :
+    rc("table", { key:"t", className:"tblCompact", style:{ width:"100%" } }, [
+      rc("thead", { key:"h" }, rc("tr", null, ["Nhân viên","Lượt nhắc","Khách mua lại","Tỉ lệ"].map((h,i) => rc("th", { key:i, style:{ textAlign:i?"right":"left" } }, h)))),
+      rc("tbody", { key:"b" }, Object.entries(eff.byStaff).sort((a,b)=>b[1].contacts-a[1].contacts).map(([n,v]) => rc("tr", { key:n }, [
+        rc("td", { key:"n", style:{ fontWeight:600 } }, n), rc("td", { key:"c", style:{ textAlign:"right" } }, fmtNum(v.contacts)),
+        rc("td", { key:"v", style:{ textAlign:"right", color:"#15803d", fontWeight:700 } }, fmtNum(v.converted)),
+        rc("td", { key:"r", style:{ textAlign:"right" } }, v.contacts ? `${Math.round(v.converted*100/v.contacts)}%` : "—"),
+      ]))),
+    ]),
+  ]);
+  else body = rc("div", { key:"cust" }, [
+    rows.length===0 ? rc("div", { key:"e", className:"card" }, rc("div", { className:"emptyState" }, "Không có khách nào ở mục này 🎉")) :
+    paged.pageRows.map(c => {
+      const allDone = c.its.every(it => it.contact);
+      return rc("div", { key:c.phone, className:"card", style:{ marginBottom:10, borderLeft:`4px solid ${allDone ? "#86efac" : replStatus(Math.min(...c.its.map(x=>x.daysLeft))).color}`, opacity: allDone ? .8 : 1 } }, [
+        rc("div", { key:"h", style:{ display:"flex", justifyContent:"space-between", gap:10, flexWrap:"wrap" } }, [
+          rc("div", { key:"a" }, [
+            rc("div", { key:"n", style:{ fontWeight:700, fontSize:15 } }, [c.name || c.phone, c.levelName && rc("span", { key:"l", style:{ fontSize:10.5, fontWeight:700, marginLeft:8, padding:"2px 7px", borderRadius:9, background:"var(--goldSoft)", color:"#8a5a00" } }, c.levelName)]),
+            rc(TaskPhoneLine, { key:"p", task:{ crmCustomerPhone:c.phone }, style:{ marginTop:2 } }),
+          ]),
+          rc("div", { key:"b", style:{ fontSize:11.5, color:"var(--inkSoft)", textAlign:"right" } }, [
+            rc("div", { key:"s" }, String(c.shop||"").replace(/^SHOP/,"NT")),
+            rc("div", { key:"p" }, c.assignedStaffName ? `Phụ trách: ${c.assignedStaffName}` : "Chưa phân công"),
+          ]),
+        ]),
+        ...c.its.map(it => {
+          const st = replStatus(it.daysLeft);
+          return rc("div", { key:it.productId+it.lastDate, style:{ borderTop:"1px dashed var(--line)", marginTop:9, paddingTop:9, display:"flex", gap:10, flexWrap:"wrap", alignItems:"center" } }, [
+            rc("div", { key:"i", style:{ flex:"1 1 280px", minWidth:0 } }, [
+              rc("div", { key:"n", style:{ fontWeight:600, fontSize:13.5 } }, ["💊 ", it.productName, rc("span", { key:"st", style:{ marginLeft:8, fontSize:11, fontWeight:700, padding:"2px 8px", borderRadius:10, color:st.color, background:st.bg } }, st.text)]),
+              rc("div", { key:"d", style:{ fontSize:12, color:"var(--inkSoft)", marginTop:2 } },
+                `Mua ${replDmy(it.lastDate)} · ${fmtNum(it.lastQty)} ${it.unit||""} · ${fmtVND(it.lastAmount)} · đã mua ${it.timesBought} lần → dự kiến hết ${replDmy(it.runOutDate)} (dùng ~${it.expectedDays} ngày)`),
+              rc("div", { key:"c", style:{ fontSize:11, color:"var(--inkSoft)" } }, `Độ tin cậy: ${it.confidence} — ${it.basis}`),
+              it.contact && rc("div", { key:"ct", style:{ fontSize:12, marginTop:4, color: it.contact.converted ? "#15803d" : "var(--pine)", fontWeight:600 } },
+                `${it.contact.converted ? "🛒 Đã mua lại" : "✓ Đã liên hệ"} · ${it.contact.result} · ${it.contact.staffName} ${replDmy(it.contact.contactAt)}${it.contact.note ? ` — ${it.contact.note}` : ""}`),
+            ]),
+            rc("div", { key:"b", style:{ display:"flex", gap:6, flexWrap:"wrap" } }, [
+              rc("button", { key:"cp", type:"button", className:"btn btnGhost", style:{ fontSize:12, padding:"5px 10px" }, onClick:()=>copyScript(c, it) }, copied===c.phone+it.productId ? "✓ Đã chép" : "📋 Chép tin nhắn Zalo"),
+              rc("button", { key:"ok", type:"button", className:"btn btnPrimary", style:{ fontSize:12, padding:"5px 10px" }, onClick:()=>{ setModal({ c, it }); setResult(REPL_RESULTS[0].v); setNote(""); } }, it.contact ? "Cập nhật kết quả" : "Ghi kết quả liên hệ"),
+            ]),
+          ]);
+        }),
+      ]);
+    }),
+    rc(TablePager, { key:"pg", ...paged }),
+  ]);
+
+  const modalEl = modal && rc("div", { key:"modal", className:"modalOverlay", onClick:()=>setModal(null) },
+    rc("div", { className:"modal", onClick:e=>e.stopPropagation() }, [
+      rc("div", { key:"t", style:{ fontWeight:700, fontSize:17, marginBottom:2 } }, `Kết quả nhắc tái mua — ${modal.c.name || modal.c.phone}`),
+      rc("div", { key:"s", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } }, `${modal.it.productName} · mua ${replDmy(modal.it.lastDate)} · dự kiến hết ${replDmy(modal.it.runOutDate)}`),
+      rc("div", { key:"r", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:8, marginBottom:12 } }, REPL_RESULTS.map(o =>
+        rc("button", { key:o.v, type:"button", onClick:()=>setResult(o.v), style:{ padding:"9px 10px", borderRadius:9, fontSize:12.5, fontWeight:600, cursor:"pointer", textAlign:"left",
+          border: result===o.v ? "2px solid var(--pine)" : "1px solid var(--line)", background: result===o.v ? "var(--pineSoft)" : "#fff" } },
+          (o.good===true ? "✅ " : o.good===false ? "⛔ " : "⏸ ") + o.v))),
+      result==="Ngưng dùng" && rc("div", { key:"w", style:{ fontSize:12, color:"#b45309", marginBottom:8 } }, "Khách sẽ không được nhắc lại mã này nữa (cho tới khi khách tự mua lại)."),
+      rc("textarea", { key:"n", rows:3, value:note, onChange:e=>setNote(e.target.value), placeholder:"Ghi chú (VD: hẹn thứ 7 ghé, đổi sang loại khác, bác sĩ đổi đơn...)", style:{ width:"100%", padding:"8px 10px", border:"1px solid var(--line)", borderRadius:8, fontSize:13, marginBottom:10 } }),
+      !isAdmin && !modal.c.assignedStaffId && rc("div", { key:"cl", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8 } }, "Khách đang \"Chưa phân công\" — lưu kết quả sẽ tự nhận bạn là người phụ trách khách này."),
+      rc("div", { key:"b", className:"btnRow" }, [
+        rc("button", { key:"c", type:"button", className:"btn btnGhost", onClick:()=>setModal(null) }, "Huỷ"),
+        rc("button", { key:"s", type:"button", className:"btn btnPrimary", disabled:saving, onClick:saveContact }, saving ? "Đang lưu..." : "Lưu kết quả"),
+      ]),
+    ]));
+
+  return rc("div", {}, [ head, tiles, filters, body, modalEl ]);
+}
+
 function StaffProgressPanel({ openTasks, doneTasks, roster, fixedShop, onPick, title }){
   const rc = React.createElement;
   const [progShop, setProgShop] = useState("Tất cả");
@@ -17514,6 +17782,7 @@ function Dashboard({ user, isAdmin, myStaff }){
         activeTab==="donthuoc" && React.createElement(PrescriptionLibraryView, { key:viewResetKey, isAdmin, myStaff }),
         activeTab==="tasks" && React.createElement(TaskAssignView, { key:viewResetKey, isAdmin, myStaff, navParam }),
         activeTab==="kpi" && React.createElement(KpiView, { key:viewResetKey, isAdmin, myStaff }),
+        activeTab==="taimua" && React.createElement(ReplenishView, { key:viewResetKey, isAdmin, myStaff }),
         activeTab==="crm" && React.createElement(CrmView, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab }),
         activeTab==="training" && React.createElement(TrainingView, { key:viewResetKey, isAdmin, myStaff }),
         activeTab==="kudos" && React.createElement(KudosView, { key:viewResetKey, isAdmin, myStaff }),
