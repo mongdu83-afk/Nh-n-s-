@@ -5830,18 +5830,7 @@ function KpiView({ isAdmin, myStaff }){
             canEditTarget:false, canEditActual:true,
             onTargetChange:()=>{}, onActualChange:(itemId,v)=>saveActual(myStaff, itemId, v),
           }),
-          React.createElement("div", { key:"ev", style:{ marginTop:16 } }, [
-            React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15.5, marginBottom:8 } }, "Đính kèm minh chứng kết quả (nếu có)"),
-            React.createElement("div", { key:"link", className:"field", style:{ marginBottom:10 } }, [
-              React.createElement("label",{key:"l"},"Link kết quả (báo cáo, Google Sheet, ảnh chụp màn hình...)"),
-              React.createElement("input", { key:"i", defaultValue:(myAssign&&myAssign.linkKetQua)||"", placeholder:"https://...", onBlur:e=>saveLinkKetQua(myStaff, e.target.value) }),
-            ]),
-            React.createElement(PhotoUploadField, {
-              key:"ph", label:"Ảnh minh chứng", photos:(myAssign&&myAssign.anhKetQua)||[], uploading:uploadingKpiEvidence, requireMobile:false,
-              onUpload: async files => { setUploadingKpiEvidence(true); try{ await addEvidencePhoto(myStaff, files, (myAssign&&myAssign.anhKetQua)||[]); } finally { setUploadingKpiEvidence(false); } },
-              onRemove: idx => removeEvidencePhoto(myStaff, (myAssign&&myAssign.anhKetQua)||[], idx),
-            }),
-          ]),
+          // 27/9/2026 (Phương): bỏ mục "Đính kèm minh chứng kết quả (nếu có)" khỏi KPI.
           React.createElement("div", { key:"duyet", style:{ marginTop:14, borderRadius:8, padding:"10px 14px", fontSize:12.5,
               background: myDuyet==="QLKV đã duyệt" ? "var(--pineSoft)" : (myDuyet==="CHT đã duyệt" ? "var(--goldSoft)" : "var(--paper)") } }, [
             React.createElement("b",{key:"b"},"Trạng thái duyệt: "),
@@ -10553,7 +10542,7 @@ function BaoCaoTuanView({ isAdmin, myStaff }){
 // render vẫn giữ nguyên, chỉ ẩn khỏi điều hướng nên có thể bật lại dễ dàng sau này nếu cần.
 // 23/9/2026: thêm "cust360" (Customer 360) vào STAFF_TABS — trước đây chỉ quản lý (isAdmin) mới
 // thấy tab này; xem Customer360View bên dưới (đã tự lọc theo nhà thuốc của nhân viên khi !isAdmin).
-const STAFF_TABS = ["checklist","homnay","photos","hanghoa","tasks","kpi","crm","cust360","training","kudos","temgia","revenueAnalytics","nhanvien","ctkm","baocaotuan","sales","kinhnghiem"];
+const STAFF_TABS = ["checklist","homnay","photos","hanghoa","tasks","kpi","crm","cust360","training","kudos","temgia","revenueAnalytics","nhanvien","ctkm","baocaotuan","sales"]; // 27/9/2026: bỏ "Kinh nghiệm vận hành" khỏi giao diện nhân viên/CHT
 const OPS_TABS = [
   { id:"command", label:"Tổng quan điều hành" },
   { id:"shop360", label:"Hồ sơ nhà thuốc" },
