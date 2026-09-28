@@ -1025,9 +1025,9 @@ function AiFallbackBox({ text, reason, compact }){
 
 function AiSummaryBox({ summary, flag, feature, contextLabel, inputSnapshot, aiStatus, validation, fallback, promptVersion, dataAsOf }){
   if(!summary){
-    if(aiStatus==="failed" && fallback) return React.createElement("div", { style:{ marginBottom:14 } }, React.createElement(AiFallbackBox, { text:fallback, reason:"AI chưa phân tích được báo cáo này (sẽ tự thử lại khi báo cáo được cập nhật)" }));
+    if(aiStatus==="failed" && fallback) return React.createElement("div", { style:{ marginBottom:14 } }, React.createElement(AiFallbackBox, { text:fallback, reason:"AI chưa phân tích được báo cáo này — bấm \"Phân tích AI\" để thử lại" }));
     return React.createElement("div", { style:{ marginBottom:14, padding:"9px 12px", borderRadius:8, background:"#F0EEE2", fontSize:12, color:"var(--inkSoft)" } },
-      "🤖 AI chưa có bản tóm tắt cho báo cáo này (mới nộp, đang xử lý — hoặc AI chưa được cấu hình).");
+      "AI chưa phân tích báo cáo này. Bấm \"Phân tích AI\" để tạo bản tóm tắt (chỉ tính tiền khi bấm).");
   }
   return React.createElement("div", { style:{ marginBottom:14, padding:"11px 13px", borderRadius:8, background:"var(--pineSoft)", border:"1px solid var(--line)" } }, [
     React.createElement("div", { key:"h", style:{ display:"flex", alignItems:"center", gap:8, marginBottom:6, flexWrap:"wrap" } }, [
@@ -2832,6 +2832,19 @@ function WeeklyCategorySection({ label, rows, mode, staffOptions, staffNameMap, 
 }
 
 function WeeklyReviewModal({ report, prevReport, onSave, onClose }){
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiMsg, setAiMsg] = useState("");
+  // 28/9/2026: AI báo cáo tuần KHÔNG còn tự chạy khi nhân viên gửi báo cáo — chỉ chạy khi quản lý bấm nút này.
+  async function runWeeklyAi(force){
+    setAiBusy(true); setAiMsg("");
+    try{
+      const r = await fetch(`https://asia-southeast1-upharma-176d5.cloudfunctions.net/analyzeWeeklyReportNow?id=${encodeURIComponent(report.id)}${force ? "&force=1" : ""}`, { headers: await authHeader() });
+      const j = await r.json();
+      if(!j.ok) throw new Error(j.error || "Lỗi");
+      setAiMsg(j.cached ? "Nội dung chưa đổi so với lần phân tích trước — dùng lại kết quả cũ (không tốn thêm lượt gọi)." : j.busy ? "Đang có lượt phân tích khác chạy — chờ vài giây." : "Đã phân tích xong.");
+    } catch(err){ setAiMsg("Không phân tích được: " + (err && err.message ? err.message : err)); }
+    finally { setAiBusy(false); }
+  }
   const [diem, setDiem] = useState(report.diemChu || 0);
   const [nhanXet, setNhanXet] = useState(report.nhanXetChu || "");
   const ketQua = report.ketQua || {};
@@ -2849,6 +2862,11 @@ function WeeklyReviewModal({ report, prevReport, onSave, onClose }){
           React.createElement("div", { key:"s", style:{ fontSize:13, color:"var(--inkSoft)", marginTop:2 } }, report.nguoiBaoCao ? `Người báo cáo: ${report.nguoiBaoCao}` : "Chưa ghi người báo cáo"),
         ]),
         React.createElement("button", { key:"x", type:"button", className:"btn btnGhost", onClick:onClose }, "✕ Đóng"),
+      ]),
+      React.createElement("div", { key:"aibtn", style:{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap", marginBottom:8 } }, [
+        React.createElement("button", { key:"b", type:"button", className:"btn btnPrimary", disabled:aiBusy, onClick:()=>runWeeklyAi(false) }, aiBusy ? "Đang phân tích..." : (report.aiSummary ? "Cập nhật phân tích AI" : "Phân tích AI")),
+        report.aiSummary && React.createElement("button", { key:"f", type:"button", className:"btn btnGhost", disabled:aiBusy, onClick:()=>runWeeklyAi(true), title:"Gọi lại AI dù nội dung không đổi (tính tiền)" }, "Phân tích lại"),
+        aiMsg && React.createElement("span", { key:"m", style:{ fontSize:12, color:"var(--inkSoft)" } }, aiMsg),
       ]),
       React.createElement(AiSummaryBox, { key:"ai", summary:report.aiSummary, flag:report.aiFlag,
         aiStatus: report.aiStatus==="failed" && report.aiSummary ? "ok" : report.aiStatus, validation:report.aiValidation, fallback:report.aiFallback,
@@ -10935,7 +10953,7 @@ function DailyResultsView({ isAdmin, myStaff }){
         React.createElement("div", { key:"txt", style:{ fontSize:13, lineHeight:1.6, whiteSpace:"pre-wrap", marginTop:6 } }, data.aiSummary),
         React.createElement(AiTrustNote, { key:"trust", validation:data.aiValidation, promptVersion:data.aiPromptVersion, dataAsOf:data.generatedAtTs, fallback:data.aiFallback }),
       ]),
-      !data.aiSummary && data.aiFallback && React.createElement("div", { key:"aifb", style:{ marginBottom:16 } }, React.createElement(AiFallbackBox, { text:data.aiFallback, reason:"AI chưa phân tích được ngày này" })),
+      !data.aiSummary && data.aiFallback && React.createElement("div", { key:"aifb", style:{ marginBottom:16 } }, React.createElement(AiFallbackBox, { text:data.aiFallback, reason: data.aiStatus==="skipped" ? "Chưa phân tích AI — bấm \"Phân tích ngay\" (chỉ tính tiền khi bấm)" : "AI chưa phân tích được ngày này" })),
       React.createElement("div", { key:"grid", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(360px,1fr))", gap:16 } },
         shops.map(shopCode => {
           const s = byShop[shopCode];
@@ -16227,7 +16245,7 @@ function AiReportsPanel(){
   async function gen(type, force){
     setBusy(type); setMsg("");
     try{ const r = await fetch(`https://asia-southeast1-upharma-176d5.cloudfunctions.net/runAiReportNow?type=${type}${force ? "&force=1" : ""}`, { headers: await authHeader() }); const j = await r.json(); if(!j.ok) throw new Error(j.error||"Lỗi");
-      setMsg(j.cached ? "Số liệu chưa đổi so với lần trước — dùng lại nhận xét AI đã có (không tốn thêm lượt gọi)." : `Đã tạo báo cáo${j.aiStatus!=="ok" ? " — AI lỗi, đang hiển thị tóm tắt theo quy tắc" : ""}.`); setSelId(null); }
+      setMsg(j.cached ? "Số liệu chưa đổi so với lần trước — dùng lại nhận xét AI đã có (không tốn thêm lượt gọi)." : (j.skippedAi ? "Đã có nhận xét AI — giữ nguyên." : `Đã tạo báo cáo${j.aiStatus!=="ok" ? " — AI lỗi, đang hiển thị tóm tắt theo quy tắc" : ""}.`)); setSelId(null); }
     catch(err){ setMsg("Không tạo được: " + (err && err.message ? err.message : err)); }
     setBusy("");
   }
@@ -16252,7 +16270,7 @@ function AiReportsPanel(){
       rc("div", { key:"l", className:"card", style:{ padding:8, flex:"1 1 220px", maxHeight:640, overflowY:"auto" } }, list.length===0 ? rc("div", { className:"emptyState" }, "Chưa có báo cáo nào.") : list.map(r =>
         rc("div", { key:r.id, onClick:()=>setSelId(r.id), style:{ padding:"8px 9px", borderRadius:8, cursor:"pointer", background: sel && sel.id===r.id ? "var(--pineSoft)" : "transparent", marginBottom:2 } }, [
           rc("div", { key:"t", style:{ fontWeight:600, fontSize:12.5 } }, AI_REPORT_TYPE_VI[r.type] || r.type),
-          rc("div", { key:"s", style:{ fontSize:11, color:"var(--inkSoft)" } }, `${fmtTs360(r.generatedAt)}${r.aiStatus!=="ok" ? " · AI lỗi" : ""}${r.validation && r.validation.status==="warn" ? " · ⚠ số chưa kiểm chứng" : ""}${r.approval && r.approval.status==="approved" ? " · ✓ đã duyệt" : ""}`),
+          rc("div", { key:"s", style:{ fontSize:11, color:"var(--inkSoft)" } }, `${fmtTs360(r.generatedAt)}${r.aiStatus==="skipped" ? " · chưa phân tích AI" : (r.aiStatus!=="ok" ? " · AI lỗi" : "")}${r.validation && r.validation.status==="warn" ? " · ⚠ số chưa kiểm chứng" : ""}${r.approval && r.approval.status==="approved" ? " · ✓ đã duyệt" : ""}`),
         ]))),
       sel ? rc("div", { key:"r", className:"card", style:{ flex:"3 1 420px", minWidth:0 } }, [
         rc("div", { key:"h", style:{ display:"flex", justifyContent:"space-between", flexWrap:"wrap", gap:6, marginBottom:6 } }, [
@@ -18839,6 +18857,53 @@ function App(){
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App, null));
+</script>
+<script>
+/* 28/9/2026: bỏ TOÀN BỘ emoji/icon ký tự trên giao diện (chữ hiển thị, placeholder, tooltip).
+   Chạy ở tầng DOM nên không đụng logic/dữ liệu; nội dung người dùng đang gõ trong ô nhập không bị sửa. */
+(function(){
+  var KEEP = "\u00A9\u00AE\u2122";
+  var RE = /(?:[\p{Extended_Pictographic}\p{Emoji_Presentation}\uFE0F\u200D\u20E3]|[\u{1F1E6}-\u{1F1FF}])+[ \u00A0]*/gu;
+  function clean(s){
+    return s.replace(RE, function(m){
+      var keep = ""; for(var i=0;i<m.length;i++){ if(KEEP.indexOf(m[i])>=0) keep += m[i]; }
+      return keep;
+    });
+  }
+  var ATTRS = ["placeholder","title","aria-label"];
+  function fixText(n){
+    var p = n.parentNode; if(!p) return;
+    var tag = p.nodeName; if(tag==="SCRIPT"||tag==="STYLE"||tag==="TEXTAREA"||tag==="NOSCRIPT") return;
+    var v = n.nodeValue; if(!v) return;
+    var c = clean(v); if(c!==v) n.nodeValue = c;
+  }
+  function fixEl(el){
+    for(var i=0;i<ATTRS.length;i++){
+      var v = el.getAttribute && el.getAttribute(ATTRS[i]);
+      if(v){ var c = clean(v); if(c!==v) el.setAttribute(ATTRS[i], c); }
+    }
+  }
+  function walk(root){
+    if(root.nodeType===3){ fixText(root); return; }
+    if(root.nodeType!==1) return;
+    var t = root.nodeName; if(t==="SCRIPT"||t==="STYLE") return;
+    fixEl(root);
+    var w = document.createTreeWalker(root, 5, null), n;
+    while((n = w.nextNode())){ if(n.nodeType===3) fixText(n); else fixEl(n); }
+  }
+  function start(){
+    walk(document.body);
+    new MutationObserver(function(muts){
+      for(var i=0;i<muts.length;i++){
+        var m = muts[i];
+        if(m.type==="characterData") fixText(m.target);
+        else if(m.type==="attributes") fixEl(m.target);
+        else for(var j=0;j<m.addedNodes.length;j++) walk(m.addedNodes[j]);
+      }
+    }).observe(document.body, { childList:true, subtree:true, characterData:true, attributes:true, attributeFilter:ATTRS });
+  }
+  if(document.body) start(); else document.addEventListener("DOMContentLoaded", start);
+})();
 </script>
 </body>
 </html>
