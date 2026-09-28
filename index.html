@@ -3831,7 +3831,7 @@ function TaskAssignView({ isAdmin, myStaff, navParam }){
     ]),
     isAdmin && React.createElement(SubTabBar, { key:"atabs", tabs:[{ id:"list", label:"Danh sách công việc" }, { id:"intel", label:"Phân tích công việc" }], active:adminView, onChange:setAdminView }),
     // 27/9/2026 (Phương): CỬA HÀNG TRƯỞNG xem tiến độ thực hiện của nhân viên nhà thuốc mình.
-    isCHT && React.createElement(SubTabBar, { key:"ctabs", tabs:[{ id:"review", label:`✅ Kiểm tra kết quả NV${chtAwaitingN ? ` (${chtAwaitingN})` : ""}` }, { id:"list", label:"Việc của nhà thuốc" }, { id:"progress", label:"📊 Tiến độ nhân viên" }], active:(adminView==="progress"||adminView==="review") ? adminView : "list", onChange:v=>{ setAdminView(v); } }),
+    isCHT && React.createElement(SubTabBar, { key:"ctabs", tabs:[{ id:"review", label:`✅ Kiểm tra kết quả NV${chtAwaitingN ? ` (${chtAwaitingN})` : ""}` }, { id:"list", label:"Việc của nhà thuốc" }, { id:"progress", label:"Tiến độ nhân viên" }], active:(adminView==="progress"||adminView==="review") ? adminView : "list", onChange:v=>{ setAdminView(v); } }),
     // 27/9/2026 (Phương): CHT có màn "Công việc cần xử lý" giống quản lý — xem kết quả NV nộp, duyệt / trả lại.
     isCHT && adminView==="review" && React.createElement(ActionCenterView, { key:"chtac", embedded:true, isAdmin:false, myStaff, shopScope:myStaff.shop,
       openTasks: myTasks.filter(t => t.trangThai==="Đang giao"), shopDoneTasks: myTasks.filter(t => t.trangThai==="Đã hoàn thành"),
@@ -10791,6 +10791,12 @@ function reorderSideSubNav(){
   seq.forEach((b, k) => { b.style.order = k; });
   box.classList.toggle("hasItems", items.length>0);
 }
+// 28/9/2026: bỏ emoji đầu nhãn ở 2 mục "Tiến độ nhân viên" và "Chăm sóc tái mua" (menu con sidebar + tab ngang).
+const SUBTAB_NO_EMOJI_IDS = ["progress","taimua"];
+function subTabLabel(t){
+  if(!t || typeof t.label!=="string") return t ? t.label : "";
+  return t.label.replace(/^[\p{Extended_Pictographic}\p{Emoji_Presentation}\uFE0F\u200D\s]+/u, "");
+}
 function SubTabBar({ tabs, active, onChange, style }){
   const isDesktop = useIsDesktop();
   const anchorRef = useRef(null);
@@ -10812,7 +10818,7 @@ function SubTabBar({ tabs, active, onChange, style }){
     return React.createElement(React.Fragment, null, [
       React.createElement("span", { key:"__anchor", ref:anchorRef, style:{ display:"none" } }),
       host ? ReactDOM.createPortal(
-        tabs.map(t => React.createElement("button", { key:t.id, type:"button", className:"sideSubItem" + (active===t.id ? " active" : ""), onClick:()=>onChange(t.id) }, t.label)),
+        tabs.map(t => React.createElement("button", { key:t.id, type:"button", className:"sideSubItem" + (active===t.id ? " active" : ""), onClick:()=>onChange(t.id) }, subTabLabel(t))),
         host) : null,
     ]);
   }
@@ -10822,7 +10828,7 @@ function SubTabBar({ tabs, active, onChange, style }){
       key:t.id, type:"button", onClick:()=>onChange(t.id),
       style:{ padding:"6px 14px", borderRadius:20, border:"1px solid var(--line)", fontSize:12.5, fontWeight:600, cursor:"pointer",
         background: active===t.id ? "var(--pine)" : "#fff", color: active===t.id ? "#fff" : "var(--ink)" },
-    }, t.label)),
+    }, subTabLabel(t))),
   ]);
 }
 function HangHoaView({ isAdmin, myStaff, navParam }){
@@ -11015,11 +11021,11 @@ const OPS_TABS = [
   { id:"action", label:"Việc cần xử lý" },
   { id:"emp360", label:"Employee 360" },
   { id:"cust360", label:"Customer 360" },
-  { id:"taimua", label:"🔁 Chăm sóc tái mua" },
+  { id:"taimua", label:"Chăm sóc tái mua" },
   { id:"prod360", label:"Product 360" },
   { id:"checklist", label:"Checklist ngày" },
   { id:"homnay", label:"Tình hình hôm nay" },
-  { id:"photos", label:"Minh chứng hình ảnh" },
+  { id:"photos", label:"Báo cáo hình ảnh" },
   { id:"hanghoa", label:"Hàng hoá & tồn kho" },
   { id:"donthuoc", label:"Thư viện đơn thuốc" },
   { id:"revenueAnalytics", label:"Doanh thu" },
@@ -17757,7 +17763,7 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
     { id:"overdue", label:`Quá hạn (${lists.overdue.length})` },
     { id:"review", label:`Chưa nhận xét (${lists.review.length})` },
     { id:"done", label:`Đã hoàn tất (${lists.done.length})` },
-    { id:"progress", label:"📊 Tiến độ nhân viên" },
+    { id:"progress", label:"Tiến độ nhân viên" },
   ] : [
     { id:"mine", label:`Của tôi (${lists.mine.length})` },
     { id:"today", label:`Hôm nay (${lists.today.length})` },
@@ -17768,7 +17774,7 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
     { id:"overdue", label:`Quá hạn (${lists.overdue.length})` },
     { id:"doneWeak", label:`Xong chưa đạt (${lists.doneWeak.length})` },
     { id:"done", label:`Đã hoàn tất (${lists.done.length})` },
-    { id:"progress", label:"📊 Tiến độ nhân viên" },
+    { id:"progress", label:"Tiến độ nhân viên" },
   ];
   const s = search.trim().toLowerCase();
   const list = (lists[tab] || []).filter(t => {
@@ -18639,8 +18645,7 @@ function Dashboard({ user, isAdmin, myStaff }){
       React.createElement("div", { key:"nav", className:"sidebarNav" }, navGroups.flatMap(g => {
         const u = groupUnread(g);
         const item = React.createElement("button", { key:g.id, type:"button", className:"sidebarItem" + (activeGroup.id===g.id ? " active" : ""), onClick:()=>{ setActiveTab(g.tabs.includes(activeTab) ? activeTab : g.tabs[0]); } }, [
-          React.createElement("span", { key:"i", className:"sIcon" }, renderTabIcon(g.id, 17, {})),
-          React.createElement("span", { key:"l", className:"sLabel" }, g.label),
+                    React.createElement("span", { key:"l", className:"sLabel" }, g.label),
           u>0 && React.createElement("span", { key:"b", className:"sidebarBadge" }, u>99 ? "99+" : u),
         ]);
         // 27/9/2026: khung tab con (các SubTabBar gửi vào bằng portal) nằm ngay dưới nhóm đang chọn —
