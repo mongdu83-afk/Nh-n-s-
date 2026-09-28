@@ -14476,26 +14476,72 @@ function EmptyFromError({ err, fallbackDetail }){
 function DataQualityCommandBanner({ onNavigate }){
   const [health, setHealth] = useState(null);
   const [crmDq, setCrmDq] = useState(null);
+  const [resyncing, setResyncing] = useState(false);
+  const [resyncMsg, setResyncMsg] = useState("");
   useEffect(()=>{
     const u1 = db.collection("opsConfig").doc("kpiSyncHealth").onSnapshot(s => setHealth(s.exists ? s.data() : null), ()=>{});
     const u2 = db.collection("opsConfig").doc("crmDataQuality").onSnapshot(s => setCrmDq(s.exists ? s.data() : null), ()=>{});
     return ()=>{ u1(); u2(); };
   }, []);
+  const KEY_LABEL = {
+    salesOrders:"Đơn bán", inventory:"Tồn kho", workRegistrations:"Đăng ký ca",
+    employeePlan:"Chỉ tiêu NV", inventoryExpiry:"Hàng cận date", customerUpgrades:"Nâng hạng KH", replenishment:"Tái mua",
+  };
   const keys = ["salesOrders","inventory","workRegistrations","employeePlan","inventoryExpiry","customerUpgrades","replenishment"];
   const rows = keys.map(k => {
     const h = health && health[k];
-    return { k, ok: h ? (h.ok !== false && !h.fatalError && !h.error) : null, at: h && (h.atTs || h.at), err: h && (h.fatalError || h.error) };
+    const fatal = h && (h.fatalError || h.error);
+    const ok = h ? (h.ok !== false && !fatal) : null;
+    const partial = h && h.partial === true;
+    return { k, label: KEY_LABEL[k]||k, ok, partial, at: h && (h.atTs || h.at),
+      err: fatal || (h && h.errorSummary) || null,
+      shopErrors: h && h.shopErrors };
   });
   const stale = rows.filter(r => r.at && !isNaN(Date.parse(r.at)) && (Date.now() - Date.parse(r.at)) > 36*3600*1000);
   const bad = rows.filter(r => r.ok === false);
+  const partialRows = rows.filter(r => r.partial && r.ok !== false);
   if(!health && !crmDq) return null;
-  if(bad.length===0 && stale.length===0 && !(crmDq && crmDq.warningCount > 0)) return null;
+  if(bad.length===0 && stale.length===0 && partialRows.length===0 && !(crmDq && crmDq.warningCount > 0)) return null;
+
+  const RESYNC = [
+    { key:"employeePlan", url:"https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncEmployeePlanNow", label:"Chỉ tiêu NV" },
+    { key:"inventoryExpiry", url:"https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncInventoryExpiryNow", label:"Hàng cận date" },
+    { key:"customerUpgrades", url:"https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncCustomerLevelUpgradesNow", label:"Nâng hạng KH" },
+  ];
+  async function resyncFailed(){
+    const targets = RESYNC.filter(t => bad.some(b => b.k===t.key) || partialRows.some(b => b.k===t.key));
+    const list = targets.length ? targets : RESYNC;
+    setResyncing(true); setResyncMsg("Đang đồng bộ lại " + list.map(t=>t.label).join(", ") + "…");
+    const notes = [];
+    for(const t of list){
+      try{
+        const data = await callCf(t.url, {}, t.key==="customerUpgrades" ? 300000 : 180000);
+        const shopErr = data && data.shopErrors ? Object.keys(data.shopErrors).length : 0;
+        notes.push(t.label + (data && data.ok === false ? (" ❌ " + (data.error||data.fatalError||"lỗi")) : (" ✓" + (shopErr ? ` (${shopErr} shop còn lỗi)` : ""))));
+      }catch(err){
+        notes.push(t.label + " ❌ " + (err && err.message ? err.message : String(err)));
+      }
+    }
+    setResyncMsg(notes.join(" · "));
+    setResyncing(false);
+  }
+
   return React.createElement("div", { className:"card", style:{ marginBottom:12, borderColor:"var(--amber)", background:"var(--amberSoft)", padding:"10px 14px", fontSize:12.5 } }, [
     React.createElement("div", { key:"t", style:{ fontWeight:700, marginBottom:4 } }, "Chất lượng dữ liệu — cần chú ý"),
-    bad.length>0 && React.createElement("div", { key:"b" }, `${bad.length} nguồn đồng bộ lỗi: ${bad.map(r=>r.k).join(", ")}`),
-    stale.length>0 && React.createElement("div", { key:"s" }, `${stale.length} nguồn >36h chưa cập nhật: ${stale.map(r=>r.k).join(", ")}`),
+    bad.length>0 && React.createElement("div", { key:"b", style:{ marginBottom:4 } },
+      `${bad.length} nguồn đồng bộ lỗi: ` + bad.map(r => r.label + (r.err ? ` (${r.err})` : "")).join("; ")),
+    partialRows.length>0 && React.createElement("div", { key:"p", style:{ marginBottom:4 } },
+      `Một phần shop lỗi (vẫn có dữ liệu): ` + partialRows.map(r => r.label + (r.err ? ` — ${r.err}` : "")).join("; ")),
+    stale.length>0 && React.createElement("div", { key:"s", style:{ marginBottom:4 } },
+      `${stale.length} nguồn >36h chưa cập nhật: ${stale.map(r=>r.label).join(", ")}`),
     crmDq && crmDq.warningCount > 0 && React.createElement("div", { key:"c" }, `CRM DQ: ${crmDq.warningCount} cảnh báo chất lượng`),
-    React.createElement("button", { key:"go", type:"button", className:"btn btnGhost", style:{ marginTop:6, fontSize:11.5, padding:"3px 10px" }, onClick:()=>onNavigate && onNavigate("hethong") }, "Mở Hệ thống → Chất lượng dữ liệu"),
+    React.createElement("div", { key:"btns", style:{ display:"flex", gap:8, flexWrap:"wrap", marginTop:8, alignItems:"center" } }, [
+      React.createElement("button", { key:"rs", type:"button", className:"btn btnPrimary", style:{ fontSize:11.5, padding:"4px 12px" }, disabled:resyncing,
+        onClick:resyncFailed }, resyncing ? "Đang đồng bộ…" : "↻ Đồng bộ lại 3 nguồn KPI"),
+      React.createElement("button", { key:"go", type:"button", className:"btn btnGhost", style:{ fontSize:11.5, padding:"4px 12px" },
+        onClick:()=>onNavigate && onNavigate("hethong") }, "Mở Hệ thống → Chi tiết"),
+    ]),
+    resyncMsg && React.createElement("div", { key:"msg", style:{ marginTop:6, fontSize:11.5, color:"var(--inkSoft)" } }, resyncMsg),
   ]);
 }
 // Customer Intelligence trên Command Center: nhóm rủi ro + im lặng + lối tắt chăm sóc.
