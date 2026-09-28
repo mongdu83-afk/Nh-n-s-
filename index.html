@@ -8694,9 +8694,11 @@ function WeeklyPlanManagerView(){
     return unsub;
   }, [weekStart]);
   useEffect(()=>{
-    const unsub = db.collection("weeklyPlans").orderBy(firebase.firestore.FieldPath.documentId(), "desc").onSnapshot(snap => {
-      setAllPlanIds(snap.docs.map(d=>d.id));
-    });
+    // 28/9/2026: sắp xếp GIẢM theo documentId cần chỉ mục riêng (__name__ desc) → Firestore báo "The query requires an index".
+    // Đổi sang thứ tự mặc định (tăng dần, không cần chỉ mục) rồi đảo ngược ở trình duyệt; thêm callback lỗi để không còn "Uncaught".
+    const unsub = db.collection("weeklyPlans").onSnapshot(snap => {
+      setAllPlanIds(snap.docs.map(d=>d.id).sort().reverse());
+    }, err => logSystemError("weeklyPlans", err));
     return unsub;
   }, []);
   // Kết quả thực hiện của TỪNG nhà thuốc trong tuần đang xem — tự đổ lên làm tham chiếu, không
