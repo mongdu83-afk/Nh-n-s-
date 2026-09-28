@@ -19306,51 +19306,9 @@ function App(){
 ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App, null));
 </script>
 <script>
-/* 28/9/2026: bỏ TOÀN BỘ emoji/icon ký tự trên giao diện (chữ hiển thị, placeholder, tooltip).
-   Chạy ở tầng DOM nên không đụng logic/dữ liệu; nội dung người dùng đang gõ trong ô nhập không bị sửa. */
-(function(){
-  var KEEP = "\u00A9\u00AE\u2122";
-  var RE = /(?:[\p{Extended_Pictographic}\p{Emoji_Presentation}\uFE0F\u200D\u20E3]|[\u{1F1E6}-\u{1F1FF}])+[ \u00A0]*/gu;
-  function clean(s){
-    return s.replace(RE, function(m){
-      var keep = ""; for(var i=0;i<m.length;i++){ if(KEEP.indexOf(m[i])>=0) keep += m[i]; }
-      return keep;
-    });
-  }
-  var ATTRS = ["placeholder","title","aria-label"];
-  function fixText(n){
-    var p = n.parentNode; if(!p) return;
-    var tag = p.nodeName; if(tag==="SCRIPT"||tag==="STYLE"||tag==="TEXTAREA"||tag==="NOSCRIPT") return;
-    var v = n.nodeValue; if(!v) return;
-    var c = clean(v); if(c!==v) n.nodeValue = c;
-  }
-  function fixEl(el){
-    for(var i=0;i<ATTRS.length;i++){
-      var v = el.getAttribute && el.getAttribute(ATTRS[i]);
-      if(v){ var c = clean(v); if(c!==v) el.setAttribute(ATTRS[i], c); }
-    }
-  }
-  function walk(root){
-    if(root.nodeType===3){ fixText(root); return; }
-    if(root.nodeType!==1) return;
-    var t = root.nodeName; if(t==="SCRIPT"||t==="STYLE") return;
-    fixEl(root);
-    var w = document.createTreeWalker(root, 5, null), n;
-    while((n = w.nextNode())){ if(n.nodeType===3) fixText(n); else fixEl(n); }
-  }
-  function start(){
-    walk(document.body);
-    new MutationObserver(function(muts){
-      for(var i=0;i<muts.length;i++){
-        var m = muts[i];
-        if(m.type==="characterData") fixText(m.target);
-        else if(m.type==="attributes") fixEl(m.target);
-        else for(var j=0;j<m.addedNodes.length;j++) walk(m.addedNodes[j]);
-      }
-    }).observe(document.body, { childList:true, subtree:true, characterData:true, attributes:true, attributeFilter:ATTRS });
-  }
-  if(document.body) start(); else document.addEventListener("DOMContentLoaded", start);
-})();
+/* 28/9/2026 (sửa 28/9 tối): Script xóa emoji bằng MutationObserver TRONG #root
+   làm React 18 lệch DOM → trang trắng sau đăng nhập. ĐÃ TẮT.
+   Nếu cần bỏ emoji: làm trong JSX/render, không sửa DOM sau khi React render. */
 </script>
 </body>
 </html>
