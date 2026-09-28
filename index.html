@@ -113,6 +113,7 @@
   .btn{ display:inline-flex; align-items:center; gap:6px; font-size:13px; font-weight:600; padding:9px 15px; border-radius:8px; border:1px solid var(--line); background:#fff; color:var(--ink); cursor:pointer; }
   .btn:hover{ border-color:var(--pine); }
   .btnPrimary{ background:var(--pine); border-color:var(--pine); color:#fff; }
+  .btn:disabled{ opacity:.45; cursor:not-allowed; pointer-events:none; }
   .btnPrimary:hover{ background:#175a42; }
   .btnAmber{ background:var(--amber); border-color:var(--amber); color:#fff; }
   .btnGhost{ background:transparent; }
@@ -5276,6 +5277,7 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
         React.createElement("textarea", { key:"note", value:claimNote, onChange:e=>setClaimNote(e.target.value), placeholder:"VD: Gọi tư vấn lại sản phẩm đang dùng, hỏi thăm tình hình...", style:{ width:"100%", minHeight:60, padding:8, fontSize:12.5, border:"1px solid var(--line)", borderRadius:8, marginBottom:8 } }),
         React.createElement("div", { key:"l2", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:4 } }, "Hẹn liên hệ lại ngày (bắt buộc)"),
         React.createElement("input", { key:"date", type:"date", value:claimFollowUp, onChange:e=>setClaimFollowUp(e.target.value), style:{ width:"100%", padding:"6px 8px", fontSize:12.5, border:"1px solid var(--line)", borderRadius:8, marginBottom:10 } }),
+        (!claimNote.trim() && React.createElement("div", { key:"hint", style:{ color:"var(--inkSoft)", fontSize:11.5, marginBottom:8 } }, "Nhập kế hoạch chăm sóc để bật nút xác nhận.")),
         claimError && React.createElement("div", { key:"err", style:{ color:"var(--clay)", fontSize:12, marginBottom:8 } }, claimError),
         React.createElement("div", { key:"acts", style:{ display:"flex", gap:8, justifyContent:"flex-end" } }, [
           React.createElement("button", { key:"cancel", type:"button", className:"btn btnGhost", style:{ padding:"6px 14px", fontSize:12.5 }, onClick:()=>setClaimingPhone(null) }, "Huỷ"),
