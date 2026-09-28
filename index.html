@@ -663,17 +663,39 @@ function fmtVNDCompact(n){
 // để debug khi cần, không ghi vào systemErrors.
 const IGNORED_ERROR_PATTERNS = [
   "Attempt to get records from database without an in-progress transaction", // Firestore mở nhiều tab cùng lúc
-  "internal error was encountered in the Indexed Database server", // Lỗi IndexedDB nội bộ trình duyệt (Chrome) — vô hại, tự hết, thường do mở nhiều tab/bộ nhớ đệm, không phải lỗi app
+  "internal error was encountered in the Indexed Database server", // Lỗi IndexedDB nội bộ trình duyệt (Chrome) — vô hại, tự hết
+  "Missing or insufficient permissions", // Firestore rules từ chối — thường do mở file://, rule chưa cover collection, hoặc token hết hạn; không spam nhật ký
+  "permission-denied",
+  "The query requires an index", // thiếu composite index — cần tạo index, không phải crash app
+  "Failed to get document because the client is offline",
+  "client is offline",
 ];
+// Chống spam: cùng source+message trong vòng 10 phút chỉ ghi 1 lần vào systemErrors.
+const _sysErrSeen = new Map(); // key -> ts
+const SYS_ERR_DEDUPE_MS = 10 * 60 * 1000;
 async function logSystemError(source, err){
-  console.error(source, err);
   const msg = (err && err.message) ? String(err.message) : String(err || "");
-  if(IGNORED_ERROR_PATTERNS.some(p => msg.includes(p))) return;
+  const code = (err && err.code) ? String(err.code) : "";
+  // permission-denied / offline: chỉ console, không ghi systemErrors (tránh 50 dòng giống hệt như ảnh nhật ký).
+  if(IGNORED_ERROR_PATTERNS.some(p => msg.includes(p) || code.includes(p))) {
+    console.warn("[bỏ qua ghi nhật ký]", source, msg || code);
+    return;
+  }
+  console.error(source, err);
+  const key = String(source) + "|" + (msg || code).slice(0, 120);
+  const now = Date.now();
+  const prev = _sysErrSeen.get(key);
+  if(prev && (now - prev) < SYS_ERR_DEDUPE_MS) return;
+  _sysErrSeen.set(key, now);
+  // dọn map nếu phình
+  if(_sysErrSeen.size > 80){
+    for(const [k, t] of _sysErrSeen){ if(now - t > SYS_ERR_DEDUPE_MS) _sysErrSeen.delete(k); }
+  }
   try{
     await db.collection("systemErrors").add({
       source: String(source),
       message: msg || "Lỗi không rõ",
-      code: (err && err.code) ? String(err.code) : "",
+      code,
       stack: (err && err.stack) ? String(err.stack).slice(0, 1500) : "",
       url: (typeof location!=="undefined" ? location.href : ""),
       userEmail: (typeof auth!=="undefined" && auth.currentUser && auth.currentUser.email) || "",
@@ -689,7 +711,18 @@ function subscribeCol(name, cb, orderField){
 // Bắt lỗi JS không được try/catch xử lý và promise bị reject nhưng không .catch — để không
 // còn lỗi "ngầm" nào lọt lưới, tất cả đều được ghi vào systemErrors cho Quản lý.
 window.addEventListener("error", e => logSystemError("window.onerror", e.error || e.message));
-window.addEventListener("unhandledrejection", e => logSystemError("unhandledrejection", e.reason));
+window.addEventListener("unhandledrejection", e => {
+  const reason = e.reason;
+  const msg = (reason && reason.message) ? String(reason.message) : String(reason || "");
+  const code = (reason && reason.code) ? String(reason.code) : "";
+  // Không để Firebase permission-denied nổi thành Uncaught (in promise) trên console + spam nhật ký.
+  if(IGNORED_ERROR_PATTERNS.some(p => msg.includes(p) || code.includes(p))) {
+    try{ e.preventDefault(); } catch(_){}
+    console.warn("[unhandledrejection bỏ qua]", msg || code);
+    return;
+  }
+  logSystemError("unhandledrejection", reason);
+});
 // Khoá chức năng "Nhận chăm sóc" khách hàng: true = ẩn nút + chặn mở/ghi; đổi thành false để mở lại.
 const CLAIM_CUSTOMER_LOCKED = false;
 async function addDoc(name, data){ return db.collection(name).add({ ...data, createdAtTs: firebase.firestore.FieldValue.serverTimestamp() }); }
@@ -7559,7 +7592,11 @@ function CleanupTokensButton(){
       setResult(`Đã kiểm tra ${checked} tài khoản, dọn ${cleaned} tài khoản có token trùng.`);
     } catch(err){
       console.error("Dọn token lỗi:", err);
-      setResult("Có lỗi xảy ra: " + (err && err.message ? err.message : String(err)));
+      const msg = (err && err.message) ? String(err.message) : String(err);
+      const isPerm = /permission|insufficient/i.test(msg) || (err && err.code === "permission-denied");
+      setResult(isPerm
+        ? "Không đủ quyền đọc collection fcmTokens (Firestore rules). Cần rule cho phép admin đọc/ghi fcmTokens — không phải lỗi logic app."
+        : ("Có lỗi xảy ra: " + msg));
     } finally{ setRunning(false); }
   }
   return React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
@@ -9005,10 +9042,15 @@ function buildAlertTaskPreset({
       sourceType: sourceType || "alert",
       sourceId: sourceId || null,
       sourceCode: sourceCode || null,
+      // P1 vòng khép: ImpactEffectivenessPanel / Action Center lọc theo sourceIssueCode
+      sourceIssueCode: sourceCode || (extra && extra.sourceIssueCode) || null,
+      sourceIssueTitle: (extra && extra.sourceIssueTitle) || title || null,
       hypothesis: hypothesis || null,
       evidence: evidence || null,
       expectedResult: expectedResult || null,
       createdFrom: "alertTaskPreset",
+      // Gợi ý điền "Trước xử lý" khi tạo việc (Action Center đọc truocXuLy)
+      truocXuLy: (extra && extra.truocXuLy) || evidence || null,
     }, extra || {}),
   };
 }
@@ -13446,8 +13488,21 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate }){
     .sort((a,b) => (ISSUE_SEV[a.severity].rank - ISSUE_SEV[b.severity].rank) || (a.shopScore - b.shopScore)) : [];
   const issuesShown = showAllIssues ? issues : issues.slice(0, 8);
   function openIssueTask(i){
-    setComposer({ heading:"Tạo công việc xử lý", title:`[${shopLabel(i.shopCode)}] ${i.title}`, mota:`${i.detail||""}`.trim(), module:HEALTH_GROUP_MODULE[i.group]||"Khác",
-      shopOnly:true, shop:i.shopCode, extra:{ sourceIssueCode:i.code, sourceIssueTitle:i.title, sourceShop:i.shopCode, actionInsight:i.title } });
+    setComposer(buildAlertTaskPreset({
+      heading: "Tạo công việc xử lý",
+      title: `[${shopLabel(i.shopCode)}] ${i.title}`,
+      mota: `${i.detail||""}`.trim(),
+      shop: i.shopCode,
+      module: HEALTH_GROUP_MODULE[i.group]||"Ops",
+      deadline: addDays(todayStr, (i.priority==="P0"||i.severity==="critical")?1:3),
+      sourceType: "shopHealthIssue",
+      sourceId: (i.shopCode||"") + "__" + (i.code||""),
+      sourceCode: i.code,
+      hypothesis: i.hypothesis || i.cause || null,
+      evidence: [i.metric, i.currentValue!=null?String(i.currentValue):null, i.threshold!=null?("ngưỡng "+i.threshold):null].filter(Boolean).join(" · ") || null,
+      expectedResult: "Chỉ số sức khoẻ / vấn đề được cải thiện sau xử lý",
+      extra: { sourceShop:i.shopCode, sourceScreen:"commandCenter", issuePriority:i.priority||i.severity, actionInsight:i.title },
+    }));
   }
   const [issueDetail, setIssueDetail] = useState(null);
 
@@ -13571,6 +13626,8 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate }){
       rc("b", { key:"b" }, "Dữ liệu sức khoẻ nhà thuốc đã cũ"),
       rc("span", { key:"s" }, ` (cập nhật lần cuối ${computedLabel || "—"}, ~${Math.round(summaryAgeHours)} giờ trước). Không báo đạt KPI khi dữ liệu chưa đủ mới — bấm “Tính lại điểm” hoặc chờ đồng bộ 08:30.`),
     ]),
+    rc(DataQualityCommandBanner, { key:"dqBanner", onNavigate:go }),
+    rc(CustomerIntelCommandStrip, { key:"custIntel", atRiskCount: cust ? (cust.atRisk||0) : 0, silentVipCount: cust ? (cust.silentVip||0) : 0, needCareCount: cust ? cust.needCare : null, onNavigate:go }),
     // AREA OVERVIEW — KPI khu vực theo đặc tả §II (xanh/vàng/đỏ/xám)
     rc("div", { key:"areaOverview", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:10, marginBottom:16 } }, [
       rc(StatTile, { key:"t1", label:"Nhà thuốc trong phạm vi", value:summary?fmtNum(totalShopsInScope):"—", sub:isAll?"Toàn bộ chuỗi":shopLabel(adminShop), tint:"var(--pineSoft)", onClick:()=>go("shop360", isAll ? undefined : { shop:adminShop }), source:"shopList", updatedAt:todayStr }),
@@ -13670,7 +13727,7 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate }){
                   hypothesis: i.hypothesis || i.cause || null,
                   evidence: [i.metric, i.currentValue != null ? String(i.currentValue) : null, i.threshold != null ? ("ngưỡng "+i.threshold) : null].filter(Boolean).join(" · ") || null,
                   expectedResult: "Chỉ số sức khoẻ / vấn đề được cải thiện sau xử lý",
-                  extra: { sourceShop: i.shopCode, sourceScreen: "commandCenter", issuePriority: i.priority || i.severity },
+                  extra: { sourceShop: i.shopCode, sourceScreen: "commandCenter", issuePriority: i.priority || i.severity, sourceIssueCode: i.code || null, sourceIssueTitle: i.title || i.message || null, rootCause: i.hypothesis || i.cause || null, truocXuLy: [i.metric, i.currentValue != null ? String(i.currentValue) : null].filter(Boolean).join(" · ") || null },
                 }));
               } }, "＋ Việc"),
             ]); })),
@@ -14098,15 +14155,24 @@ function parseCommandCenterItems(raw){
 function renderCommandCenterActionList(actions){
   return React.createElement("div", { style:{ marginTop:12 } }, [
     React.createElement("div", { key:"h", style:{ fontSize:10.5, fontWeight:700, color:"var(--inkSoft)", textTransform:"uppercase", letterSpacing:0.4, marginBottom:6 } },
-      `✅ Đề xuất hành động (${actions.length})`),
+      `✅ Đề xuất hành động (${actions.length}) — từ AI / quy tắc`),
     React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:6 } },
-      actions.map((a, i) => React.createElement("div", { key:"a"+i, style:{ display:"flex", gap:8, alignItems:"flex-start", fontSize:12.5, lineHeight:1.5 } }, [
-        React.createElement("span", { key:"n", style:{ flex:"none", width:18, height:18, borderRadius:"50%", background:"var(--pineSoft)", color:"var(--pine)", fontSize:10.5, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center", marginTop:1 } }, i+1),
-        React.createElement("div", { key:"t", style:{ flex:1 } }, String(a)),
-      ]))
+      actions.map((a, i) => {
+        const isObj = a && typeof a === "object";
+        const title = isObj ? (a.title || a.action || a.text || JSON.stringify(a)) : String(a);
+        const meta = isObj ? [a.owner, a.deadline, a.rootCause || a.cause].filter(Boolean).join(" · ") : null;
+        return React.createElement("div", { key:"a"+i, style:{ display:"flex", gap:8, alignItems:"flex-start", fontSize:12.5, lineHeight:1.5 } }, [
+          React.createElement("span", { key:"n", style:{ flex:"none", width:18, height:18, borderRadius:"50%", background:"var(--pineSoft)", color:"var(--pine)", fontSize:10.5, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center", marginTop:1 } }, i+1),
+          React.createElement("div", { key:"t", style:{ flex:1 } }, [
+            React.createElement("div", { key:"ti" }, title),
+            meta && React.createElement("div", { key:"m", style:{ fontSize:11, color:"var(--inkSoft)", marginTop:2 } }, meta),
+          ]),
+        ]);
+      })
     ),
   ]);
 }
+
 function renderCommandCenterItemList(items){
   return items.map((it, i) => React.createElement("div", {
     key:"it"+i,
@@ -14389,6 +14455,92 @@ function EmptyState({ kind, detail }){
     React.createElement("div", { className:"esTitle" }, meta.title),
     detail && React.createElement("div", null, detail)
   );
+}
+// Map lỗi / kết quả callCf → kind EmptyState (chuẩn hoá P0 §XIV trên mọi màn).
+function emptyKindFromError(err){
+  if(!err) return "apiError";
+  const k = err.kind || "";
+  if(k==="timeout") return "timeout";
+  if(k==="forbidden") return "forbidden";
+  if(k==="emptyApi") return "emptyApi";
+  const msg = String(err.message || err || "");
+  if(/permission|insufficient/i.test(msg)) return "forbidden";
+  if(/timeout|hết thời gian/i.test(msg)) return "timeout";
+  if(/offline|mạng/i.test(msg)) return "syncFailed";
+  return "apiError";
+}
+function EmptyFromError({ err, fallbackDetail }){
+  return React.createElement(EmptyState, { kind: emptyKindFromError(err), detail: (err && err.message) || fallbackDetail || null });
+}
+// Banner chất lượng dữ liệu (sync health) — gắn Command Center.
+function DataQualityCommandBanner({ onNavigate }){
+  const [health, setHealth] = useState(null);
+  const [crmDq, setCrmDq] = useState(null);
+  useEffect(()=>{
+    const u1 = db.collection("opsConfig").doc("kpiSyncHealth").onSnapshot(s => setHealth(s.exists ? s.data() : null), ()=>{});
+    const u2 = db.collection("opsConfig").doc("crmDataQuality").onSnapshot(s => setCrmDq(s.exists ? s.data() : null), ()=>{});
+    return ()=>{ u1(); u2(); };
+  }, []);
+  const keys = ["salesOrders","inventory","workRegistrations","employeePlan","inventoryExpiry","customerUpgrades","replenishment"];
+  const rows = keys.map(k => {
+    const h = health && health[k];
+    return { k, ok: h ? (h.ok !== false && !h.fatalError && !h.error) : null, at: h && (h.atTs || h.at), err: h && (h.fatalError || h.error) };
+  });
+  const stale = rows.filter(r => r.at && !isNaN(Date.parse(r.at)) && (Date.now() - Date.parse(r.at)) > 36*3600*1000);
+  const bad = rows.filter(r => r.ok === false);
+  if(!health && !crmDq) return null;
+  if(bad.length===0 && stale.length===0 && !(crmDq && crmDq.warningCount > 0)) return null;
+  return React.createElement("div", { className:"card", style:{ marginBottom:12, borderColor:"var(--amber)", background:"var(--amberSoft)", padding:"10px 14px", fontSize:12.5 } }, [
+    React.createElement("div", { key:"t", style:{ fontWeight:700, marginBottom:4 } }, "Chất lượng dữ liệu — cần chú ý"),
+    bad.length>0 && React.createElement("div", { key:"b" }, `${bad.length} nguồn đồng bộ lỗi: ${bad.map(r=>r.k).join(", ")}`),
+    stale.length>0 && React.createElement("div", { key:"s" }, `${stale.length} nguồn >36h chưa cập nhật: ${stale.map(r=>r.k).join(", ")}`),
+    crmDq && crmDq.warningCount > 0 && React.createElement("div", { key:"c" }, `CRM DQ: ${crmDq.warningCount} cảnh báo chất lượng`),
+    React.createElement("button", { key:"go", type:"button", className:"btn btnGhost", style:{ marginTop:6, fontSize:11.5, padding:"3px 10px" }, onClick:()=>onNavigate && onNavigate("hethong") }, "Mở Hệ thống → Chất lượng dữ liệu"),
+  ]);
+}
+// Customer Intelligence trên Command Center: nhóm rủi ro + im lặng + lối tắt chăm sóc.
+function CustomerIntelCommandStrip({ atRiskCount, silentVipCount, needCareCount, onNavigate }){
+  const has = (atRiskCount||0) > 0 || (silentVipCount||0) > 0 || (needCareCount||0) > 0;
+  if(!has) return null;
+  return React.createElement("div", { className:"card", style:{ marginBottom:12, padding:"12px 14px" } }, [
+    React.createElement("div", { key:"h", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:8 } }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:14 } }, "Customer Intelligence — cần chăm sóc"),
+      React.createElement("button", { key:"b", type:"button", className:"btn btnGhost", style:{ fontSize:11.5, padding:"3px 10px" }, onClick:()=>onNavigate && onNavigate("crm") }, "Mở Khách hàng ›"),
+    ]),
+    React.createElement("div", { key:"tiles", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:8 } }, [
+      React.createElement("div", { key:"1", style:{ padding:"8px 10px", borderRadius:8, background:"#fdecec", cursor:"pointer" }, onClick:()=>onNavigate && onNavigate("crm", { segment:"Có nguy cơ rời bỏ" }) }, [
+        React.createElement("div", { key:"l", style:{ fontSize:11, color:"var(--inkSoft)" } }, "Có nguy cơ rời bỏ"),
+        React.createElement("div", { key:"v", style:{ fontSize:20, fontWeight:800 } }, fmtNum(atRiskCount||0)),
+      ]),
+      React.createElement("div", { key:"2", style:{ padding:"8px 10px", borderRadius:8, background:"#f3e8ff", cursor:"pointer" }, onClick:()=>onNavigate && onNavigate("crm", { segment:"Giá trị cao im lặng" }) }, [
+        React.createElement("div", { key:"l", style:{ fontSize:11, color:"var(--inkSoft)" } }, "Giá trị cao im lặng"),
+        React.createElement("div", { key:"v", style:{ fontSize:20, fontWeight:800 } }, fmtNum(silentVipCount||0)),
+      ]),
+      needCareCount!=null && React.createElement("div", { key:"3", style:{ padding:"8px 10px", borderRadius:8, background:"var(--goldSoft)", cursor:"pointer" }, onClick:()=>onNavigate && onNavigate("crm", { sub:"care" }) }, [
+        React.createElement("div", { key:"l", style:{ fontSize:11, color:"var(--inkSoft)" } }, "Cần chăm sóc (tổng)"),
+        React.createElement("div", { key:"v", style:{ fontSize:20, fontWeight:800 } }, fmtNum(needCareCount)),
+      ]),
+    ]),
+    React.createElement("div", { key:"hint", style:{ fontSize:11, color:"var(--inkSoft)", marginTop:8 } },
+      "Bấm nhóm → lọc CRM. Tạo việc chăm sóc từ hồ sơ khách để gắn sourceIssueCode (KH01/KH02) và đo hiệu quả sau xử lý."),
+  ]);
+}
+// Hướng dẫn deploy HTTPS + Firestore rules (mục vận hành, không phải code backend).
+function DeployRulesGuidePanel(){
+  return React.createElement("div", { className:"card", style:{ marginBottom:16 } }, [
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:6 } }, "Deploy HTTPS & Firestore rules"),
+    React.createElement("div", { key:"s", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:10, lineHeight:1.55 } },
+      "Mở app bằng file:// sẽ gây lỗi quyền / FCM. Nên host trên Firebase Hosting (HTTPS). Rules phải cho admin đọc/ghi các collection vận hành."),
+    React.createElement("ol", { key:"o", style:{ margin:0, paddingLeft:18, fontSize:12.5, lineHeight:1.65 } }, [
+      React.createElement("li", { key:"1" }, "firebase deploy --only hosting (sau khi build/copy index.html vào public/)"),
+      React.createElement("li", { key:"2" }, "Mở app qua https://<project>.web.app — không mở file tải về"),
+      React.createElement("li", { key:"3" }, "Rules: admin (request.auth.token.admin==true) được đọc/ghi: systemErrors, fcmTokens, opsConfig, tasks, risks, crmCustomers, dailyReports, staff…"),
+      React.createElement("li", { key:"4" }, "Staff: chỉ đọc/ghi đúng shop/staffId của mình (tasks, dailyReports)"),
+      React.createElement("li", { key:"5" }, "Sau đổi rules: firebase deploy --only firestore:rules"),
+    ]),
+    React.createElement("div", { key:"n", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:8 } },
+      "Lỗi “Missing or insufficient permissions” trong nhật ký thường do rules hoặc mở file:// — bản app mới đã không spam các lỗi này vào systemErrors."),
+  ]);
 }
 
 function ratioColor360(r){ return r==null ? CL360.gray : (r>=0.85 ? CL360.good : (r>=0.6 ? CL360.warn : CL360.bad)); }
@@ -16860,10 +17012,15 @@ function RiskCenterView({ isAdmin, myStaff, navParam, onNavigate }){
         extra: {
           sourceRiskId: r.riskId,
           sourceRiskCode: r.code,
+          sourceIssueCode: r.code || null,
+          sourceIssueTitle: r.title || null,
           sourceShop: r.shop || null,
           actionInsight: r.title,
           mucDoAnhHuong: (r.level==="CRITICAL"||r.level==="HIGH") ? "Cao" : r.level==="MEDIUM" ? "Trung bình" : "Thấp",
           sourceScreen: "riskCenter",
+          rootCause: r.hypothesis || r.rootCause || null,
+          proposedActions: Array.isArray(r.proposedActions) ? r.proposedActions : (r.recommendation ? [r.recommendation] : []),
+          truocXuLy: evidenceStr || null,
         },
       }),
       { shopOnly: r.entityType !== "staff" }
@@ -18326,7 +18483,8 @@ function SystemErrorLogView(){
   }, []);
   return React.createElement("div", { className:"card" }, [
     React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:17.5, marginBottom:4 } }, "Nhật ký lỗi hệ thống"),
-    React.createElement("div", { key:"s", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } }, "50 lỗi gần nhất mà app tự ghi lại (mất kết nối, lỗi tải dữ liệu...) — chỉ để tham khảo khi debug, không cần xử lý gì nếu app vẫn dùng bình thường."),
+    React.createElement("div", { key:"s", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } },
+      "50 lỗi gần nhất app tự ghi (mất kết nối, lỗi tải dữ liệu…). Chỉ để debug — app vẫn dùng bình thường thì không cần xử lý. Lỗi quyền Firestore (Missing or insufficient permissions) và mở file:// không còn bị ghi spam từ bản này trở đi."),
     loading ? React.createElement(EmptyState, { kind:"loading" })
       : rows.length===0 ? React.createElement("div", { className:"emptyState" }, "Chưa ghi nhận lỗi nào.")
       : React.createElement("div", { style:{ display:"flex", flexDirection:"column", gap:8, maxHeight:420, overflowY:"auto" } },
@@ -18829,6 +18987,7 @@ function SystemHubView(){
     React.createElement(IssuePriorityEditor, { key:"issuepriority" }),
     React.createElement(DataSyncSection, { key:"datasync" }),
     React.createElement(DataQualityPanel, { key:"dq" }),
+    React.createElement(DeployRulesGuidePanel, { key:"deploy" }),
     React.createElement(OpsRhythmCard, { key:"rhythm" }),
     React.createElement(KpiFormulaHelpCard, { key:"kpiformula" }),
     React.createElement(AuditLogViewer, { key:"audit" }),
