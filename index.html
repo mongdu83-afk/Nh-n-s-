@@ -11920,7 +11920,7 @@ function DecisionLogRow({ decKey, d, onSaveOutcome }){
   ]);
 }
 function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
-  // 28/9/2026: mở tab cho nhân viên — nhân viên chỉ XEM dữ liệu nhà thuốc của mình (khoá bộ lọc), các thao tác
+  // 28/9/2026: mở tab cho nhân viên — mặc định lọc sẵn nhà thuốc của mình nhưng được đổi sang nhà thuốc khác/"Tất cả" (để trao đổi điều chuyển), các thao tác
   // của quản lý (phân tích/tính lại, ngưỡng, đồng bộ danh mục, duyệt điều chuyển, nhật ký) được ẩn.
   const staffShop = (!isAdmin && myStaff && myStaff.shop) ? myStaff.shop : null;
   const [composer, setComposer] = useState(null);
@@ -12274,30 +12274,9 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
   // lý/nhân viên tự dùng file này làm căn cứ tạo phiếu chuyển hàng thật trong POS). Tách 1 sheet
   // riêng cho MỖI nhà thuốc NHẬN hàng (đúng như 1 phiếu nhận hàng thật của nhà thuốc đó), theo đúng
   // danh sách đang lọc/hiển thị (sortedTransfers) để khớp với những gì quản lý đang xem trên màn hình.
-  function exportTransferSlip(){
-    if(sortedTransfers.length===0){ alert("Không có đề xuất điều chuyển nào để xuất."); return; }
-    const wb = XLSX.utils.book_new();
-    const byDestShop = {};
-    sortedTransfers.forEach(t => { (byDestShop[t.toShop] = byDestShop[t.toShop] || []).push(t); });
-    Object.keys(byDestShop).sort(byShop).forEach(shopCode => {
-      const rows = [
-        [`PHIẾU ĐỀ XUẤT ĐIỀU CHUYỂN HÀNG HOÁ — NHẬN TẠI ${shopCode}`],
-        [`Ngày lập: ${new Date().toLocaleDateString("vi-VN")}    Nguồn dữ liệu: ${data && data.generatedAtTs ? new Date(data.generatedAtTs).toLocaleString("vi-VN") : ""}`],
-        [],
-        ["Mã hàng", "Tên hàng", "Từ nhà thuốc", "Số lượng", "Đơn vị", "Ghi chú"],
-        ...byDestShop[shopCode].map(t => [
-          t.productId, t.productName, t.fromShop, t.qty, t.unit||"",
-          [t.priority==="P1" ? "Ưu tiên — bán nhanh" : "", t.toIsRequired ? "Hàng thường trực" : ""].filter(Boolean).join(", "),
-        ]),
-        [],
-        ["Người giao (nhà thuốc gửi)", "", "Người nhận (" + shopCode + ")", "", "Quản lý xác nhận", ""],
-      ];
-      const ws = XLSX.utils.aoa_to_sheet(rows);
-      ws["!cols"] = [{ wch:14 }, { wch:34 }, { wch:14 }, { wch:10 }, { wch:10 }, { wch:24 }];
-      XLSX.utils.book_append_sheet(wb, ws, shopCode.slice(0,31));
-    });
-    XLSX.writeFile(wb, `Phieu_de_xuat_dieu_chuyen_${todayISO()}.xlsx`);
-  }
+  // 28/9/2026: phiếu điều chuyển xuất THÀNH 1 SHEET DUY NHẤT (trước đây tách mỗi nhà thuốc nhận 1 sheet) để các nhà
+  // thuốc nhìn chung 1 bảng, tự lọc/chọn mã rồi trao đổi điều chuyển với nhau — xem exportTransfersXlsx.
+  function exportTransferSlip(){ exportTransfersXlsx(); }
 
   // ===== 28/9/2026: xuất Excel cho TỪNG bảng phân tích hàng hoá (xuất toàn bộ dòng đang lọc, không chỉ trang hiện tại) =====
   function xlsxDownload(sheetName, filePrefix, title, scope, headers, rows){
@@ -12311,6 +12290,7 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
       ...rows,
     ];
     const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s:{ r:3, c:0 }, e:{ r:3+rows.length, c:headers.length-1 } }) }; // bấm mũi tên ở dòng tiêu đề để lọc/sắp xếp
     ws["!cols"] = headers.map((h,i) => ({ wch: Math.min(42, Math.max(String(h).length+2, ...rows.slice(0,200).map(r => String(r[i]==null ? "" : r[i]).length+2))) }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, sheetName.slice(0,31));
@@ -12320,17 +12300,24 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
   const dOnly = d => d ? String(d).slice(0,10) : "";
   const nz = v => v==null ? "" : v;
   function exportTransfersXlsx(){
-    xlsxDownload("Điều chuyển","PhanTich_DieuChuyen","ĐỀ XUẤT ĐIỀU CHUYỂN HÀNG HOÁ", filterShop,
-      ["Mã hàng","Tên hàng","Từ NT","Đến NT","SL nguyên","ĐV nguyên","SL lẻ","ĐV lẻ","Đơn giá nguyên","Đơn giá lẻ","Giá trị","Hạn dùng (nơi cho)","Còn (ngày)","Tồn nơi cho (ngày bán)","Tồn nơi nhận (ngày bán)","Ghi chú","Quyết định"],
+    // Nhà thuốc đang xem (nhân viên = nhà thuốc của mình; quản lý = nhà thuốc đang lọc) → thêm cột "Chiều" (Nhận về / Chuyển đi)
+    // để dễ lọc ra phần liên quan tới mình. Cột cuối để các nhà thuốc ghi xác nhận/trao đổi với nhau.
+    const viewShop = filterShop!=="Tất cả" ? filterShop : staffShop;
+    const headers = ["Mã hàng","Tên hàng","Từ NT (cho)","Đến NT (nhận)","SL nguyên","ĐV nguyên","SL lẻ","ĐV lẻ","Đơn giá nguyên","Đơn giá lẻ","Giá trị","Hạn dùng (nơi cho)","Còn (ngày)","Tồn nơi cho (ngày bán)","Tồn nơi nhận (ngày bán)","Ghi chú"];
+    if(viewShop) headers.splice(2, 0, "Chiều (với "+nt(viewShop)+")");
+    headers.push("Nhà thuốc xác nhận / trao đổi");
+    xlsxDownload("Điều chuyển","Phieu_de_xuat_dieu_chuyen","PHIẾU ĐỀ XUẤT ĐIỀU CHUYỂN HÀNG HOÁ", filterShop,
+      headers,
       sortedTransfers.map(t => {
         const hasPack = t.orderUnit && t.orderUnitQty!=null;
-        const dec = decisionFor(t);
-        return [t.productId, t.productName, nt(t.fromShop), nt(t.toShop),
+        const row = [t.productId, t.productName, nt(t.fromShop), nt(t.toShop),
           hasPack ? t.orderUnitQty : t.qty, hasPack ? t.orderUnit : (t.unit||""), hasPack ? t.qty : "", hasPack ? (t.unit||"") : "",
           hasPack ? nz(t.priceOrder) : nz(t.price), t.price ? nz(t.price) : "", nz(valueOf(t, t.qty)),
           dOnly(t.fromExpiryDate), daysTo(t.fromExpiryDate), nz(t.fromDaysStock), nz(t.toDaysStock),
-          [t.priority==="P1" ? "Ưu tiên" : "", t.toOutOfStock ? "Hết hàng" : "", t.toIsRequired ? "Thường trực" : "", t.crossRegion ? "Khác KV" : ""].filter(Boolean).join(", "),
-          dec ? `${dec.trangThai}${dec.lyDo ? ": "+dec.lyDo : ""}` : ""];
+          [t.priority==="P1" ? "Ưu tiên - bán nhanh" : "", t.toOutOfStock ? "Hết hàng" : "", t.toIsRequired ? "Thường trực" : "", t.crossRegion ? "Khác KV" : ""].filter(Boolean).join(", ")];
+        if(viewShop) row.splice(2, 0, t.toShop===viewShop ? "Nhận về" : (t.fromShop===viewShop ? "Chuyển đi" : ""));
+        row.push("");
+        return row;
       }));
   }
   function exportExpiryXlsx(){
@@ -12369,7 +12356,7 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
     React.createElement("button", { key:"x", type:"button", className:"btn btnGhost", disabled, onClick, style:{ fontSize:12, padding:"5px 11px" } }, "📥 Xuất Excel"),
   ]);
 
-  const shopChipsBar = isAdmin && allShops.length>0 && React.createElement("div", { key:"chips", className:"card", style:{ marginBottom:20, padding:"12px 14px" } }, [
+  const shopChipsBar = allShops.length>0 && React.createElement("div", { key:"chips", className:"card", style:{ marginBottom:20, padding:"12px 14px" } }, [
     React.createElement("div", { key:"lbl", style:{ fontSize:12, fontWeight:700, color:"var(--inkSoft)", marginBottom:8 } }, "Lọc theo nhà thuốc"),
     React.createElement("div", { key:"row", style:{ display:"flex", gap:8, overflowX:"auto", paddingBottom:4 } },
       ["Tất cả", ...allShops].map(s => React.createElement("button", {
@@ -12432,7 +12419,7 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
           React.createElement("div", { key:"a" }, `${fmtNum(s.totalSKU||0)} mã×nhà thuốc đang theo dõi${consShop!=="Tất cả" ? ` tại ${nt(consShop)}` : ""} · tính lúc ${s.computedAt ? new Date(s.computedAt).toLocaleString("vi-VN") : "—"}`),
           consShop!=="Tất cả" && !shopHasDetail && React.createElement("div", { key:"b", style:{ color:"var(--clay)" } }, isAdmin ? "Dashboard & ma trận đang hiện số TOÀN CHUỖI — bấm \"Tính lại\" 1 lần để có số riêng từng nhà thuốc. Danh sách bên dưới đã lọc đúng nhà thuốc." : "Dashboard & ma trận đang hiện số TOÀN CHUỖI (chưa có số riêng nhà thuốc). Danh sách bên dưới đã lọc đúng nhà thuốc của bạn."),
         ]),
-        isAdmin && React.createElement("div", { key:"flt", style:{ display:"flex", gap:6, flexWrap:"wrap" } },
+        React.createElement("div", { key:"flt", style:{ display:"flex", gap:6, flexWrap:"wrap" } },
           ["Tất cả", ...consShops].map(x => React.createElement("button", { key:x, type:"button", onClick:()=>setConsShop(x),
             style:{ padding:"4px 11px", borderRadius:16, border:"1px solid var(--line)", fontSize:12, fontWeight:600, cursor:"pointer", background: consShop===x ? "var(--pine)" : "#fff", color: consShop===x ? "#fff" : "var(--ink)" } }, x==="Tất cả" ? x : nt(x)))),
         isAdmin && React.createElement("button", { key:"btn", className:"btn btnGhost", disabled:consumptionAnalyzing, onClick:runConsumptionAnalyze, style:{ fontSize:12, padding:"5px 12px" } }, consumptionAnalyzing ? "Đang tính..." : "↻ Tính lại"),
@@ -12694,7 +12681,7 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
     shopChipsBar,
 
     React.createElement("div", { key:"secT", className:"card", style:{ marginBottom:20 } }, [
-      titleWithExport("t", `Đề xuất điều chuyển (${sortedTransfers.length})`, exportTransfersXlsx, sortedTransfers.length===0),
+      React.createElement("div", { key:"t", className:"cardTitle" }, `Đề xuất điều chuyển (${sortedTransfers.length})`),
       // 26/9/2026: nguyên tắc chỉ điều chuyển/đặt NCC theo ĐƠN VỊ NGUYÊN — mã chưa xác định được đơn vị
       // nguyên bị loại khỏi đề xuất; liệt kê để quản lý biết mà bổ sung quy cách trên hệ thống.
       data && data.excludedNoWholeUnitCount>0 && React.createElement("details", { key:"excl", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } }, [
