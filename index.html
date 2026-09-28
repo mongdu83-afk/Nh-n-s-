@@ -415,12 +415,38 @@ async function createStaffAccount(email, password, staffId){
   const newUid = cred.user.uid;
   await secondaryAuth.signOut();
   await updateDoc("staff", staffId, { uid:newUid, email });
+  // Gắn custom claims staff (role/shop) — trigger onStaffWrittenClaims cũng chạy; gọi thêm cho chắc.
+  try{
+    const headers = await authHeader();
+    await fetch(CF_CLAIMS_BASE + "/setUserClaimsNow", {
+      method:"POST", headers:{ ...headers, "Content-Type":"application/json" },
+      body: JSON.stringify({ uid:newUid, mode:"auto" }),
+    });
+  } catch(e){ console.warn("setUserClaims after createStaff:", e && e.message); }
   return newUid;
 }
 
-// Email được coi là tài khoản QUẢN LÝ — thấy được dữ liệu tất cả nhà thuốc.
-// Thêm email vào mảng này nếu có nhiều người cần quyền quản lý.
+// Seed admin (migration). isAdmin ưu tiên Firebase custom claims.admin — ADMIN_EMAILS chỉ fallback.
 const ADMIN_EMAILS = ["ha.phuongthanh.asm@upharma.com.vn"];
+const CF_CLAIMS_BASE = "https://asia-southeast1-upharma-176d5.cloudfunctions.net";
+async function syncMyClaims(){
+  try{
+    const headers = await authHeader();
+    await fetch(CF_CLAIMS_BASE + "/syncMyClaimsNow", { method:"POST", headers });
+    if(auth.currentUser) await auth.currentUser.getIdToken(true);
+  } catch(e){ console.warn("syncMyClaims:", e && e.message); }
+}
+async function resolveIsAdmin(user){
+  if(!user) return false;
+  try{
+    const tr = await user.getIdTokenResult();
+    if(tr.claims && tr.claims.admin === true) return true;
+  } catch(e){}
+  return ADMIN_EMAILS.includes(user.email || "");
+}
+// Đồng bộ với KPI_FORMULA_VERSION trên Cloud Functions (P0 27/9/2026).
+const KPI_FORMULA_VERSION_UI = "2026.09.27-pace85-off4";
+
 
 // ================= EMAILJS (thông báo tặng sao qua email) =================
 // Đăng ký miễn phí tại https://www.emailjs.com — điền 3 giá trị bên dưới sau khi tạo
@@ -606,7 +632,10 @@ async function deleteDoc(name, id){ return db.collection(name).doc(id).delete();
 async function mergeDotFields(collectionName, docId, dotFields, createExtras){
   const ref = db.collection(collectionName).doc(docId);
   try{ await ref.update(dotFields); }
-  catch(err){ await ref.set({ ...(createExtras||{}), ...dotFields }, { merge:true }); }
+  catch(err){
+    if(err && err.code && err.code !== "not-found") throw err; // permission-denied, unavailable... báo đúng lỗi
+    await ref.set({ ...(createExtras||{}), ...dotFields }, { merge:true });
+  }
 }
 // Định dạng 1 sheet Excel cho dễ đọc: tự giãn độ rộng cột theo nội dung dài nhất, tô đậm +
 // đổ màu dòng tiêu đề, kẻ viền toàn bảng, căn giữa tiêu đề, số căn phải/chữ căn trái, so le
@@ -760,10 +789,22 @@ function regionFromEmail(email){
   return slug.charAt(0).toUpperCase() + slug.slice(1);
 }
 function subscribeConfigDoc(docId, cb){
-  return db.collection("opsConfig").doc(docId).onSnapshot(doc => cb(doc.exists ? doc.data() : {}));
+  return db.collection("opsConfig").doc(docId).onSnapshot(doc => cb(doc.exists ? doc.data() : {}), err => console.warn("opsConfig/"+docId, err && err.code));
 }
 async function saveConfigDoc(docId, data){
-  return db.collection("opsConfig").doc(docId).set(data, { merge:false });
+  await db.collection("opsConfig").doc(docId).set(data, { merge:false });
+  // P0 (27/9/2026): audit log tối thiểu khi đổi cấu hình — không chặn thao tác nếu ghi log lỗi.
+  try{
+    const u = auth.currentUser;
+    await db.collection("auditLogs").add({
+      action: "config.set",
+      target: "opsConfig/" + docId,
+      byEmail: (u && u.email) || "",
+      byUid: (u && u.uid) || "",
+      atTs: new Date().toISOString(),
+      keys: data && typeof data === "object" ? Object.keys(data).slice(0, 40) : [],
+    });
+  } catch(e){ console.warn("auditLog config:", e && e.message); }
 }
 
 const TONE_COLOR = {
@@ -1416,7 +1457,7 @@ function DailyChecklistView({ isAdmin, myStaff }){
       console.error("toggleTask lỗi:", err);
       // Ghi lỗi — khôi phục lại trạng thái tick trước đó và báo cho người dùng.
       setPendingDone(prev => { const n = { ...prev }; delete n[taskId]; return n; });
-      window.alert("Không thể lưu thay đổi (kiểm tra kết nối mạng) — vui lòng thử lại.");
+      window.alert("Không thể lưu thay đổi (" + (err && err.code ? err.code : "lỗi không rõ") + (err && err.code==="unavailable" ? " — kiểm tra kết nối mạng" : " — liên hệ quản trị") + ").");
     }
   }
   async function saveTaskHours(taskId, soGio){
@@ -3279,9 +3320,13 @@ function TaskAssignView({ isAdmin, myStaff, navParam }){
     if(!resultText.trim()) return;
     const tk = tasks.find(x => x.id===taskId);
     const isCrmCare = !!tk && taskModule360(tk)==="CRM";
+    const prev = (tk && (tk.ketQuaTruoc || tk.ketQua)) || "";
     await updateDoc("tasks", taskId, {
-      ...(isCrmCare ? { trangThai:"Đã hoàn thành", subTrangThai:"Đã hoàn thành", ngayHoanThanh:today } : { subTrangThai:"Chờ kiểm tra" }),
-      ketQua:resultText.trim(), sauXuLy:sauXuLyText.trim(), ngayNopKetQua:today, lyDoKhongDat:"",
+      ...(isCrmCare ? { trangThai:"Đã hoàn thành", subTrangThai:"Đã hoàn thành", ngayHoanThanh:today, ketQuaSau:resultText.trim() } : { subTrangThai:"Chờ kiểm tra" }),
+      ketQua:resultText.trim(),
+      ketQuaTruoc: prev || resultText.trim(), // baseline trước khi xác minh (lần nộp đầu)
+      ketQuaSau: resultText.trim(),
+      sauXuLy:sauXuLyText.trim(), ngayNopKetQua:today, lyDoKhongDat:"",
       nguoiBaoCao: isAdmin ? "Quản lý khu vực" : (myStaff ? myStaff.name : ""),
     });
     setReportingId(null); setResultText(""); setSauXuLyText("");
@@ -3289,7 +3334,13 @@ function TaskAssignView({ isAdmin, myStaff, navParam }){
   async function startTask(taskId){ await updateDoc("tasks", taskId, { subTrangThai:"Đang thực hiện", ngayBatDau:today }); }
   async function retryTask(taskId){ setReportingId(taskId); setResultText(""); await updateDoc("tasks", taskId, { subTrangThai:"Làm lại" }); }
   async function approveTask(taskId){
-    await updateDoc("tasks", taskId, { trangThai:"Đã hoàn thành", subTrangThai:"Đã hoàn thành", ngayHoanThanh:today });
+    const tk = tasks.find(x => x.id===taskId);
+    await updateDoc("tasks", taskId, {
+      trangThai:"Đã hoàn thành", subTrangThai:"Đã hoàn thành", ngayHoanThanh:today,
+      ketQuaDat: true,
+      ketQuaSau: (tk && (tk.ketQuaSau || tk.ketQua)) || "",
+      verifiedAtTs: new Date().toISOString(),
+    });
   }
   async function rejectTask(taskId, reason){
     if(!reason || !reason.trim()) return;
@@ -5016,11 +5067,19 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
       // Transaction — chỉ gán khi khách ĐANG "Chưa phân công" tại thời điểm ghi (không phải lúc mở
       // modal), để 2 nhân viên bấm cùng lúc 1 khách không giành nhau được: người ghi sau sẽ thấy
       // báo lỗi "khách vừa được người khác nhận" thay vì ghi đè.
+      const lastInteractionTs = new Date().toISOString();
       const cust = await db.runTransaction(async (tx) => {
         const doc = await tx.get(ref);
         const data = doc.exists ? doc.data() : {};
-        if (data.assignedStaffId) return null; // đã có người nhận trước — báo lỗi bên ngoài
-        tx.set(ref, { assignedStaffId: myStaff.id, assignedStaffName: myStaff.name, assignedStaffIsDefault: false }, { merge:true });
+        // Chỉ chặn khi NGƯỜI KHÁC đã nhận; nếu chính mình đã nhận dở lần trước thì cho đi tiếp.
+        if (data.assignedStaffId && data.assignedStaffId !== myStaff.id) return null;
+        tx.set(ref, { assignedStaffId: myStaff.id, assignedStaffName: myStaff.name, assignedStaffIsDefault: false, lastInteractionTs }, { merge:true });
+        tx.set(db.collection("crmInteractions").doc(), {
+          phone: claimingPhone, shop: data.shop || (myStaff && myStaff.shop) || "",
+          staffId: myStaff.id, staffName: myStaff.name,
+          note: `[Nhận chăm sóc] ${claimNote.trim()}`, nextFollowUpDate: claimFollowUp,
+          createdAtTs: lastInteractionTs,
+        });
         return data;
       });
       if (!cust) {
@@ -5028,14 +5087,6 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
         setClaiming(false);
         return;
       }
-      const lastInteractionTs = new Date().toISOString();
-      await db.collection("crmInteractions").add({
-        phone: claimingPhone, shop: cust.shop || (myStaff && myStaff.shop) || "",
-        staffId: myStaff.id, staffName: myStaff.name,
-        note: `[Nhận chăm sóc] ${claimNote.trim()}`, nextFollowUpDate: claimFollowUp,
-        createdAtTs: lastInteractionTs,
-      });
-      await ref.set({ lastInteractionTs }, { merge:true });
       setCustomers(cs => cs.map(c => c.phone===claimingPhone
         ? { ...c, assignedStaffId: myStaff.id, assignedStaffName: myStaff.name, assignedStaffIsDefault:false, lastInteractionTs }
         : c));
@@ -5043,7 +5094,7 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
       setSelectedPhone(claimingPhone);
     } catch(err){
       logSystemError("crmClaim", err);
-      setClaimError("Có lỗi khi nhận khách — thử lại.");
+      setClaimError("Có lỗi khi nhận khách (" + (err && err.code ? err.code : "không rõ") + ") — thử lại.");
     }
     setClaiming(false);
   }
@@ -7479,9 +7530,177 @@ function ShopListEditor(){
   ]);
 }
 
-// ================= KHU VỰC ĐỒNG BỘ DỮ LIỆU (đã gộp thành 1 nút, không còn lịch tự động) =================
+// ================= KHU VỰC ĐỒNG BỘ DỮ LIỆU + SỨC KHỎE ĐỒNG BỘ (P0 đặc tả 27/9/2026) =================
+// Khóa health trên opsConfig/kpiSyncHealth do Cloud Function ghi qua writeSyncHealth(key, payload).
+const SYNC_HEALTH_LABELS = {
+  salesOrders: "Đơn hàng bán",
+  workRegistrations: "Ca làm / tăng ca",
+  inventory: "Tồn kho",
+  employeePlan: "Chỉ tiêu nhân viên (KPI)",
+  inventoryExpiry: "Hàng cận date",
+  customerUpgrades: "Nâng hạng khách hàng",
+  pointSalesProducts: "Sản phẩm bán điểm",
+  replenishment: "Nhắc tái mua (replenish)",
+};
+function formatSyncHealthAt(h){
+  if(!h || !h.atTs) return "Chưa chạy";
+  try{
+    const d = new Date(h.atTs);
+    return d.toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" });
+  } catch(e){ return String(h.atTs).slice(0, 19); }
+}
+function SyncHealthPanel(){
+  const [health, setHealth] = useState(null);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(()=>{
+    return db.collection("opsConfig").doc("kpiSyncHealth").onSnapshot(
+      s => { setHealth(s.exists ? s.data() : null); setLoaded(true); },
+      err => { console.error("kpiSyncHealth", err); setLoaded(true); }
+    );
+  }, []);
+  const keys = Object.keys(SYNC_HEALTH_LABELS);
+  const rows = keys.map(k => {
+    const h = health && health[k];
+    const ok = h && h.ok !== false && !h.fatalError && !h.error;
+    const has = !!h;
+    let detail = "—";
+    if(h){
+      if(h.fatalError || h.error) detail = String(h.fatalError || h.error).slice(0, 120);
+      else if(h.totalOrders != null) detail = `${h.totalOrders} đơn · ${h.totalLines ?? "—"} dòng · ${h.shopCount ?? "—"} shop`;
+      else if(h.totalItems != null) detail = `${h.totalItems} dòng · ${h.shopCount ?? "—"} shop`;
+      else if(h.totalRecords != null) detail = `${h.totalRecords} bản ghi · ${h.shopCount ?? "—"} shop`;
+      else if(h.totalUpgrades != null) detail = `${h.totalUpgrades} lượt`;
+      else if(h.customersDue != null) detail = `${h.customersDue} khách đến hạn · ${h.replenishableProducts ?? "—"} SP · ${h.tookSec ?? "—"}s`;
+      else if(h.shopCount != null) detail = `${h.shopCount} nhà thuốc`;
+      else detail = "OK";
+    }
+    return { key:k, label:SYNC_HEALTH_LABELS[k], has, ok, at: formatSyncHealthAt(h), detail };
+  });
+  const bad = rows.filter(r => r.has && !r.ok).length;
+  const never = rows.filter(r => !r.has).length;
+  return React.createElement("div", { className:"card", style:{ marginBottom:16 } }, [
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, "Sức khỏe đồng bộ dữ liệu"),
+    React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } },
+      "Mỗi job đồng bộ ghi trạng thái vào opsConfig/kpiSyncHealth. Nguồn: hệ thống bán hàng ngoài + lịch Cloud Functions. Cập nhật lúc = atTs lần chạy gần nhất."),
+    !loaded ? React.createElement("div", { key:"l", className:"emptyState" }, "Đang tải…") :
+    React.createElement(React.Fragment, { key:"b" }, [
+      React.createElement("div", { key:"sum", style:{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:10, fontSize:12.5 } }, [
+        React.createElement("span", { key:"ok", className:"sevBadge sev-healthy" }, `${rows.length - bad - never} ổn`),
+        bad > 0 && React.createElement("span", { key:"bad", className:"sevBadge sev-critical" }, `${bad} lỗi`),
+        never > 0 && React.createElement("span", { key:"n", className:"sevBadge sev-monitor" }, `${never} chưa chạy`),
+      ]),
+      React.createElement("div", { key:"tbl", className:"tableWrap" }, React.createElement("table", { className:"data tblCompact" }, [
+        React.createElement("thead", { key:"h" }, React.createElement("tr", null,
+          ["Nguồn", "Trạng thái", "Cập nhật lúc", "Chi tiết"].map(h => React.createElement("th", { key:h }, h))
+        )),
+        React.createElement("tbody", { key:"body" }, rows.map(r => React.createElement("tr", { key:r.key }, [
+          React.createElement("td", { key:"l" }, r.label),
+          React.createElement("td", { key:"st" },
+            !r.has ? React.createElement("span", { className:"sevBadge sev-neutral" }, "Chưa có")
+            : r.ok ? React.createElement("span", { className:"sevBadge sev-healthy" }, "OK")
+            : React.createElement("span", { className:"sevBadge sev-critical" }, "Lỗi")
+          ),
+          React.createElement("td", { key:"at", className:"nw" }, r.at),
+          React.createElement("td", { key:"d", style:{ fontSize:11.5, color: r.has && !r.ok ? "var(--clay)" : "var(--inkSoft)" } }, r.detail),
+        ]))),
+      ])),
+    ]),
+  ]);
+}
+function KpiFormulaHelpCard(){
+  // P0.1 — Từ điển KPI thống nhất (đặc tả §II.1): định nghĩa + loại số + nguồn + màn hình.
+  const rows = [
+    { name:"Doanh thu (actual)", type:"Thực tế", formula:"Σ thành tiền đơn bán trong kỳ (externalSalesOrders / revenueAnalytics)", source:"Sync đơn bán", screens:"Tổng quan, Doanh thu, Kết quả ngày" },
+    { name:"Chỉ tiêu doanh thu (target)", type:"Mục tiêu", formula:"target tháng từ hệ thống ngoài hoặc nhập tay; chỉ tiêu ngày = target tháng ÷ số ngày làm việc ước tính", source:"KPI sync / salesCheckpoints", screens:"KPI, Doanh thu, Kết quả ngày" },
+    { name:"Pace / % hoàn thành", type:"Thực tế vs Mục tiêu", formula:"actual / target × 100; dự kiến cuối tháng theo ngày làm việc; đạt thưởng nếu ≥ 85% (KPI_PASS_PCT); <60% = 0 điểm", source:"dailyKpiPace + formulaVersion", screens:"KPI, Employee 360" },
+    { name:"Lợi nhuận gộp", type:"Chưa bật", formula:"Không hiển thị khi thiếu nguồn giá vốn tin cậy (đặc tả: không bịa số)", source:"—", screens:"—" },
+    { name:"Tồn kho hiện tại", type:"Thực tế", formula:"Snapshot inventory theo shop/SKU sau sync cuối ngày", source:"syncInventory → inventory*", screens:"HangHoa, Product 360" },
+    { name:"Tốc độ tiêu thụ", type:"Thực tế / ước lượng", formula:"SL bán / số ngày quan sát (theo catalog velocity)", source:"Bán hàng + catalog", screens:"HangHoa · tốc độ" },
+    { name:"DOI (Days of Inventory)", type:"Ước lượng", formula:"Tồn khả dụng ÷ tốc độ tiêu thụ/ngày", source:"calcDOI()", screens:"Điều chuyển (ghi chú)" },
+    { name:"Hàng cận date", type:"Thực tế", formula:"Tỷ lệ / số dòng theo ngưỡng HSD (inventoryExpiry)", source:"sync inventoryExpiry", screens:"HangHoa, Rủi ro" },
+    { name:"RFM / nguy cơ rời bỏ", type:"Phân tích", formula:"Recency/Frequency/Monetary + quy tắc segment backend", source:"computeCustomerSegments", screens:"CRM, Customer 360" },
+    { name:"Checklist % nộp", type:"Thực tế", formula:"submitted / eligible (chỉ người có ca hôm qua)", source:"shopHealthSummary.ops", screens:"Tổng quan, Checklist" },
+    { name:"Việc quá hạn", type:"Thực tế", formula:"trangThai=Đang giao và deadline < now", source:"tasks", screens:"Action Center, Tổng quan" },
+    { name:"Điểm sức khoẻ shop", type:"Tổng hợp", formula:"Trọng số revenue/hr/customer/goods/ops (shopHealthConfig)", source:"computeShopHealth", screens:"Tổng quan, Shop 360" },
+  ];
+  return React.createElement("div", { className:"card", style:{ marginBottom:16 } }, [
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:6 } }, "Từ điển KPI thống nhất"),
+    React.createElement("div", { key:"v", style:{ fontSize:12, marginBottom:8 } }, [
+      React.createElement("span", { key:"b", className:"sevBadge sev-monitor" }, "formulaVersion: " + (typeof KPI_FORMULA_VERSION_UI!=="undefined"?KPI_FORMULA_VERSION_UI:"2026.09.27-pace85-off4")),
+    ]),
+    React.createElement("div", { key:"n0", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:8 } },
+      "Cùng một chỉ số dùng cùng công thức trên mọi màn. Phân biệt: Thực tế · Mục tiêu · Ước lượng/Dự báo. Đổi công thức → tăng version trên Cloud Functions."),
+    React.createElement("div", { key:"tbl", className:"tableWrap" }, React.createElement("table", { className:"data tblCompact" }, [
+      React.createElement("thead", { key:"h" }, React.createElement("tr", null,
+        ["Chỉ số","Loại","Công thức / quy tắc","Nguồn","Màn hình"].map(x => React.createElement("th", { key:x }, x))
+      )),
+      React.createElement("tbody", { key:"b" }, rows.map((r,i) => React.createElement("tr", { key:i }, [
+        React.createElement("td", { key:"n" }, React.createElement("b", null, r.name)),
+        React.createElement("td", { key:"t" }, r.type),
+        React.createElement("td", { key:"f", style:{ fontSize:11 } }, r.formula),
+        React.createElement("td", { key:"s", style:{ fontSize:11 } }, r.source),
+        React.createElement("td", { key:"sc", style:{ fontSize:11 } }, r.screens),
+      ]))),
+    ])),
+    React.createElement("ul", { key:"u", style:{ margin:"10px 0 0", paddingLeft:18, fontSize:12.5, lineHeight:1.55 } }, [
+      React.createElement("li", { key:"1" }, "NVBH: chiếu theo ngày làm việc; trừ 4 ngày nghỉ/tháng (off4) trừ khi có ca thật."),
+      React.createElement("li", { key:"2" }, "CHT / shop: chiếu theo ngày lịch."),
+      React.createElement("li", { key:"3" }, "Trạng thái dữ liệu: xem Sức khỏe đồng bộ + Data Quality (lỗi / >36h)."),
+    ]),
+  ]);
+}
+
+/** Chống trùng nhiệm vụ từ cùng nguồn cảnh báo (P1 Action Center). */
+async function findOpenTaskBySource({ sourceRiskId, sourceCode, sourceType, shop }){
+  try{
+    let q = db.collection("tasks").where("trangThai","==","Đang giao").limit(80);
+    const snap = await q.get();
+    const code = sourceCode || null;
+    const rid = sourceRiskId || null;
+    const st = sourceType || null;
+    return snap.docs.map(d => ({ id:d.id, ...d.data() })).find(t => {
+      if(shop && t.shop && t.shop !== shop) return false;
+      if(rid && (t.sourceRiskId === rid || t.extra && t.extra.sourceRiskId === rid)) return true;
+      if(code && (t.sourceCode === code || t.sourceRiskCode === code || (t.extra && (t.extra.sourceCode===code || t.extra.sourceRiskCode===code)))) return true;
+      if(st && t.sourceType === st && code && t.title && t.title.indexOf(code)>=0) return true;
+      return false;
+    }) || null;
+  } catch(e){
+    console.warn("findOpenTaskBySource", e);
+    return null;
+  }
+}
+function AuditLogViewer(){
+  const [rows, setRows] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(()=>{
+    return db.collection("auditLogs").orderBy("atTs", "desc").limit(50)
+      .onSnapshot(s => { setRows(s.docs.map(d => ({ id:d.id, ...d.data() }))); setLoaded(true); },
+        err => { console.error("auditLogs", err); setLoaded(true); });
+  }, []);
+  return React.createElement("div", { className:"card", style:{ marginBottom:16 } }, [
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, "Nhật ký cấu hình (audit)"),
+    React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } }, "50 thay đổi opsConfig gần nhất (khi Lưu cấu hình qua app)."),
+    !loaded ? React.createElement("div", { key:"l", className:"emptyState" }, "Đang tải…")
+    : rows.length === 0 ? React.createElement("div", { key:"e", className:"emptyState" }, "Chưa có bản ghi — lưu một cấu hình (danh sách shop, ngưỡng…) để tạo log.")
+    : React.createElement("div", { key:"tbl", className:"tableWrap" }, React.createElement("table", { className:"data tblCompact" }, [
+        React.createElement("thead", { key:"h" }, React.createElement("tr", null,
+          ["Thời điểm", "Người", "Đối tượng", "Trường"].map(h => React.createElement("th", { key:h }, h))
+        )),
+        React.createElement("tbody", { key:"b" }, rows.map(r => React.createElement("tr", { key:r.id }, [
+          React.createElement("td", { key:"t", className:"nw" }, (r.atTs || "").replace("T", " ").slice(0, 19)),
+          React.createElement("td", { key:"e" }, r.byEmail || "—"),
+          React.createElement("td", { key:"tg" }, r.target || "—"),
+          React.createElement("td", { key:"k", style:{ fontSize:11 } }, Array.isArray(r.keys) ? r.keys.join(", ") : "—"),
+        ]))),
+      ])),
+  ]);
+}
 function DataSyncSection(){
-  return React.createElement(SyncAllDataButton, null);
+  return React.createElement(React.Fragment, null, [
+    React.createElement(SyncHealthPanel, { key:"health" }),
+    React.createElement(SyncAllDataButton, { key:"sync" }),
+  ]);
 }
 
 function StaffView(){
@@ -8657,12 +8876,80 @@ function ShopFilterBar({ isAdmin, adminShop, setAdminShop, shopFilter }){
 // liệu nền xanh nhạt, chọn nhanh khoảng thời gian, 3 tab con "Theo kỳ / So sánh theo kỳ / Theo
 // ngành" — nhưng số liệu vẫn tính từ dữ liệu API đã đồng bộ (opsConfig/revenueAnalytics +
 // opsConfig/behaviorAnalytics), KHÔNG dùng file Excel tải lên như app Dashboard cũ.
-function StatTile({ label, value, sub, tint, onClick }){
+function StatTile({ label, value, sub, tint, onClick, source, updatedAt }){
+  // A2 (P0): source + updatedAt — nguồn số liệu và thời điểm cập nhật (đặc tả Command Center).
+  const meta = [source, updatedAt].filter(Boolean).join(" · ");
   return React.createElement("div", { className:"card" + (onClick ? " clickTile" : ""), onClick, title: onClick ? "Bấm để xem chi tiết" : undefined, style:{ padding:"14px 16px", background: tint||"var(--pineSoft)", border:"none", cursor: onClick ? "pointer" : "default" } }, [
     React.createElement("div", { key:"l", style:{ fontSize:11, fontWeight:700, color:"var(--inkSoft)", textTransform:"uppercase", letterSpacing:.03, marginBottom:6 } }, label),
     React.createElement("div", { key:"v", style:{ fontSize:22, fontWeight:700, fontFamily:"'Fraunces',serif" } }, value),
     sub && React.createElement("div", { key:"s", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:4 } }, sub),
+    meta && React.createElement("div", { key:"m", style:{ fontSize:10.5, color:"var(--inkSoft)", marginTop:6, opacity:0.9 } }, meta),
   ]);
+}
+// B1 — thẻ KPI đầy đủ: thực tế / mục tiêu / chênh lệch / kỳ / nguồn / cập nhật (đặc tả §3).
+function KpiMetricCard({ label, actual, target, unit, period, source, updatedAt, onClick, better }){
+  // better: "higher" (mặc định) | "lower" — chiều tốt của chênh lệch
+  const a = actual == null || actual === "" || isNaN(Number(actual)) ? null : Number(actual);
+  const t = target == null || target === "" || isNaN(Number(target)) ? null : Number(target);
+  let delta = null, deltaPct = null, tone = "var(--inkSoft)";
+  if(a != null && t != null && t !== 0){
+    delta = a - t;
+    deltaPct = (delta / Math.abs(t)) * 100;
+    const good = (better === "lower") ? (delta <= 0) : (delta >= 0);
+    tone = Math.abs(deltaPct) < 0.5 ? "var(--inkSoft)" : (good ? "var(--pine)" : "var(--clay)");
+  }
+  const fmt = (n) => {
+    if(n == null) return "—";
+    if(unit === "%") return (Math.round(n * 10) / 10).toLocaleString("vi-VN") + "%";
+    if(unit === "đ" || unit === "VND") return fmtVND(n);
+    if(unit === "pct1") return (Math.round(n * 10) / 10).toLocaleString("vi-VN") + "%";
+    return fmtNum(n) + (unit ? unit : "");
+  };
+  const meta = [period, source ? ("Nguồn: " + source) : null, updatedAt ? ("Cập nhật: " + updatedAt) : null].filter(Boolean).join(" · ");
+  return React.createElement("div", {
+    className: "card" + (onClick ? " clickTile" : ""),
+    onClick, title: onClick ? "Bấm để xem chi tiết" : undefined,
+    style: { padding: "14px 16px", cursor: onClick ? "pointer" : "default" },
+  }, [
+    React.createElement("div", { key: "l", style: { fontSize: 11, fontWeight: 700, color: "var(--inkSoft)", textTransform: "uppercase", letterSpacing: 0.03, marginBottom: 6 } }, label),
+    React.createElement("div", { key: "v", style: { fontSize: 22, fontWeight: 800, fontFamily: "'Fraunces',serif", lineHeight: 1.15 } }, fmt(a)),
+    React.createElement("div", { key: "row", style: { display: "flex", flexWrap: "wrap", gap: "6px 12px", marginTop: 6, fontSize: 12 } }, [
+      React.createElement("span", { key: "t", style: { color: "var(--inkSoft)" } }, ["Mục tiêu ", React.createElement("b", { key: "b", style: { color: "var(--ink)" } }, fmt(t))]),
+      delta != null && React.createElement("span", { key: "d", style: { color: tone, fontWeight: 700 } },
+        (delta >= 0 ? "▲ +" : "▼ ") + fmt(Math.abs(delta)) + (deltaPct != null ? ` (${deltaPct >= 0 ? "+" : ""}${Math.round(deltaPct * 10) / 10}%)` : "")),
+    ]),
+    meta && React.createElement("div", { key: "m", style: { fontSize: 10.5, color: "var(--inkSoft)", marginTop: 8 } }, meta),
+  ]);
+}
+// B2 — preset task chuẩn từ cảnh báo/rủi ro/vấn đề (một luồng: nguồn → giả thuyết → deadline → owner).
+function buildAlertTaskPreset({
+  heading, title, mota, shop, module, deadline, staffId, staffName,
+  sourceType, sourceId, sourceCode, hypothesis, evidence, expectedResult, extra,
+}){
+  const lines = [];
+  if(hypothesis) lines.push("Giả thuyết / nguyên nhân: " + hypothesis);
+  if(evidence) lines.push("Dữ liệu chứng minh: " + evidence);
+  if(expectedResult) lines.push("Kết quả kỳ vọng: " + expectedResult);
+  const body = [mota || "", lines.length ? ("\n" + lines.join("\n")) : ""].join("").trim();
+  return {
+    heading: heading || "Tạo việc từ cảnh báo",
+    title: title || "Xử lý cảnh báo",
+    mota: body,
+    shop: shop || "",
+    module: module || "Ops",
+    deadline: deadline || addDays(todayISO(), 3),
+    staffId: staffId || null,
+    staffName: staffName || null,
+    extra: Object.assign({
+      sourceType: sourceType || "alert",
+      sourceId: sourceId || null,
+      sourceCode: sourceCode || null,
+      hypothesis: hypothesis || null,
+      evidence: evidence || null,
+      expectedResult: expectedResult || null,
+      createdFrom: "alertTaskPreset",
+    }, extra || {}),
+  };
 }
 function RevenueDateRangePicker({ from, to, setFrom, setTo }){
   return React.createElement("div", { style:{ display:"flex", gap:10, alignItems:"center", marginBottom:6, flexWrap:"wrap" } }, [
@@ -9853,19 +10140,39 @@ function PromoDocDetectSection({ myStaff, monthKey, onTracked }){
       setMsg("Lỗi: " + (err.message||"thử lại sau."));
     } finally { setBusy(false); }
   }
+  // Xác nhận qua thực tế (27/9/2026): hệ thống bán hàng sinh 1 DocumentID RIÊNG cho MỖI LẦN khách
+  // dùng (không dùng chung 1 mã cho cả chương trình) — nên backend giờ GỘP SẴN nhiều DocumentID rời
+  // rạc lại theo đúng tên chương trình thật (tra qua API), trả về mỗi dòng ở đây là `documentIds`
+  // (mảng, có thể hàng chục/hàng trăm mã) thay vì 1 `documentId` đơn như trước — tự chọn sẵn dòng
+  // dropdown nếu tên trùng khớp với chương trình đã có trong file kế hoạch, đỡ phải chọn tay.
+  useEffect(()=>{
+    if(!rows || !rows.length || !existingCampaigns.length) return;
+    setLinkChoice(prev=>{
+      const next = { ...prev };
+      let changed = false;
+      rows.forEach(r=>{
+        const key = r.documentIds[0];
+        if(next[key]!=null || !r.name) return;
+        const match = existingCampaigns.find(c=>slugifyPromoName(c.name)===slugifyPromoName(r.name));
+        if(match){ next[key] = match.id; changed = true; }
+      });
+      return changed ? next : prev;
+    });
+  }, [rows, existingCampaigns]);
   async function trackRow(row){
-    setTrackingId(row.documentId);
+    const key = row.documentIds[0];
+    setTrackingId(key);
     try{
-      const targetCampaignId = linkChoice[row.documentId] || null;
+      const targetCampaignId = linkChoice[key] || null;
       const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/trackPromoByDocumentIdNow", {
         method:"POST", headers:{ "Content-Type":"application/json", ...(await authHeader()) },
-        body: JSON.stringify({ documentId: row.documentId, shopCode: row.shops[0], updatedBy: (myStaff && myStaff.name) || "", targetCampaignId }),
+        body: JSON.stringify({ documentIds: row.documentIds, shopCode: row.shops[0], name: row.name || undefined, updatedBy: (myStaff && myStaff.name) || "", targetCampaignId }),
       });
       const data = await resp.json();
       if(!data.ok) throw new Error(data.error||"Lỗi không rõ.");
       setMsg(targetCampaignId
-        ? `✓ Đã ghép doanh thu thực tế vào chương trình "${data.name}".`
-        : `✓ Đã tạo chương trình mới "${data.name}" và bắt đầu theo dõi tự động.`);
+        ? `✓ Đã ghép doanh thu thực tế (từ ${row.documentIds.length} lượt phát sinh) vào chương trình "${data.name}".`
+        : `✓ Đã tạo chương trình mới "${data.name}" (gộp ${row.documentIds.length} lượt phát sinh) và bắt đầu theo dõi tự động.`);
       if(onTracked) onTracked();
     } catch(err){
       console.error("Theo dõi từ danh sách quét lỗi:", err);
@@ -9875,22 +10182,27 @@ function PromoDocDetectSection({ myStaff, monthKey, onTracked }){
   return React.createElement("div", { className:"card", style:{ marginTop:16 } }, [
     React.createElement("div", { key:"t", className:"cardTitle" }, "🔍 Quét chương trình đã dùng thực tế trong tháng (khuyến nghị — không cần biết DocumentID)"),
     React.createElement("div", { key:"sub", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:12 } },
-      `App tự tìm TẤT CẢ chương trình khuyến mại/voucher đã có khách dùng trong tháng ${monthKey}, dựa thẳng trên dữ liệu bán hàng đã đồng bộ — không cần bạn biết trước DocumentID. Bấm "Quét" rồi chọn chương trình muốn theo dõi tự động (kể cả voucher rời, không chỉ chương trình giảm giá theo SKU).`),
+      `App tự tìm TẤT CẢ chương trình khuyến mại/voucher đã có khách dùng trong tháng ${monthKey}, dựa thẳng trên dữ liệu bán hàng đã đồng bộ — không cần bạn biết trước DocumentID. Mỗi lượt khách dùng voucher/khuyến mãi có 1 DocumentID riêng, nhưng app đã tự tra tên chương trình qua API và GỘP LẠI thành 1 dòng theo tên — chỉ cần chọn đúng chương trình muốn ghép (app tự chọn sẵn nếu tên khớp với file kế hoạch) rồi bấm "Theo dõi tự động".`),
     React.createElement("button", { key:"go", type:"button", className:"btn btnPrimary", disabled:busy, onClick:scan, style:{ padding:"7px 16px", fontSize:13, marginBottom:12 } },
       busy ? "Đang quét..." : "Quét ngay"),
     msg && React.createElement("div", { key:"msg", style:{ fontSize:12.5, color: msg.startsWith("Lỗi")?"#b3261e":"var(--pine)", background: msg.startsWith("Lỗi")?"#fbe9e7":"var(--pineSoft)", borderRadius:8, padding:"8px 10px", marginBottom:10 } }, msg),
     rows && rows.length>0 && React.createElement("div", { key:"tblwrap", style:{ overflowX:"auto" } }, React.createElement("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5 } }, [
-      React.createElement("thead", { key:"h" }, React.createElement("tr", { style:{ background:"#f8f8f6" } }, ["DocumentID","Doanh thu thực tế","SL","Số đơn","Nhà thuốc","Ghép với chương trình đã có (khuyến nghị)",""].map(h=>
+      React.createElement("thead", { key:"h" }, React.createElement("tr", { style:{ background:"#f8f8f6" } }, ["Chương trình phát hiện","Doanh thu thực tế","SL","Số đơn","Nhà thuốc","Ghép với chương trình đã có (khuyến nghị)",""].map(h=>
         React.createElement("th", { key:h, style:{ textAlign:"left", padding:"6px 8px", borderBottom:"2px solid var(--line)" } }, h)))),
-      React.createElement("tbody", { key:"b" }, rows.map(r=>
-        React.createElement("tr", { key:r.documentId, style:{ borderTop:"1px solid var(--line)" } }, [
-          React.createElement("td", { key:"id", style:{ padding:"6px 8px", fontWeight:600 } }, r.documentId),
+      React.createElement("tbody", { key:"b" }, rows.map(r=>{
+        const key = r.documentIds[0];
+        return React.createElement("tr", { key, style:{ borderTop:"1px solid var(--line)" } }, [
+          React.createElement("td", { key:"id", style:{ padding:"6px 8px" } }, [
+            React.createElement("div", { key:"n", style:{ fontWeight:600 } }, r.name || key),
+            React.createElement("div", { key:"c", style:{ fontSize:10.5, color:"var(--inkSoft)" } },
+              r.name ? `Gộp từ ${r.documentIds.length} lượt phát sinh (${key}${r.documentIds.length>1?", ...":""})` : "Không tra được tên qua API — chỉ có 1 DocumentID"),
+          ]),
           React.createElement("td", { key:"rev", style:{ padding:"6px 8px" } }, fmtVND(r.totalRevenue)),
           React.createElement("td", { key:"qty", style:{ padding:"6px 8px" } }, fmtNum(r.totalQty)),
           React.createElement("td", { key:"oc", style:{ padding:"6px 8px" } }, fmtNum(r.orderCount)),
           React.createElement("td", { key:"sh", style:{ padding:"6px 8px", fontSize:11 } }, promoShopsLabel(r.shops)),
           React.createElement("td", { key:"link", style:{ padding:"6px 8px" } },
-            React.createElement("select", { value:linkChoice[r.documentId]||"", onChange:e=>setLinkChoice(m=>({ ...m, [r.documentId]:e.target.value })),
+            React.createElement("select", { value:linkChoice[key]||"", onChange:e=>setLinkChoice(m=>({ ...m, [key]:e.target.value })),
               style:{ fontSize:11.5, padding:"4px 6px", borderRadius:6, border:"1px solid var(--line)", maxWidth:220 } }, [
               React.createElement("option", { key:"none", value:"" }, "— Tạo chương trình mới —"),
               ...existingCampaigns.map(c=>React.createElement("option", { key:c.id, value:c.id },
@@ -9898,8 +10210,9 @@ function PromoDocDetectSection({ myStaff, monthKey, onTracked }){
             ])),
           React.createElement("td", { key:"a", style:{ padding:"6px 8px" } },
             React.createElement("button", { type:"button", className:"btn btnGhost", style:{ fontSize:11.5, padding:"4px 10px" },
-              disabled: trackingId===r.documentId, onClick:()=>trackRow(r) }, trackingId===r.documentId ? "Đang lưu..." : "Theo dõi tự động")),
-        ]))),
+              disabled: trackingId===key, onClick:()=>trackRow(r) }, trackingId===key ? "Đang lưu..." : "Theo dõi tự động")),
+        ]);
+      })),
     ])),
   ]);
 }
@@ -10261,6 +10574,10 @@ function ShopInventoryValueBarChart({ items }){
 // lô sắp hết hạn nhất/nhà thuốc — tab "Đồng bộ dữ liệu"/KPI đã tính) — cho quản lý 1 màn hình tổng
 // quan thay vì phải mở nhiều tab. Giao diện làm lại theo mẫu "Báo cáo kinh doanh" (25/9/2026):
 // thẻ KPI + biểu đồ cột theo nhà thuốc + bảng cảnh báo hạn sử dụng.
+function InventoryFormulaNote(){
+  return React.createElement("div", { className:"card", style:{ marginBottom:12, fontSize:12, color:"var(--inkSoft)" } },
+    "Công thức: DOI (Days of Inventory) = Tồn khả dụng ÷ Tốc độ tiêu thụ/ngày. Vòng quay ≈ 30/DOI (tháng). Đề xuất điều chuyển chỉ là gợi ý — Đồng ý/Từ chối qua transferDecisions (không tự xuất kho).");
+}
 function InventoryHealthView({ isAdmin, myStaff }){
   const [summary, setSummary] = useState(null);
   const [expiryByShop, setExpiryByShop] = useState({});
@@ -10578,7 +10895,8 @@ function DailyResultsView({ isAdmin, myStaff }){
         React.createElement("label", { key:"dl", style:{ fontSize:12.5, color:"var(--inkSoft)" } }, "Ngày phân tích:"),
         React.createElement("input", { key:"d", type:"date", value:date, max:addDays(todayISO(),-1), onChange:e=>setDate(e.target.value),
           style:{ padding:"7px 10px", fontSize:13, border:"1px solid var(--line)", borderRadius:8 } }),
-        data && data.generatedAtTs && React.createElement("span", { key:"gen", style:{ fontSize:11.5, color:"var(--inkSoft)" } }, `Tính lúc ${new Date(data.generatedAtTs).toLocaleString("vi-VN")}`),
+        data && data.generatedAtTs && React.createElement("span", { key:"gen", style:{ fontSize:11.5, color:"var(--inkSoft)" } },
+          `Nguồn: dailyResults · Tính lúc ${new Date(data.generatedAtTs).toLocaleString("vi-VN")}${data.formulaVersion ? " · CT " + data.formulaVersion : ""}`),
       ]),
       React.createElement("div", { key:"r", style:{ display:"flex", gap:8 } }, [
         isAdmin && React.createElement("button", { key:"run", type:"button", className:"btn btnPrimary", disabled:analyzing, onClick:runAnalyze }, analyzing ? "Đang phân tích..." : "🔄 Phân tích ngay"),
@@ -11572,6 +11890,7 @@ function DecisionLogRow({ decKey, d, onSaveOutcome }){
   ]);
 }
 function TransferSuggestionsView({ navParam, myStaff } = {}){
+  const [composer, setComposer] = useState(null);
   const [data, setData] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
@@ -12008,6 +12327,17 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
             React.createElement("div", { key:"l", style:{ fontSize:11.5, color:"var(--inkSoft)" } }, SPEED_TREND_LABELS[k]),
           ]))
         ),
+        React.createElement("div", { key:"kpi", style:{ display:"flex", flexWrap:"wrap", gap:12, marginTop:12, fontSize:12.5 } }, [
+          React.createElement("span", { key:"u", style:{ color:"var(--clay)", fontWeight:700 } },
+            `Nguy cơ hết (URGENT): ${fmtNum((s.byStatus||{}).URGENT_REPLENISH||0)}`),
+          React.createElement("span", { key:"s" },
+            `Nhập sớm: ${fmtNum((s.byStatus||{}).REPLENISH_SOON||0)}`),
+          React.createElement("span", { key:"o" },
+            `Dư/tồn cao: ${fmtNum(((s.byStatus||{}).OVERSTOCK||0)+((s.byStatus||{}).MONITOR_HIGH_STOCK||0))}`),
+          React.createElement("span", { key:"d" },
+            `Chết 60n: ${fmtNum((s.byStatus||{}).DEAD_STOCK||0)}`),
+          React.createElement("span", { key:"note", style:{ color:"var(--inkSoft)" } }, "DOI = Tồn ÷ ADS (ưu tiên ADS 30 ngày)."),
+        ]),
       ]),
 
       // Mục XVI — Consumption Matrix
@@ -12058,16 +12388,44 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
                     React.createElement("caption", { key:"cap", style:{ captionSide:"bottom", fontSize:11.5, color:"var(--inkSoft)", textAlign:"left", paddingTop:6 } },
                       `Hiển thị ${fmtNum(flaggedItems.length)}/${fmtNum((s.byStatus||{})[flaggedStatus]||flaggedItems.length)} mã${flaggedItems.length < ((s.byStatus||{})[flaggedStatus]||0) ? " — chọn 1 nhà thuốc để xem đầy đủ hơn" : ""}.`),
                     React.createElement("thead",{key:"h"}, React.createElement("tr",null,
-                      ["Mã hàng","Tên hàng","Nhà thuốc","Tồn","Bán TB/ngày (7 ngày)","Bán TB/ngày (30 ngày)","Đủ bán (ngày)"].map((h,i)=>React.createElement("th",{key:i},h)))),
-                    React.createElement("tbody",{key:"b"}, flaggedItems.map((it,i) => React.createElement("tr",{key:i}, [
-                      React.createElement("td",{key:"pid"}, it.productId),
-                      React.createElement("td",{key:"pn"}, it.productName),
-                      React.createElement("td",{key:"sh"}, nt(it.shopCode)),
-                      React.createElement("td",{key:"q"}, `${fmtNum(it.stockQty)} ${it.unit||""}`),
-                      React.createElement("td",{key:"a7"}, it.ads7),
-                      React.createElement("td",{key:"a30"}, it.ads30),
-                      React.createElement("td",{key:"doi"}, it.doi),
-                    ]))),
+                      ["Mã hàng","Tên hàng","Nhà thuốc","Tồn","ADS 7n","ADS 30n","DOI (ngày)","Rủi ro tồn","Việc"].map((h,i)=>React.createElement("th",{key:i},h)))),
+                    React.createElement("tbody",{key:"b"}, flaggedItems.map((it,i) => {
+                      const doi = it.doi != null ? Number(it.doi) : calcDOI(it.stockQty, it.ads30 || it.ads7);
+                      const risk = doi == null ? "—" : (doi <= 7 ? "Nguy cơ hết" : doi <= 14 ? "Theo dõi" : doi >= 90 ? "Tồn lâu" : "Ổn");
+                      const riskColor = risk === "Nguy cơ hết" ? "var(--clay)" : risk === "Tồn lâu" ? "var(--amber, #b4720a)" : risk === "Theo dõi" ? "#b4720a" : "var(--pine)";
+                      return React.createElement("tr",{key:i}, [
+                        React.createElement("td",{key:"pid"}, it.productId),
+                        React.createElement("td",{key:"pn"}, it.productName),
+                        React.createElement("td",{key:"sh"}, nt(it.shopCode)),
+                        React.createElement("td",{key:"q"}, `${fmtNum(it.stockQty)} ${it.unit||""}`),
+                        React.createElement("td",{key:"a7"}, it.ads7 != null ? Math.round(Number(it.ads7)*100)/100 : "—"),
+                        React.createElement("td",{key:"a30"}, it.ads30 != null ? Math.round(Number(it.ads30)*100)/100 : "—"),
+                        React.createElement("td",{key:"doi", style:{ fontWeight:700, color: riskColor }}, doi == null ? "—" : doiLabel(doi)),
+                        React.createElement("td",{key:"rk", style:{ color: riskColor, fontWeight:600, fontSize:12 }}, risk),
+                        React.createElement("td",{key:"tk"}, React.createElement("button", {
+                          type:"button", className:"btn btnGhost", style:{ fontSize:11, padding:"3px 8px" },
+                          onClick:()=>{
+                            if(typeof setComposer === "function"){
+                              setComposer(buildAlertTaskPreset({
+                                heading:"Tạo việc từ tồn kho",
+                                title: `[${flaggedStatus}] ${it.productName||it.productId} · ${it.shopCode}`,
+                                mota: `Tồn ${fmtNum(it.stockQty)} ${it.unit||""}. ADS30=${it.ads30??"—"}, DOI=${doi??"—"}.`,
+                                shop: it.shopCode,
+                                module: "Goods",
+                                deadline: addDays(todayISO(), doi != null && doi <= 7 ? 1 : 3),
+                                sourceType: "inventory",
+                                sourceCode: it.productId,
+                                evidence: `stockStatus=${flaggedStatus}; stockQty=${it.stockQty}; ads30=${it.ads30}; doi=${doi}`,
+                                expectedResult: "Cân bằng tồn / không stockout / giảm tồn lâu",
+                                extra: { productId: it.productId, shopCode: it.shopCode, stockStatus: flaggedStatus },
+                              }));
+                            } else if(typeof window !== "undefined"){
+                              window.alert("Mở tab Công việc / Action Center để giao việc nhập hoặc điều chuyển cho SKU này.");
+                            }
+                          },
+                        }, "＋ Việc")),
+                      ]);
+                    })),
                   ]))),
       ]),
     ]);
@@ -12075,6 +12433,8 @@ function TransferSuggestionsView({ navParam, myStaff } = {}){
 
   return React.createElement("div", null, [
     React.createElement(PageTitle, { key:"t" }, "Điều chuyển hàng hoá"),
+    React.createElement(InventoryFormulaNote, { key:"doi" }),
+    composer && React.createElement(TaskComposer360, { key:"cmp", preset:composer, onClose:()=>setComposer(null) }),
 
     React.createElement(SubTabBar, { key:"subtabs", tabs:[{ id:"dieuchuyen", label:"Điều chuyển" }, { id:"tocdo", label:"📉 Tốc độ tiêu thụ" }], active:invSubTab==="dieuchuyen" ? "dieuchuyen" : "tocdo", onChange:setInvSubTab }),
 
@@ -13009,6 +13369,8 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate }){
     rc("div", { key:"head", style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", flexWrap:"wrap", gap:10, marginBottom:14 } }, [
       rc("div", { key:"t" }, [
         rc(PageTitle, { key:"h", style:{ marginBottom:2 } }, "Tổng quan điều hành"),
+        rc("div", { key:"meta", style:{ fontSize:11.5, color:"var(--inkSoft)" } },
+          `Nguồn: dailyResults / shopHealth / risk · Công thức KPI ${typeof KPI_FORMULA_VERSION_UI!=="undefined"?KPI_FORMULA_VERSION_UI:"—"} · Cập nhật theo lần đồng bộ gần nhất (Hệ thống → Sức khỏe đồng bộ)`),
       ]),
       rc("div", { key:"f", style:{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" } }, [
         rc(MonthPicker, { key:"m", month:monthKey, setMonth:setMonthKey }),
@@ -13019,11 +13381,49 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate }){
 
     // AREA OVERVIEW — 5 KPI khu vực (mục A đặc tả Module 6)
     rc("div", { key:"areaOverview", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10, marginBottom:16 } }, [
-      rc(StatTile, { key:"t1", label:"Nhà thuốc trong phạm vi", value:fmtNum(totalShopsInScope), sub:isAll?"Toàn bộ chuỗi":shopLabel(adminShop), tint:"var(--pineSoft)", onClick:()=>go("shop360", isAll ? undefined : { shop:adminShop }) }),
+      rc(StatTile, { key:"t1", label:"Nhà thuốc trong phạm vi", value:fmtNum(totalShopsInScope), sub:isAll?"Toàn bộ chuỗi":shopLabel(adminShop), tint:"var(--pineSoft)", onClick:()=>go("shop360", isAll ? undefined : { shop:adminShop }), source:"shopList / DEFAULT_SHOPS", updatedAt:todayStr }),
       rc(StatTile, { key:"t2", label:"Đạt KPI (điểm > 85)", value:shopsAtKpiCount==null?"—":fmtNum(shopsAtKpiCount), sub:shopsAtKpiCount==null?"Chưa có dữ liệu":`/${totalShopsInScope} nhà thuốc`, tint:"var(--pineSoft)", onClick:()=>go("shop360", isAll ? undefined : { shop:adminShop }) }),
-      rc(StatTile, { key:"t3", label:"Nhà thuốc có cảnh báo", value:shopsWithAlertCount==null?"—":fmtNum(shopsWithAlertCount), sub:shopsWithAlertCount==null?"Chưa có dữ liệu":`/${totalShopsInScope} nhà thuốc`, tint:(shopsWithAlertCount||0)>0?"#fdecec":"var(--pineSoft)", onClick:()=>go("risk") }),
+      rc(StatTile, { key:"t3", label:"Nhà thuốc có cảnh báo", value:shopsWithAlertCount==null?"—":fmtNum(shopsWithAlertCount), sub:shopsWithAlertCount==null?"Chưa có dữ liệu":`/${totalShopsInScope} nhà thuốc`, tint:(shopsWithAlertCount||0)>0?"#fdecec":"var(--pineSoft)", onClick:()=>go("risk"), source:"shopHealth / risks", updatedAt:(summary&&summary.generatedAtTs)?String(summary.generatedAtTs).replace("T"," ").slice(0,16):"—"}),
       rc(StatTile, { key:"t4", label:"Vấn đề đang mở", value:fmtNum(issues.length), sub:"Toàn phạm vi đang xem", tint:issues.length>0?"#fff4e0":"var(--pineSoft)", onClick:()=>go("risk") }),
-      rc(StatTile, { key:"t5", label:"Hoàn thành đúng hạn (hôm nay)", value:onTimeTodayPct==null?"—":`${onTimeTodayPct}%`, sub:onTimeTodayPct==null?"Chưa có việc hoàn thành hôm nay":`${onTimeTodayCount}/${doneTodayN} việc`, tint:"var(--pineSoft)", onClick:()=>go("action", { tab:"done" }) }),
+      rc(StatTile, { key:"t5", label:"Hoàn thành đúng hạn (hôm nay)", value:onTimeTodayPct==null?"—":`${onTimeTodayPct}%`, sub:onTimeTodayPct==null?"Chưa có việc hoàn thành hôm nay":`${onTimeTodayCount}/${doneTodayN} việc`, tint:"var(--pineSoft)", onClick:()=>go("action", { tab:"done" }), source:"tasks", updatedAt: todayStr }),
+    ]),
+
+    // B1 (P1): KPI có actual / target / Δ / kỳ / nguồn / cập nhật — doanh thu tháng + việc quá hạn
+    rc("div", { key:"kpiStrip", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:10, marginBottom:16 } }, [
+      rc(KpiMetricCard, {
+        key: "rev",
+        label: "Doanh thu tháng",
+        actual: revenueBlock && revenueBlock.actual != null ? revenueBlock.actual : null,
+        target: revenueBlock && revenueBlock.target != null ? revenueBlock.target : null,
+        unit: "đ",
+        period: monthKey,
+        source: "revenueAnalytics / monthTracking",
+        updatedAt: (revStats && (revStats.updatedAtTs || revStats.generatedAtTs)) ? String(revStats.updatedAtTs || revStats.generatedAtTs).replace("T"," ").slice(0,16) : "—",
+        onClick: ()=>go("revenueAnalytics"),
+      }),
+      rc(KpiMetricCard, {
+        key: "chk",
+        label: "Checklist hôm qua (% nộp)",
+        actual: checklistEligibleSum ? Math.round((checklistSubmittedSum/checklistEligibleSum)*1000)/10 : null,
+        target: 100,
+        unit: "%",
+        period: "Hôm qua · người có ca",
+        source: "shopHealthSummary.ops.checklistYesterday",
+        updatedAt: (summary && summary.generatedAtTs) ? String(summary.generatedAtTs).replace("T"," ").slice(0,16) : "—",
+        onClick: ()=>go("checklist"),
+      }),
+      rc(KpiMetricCard, {
+        key: "od",
+        label: "Việc quá hạn (đang mở)",
+        actual: overdueTasks.length,
+        target: 0,
+        unit: "",
+        better: "lower",
+        period: todayStr,
+        source: "tasks · deadline < now",
+        updatedAt: todayStr,
+        onClick: ()=>go("action"),
+      }),
     ]),
 
     // PERFORMANCE ANALYTICS — xu hướng doanh thu theo ngày trong kỳ đang xem (mục E đặc tả Module 6)
@@ -13062,7 +13462,24 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate }){
                 i.priority && rc(IssuePriorityBadge, { key:"pr", priority:i.priority }),
                 rc(Pill360, { key:"g", text:(HEALTH_GROUP_LABEL[i.group]||"").toUpperCase(), color:ISSUE_SEV[i.severity].color }),
               ]),
-              rc("button", { key:"c", type:"button", className:"btn btnGhost", style:{ fontSize:11, padding:"3px 8px", flex:"none" }, onClick:()=>setIssueDetail(i) }, "＋ Việc"),
+              rc("button", { key:"c", type:"button", className:"btn btnGhost", style:{ fontSize:11, padding:"3px 8px", flex:"none" }, onClick:()=>setIssueDetail(i), title:"Chi tiết vấn đề" }, "Chi tiết"),
+              rc("button", { key:"tk", type:"button", className:"btn btnPrimary", style:{ fontSize:11, padding:"3px 8px", flex:"none" }, onClick:()=>{
+                setComposer(buildAlertTaskPreset({
+                  heading: "Tạo việc từ vấn đề sức khoẻ",
+                  title: `[${i.code||""}] ${i.title||i.message||"Vấn đề"}`,
+                  mota: i.detail || i.message || "",
+                  shop: i.shopCode || "",
+                  module: (i.group==="customer" ? "CRM" : i.group==="goods" ? "Goods" : i.group==="hr" ? "HR" : "Ops"),
+                  deadline: addDays(todayStr, i.priority==="P0" || i.severity==="critical" ? 1 : 3),
+                  sourceType: "shopHealthIssue",
+                  sourceId: (i.shopCode||"") + "__" + (i.code||""),
+                  sourceCode: i.code,
+                  hypothesis: i.hypothesis || i.cause || null,
+                  evidence: [i.metric, i.currentValue != null ? String(i.currentValue) : null, i.threshold != null ? ("ngưỡng "+i.threshold) : null].filter(Boolean).join(" · ") || null,
+                  expectedResult: "Chỉ số sức khoẻ / vấn đề được cải thiện sau xử lý",
+                  extra: { sourceShop: i.shopCode, sourceScreen: "commandCenter", issuePriority: i.priority || i.severity },
+                }));
+              } }, "＋ Việc"),
             ]); })),
         issues.length>8 && rc("div", { key:"more", onClick:()=>setShowAllIssues(v=>!v), style:{ fontSize:11.5, color:CL360.info, cursor:"pointer", marginTop:8 } }, showAllIssues ? "Thu gọn ‹" : `Xem tất cả ${issues.length} vấn đề ›`),
       ]),
@@ -13975,7 +14392,7 @@ function TaskComposer360({ preset, onClose, onSaved }){
       rc("form", { key:"f", onSubmit:save }, [
         fld("ti", "Tiêu đề", rc("input", { type:"text", value:title, onChange:e=>setTitle(e.target.value) })),
         fld("mo", "Mô tả / hướng dẫn", rc("textarea", { rows:3, value:mota, onChange:e=>setMota(e.target.value) })),
-        fld("mod", "Nhóm việc", rc("select", { value:module, onChange:e=>setModule(e.target.value) }, ["HR","CRM","Goods","Khác"].map(m => rc("option", { key:m, value:m }, moduleLabelVI(m))))),
+        fld("mod", "Nhóm việc", rc("select", { value:module, onChange:e=>setModule(e.target.value) }, ["HR","CRM","Goods","Ops","Khác"].map(m => rc("option", { key:m, value:m }, moduleLabelVI(m))))),
         fld("tg", "Giao cho", rc("select", { value:target, onChange:e=>setTarget(e.target.value) },
           rc("option", { value:"staff" }, "1 nhân viên cụ thể"), rc("option", { value:"shop" }, "Cả nhà thuốc (ai làm xong cũng được)"))),
         target==="staff"
@@ -15296,6 +15713,51 @@ function Productivity360Panel({ me, thang, metrics, summary, onCreateTask }){
   ]);
 }
 
+
+function PeerCompareCard({ me, thang, staffList, assign }){
+  const [peers, setPeers] = useState([]);
+  useEffect(()=>{
+    if(!me || !me.role){ setPeers([]); return; }
+    const same = (staffList||[]).filter(s => s.id !== me.id && s.role === me.role && s.shop === me.shop && s.active !== false);
+    if(same.length === 0){ setPeers([]); return; }
+    let cancelled = false;
+    Promise.all(same.slice(0, 12).map(s =>
+      db.collection("kpiAssignments").doc(s.id + "_" + thang).get().then(d => ({ staff:s, data:d.exists?d.data():null }))
+    )).then(rows => {
+      if(cancelled) return;
+      setPeers(rows.map(r => {
+        const pct = r.data && (r.data.doanhSoPct != null ? r.data.doanhSoPct : r.data.pct);
+        return { name: r.staff.name, shop: r.staff.shop, pct: pct != null ? Number(pct) : null };
+      }).filter(x => x.pct != null));
+    }).catch(()=>setPeers([]));
+    return ()=>{ cancelled = true; };
+  }, [me && me.id, me && me.role, me && me.shop, thang, (staffList||[]).length]);
+  const myPct = assign && (assign.doanhSoPct != null ? Number(assign.doanhSoPct) : assign.pct != null ? Number(assign.pct) : null);
+  const vals = peers.map(p => p.pct).filter(x => x != null);
+  if(myPct != null) vals.push(myPct);
+  const avg = vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null;
+  return React.createElement("div", { className:"card", style:{ marginBottom:12 } }, [
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:14, marginBottom:4 } }, "So sánh cùng vai trò · cùng nhà thuốc"),
+    React.createElement("div", { key:"s", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8 } },
+      me ? `${me.role || "—"} · ${me.shop || "—"} · tháng ${thang}` : "—"),
+    myPct == null && peers.length === 0
+      ? React.createElement("div", { key:"e", className:"emptyState" }, "Chưa đủ KPI cùng vai trò để so sánh.")
+      : React.createElement("div", { key:"b" }, [
+          React.createElement("div", { key:"me", style:{ fontSize:13, marginBottom:6 } }, [
+            "Bạn: ", React.createElement("b", { key:"p" }, myPct != null ? myPct + "%" : "—"),
+            avg != null ? React.createElement("span", { key:"a", style:{ color:"var(--inkSoft)" } }, ` · Trung bình nhóm: ${Math.round(avg*10)/10}%`) : null,
+          ]),
+          peers.length > 0 && React.createElement("div", { key:"list", style:{ fontSize:12 } },
+            peers.slice().sort((a,b)=>(b.pct||0)-(a.pct||0)).slice(0,8).map((p,i) =>
+              React.createElement("div", { key:i, style:{ display:"flex", justifyContent:"space-between", padding:"3px 0", borderBottom:"1px solid var(--line)" } }, [
+                React.createElement("span", { key:"n" }, p.name),
+                React.createElement("b", { key:"p" }, p.pct + "%"),
+              ])
+            )
+          ),
+        ]),
+  ]);
+}
 function Employee360View({ isAdmin, myStaff, navParam, onNavigate }){
   const [staffList, setStaffList] = useState([]);
   const [paceList, setPaceList] = useState([]);
@@ -15653,6 +16115,7 @@ function Employee360View({ isAdmin, myStaff, navParam, onNavigate }){
         }) }, "Tạo coaching task")
       : rc("button", { type:"button", className:"btn", style:{ fontSize:12, padding:"6px 12px" }, onClick:()=>onNavigate && onNavigate("kudos") }, "Đi tới Ghi nhận & Quà"));
     body = rc("div", { key:"ov" }, [
+      me && rc(PeerCompareCard, { key:"peer", me, thang, staffList, assign }),
       // P1-1 (mục XI): cảnh báo vấn đề nhân sự phát hiện được cho nhân viên này.
       staffIssues.length>0 && rc("div", { key:"issues", className:"card", style:{ marginBottom:12, borderColor:CL360.warn } }, [
         rc(Head360, { key:"h", title:`⚠ Vấn đề phát hiện (${staffIssues.length})` }),
@@ -16121,10 +16584,47 @@ function RiskCenterView({ isAdmin, myStaff, navParam, onNavigate }){
     setBusy(false);
   }
   function createTaskFor(r){
-    setComposer({ heading:"Tạo việc xử lý rủi ro", module: r.domain==="Customer" ? "CRM" : r.domain==="Inventory" ? "Goods" : r.domain==="People" ? "HR" : "Ops",
-      staffId: r.ownerType==="staff" ? r.ownerId : "", shopOnly: r.entityType!=="staff", shop:r.shop || "", deadline: r.dueAt ? new Date(new Date(r.dueAt).getTime()+7*3600000).toISOString().slice(0,10) : addDays(todayISO(), 1),
-      title:`[${r.code}] ${r.title}`, mota:`${r.detail || ""}\nNguồn: ${(r.evidence||{}).source || "—"} · Rủi ro ${r.riskId}`.trim(),
-      extra:{ sourceRiskId:r.riskId, sourceRiskCode:r.code, sourceShop:r.shop || null, actionInsight:r.title, mucDoAnhHuong: (r.level==="CRITICAL"||r.level==="HIGH") ? "Cao" : r.level==="MEDIUM" ? "Trung bình" : "Thấp", sourceScreen:"riskCenter" } });
+    // Chống trùng: đã có việc mở từ cùng riskId/code
+    findOpenTaskBySource({ sourceRiskId: r.riskId || r.id, sourceCode: r.code, sourceType:"risk", shop: r.shop }).then(existing => {
+      if(existing){
+        window.alert("Đã có việc đang mở từ cảnh báo này: \"" + (existing.title||existing.id) + "\". Mở Action Center để xem.");
+        return;
+      }
+      createTaskForProceed(r);
+    });
+  }
+  function createTaskForProceed(r){
+    const mod = r.domain==="Customer" ? "CRM" : r.domain==="Inventory" ? "Goods" : r.domain==="People" ? "HR" : "Ops";
+    const due = r.dueAt ? new Date(new Date(r.dueAt).getTime()+7*3600000).toISOString().slice(0,10) : addDays(todayISO(), 1);
+    const evid = r.evidence || {};
+    const evidenceStr = [evid.source, evid.metric, evid.currentValue != null ? ("hiện tại: " + evid.currentValue) : null, evid.threshold != null ? ("ngưỡng: " + evid.threshold) : null].filter(Boolean).join(" · ") || (r.detail || "");
+    setComposer(Object.assign(
+      buildAlertTaskPreset({
+        heading: "Tạo việc xử lý rủi ro",
+        title: "[" + (r.code||"") + "] " + (r.title||""),
+        mota: (r.detail || "").trim(),
+        shop: r.shop || "",
+        module: mod,
+        deadline: due,
+        staffId: r.ownerType === "staff" ? r.ownerId : null,
+        staffName: r.ownerName || null,
+        sourceType: "risk",
+        sourceId: r.riskId || r.id,
+        sourceCode: r.code,
+        hypothesis: r.hypothesis || r.rootCause || null,
+        evidence: evidenceStr,
+        expectedResult: "Điều kiện rủi ro được xử lý / không tái phát trong kỳ theo dõi",
+        extra: {
+          sourceRiskId: r.riskId,
+          sourceRiskCode: r.code,
+          sourceShop: r.shop || null,
+          actionInsight: r.title,
+          mucDoAnhHuong: (r.level==="CRITICAL"||r.level==="HIGH") ? "Cao" : r.level==="MEDIUM" ? "Trung bình" : "Thấp",
+          sourceScreen: "riskCenter",
+        },
+      }),
+      { shopOnly: r.entityType !== "staff" }
+    ));
   }
 
   const header = rc("div", { key:"head", style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", flexWrap:"wrap", gap:10, marginBottom:12 } }, [
@@ -17230,24 +17730,38 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
   const lists = {
     mine: open.filter(t => t.assignType==="admin").sort(sortOpen),
     team: open.filter(t => t.assignType!=="admin").sort(sortOpen),
-    // "Chờ kiểm tra" (P0-3): nhân viên đã nộp kết quả, đang chờ quản lý DUYỆT/từ chối — khác với
-    // "Chưa nhận xét" bên dưới (việc ĐÃ được duyệt xong rồi nhưng quản lý chưa viết nhận xét thêm).
+    // "Chờ kiểm tra" / đặc tả "Chờ xác minh": đã nộp kết quả, chờ quản lý duyệt.
     awaiting: open.filter(t => taskSubStatus(t)==="Chờ kiểm tra").sort((a,b) => (a.ngayNopKetQua||"").localeCompare(b.ngayNopKetQua||"")),
+    today: open.filter(t => t.deadline === today).sort(sortOpen),
+    dueSoon: open.filter(t => {
+      if(!t.deadline || t.deadline < today) return false;
+      const d = taskDeadlineTs360(t);
+      return d >= nowTs && d <= (today + "T23:59");
+    }).sort(sortOpen),
     review: done.filter(t => !t.nhanXetQuanLy).sort((a,b) => (b.ngayHoanThanh||"").localeCompare(a.ngayHoanThanh||"")),
+    // Hoàn thành nhưng có thể chưa đạt mục tiêu (có flag / không đạt trước đó)
+    doneWeak: done.filter(t => t.ketQuaDat === false || t.subTrangThai === "Không đạt" || (t.mucTieuDat === false)).sort((a,b) => (b.ngayHoanThanh||"").localeCompare(a.ngayHoanThanh||"")),
     overdue: open.filter(t => t.deadline && taskDeadlineTs360(t) < nowTs).sort(sortOpen),
     done: done.slice().sort((a,b) => (b.ngayHoanThanh||"").localeCompare(a.ngayHoanThanh||"")),
   };
   const tabs = shopScope ? [
-    { id:"awaiting", label:`Chờ kiểm tra (${lists.awaiting.length})` },
+    { id:"today", label:`Hôm nay (${lists.today.length})` },
+    { id:"awaiting", label:`Chờ xác minh (${lists.awaiting.length})` },
     { id:"team", label:`Đang thực hiện (${lists.team.length})` },
+    { id:"dueSoon", label:`Nguy cơ trễ (${lists.dueSoon.length})` },
     { id:"overdue", label:`Quá hạn (${lists.overdue.length})` },
     { id:"review", label:`Chưa nhận xét (${lists.review.length})` },
     { id:"done", label:`Đã hoàn tất (${lists.done.length})` },
     { id:"progress", label:"📊 Tiến độ nhân viên" },
   ] : [
-    { id:"mine", label:`Của tôi (${lists.mine.length})` }, { id:"team", label:`Đội nhóm (${lists.team.length})` },
-    { id:"awaiting", label:`Chờ kiểm tra (${lists.awaiting.length})` },
-    { id:"review", label:`Chưa nhận xét (${lists.review.length})` }, { id:"overdue", label:`Quá hạn (${lists.overdue.length})` },
+    { id:"mine", label:`Của tôi (${lists.mine.length})` },
+    { id:"today", label:`Hôm nay (${lists.today.length})` },
+    { id:"team", label:`Đội nhóm (${lists.team.length})` },
+    { id:"awaiting", label:`Chờ xác minh (${lists.awaiting.length})` },
+    { id:"dueSoon", label:`Nguy cơ trễ (${lists.dueSoon.length})` },
+    { id:"review", label:`Chưa nhận xét (${lists.review.length})` },
+    { id:"overdue", label:`Quá hạn (${lists.overdue.length})` },
+    { id:"doneWeak", label:`Xong chưa đạt (${lists.doneWeak.length})` },
     { id:"done", label:`Đã hoàn tất (${lists.done.length})` },
     { id:"progress", label:"📊 Tiến độ nhân viên" },
   ];
@@ -17557,6 +18071,47 @@ function AlertRulesConfigView(){
       setCrmLoaded(true);
     });
   }, []);
+
+  const CRM_ACT_DEFAULTS = { enabled:false, maxTasksPerRun:50, cooldownDays:14, segSilentVip:true, segAtRisk:true, segVip:false, segLoyal:false };
+  const [crmAct, setCrmAct] = useState(CRM_ACT_DEFAULTS);
+  const [crmActLoaded, setCrmActLoaded] = useState(false);
+  const [crmActSaving, setCrmActSaving] = useState(false);
+  const [crmActMsg, setCrmActMsg] = useState("");
+  useEffect(()=>{
+    return db.collection("opsConfig").doc("crmActionConfig").onSnapshot(d => {
+      const v = d.exists ? d.data() : {};
+      const segs = v.enabledSegments || {};
+      setCrmAct({
+        enabled: v.enabled === true,
+        maxTasksPerRun: v.maxTasksPerRun != null ? Number(v.maxTasksPerRun) : 50,
+        cooldownDays: v.cooldownDays != null ? Number(v.cooldownDays) : 14,
+        segSilentVip: segs["Giá trị cao im lặng"] !== false,
+        segAtRisk: segs["Có nguy cơ rời bỏ"] !== false,
+        segVip: segs["Khách VIP"] === true,
+        segLoyal: segs["Khách thân thiết"] === true,
+      });
+      setCrmActLoaded(true);
+    });
+  }, []);
+  async function saveCrmAct(){
+    setCrmActSaving(true); setCrmActMsg("");
+    try{
+      await saveConfigDoc("crmActionConfig", {
+        enabled: !!crmAct.enabled,
+        maxTasksPerRun: Number(crmAct.maxTasksPerRun)||50,
+        cooldownDays: Number(crmAct.cooldownDays)||14,
+        onlySilentVipAndAtRisk: true,
+        enabledSegments: {
+          "Giá trị cao im lặng": !!crmAct.segSilentVip,
+          "Có nguy cơ rời bỏ": !!crmAct.segAtRisk,
+          "Khách VIP": !!crmAct.segVip,
+          "Khách thân thiết": !!crmAct.segLoyal,
+        },
+      });
+      setCrmActMsg("Đã lưu. Auto-task CRM: " + (crmAct.enabled ? "BẬT" : "TẮT"));
+    } catch(err){ setCrmActMsg("Lỗi: " + (err && err.message ? err.message : err)); }
+    setCrmActSaving(false);
+  }
   async function saveCrm(){
     setCrmSaving(true); setCrmMsg("");
     try{
@@ -17668,6 +18223,29 @@ function AlertRulesConfigView(){
         ]),
         React.createElement("button", { key:"b", type:"button", className:"btn btnPrimary", disabled:crmSaving, onClick:saveCrm }, crmSaving ? "Đang lưu..." : "Lưu ngưỡng khách hàng"),
         crmMsg && React.createElement("div", { key:"m", style:{ fontSize:12, marginTop:8, color:"var(--inkSoft)" } }, crmMsg),
+        React.createElement("div", { key:"act", style:{ marginTop:14, paddingTop:12, borderTop:"1px dashed var(--line)" } }, [
+          React.createElement("div", { key:"ah", style:{ fontWeight:700, fontSize:14, marginBottom:6 } }, "Tự tạo nhiệm vụ chăm sóc (CRM Action)"),
+          React.createElement("div", { key:"as", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8 } }, "Mặc định TẮT. Bật có kiểm soát + giới hạn max task/lần chạy."),
+          !crmActLoaded ? null : React.createElement(React.Fragment, { key:"f" }, [
+            React.createElement("label", { key:"en", style:{ display:"flex", alignItems:"center", gap:8, marginBottom:8, fontSize:13 } }, [
+              React.createElement("input", { type:"checkbox", checked:!!crmAct.enabled, onChange:e=>setCrmAct(v=>({...v, enabled:e.target.checked})) }),
+              "Bật tự tạo task từ Customer Action Engine",
+            ]),
+            React.createElement("div", { key:"g", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:10, marginBottom:8 } }, [
+              React.createElement("label", { key:"mx", style:{ fontSize:12 } }, ["Max task/lần", React.createElement("input", { key:"i", type:"number", min:1, max:500, value:crmAct.maxTasksPerRun, onChange:e=>setCrmAct(v=>({...v, maxTasksPerRun:e.target.value})), style:{ display:"block", width:"100%", marginTop:4, padding:"6px 8px", borderRadius:8, border:"1px solid var(--line)" } })]),
+              React.createElement("label", { key:"cd", style:{ fontSize:12 } }, ["Cooldown (ngày)", React.createElement("input", { key:"i", type:"number", min:1, max:90, value:crmAct.cooldownDays, onChange:e=>setCrmAct(v=>({...v, cooldownDays:e.target.value})), style:{ display:"block", width:"100%", marginTop:4, padding:"6px 8px", borderRadius:8, border:"1px solid var(--line)" } })]),
+            ]),
+            React.createElement("div", { key:"segs", style:{ fontSize:12.5, marginBottom:8 } },
+              [["segSilentVip","Giá trị cao im lặng"],["segAtRisk","Có nguy cơ rời bỏ"],["segVip","Khách VIP"],["segLoyal","Khách thân thiết"]].map(([k,lab]) =>
+                React.createElement("label", { key:k, style:{ display:"inline-flex", alignItems:"center", gap:6, marginRight:12 } }, [
+                  React.createElement("input", { type:"checkbox", checked:!!crmAct[k], onChange:e=>setCrmAct(v=>({...v, [k]:e.target.checked})) }), lab
+                ])
+              )
+            ),
+            React.createElement("button", { key:"sb", type:"button", className:"btn btnPrimary", disabled:crmActSaving, onClick:saveCrmAct }, crmActSaving?"...":"Lưu cấu hình auto-task CRM"),
+            crmActMsg && React.createElement("div", { key:"msg", style:{ fontSize:12, marginTop:8 } }, crmActMsg),
+          ]),
+        ]),
       ]),
     ]),
 
@@ -17831,6 +18409,100 @@ function KinhNghiemVanHanhView({ myStaff, navParam }){
   ]);
 }
 
+
+// ===== P0 còn lại: Data Quality panel + nhịp vận hành (đặc tả §10–11) =====
+function DataQualityPanel(){
+  const [health, setHealth] = useState(null);
+  const [crmDq, setCrmDq] = useState(null);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(()=>{
+    const u1 = db.collection("opsConfig").doc("kpiSyncHealth").onSnapshot(s => setHealth(s.exists ? s.data() : null));
+    const u2 = db.collection("opsConfig").doc("crmDataQuality").onSnapshot(s => setCrmDq(s.exists ? s.data() : null), ()=>{});
+    setLoaded(true);
+    return () => { u1(); u2(); };
+  }, []);
+  const keys = ["salesOrders","inventory","workRegistrations","employeePlan","inventoryExpiry","customerUpgrades","replenishment"];
+  const rows = keys.map(k => {
+    const h = health && health[k];
+    return { k, ok: h ? (h.ok !== false && !h.fatalError && !h.error) : null, at: h && h.atTs, err: h && (h.fatalError || h.error) };
+  });
+  const stale = rows.filter(r => r.at && (Date.now() - Date.parse(r.at)) > 36*3600*1000).length;
+  const bad = rows.filter(r => r.ok === false).length;
+  return React.createElement("div", { className:"card", style:{ marginBottom:16 } }, [
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, "Chất lượng dữ liệu (Data Quality)"),
+    React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } },
+      "Đối chiếu nhanh: job đồng bộ lỗi / quá 36h chưa chạy. CRM DQ từ opsConfig/crmDataQuality nếu có."),
+    React.createElement("div", { key:"b", style:{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:8 } }, [
+      React.createElement("span", { key:"1", className:"sevBadge " + (bad ? "sev-critical" : "sev-healthy") }, bad ? bad + " nguồn lỗi" : "Đồng bộ OK"),
+      React.createElement("span", { key:"2", className:"sevBadge " + (stale ? "sev-warning" : "sev-healthy") }, stale ? stale + " nguồn >36h" : "Không stale"),
+      crmDq && React.createElement("span", { key:"3", className:"sevBadge sev-monitor" }, "CRM DQ có dữ liệu"),
+    ]),
+    React.createElement("div", { key:"n", style:{ fontSize:11.5, color:"var(--inkSoft)" } },
+      "Chi tiết từng job: xem panel Sức khỏe đồng bộ phía trên. Không tự tạo số liệu giả."),
+  ]);
+}
+function OpsRhythmCard(){
+  return React.createElement("div", { className:"card", style:{ marginBottom:16 } }, [
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:6 } }, "Nhịp vận hành khuyến nghị"),
+    React.createElement("ul", { key:"u", style:{ margin:0, paddingLeft:18, fontSize:12.5, lineHeight:1.55 } }, [
+      React.createElement("li", { key:"d" }, "Hằng ngày: đầu ngày xem Tổng quan + Rủi ro; trong ngày Action Center (Hôm nay / Quá hạn / Chờ xác minh); cuối ngày chốt checklist & việc tồn."),
+      React.createElement("li", { key:"w" }, "Hằng tuần: rà soát hàng hóa (điều chuyển/cận hạn), CRM/tái mua, nhân sự KPI; mỗi vấn đề có owner + deadline."),
+      React.createElement("li", { key:"m" }, "Hằng tháng: doanh thu/tồn/khách/năng suất; chỉnh ngưỡng cảnh báo nếu tỷ lệ false-positive cao."),
+      React.createElement("li", { key:"q" }, "Hằng quý: hiệu quả cửa hàng, chất lượng dữ liệu, hiệu quả app (thời gian phát hiện→xử lý)."),
+    ]),
+  ]);
+}
+// Inventory: Days of Inventory (DOI) = tồn / tốc độ tiêu thụ ngày — chuẩn hóa công thức hiển thị.
+function calcDOI(onHand, dailyVelocity){
+  const v = Number(dailyVelocity);
+  const q = Number(onHand);
+  if(!v || v <= 0 || q == null || isNaN(q)) return null;
+  return Math.round((q / v) * 10) / 10;
+}
+function doiLabel(doi){
+  if(doi == null) return "—";
+  if(doi <= 7) return doi + " ngày (nguy cơ hết)";
+  if(doi <= 30) return doi + " ngày";
+  if(doi <= 90) return doi + " ngày (chậm)";
+  return doi + " ngày (tồn lâu)";
+}
+
+
+function ClaimsAdminPanel(){
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [email, setEmail] = useState("");
+  async function run(path, body){
+    setBusy(true); setMsg("");
+    try{
+      const headers = await authHeader();
+      const resp = await fetch(CF_CLAIMS_BASE + path, {
+        method:"POST", headers:{ ...headers, "Content-Type":"application/json" },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const data = await resp.json().catch(()=>({}));
+      if(!resp.ok || data.ok===false) setMsg("Lỗi: " + (data.error || resp.status));
+      else setMsg(JSON.stringify(data, null, 2));
+      if(auth.currentUser) await auth.currentUser.getIdToken(true);
+    } catch(e){ setMsg(String(e && e.message || e)); }
+    setBusy(false);
+  }
+  return React.createElement("div", { className:"card", style:{ marginBottom:16 } }, [
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, "Custom Claims (phân quyền)"),
+    React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } },
+      "Admin được nhận diện qua claims.admin trên Firebase Auth. Bootstrap 1 lần sau deploy; thêm admin bằng email (mode admin). Nhân viên tự sync khi đăng nhập."),
+    React.createElement("div", { key:"btns", className:"btnRow", style:{ marginBottom:10 } }, [
+      React.createElement("button", { key:"b", type:"button", className:"btn btnPrimary", disabled:busy, onClick:()=>run("/bootstrapAdminClaimsNow") }, busy?"…":"Bootstrap admin claims"),
+      React.createElement("button", { key:"m", type:"button", className:"btn", disabled:busy, onClick:()=>run("/syncMyClaimsNow") }, "Sync claims của tôi"),
+    ]),
+    React.createElement("div", { key:"row", style:{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:8 } }, [
+      React.createElement("input", { key:"i", value:email, onChange:e=>setEmail(e.target.value), placeholder:"email@…", style:{ flex:"1 1 200px", padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)" } }),
+      React.createElement("button", { key:"a", type:"button", className:"btn btnPrimary", disabled:busy || !email.trim(), onClick:()=>run("/setUserClaimsNow", { email:email.trim(), mode:"admin" }) }, "Gán admin"),
+      React.createElement("button", { key:"s", type:"button", className:"btn", disabled:busy || !email.trim(), onClick:()=>run("/setUserClaimsNow", { email:email.trim(), mode:"auto" }) }, "Sync theo staff"),
+    ]),
+    msg && React.createElement("pre", { key:"m", style:{ fontSize:11, background:"var(--paper)", padding:10, borderRadius:8, overflow:"auto", maxHeight:180 } }, msg),
+  ]);
+}
 function SystemHubView(){
   return React.createElement("div", { style:{ maxWidth:900, margin:"0 auto", padding:16 } }, [
     React.createElement(PageTitle, { key:"title" }, "Hệ thống"),
@@ -17839,6 +18511,11 @@ function SystemHubView(){
     React.createElement(ShopHealthWeightsEditor, { key:"healthweights" }),
     React.createElement(IssuePriorityEditor, { key:"issuepriority" }),
     React.createElement(DataSyncSection, { key:"datasync" }),
+    React.createElement(DataQualityPanel, { key:"dq" }),
+    React.createElement(OpsRhythmCard, { key:"rhythm" }),
+    React.createElement(KpiFormulaHelpCard, { key:"kpiformula" }),
+    React.createElement(AuditLogViewer, { key:"audit" }),
+    React.createElement(ClaimsAdminPanel, { key:"claims" }),
     React.createElement(CleanupTokensButton, { key:"cleanup" }),
     React.createElement(SystemErrorLogView, { key:"errlog" }),
   ]);
@@ -18098,18 +18775,31 @@ function App(){
   const [authState, setAuthState] = useState({ status:"loading" }); // loading | out | in
   const [staff, setStaff] = useState([]);
   const [staffLoaded, setStaffLoaded] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [claimsReady, setClaimsReady] = useState(false);
   const [, setShopTick] = useState(0);
 
   useEffect(()=>{
-    const unsub = auth.onAuthStateChanged(user => {
-      setAuthState(user ? { status:"in", user } : { status:"out" });
+    const unsub = auth.onAuthStateChanged(async (user) => {
+      if(!user){
+        setAuthState({ status:"out" });
+        setIsAdmin(false);
+        setClaimsReady(false);
+        return;
+      }
+      setAuthState({ status:"in", user });
+      setClaimsReady(false);
+      // Đồng bộ claims rồi đọc token mới (admin từ claims, không chỉ email list)
+      try{ await syncMyClaims(); } catch(e){}
+      const admin = await resolveIsAdmin(user);
+      setIsAdmin(admin);
+      setClaimsReady(true);
     });
     return unsub;
   }, []);
 
-  // Danh sách nhà thuốc giờ có thể chỉnh trực tiếp trong app (tab Nhân viên → Quản lý nhà thuốc)
-  // thay vì cố định trong code — cập nhật mảng DEFAULT_SHOPS tại chỗ rồi ép toàn app render lại.
   useEffect(()=>{
+    if(authState.status!=="in") return undefined;
     const unsub = subscribeConfigDoc("shopList", (d) => {
       if(d && Array.isArray(d.shops) && d.shops.length>0){
         DEFAULT_SHOPS.length = 0;
@@ -18118,21 +18808,20 @@ function App(){
       }
     });
     return unsub;
-  }, []);
+  }, [authState.status]);
 
   useEffect(()=>{
-    if(authState.status!=="in") return;
-    const isAdmin = ADMIN_EMAILS.includes(authState.user.email);
-    if(isAdmin){ setStaffLoaded(true); return; } // admin không cần danh sách staff để vào app
+    if(authState.status!=="in" || !claimsReady) return;
+    if(isAdmin){ setStaffLoaded(true); return; }
     const unsub = subscribeCol("staff", rows => { setStaff(rows); setStaffLoaded(true); });
     return unsub;
-  }, [authState.status, authState.user && authState.user.uid]);
+  }, [authState.status, authState.user && authState.user.uid, isAdmin, claimsReady]);
 
-  if(authState.status==="loading") return React.createElement("div", { style:{ padding:40 } }, React.createElement(EmptyState, { kind:"loading" }));
+  if(authState.status==="loading" || (authState.status==="in" && !claimsReady))
+    return React.createElement("div", { style:{ padding:40 } }, React.createElement(EmptyState, { kind:"loading" }));
   if(authState.status==="out") return React.createElement(LoginScreen, null);
 
   const user = authState.user;
-  const isAdmin = ADMIN_EMAILS.includes(user.email);
   if(!isAdmin && !staffLoaded) return React.createElement("div", { style:{ padding:40 } }, React.createElement(EmptyState, { kind:"loading" }));
   const myStaff = isAdmin ? null : staff.find(s => s.uid===user.uid);
   if(!isAdmin && !myStaff) return React.createElement(NoStaffLinkedScreen, { user });
