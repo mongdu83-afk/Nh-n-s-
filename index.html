@@ -399,6 +399,61 @@ async function authHeader() {
   const token = await user.getIdToken();
   return { Authorization: "Bearer " + token };
 }
+// P0 nghiệm thu (§XIV): gọi API an toàn — phân biệt timeout / 401 / 403 / rỗng / lỗi server.
+// Không thay dữ liệu thật bằng 0 khi lỗi; caller nhận { ok:false, kind, error } để hiện EmptyState đúng loại.
+async function safeApiFetch(url, opts = {}, { timeoutMs = 45000 } = {}) {
+  const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
+  try {
+    // Không ghi đè Content-Type/Authorization nếu caller đã set; luôn gắn Bearer.
+    const auth = await authHeader();
+    const headers = { ...(opts.headers || {}), ...auth };
+    const resp = await fetch(url, { ...opts, headers, signal: ctrl ? ctrl.signal : undefined });
+    if (timer) clearTimeout(timer);
+    if (resp.status === 401) return { ok:false, kind:"forbidden", error:"Phiên đăng nhập hết hạn — vui lòng đăng nhập lại.", status:401 };
+    if (resp.status === 403) return { ok:false, kind:"forbidden", error:"Không có quyền thực hiện thao tác này.", status:403 };
+    const text = await resp.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch(e) {
+      if (!resp.ok) return { ok:false, kind:"apiError", error:`HTTP ${resp.status}: ${text.slice(0,200)}`, status:resp.status };
+      return { ok:false, kind:"apiError", error:"Phản hồi không phải JSON.", status:resp.status };
+    }
+    if (!resp.ok) return { ok:false, kind:"apiError", error:(data && (data.error||data.message)) || (`HTTP ${resp.status}`), status:resp.status, data };
+    // Nhiều Cloud Function trả HTTP 200 kèm { ok:false, error } — coi là lỗi nghiệp vụ.
+    if (data && data.ok === false) return { ok:false, kind:"apiError", error:(data.error||data.message||"Thao tác thất bại"), status:resp.status, data };
+    if (data == null || (Array.isArray(data) && data.length===0) || (data && data.ok===true && data.empty===true))
+      return { ok:true, kind:"emptyApi", data:data, empty:true };
+    return { ok:true, kind:"ok", data };
+  } catch (err) {
+    if (timer) clearTimeout(timer);
+    const msg = err && err.message ? err.message : String(err);
+    if (err && err.name === "AbortError") return { ok:false, kind:"timeout", error:`Hết thời gian chờ (${timeoutMs/1000}s).` };
+    if (/Chưa đăng nhập/i.test(msg)) return { ok:false, kind:"forbidden", error:msg };
+    return { ok:false, kind:"apiError", error:msg };
+  }
+}
+// Wrapper tiện cho nút *Now: trả data khi thành công, throw Error(kind) khi lỗi — caller catch và hiện thông báo.
+// opts: fetch init (method/body/headers). timeoutMs mặc định 45s; job nặng truyền 120000–300000.
+async function callCf(url, opts = {}, timeoutMs = 45000) {
+  const r = await safeApiFetch(url, opts, { timeoutMs });
+  if (!r.ok) {
+    const err = new Error(r.error || "Lỗi API");
+    err.kind = r.kind;
+    err.status = r.status;
+    err.data = r.data;
+    throw err;
+  }
+  return r.data;
+}
+function cfErrorLabel(err){
+  const k = err && err.kind;
+  if(k==="timeout") return "Hết thời gian chờ";
+  if(k==="forbidden") return "Không có quyền / phiên hết hạn";
+  if(k==="apiError") return "Lỗi API";
+  return "Lỗi";
+}
+
+
 // Khoá "VAPID" dùng cho thông báo đẩy (Web Push) — lấy ở Firebase Console:
 // Project Settings > Cloud Messaging > Web configuration > "Generate key pair", dán vào đây.
 const FCM_VAPID_KEY = "BHp0H9G6vblCIpkPRi8yDlXcJ6o4yhVAJGuMpcuNG99J-Ptrx-ZCsOid-EM530rmnIV1MHZYK7j-Wdkq1YeaMAM";
@@ -573,13 +628,26 @@ function addDays(iso, n){
   return dt.toISOString().slice(0, 10);
 }
 function daysBetween(a, b){ return Math.round((new Date(b+"T00:00:00") - new Date(a+"T00:00:00")) / 86400000); }
-function fmtNum(n){ if(n==null||isNaN(n)) return "0"; return Math.round(n).toLocaleString("vi-VN"); }
-function fmtVND(n){ return fmtNum(n) + "đ"; }
+// P0 nghiệm thu (§XIV): null/undefined/NaN → "—" (không bịa thành 0). Chỉ hiện "0" khi giá trị thật = 0.
+function fmtNum(n){
+  if(n==null || n==="") return "—";
+  const x = typeof n === "number" ? n : Number(n);
+  if(isNaN(x)) return "—";
+  return Math.round(x).toLocaleString("vi-VN");
+}
+function fmtVND(n){
+  if(n==null || n==="") return "—";
+  const x = typeof n === "number" ? n : Number(n);
+  if(isNaN(x)) return "—";
+  return fmtNum(x) + "đ";
+}
 // Định dạng rút gọn (VD "1,68tỷ", "175tr") — dùng cho bảng nhiều cột để bảng đủ hẹp hiện hết
 // không cần cuộn ngang, thay vì số đầy đủ dài như "1.680.000.000đ".
 function fmtVNDCompact(n){
-  if(n==null||isNaN(n)) return "0đ";
-  const v = Math.round(n);
+  if(n==null || n==="") return "—";
+  const x = typeof n === "number" ? n : Number(n);
+  if(isNaN(x)) return "—";
+  const v = Math.round(x);
   const abs = Math.abs(v);
   if(abs >= 1e9) return (v/1e9).toLocaleString("vi-VN",{maximumFractionDigits:2}) + "tỷ";
   if(abs >= 1e6) return Math.round(v/1e6).toLocaleString("vi-VN") + "tr";
@@ -2012,8 +2080,7 @@ function CustomerOrderView({ isAdmin, myStaff }){
     const to = dateTo || today;
     setAnalyzingTrend(true); setAnalyzeTrendMsg(null);
     try{
-      const resp = await fetch(`https://asia-southeast1-upharma-176d5.cloudfunctions.net/analyzeCustomerOrderTrendsNow?from=${from}&to=${to}`, { headers: await authHeader() });
-      const data = await resp.json();
+      const data = await callCf(`https://asia-southeast1-upharma-176d5.cloudfunctions.net/analyzeCustomerOrderTrendsNow?from=${from}&to=${to}`, {}, 180000);
       if(data.ok){
         setAnalyzeTrendMsg(`Đã phân tích xong ${data.orderCount} lượt đặt hàng từ ${from} đến ${to}.`);
       } else {
@@ -2477,8 +2544,7 @@ function ReplenishBanner({ myStaff, onOpen }){
     let alive = true;
     (async ()=>{
       try{
-        const r = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/replenishmentList?shop=all", { headers: await authHeader() });
-        const d = await r.json(); if(!d.ok || !alive) return;
+        const d = await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/replenishmentList?shop=all", {}, 120000); if(!d.ok || !alive) return;
         let now = 0, mine = 0, unclaimed = 0, soon = 0;
         (d.customers||[]).forEach(c => {
           const its = (c.items||[]).filter(it => !it.contact);
@@ -2838,9 +2904,7 @@ function WeeklyReviewModal({ report, prevReport, onSave, onClose }){
   async function runWeeklyAi(force){
     setAiBusy(true); setAiMsg("");
     try{
-      const r = await fetch(`https://asia-southeast1-upharma-176d5.cloudfunctions.net/analyzeWeeklyReportNow?id=${encodeURIComponent(report.id)}${force ? "&force=1" : ""}`, { headers: await authHeader() });
-      const j = await r.json();
-      if(!j.ok) throw new Error(j.error || "Lỗi");
+      const j = await callCf(`https://asia-southeast1-upharma-176d5.cloudfunctions.net/analyzeWeeklyReportNow?id=${encodeURIComponent(report.id)}${force ? "&force=1" : ""}`, {}, 180000);
       setAiMsg(j.cached ? "Nội dung chưa đổi so với lần phân tích trước — dùng lại kết quả cũ (không tốn thêm lượt gọi)." : j.busy ? "Đang có lượt phân tích khác chạy — chờ vài giây." : "Đã phân tích xong.");
     } catch(err){ setAiMsg("Không phân tích được: " + (err && err.message ? err.message : err)); }
     finally { setAiBusy(false); }
@@ -4721,9 +4785,8 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
   async function refreshCampaignStats(){
     setCampaignRefreshing(true);
     try{
-      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeCrmCampaignStatsNow", { headers: await authHeader() });
-      if(!resp.ok){ const t = await resp.text().catch(()=> ""); alert(`Tính lại thất bại (mã lỗi ${resp.status}). ${t.slice(0,300)}`); }
-    } catch(err){ alert(`Lỗi kết nối khi tính lại: ${err && err.message ? err.message : err}`); }
+      await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeCrmCampaignStatsNow", {}, 120000);
+    } catch(err){ alert(`${cfErrorLabel(err)}: ${err && err.message ? err.message : err}`); }
     setCampaignRefreshing(false);
   }
   // Tên rule dễ đọc cho trang Chiến dịch — khớp với sourceId trong index.js (createCrmTask).
@@ -4746,9 +4809,8 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
   async function refreshBehaviorStats(){
     setBehaviorRefreshing(true);
     try{
-      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeBehaviorAnalyticsNow", { headers: await authHeader() });
-      if(!resp.ok){ const t = await resp.text().catch(()=> ""); alert(`Tính lại thất bại (mã lỗi ${resp.status}). ${t.slice(0,300)}`); }
-    } catch(err){ alert(`Lỗi kết nối khi tính lại: ${err && err.message ? err.message : err}`); }
+      await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeBehaviorAnalyticsNow", {}, 120000);
+    } catch(err){ alert(`${cfErrorLabel(err)}: ${err && err.message ? err.message : err}`); }
     setBehaviorRefreshing(false);
   }
   // Đề xuất bổ sung (9/2026) — Chấm điểm hiệu quả CSKH theo nhân viên.
@@ -4761,9 +4823,8 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
   async function refreshStaffEffectiveness(){
     setStaffEffRefreshing(true);
     try{
-      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeCrmStaffEffectivenessNow", { headers: await authHeader() });
-      if(!resp.ok){ const t = await resp.text().catch(()=> ""); alert(`Tính lại thất bại (mã lỗi ${resp.status}). ${t.slice(0,300)}`); }
-    } catch(err){ alert(`Lỗi kết nối khi tính lại: ${err && err.message ? err.message : err}`); }
+      await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeCrmStaffEffectivenessNow", {}, 120000);
+    } catch(err){ alert(`${cfErrorLabel(err)}: ${err && err.message ? err.message : err}`); }
     setStaffEffRefreshing(false);
   }
   const DOW_NAMES = ["CN","T2","T3","T4","T5","T6","T7"];
@@ -4964,27 +5025,19 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
     if(!window.confirm("Xoá HẾT người phụ trách đã gắn sẵn cho toàn bộ khách hàng (kể cả gán tay/đã nhận chăm sóc)? Tất cả khách sẽ về trạng thái \"Chưa phân công\". Không thể hoàn tác.")) return;
     setClearingAssign(true); setAutoAssignMsg(null);
     try{
-      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/clearAllCrmAssignmentsNow", { headers: await authHeader() });
-      const d = await resp.json();
-      if(d && d.ok===false){ setAutoAssignMsg("Lỗi: " + (d.error || "không rõ nguyên nhân")); }
-      else{
-        setAutoAssignMsg(`Đã xoá người phụ trách của ${d.cleared ?? 0} khách — tất cả về "Chưa phân công".`);
-        if(isAdmin) loadCustomersOnce();
-      }
-    } catch(err){ setAutoAssignMsg("Lỗi kết nối, thử lại."); }
+      const d = await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/clearAllCrmAssignmentsNow", {}, 120000);
+      setAutoAssignMsg(`Đã xoá người phụ trách của ${d.cleared ?? 0} khách — tất cả về "Chưa phân công".`);
+      if(isAdmin) loadCustomersOnce();
+    } catch(err){ setAutoAssignMsg(`${cfErrorLabel(err)}: ${err && err.message ? err.message : err}`); }
     setClearingAssign(false);
   }
   async function runAutoAssign(){
     setAutoAssigning(true); setAutoAssignMsg(null);
     try{
-      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/autoAssignCrmCustomersNow", { headers: await authHeader() });
-      const d = await resp.json();
-      if(d && d.ok===false){ setAutoAssignMsg("Lỗi: " + (d.error || "không rõ nguyên nhân")); }
-      else{
-        setAutoAssignMsg(`Đã gán ${d.assigned ?? 0} khách (${d.assignedViaCHT ?? 0} theo Cửa hàng trưởng, ${d.assignedViaFallback ?? 0} theo nhân viên tạm thời ở shop chưa có CHT)${d.skippedNoStaffAtAll ? ` — ${d.skippedNoStaffAtAll} khách thuộc shop chưa có NHÂN VIÊN nào trong hệ thống, chưa gán được` : ""}.`);
-        if(isAdmin) loadCustomersOnce(); // tải lại để thấy ngay kết quả (không còn real-time nữa)
-      }
-    } catch(err){ setAutoAssignMsg("Lỗi kết nối, thử lại."); }
+      const d = await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/autoAssignCrmCustomersNow", {}, 120000);
+      setAutoAssignMsg(`Đã gán ${d.assigned ?? 0} khách (${d.assignedViaCHT ?? 0} theo Cửa hàng trưởng, ${d.assignedViaFallback ?? 0} theo nhân viên tạm thời ở shop chưa có CHT)${d.skippedNoStaffAtAll ? ` — ${d.skippedNoStaffAtAll} khách thuộc shop chưa có NHÂN VIÊN nào trong hệ thống, chưa gán được` : ""}.`);
+      if(isAdmin) loadCustomersOnce(); // tải lại để thấy ngay kết quả (không còn real-time nữa)
+    } catch(err){ setAutoAssignMsg(`${cfErrorLabel(err)}: ${err && err.message ? err.message : err}`); }
     setAutoAssigning(false);
   }
 
@@ -5763,14 +5816,12 @@ function KpiView({ isAdmin, myStaff }){
       const params = new URLSearchParams({ scope:compScope, month:thang, from:compFromDate, to:compToDate });
       if(compScope==="shop") params.set("shop", compShop);
       if(compScope==="staff"){ params.set("staffName", compStaffName); if(compShop) params.set("shop", compShop); }
-      const resp = await fetch(`https://asia-southeast1-upharma-176d5.cloudfunctions.net/analyzeComprehensiveNow?${params.toString()}`, { headers: await authHeader() });
-      const data = await resp.json();
+      const data = await callCf(`https://asia-southeast1-upharma-176d5.cloudfunctions.net/analyzeComprehensiveNow?${params.toString()}`, {}, 300000);
       setCompMeta({ validation:data.validation||null, fallback:data.fallback||null, promptVersion:data.promptVersion||null, dataAsOf:data.dataAsOf||null });
-      if(data.ok){ setCompResult(data.result); setCompInputSnapshot(data.aiInputSnapshot || ""); }
-      else { setCompError(data.reason || data.error || "Không rõ nguyên nhân."); }
+      setCompResult(data.result); setCompInputSnapshot(data.aiInputSnapshot || "");
     } catch(err){
       console.error("Phân tích tổng hợp lỗi:", err);
-      setCompError(err && err.message ? err.message : String(err));
+      setCompError(`${cfErrorLabel(err)}: ${err && err.message ? err.message : String(err)}`);
     } finally { setAnalyzingComp(false); }
   }
   const [ctahDocs, setCtahDocs] = useState({});
@@ -5849,7 +5900,7 @@ function KpiView({ isAdmin, myStaff }){
         if(!cancelled){ setKpiSyncStatus("syncing"); setKpiSyncMsg("Đang tự động lấy dữ liệu mới nhất..."); }
         for(const url of REALTIME_SYNC_ENDPOINTS){
           if(cancelled) return;
-          try{ await fetch(url, { headers: await authHeader() }); } catch(err){ console.error("Tự động đồng bộ KPI lỗi:", url, err); }
+          try{ await callCf(url, {}, 120000); } catch(err){ console.error("Tự động đồng bộ KPI lỗi:", url, err); }
         }
         if(!cancelled){ setKpiSyncStatus("done"); setKpiSyncMsg("Đã cập nhật dữ liệu mới nhất."); }
       } catch(err){
@@ -5866,8 +5917,7 @@ function KpiView({ isAdmin, myStaff }){
   async function runKpiAiAnalysis(){
     setAnalyzingKpi(true); setAnalyzeKpiMsg(null);
     try{
-      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/analyzeKpiNow", { headers: await authHeader() });
-      const data = await resp.json();
+      const data = await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/analyzeKpiNow", {}, 300000);
       if(data.ok){
         setAnalyzeKpiMsg("Đã phân tích xong.");
       } else {
@@ -7463,12 +7513,11 @@ function SyncAllDataButton(){
     for(const t of SYNC_ALL_TASKS){
       setStatuses(prev => ({ ...prev, [t.key]: { state:"running", message:"" } }));
       try{
-        const resp = await fetch(t.url, { headers: await authHeader() });
-        const data = await resp.json();
+        const data = await callCf(t.url, {}, 180000);
         setStatuses(prev => ({ ...prev, [t.key]: { state:"done", message:t.format(data) } }));
       } catch(err){
         console.error(`Đồng bộ "${t.label}" lỗi:`, err);
-        setStatuses(prev => ({ ...prev, [t.key]: { state:"error", message:"Có lỗi xảy ra: " + (err && err.message ? err.message : String(err)) } }));
+        setStatuses(prev => ({ ...prev, [t.key]: { state:"error", message:cfErrorLabel(err) + ": " + (err && err.message ? err.message : String(err)) } }));
       }
     }
     setRunning(false);
@@ -8199,11 +8248,7 @@ function PrescriptionLibraryView({ isAdmin, myStaff }){
     setSaveMsg(null); setSavedResult(null);
     let data = null;
     try{
-      const resp = await fetch(CF_BASE + "/savePrescriptionImageNow", {
-        method:"POST", headers:{ "Content-Type":"application/json", ...(await authHeader()) },
-        body: JSON.stringify({ shopCode:shopVal, headerID:hVal, dhdCode:"", staffName:(myStaff && myStaff.name) || "" }),
-      });
-      data = await resp.json();
+      data = await callCf(CF_BASE + "/savePrescriptionImageNow", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ shopCode:shopVal, headerID:hVal, dhdCode:"", staffName:(myStaff && myStaff.name) || "" }) }, 90000);
       if(data && data.ok){
         setSaveOk(true);
         setSaveMsg("Đã lưu ảnh đơn thuốc vào thư viện" + (data.shopCode ? " (nhà thuốc " + data.shopCode + ")." : "."));
@@ -8229,11 +8274,7 @@ function PrescriptionLibraryView({ isAdmin, myStaff }){
     if(!term){ setProductSearchMsg("Nhập tên hoặc mã sản phẩm cần tìm."); setProductOrders(null); return; }
     setProductSearching(true); setProductSearchMsg(null); setProductOrders(null);
     try{
-      const resp = await fetch(CF_BASE + "/searchOrdersByProductNow", {
-        method:"POST", headers:{ "Content-Type":"application/json", ...(await authHeader()) },
-        body: JSON.stringify({ shopCode, term }),
-      });
-      const data = await resp.json();
+      const data = await callCf(CF_BASE + "/searchOrdersByProductNow", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ shopCode, term }) }, 90000);
       if(data && data.ok){
         setProductOrders(data.orders || []);
         if(!data.orders || data.orders.length===0){
@@ -8866,14 +8907,8 @@ function useRevenueAnalytics(){
   async function refresh(){
     setRefreshing(true);
     try{
-      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeRevenueAnalyticsNow", { headers: await authHeader() });
-      const raw = await resp.text();
-      let j = null;
-      try{ j = JSON.parse(raw); }catch(parseErr){ /* server trả về text thô (vd lỗi hạ tầng), không phải JSON */ }
-      if(!resp.ok || !j || !j.ok){
-        alert("Lỗi tính lại (mã " + resp.status + "): " + (j && j.error ? j.error : raw.slice(0,200) || "?"));
-      }
-    }catch(e){ alert("Lỗi kết nối khi tính lại: " + e.message); }
+      await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeRevenueAnalyticsNow", {}, 180000);
+    }catch(e){ alert(`${cfErrorLabel(e)}: ${e.message}`); }
     setRefreshing(false);
   }
   return { stats, refreshing, refresh };
@@ -9021,7 +9056,7 @@ function useMonthTracking(monthKey){
       try{
         const cur = await db.collection("opsConfig").doc("revenueAnalyticsMonths").collection("months").doc(monthKey).get();
         if(cur.exists || cancelled) return;
-        await fetch(`https://asia-southeast1-upharma-176d5.cloudfunctions.net/getMonthTrackingNow?month=${monthKey}`, { headers: await authHeader() });
+        await callCf(`https://asia-southeast1-upharma-176d5.cloudfunctions.net/getMonthTrackingNow?month=${monthKey}`, {}, 120000);
       }catch(e){ /* im lặng, người dùng có thể tự bấm "Tính lại" nếu là tháng hiện tại */ }
     })();
     return () => { cancelled = true; };
@@ -9815,11 +9850,7 @@ function PromoImportPanel({ myStaff, monthKey, setMonthKey, onSaved }){
     if(!l.documentId || !l.shopCode) return;
     setApiBusy(m=>({ ...m, [rowName]:true }));
     try{
-      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/getPromoHeaderByIdNow", {
-        method:"POST", headers:{ "Content-Type":"application/json", ...(await authHeader()) },
-        body: JSON.stringify({ documentId:l.documentId, shopCode:l.shopCode }),
-      });
-      const data = await resp.json();
+      const data = await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/getPromoHeaderByIdNow", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ documentId:l.documentId, shopCode:l.shopCode }) }, 180000);
       if(data && data.ok){
         setApiSkuResult(m=>({ ...m, [rowName]:data }));
         setSkuDates(m=>({ ...m, [rowName]: { start: data.timeStart||(m[rowName]&&m[rowName].start)||"", end: data.timeEnd||(m[rowName]&&m[rowName].end)||"" } }));
@@ -9840,11 +9871,7 @@ function PromoImportPanel({ myStaff, monthKey, setMonthKey, onSaved }){
     if(!skus.length || !dates.start || !dates.end){ return; }
     setSkuBusy(m=>({ ...m, [rowName]:true }));
     try{
-      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computePromoSkuActualsNow", {
-        method:"POST", headers:{ "Content-Type":"application/json", ...(await authHeader()) },
-        body: JSON.stringify({ skus, dateStart: dates.start, dateEnd: dates.end }),
-      });
-      const data = await resp.json();
+      const data = await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computePromoSkuActualsNow", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ skus, dateStart: dates.start, dateEnd: dates.end }) }, 180000);
       if(data && data.ok){ setSkuResults(m=>({ ...m, [rowName]: data })); }
       else { setMsg(`Tính doanh thu SKU cho "${rowName}" lỗi: ${(data && data.error)||"không rõ"}`); }
     } catch(err){
@@ -10156,9 +10183,7 @@ function PromoDocDetectSection({ myStaff, monthKey, onTracked }){
   async function scan(){
     setBusy(true); setMsg(null); setRows(null);
     try{
-      const resp = await fetch(`https://asia-southeast1-upharma-176d5.cloudfunctions.net/detectPromoDocUsageNow?month=${monthKey}`, { headers: await authHeader() });
-      const data = await resp.json();
-      if(!data.ok) throw new Error(data.error||"Lỗi không rõ.");
+      const data = await callCf(`https://asia-southeast1-upharma-176d5.cloudfunctions.net/detectPromoDocUsageNow?month=${monthKey}`, {}, 120000);
       setRows(data.campaigns||[]);
       if(!data.campaigns || data.campaigns.length===0) setMsg("Chưa phát hiện chương trình nào có khách dùng trong tháng này.");
     } catch(err){
@@ -10190,11 +10215,7 @@ function PromoDocDetectSection({ myStaff, monthKey, onTracked }){
     setTrackingId(key);
     try{
       const targetCampaignId = linkChoice[key] || null;
-      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/trackPromoByDocumentIdNow", {
-        method:"POST", headers:{ "Content-Type":"application/json", ...(await authHeader()) },
-        body: JSON.stringify({ documentIds: row.documentIds, shopCode: row.shops[0], name: row.name || undefined, updatedBy: (myStaff && myStaff.name) || "", targetCampaignId }),
-      });
-      const data = await resp.json();
+      const data = await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/trackPromoByDocumentIdNow", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ documentIds: row.documentIds, shopCode: row.shops[0], name: row.name || undefined, updatedBy: (myStaff && myStaff.name) || "", targetCampaignId }) }, 180000);
       if(!data.ok) throw new Error(data.error||"Lỗi không rõ.");
       setMsg(targetCampaignId
         ? `✓ Đã ghép doanh thu thực tế (từ ${row.documentIds.length} lượt phát sinh) vào chương trình "${data.name}".`
@@ -10258,17 +10279,13 @@ function PromoAutoTrackForm({ myStaff, onSaved }){
     if(!form.documentId.trim() || !form.shopCode){ setMsg("Cần nhập DocumentID và chọn Nhà thuốc."); return; }
     setBusy(true); setMsg(null);
     try{
-      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/trackPromoByDocumentIdNow", {
-        method:"POST", headers:{ "Content-Type":"application/json", ...(await authHeader()) },
-        body: JSON.stringify({
+      const data = await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/trackPromoByDocumentIdNow", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({
           documentId: form.documentId.trim(), shopCode: form.shopCode,
           name: form.name.trim() || undefined,
           planCost: form.cost!==""?Number(form.cost):undefined,
           planRevenue: form.revenue!==""?Number(form.revenue):undefined,
           updatedBy: (myStaff && myStaff.name) || "",
-        }),
-      });
-      const data = await resp.json();
+        }) }, 180000);
       if(!data.ok) throw new Error(data.error || "Lỗi không rõ.");
       setMsg(`✓ Đã bắt đầu theo dõi "${data.name}" — ${(data.skusApi||[]).length} SKU, ${data.skuDateStart}→${data.skuDateEnd||"đang chạy"}, doanh thu hiện tại ${fmtVND(data.actualRevenueSku||0)}. App sẽ tự cập nhật lại mỗi ngày.`);
       setForm(blank);
@@ -10322,14 +10339,10 @@ function PromoCampaignReport({ isAdmin, myStaff, monthKey, setMonthKey }){
     if(!c.skuApiDocumentId || !c.skuApiShopCode) return;
     setRefreshingId(c.id);
     try{
-      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/trackPromoByDocumentIdNow", {
-        method:"POST", headers:{ "Content-Type":"application/json", ...(await authHeader()) },
-        body: JSON.stringify({
+      const data = await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/trackPromoByDocumentIdNow", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({
           documentId: c.skuApiDocumentId, shopCode: c.skuApiShopCode, name: c.name,
           planCost: c.planCost, planRevenue: c.planRevenue, updatedBy: (myStaff && myStaff.name) || "",
-        }),
-      });
-      const data = await resp.json();
+        }) }, 180000);
       if(!data.ok) throw new Error(data.error||"Lỗi không rõ.");
     } catch(err){
       console.error("Làm mới CTKM lỗi:", err);
@@ -10908,8 +10921,7 @@ function DailyResultsView({ isAdmin, myStaff }){
   async function runAnalyze(){
     setAnalyzing(true); setErrMsg(null);
     try{
-      const resp = await fetch(`https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeDailyResultsNow?date=${date}`, { headers: await authHeader() });
-      const json = await resp.json();
+      const json = await callCf(`https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeDailyResultsNow?date=${date}`, {}, 120000);
       if(!json.ok) setErrMsg(json.error || "Phân tích thất bại.");
     } catch(err){
       console.error("Phân tích Kết quả ngày lỗi:", err);
@@ -12068,9 +12080,8 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
   async function runConsumptionAnalyze(){
     setConsumptionAnalyzing(true);
     try{
-      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeInventoryConsumptionNow", { headers: await authHeader() });
-      if(!resp.ok){ const t = await resp.text().catch(()=> ""); alert(`Tính lại thất bại (mã lỗi ${resp.status}). ${t.slice(0,300)}`); }
-    } catch(err){ alert(`Lỗi kết nối khi tính lại: ${err && err.message ? err.message : err}`); }
+      await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeInventoryConsumptionNow", {}, 180000);
+    } catch(err){ alert(`${cfErrorLabel(err)}: ${err && err.message ? err.message : err}`); }
     setConsumptionAnalyzing(false);
   }
   // Danh sách SKU đang bị flag (H06/H09/H10) — chỉ tải khi mở sub-tab này, lọc thẳng theo trạng
@@ -12121,8 +12132,7 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
   async function runAnalyze(){
     setAnalyzing(true); setErrMsg(null);
     try{
-      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncTransferSuggestionsNow", { headers: await authHeader() });
-      const json = await resp.json();
+      const json = await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncTransferSuggestionsNow", {}, 180000);
       if(!json.ok) setErrMsg(json.error || "Lấy tồn kho thất bại ở một số nhà thuốc — xem chi tiết bên dưới.");
     } catch(err){
       console.error("Phân tích điều chuyển hàng hoá lỗi:", err);
@@ -12152,9 +12162,9 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
         round++;
         setPackMsg(`Đang đồng bộ quy cách — lượt ${round}...`);
         const url = `https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncProductPackagingUnitsNow?limit=1000${since ? "&since="+encodeURIComponent(since) : ""}`;
-        const resp = await fetch(url, { headers: await authHeader() });
-        const j = await resp.json().catch(()=>null);
-        if(!resp.ok || !j || j.ok===false){ setPackMsg(`Lỗi đồng bộ quy cách (mã ${resp.status}): ${(j && j.error) || "không rõ"}`); break; }
+        let j;
+        try { j = await callCf(url, {}, 180000); }
+        catch(packErr){ setPackMsg(`${cfErrorLabel(packErr)}: ${packErr.message || "không rõ"}`); break; }
         totalOk += j.withPackaging||0; totalNo += j.noPackageInfo||0; totalErr += j.errors||0;
         setPackMsg(`Lượt ${round}: xử lý ${fmtNum(j.processed||0)} mã · có đơn vị nguyên ${fmtNum(j.withPackaging||0)} · không có quy cách riêng ${fmtNum(j.noPackageInfo||0)} · lỗi ${fmtNum(j.errors||0)} — CÒN LẠI ${fmtNum(j.remainingPending||0)} mã chưa đồng bộ.`);
         // Dừng khi: không lặp, đã hết, bấm dừng, hoặc lượt này không đồng bộ được mã nào (toàn lỗi — tránh lặp vô hạn).
@@ -12169,9 +12179,7 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
   async function syncCatalogFromApi(){
     setSyncingCatalog(true); setCatalogMsg(null);
     try{
-      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncProductCatalogFromApiNow", { headers: await authHeader() });
-      const json = await resp.json().catch(()=>null);
-      if(!json || !json.ok){ setCatalogMsg("Đồng bộ thất bại: " + (json && json.error ? json.error : "lỗi không rõ")); return; }
+      const json = await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncProductCatalogFromApiNow", {}, 180000);
       setCatalogMsg(`Đã đồng bộ ${fmtNum(json.productCount||0)} mặt hàng từ hệ thống.`);
       setCatalogItems(null); // buộc tải lại danh sách nếu đang mở "Xem danh mục"
     } catch(err){
@@ -13108,9 +13116,8 @@ function CommandCenterView({ isAdmin, myStaff, onNavigate }){
   async function refreshRevenue(){
     setRevRefreshing(true);
     try{
-      const resp = await fetch(`https://asia-southeast1-upharma-176d5.cloudfunctions.net/getMonthTrackingNow?month=${currentMonthKey}`, { headers: await authHeader() });
-      if(!resp.ok){ const t = await resp.text().catch(()=>""); alert(`Tính lại thất bại (mã lỗi ${resp.status}). ${t.slice(0,300)}`); }
-    } catch(err){ alert(`Lỗi kết nối khi tính lại: ${err && err.message ? err.message : err}`); }
+      await callCf(`https://asia-southeast1-upharma-176d5.cloudfunctions.net/getMonthTrackingNow?month=${currentMonthKey}`, {}, 120000);
+    } catch(err){ alert(`${cfErrorLabel(err)}: ${err && err.message ? err.message : err}`); }
     setRevRefreshing(false);
   }
 
@@ -13218,17 +13225,59 @@ function shopLabel(code){ const m = /^SHOP0*(\d+)$/i.exec(String(code||"")); ret
 // Màu ở đây PHẢI khớp SEVERITY (định nghĩa ở gần cuối file, đọc thêm 07_UI_UX_System.md §3) —
 // không tự đổi màu riêng ở đây, đổi ở SEVERITY rồi copy lại (SEVERITY khai báo sau nên không
 // gọi trực tiếp được từ đây do thứ tự chạy script).
+// Đặc tả §II: xanh (đạt/vượt KPI), vàng (có nguy cơ), đỏ (không đạt / vấn đề nghiêm trọng), xám (thiếu dữ liệu).
+// Ngưỡng điểm đọc từ shopHealthSummary.thresholds nếu có (cấu hình được ở Hệ thống).
 const HEALTH_LEVELS = {
-  good:{ label:"Tốt", color:"#16A34A" }, watch:{ label:"Theo dõi", color:"#C9A227" },
-  improve:{ label:"Cần cải thiện", color:"#D98A1F" }, urgent:{ label:"Cần xử lý ngay", color:"#B3261E" },
-  none:{ label:"Chưa có dữ liệu", color:"#6B7A70" },
+  good:{    label:"Đạt KPI",                  color:"#16A34A", sev:"healthy",  badge:"Xanh" },
+  watch:{   label:"Có nguy cơ",               color:"#C9A227", sev:"monitor",  badge:"Vàng" },
+  improve:{ label:"Cần cải thiện",            color:"#D98A1F", sev:"warning",  badge:"Cam" },
+  urgent:{  label:"Không đạt / nghiêm trọng", color:"#B3261E", sev:"critical", badge:"Đỏ" },
+  none:{    label:"Thiếu dữ liệu",            color:"#6B7A70", sev:"neutral",  badge:"Xám" },
 };
-function healthLevelOf(score){ return score==null ? "none" : score>=85 ? "good" : score>=70 ? "watch" : score>=50 ? "improve" : "urgent"; }
+function healthLevelOf(score, thresholds){
+  if(score==null) return "none";
+  const green = (thresholds && thresholds.kpiGreenScore != null) ? thresholds.kpiGreenScore : 85;
+  const yellow = (thresholds && thresholds.kpiYellowScore != null) ? thresholds.kpiYellowScore : 70;
+  const red = (thresholds && thresholds.kpiRedScore != null) ? thresholds.kpiRedScore : 50;
+  if(score >= green) return "good";
+  if(score >= yellow) return "watch";
+  if(score >= red) return "improve";
+  return "urgent";
+}
+// Trạng thái cửa hàng theo đặc tả: ưu tiên đỏ nếu có issue severity red; xám nếu thiếu điểm.
+function shopStatusFromShop(shop, thresholds){
+  if(!shop || shop.score==null) return "none";
+  const hasRed = (shop.issues||[]).some(i => i.severity==="red");
+  if(hasRed) return "urgent";
+  return healthLevelOf(shop.score, thresholds);
+}
+// 7 nhóm cảnh báo ưu tiên theo đặc tả §II.
+const PRIORITY_ALERT_GROUPS = [
+  { key:"revenue",   codes:["DT01","DT02"],              label:"Doanh thu thấp / nguy cơ KPI", tab:"revenueAnalytics" },
+  { key:"growth",    codes:["DT02"],                     label:"Tăng trưởng giảm",             tab:"revenueAnalytics" },
+  { key:"inventory", codes:["HH01","HH02","HH03","HH06"],label:"Tồn kho bất thường",           tab:"hanghoa" },
+  { key:"hr",        codes:["NS01"],                     label:"Thiếu / chậm nhân sự KPI",     tab:"emp360" },
+  { key:"tasks",     codes:["VH01","TK01","TK02"],       label:"Nhiệm vụ quá hạn",             tab:"action" },
+  { key:"customer",  codes:["KH01","KH02"],              label:"Nguy cơ mất khách",            tab:"cust360" },
+  { key:"ops",       codes:["CP01","CP02","CP03"],       label:"Sai lệch vận hành / checklist",tab:"checklist" },
+];
+function suggestedActionForIssue(i){
+  if(!i) return "Xem chi tiết và giao việc xử lý";
+  if(i.code==="DT01" || i.code==="DT02") return "Rà soát tiến độ doanh thu, đẩy bán / CTKM, giao việc tăng TBB";
+  if(i.code==="NS01") return "Hỗ trợ / điều chỉnh phân công nhân viên chậm tiến độ";
+  if(i.code==="KH01" || i.code==="KH02") return "Giao việc chăm sóc khách (gọi/Zalo) trong 48h";
+  if(i.code==="HH01" || i.code==="HH02") return "Kiểm tra nhập hàng / điều chuyển từ NT dư tồn";
+  if(i.code==="HH03") return "Xử lý tồn chậm (trả NCC / đẩy bán)";
+  if(i.code==="HH06") return "Ưu tiên bán / trả hàng cận hạn";
+  if(i.code==="VH01") return "Nhắc người phụ trách hoặc giao lại việc quá hạn";
+  if(i.code==="CP01") return "Nhắc nộp checklist ngày / kiểm tra ca làm việc";
+  return i.detail || "Xem chi tiết và giao việc xử lý";
+}
 const HEALTH_GROUP_ORDER = ["revenue","hr","customer","goods","ops"];
 const HEALTH_GROUP_LABEL = { revenue:"Doanh thu", hr:"Nhân sự", customer:"Khách hàng", goods:"Hàng hoá", ops:"Vận hành" };
 const HEALTH_GROUP_MODULE = { revenue:"Khác", hr:"HR", customer:"CRM", goods:"Goods", ops:"Khác" };
 // Màu khớp SEVERITY.critical/warning/monitor — xem ghi chú ở HEALTH_LEVELS phía trên.
-const ISSUE_SEV = { red:{ color:"#B3261E", dot:"🔴", rank:0 }, orange:{ color:"#D98A1F", dot:"🟠", rank:1 }, yellow:{ color:"#C9A227", dot:"🟡", rank:2 } };
+const ISSUE_SEV = { red:{ color:"#B3261E", dot:"●", rank:0 }, orange:{ color:"#D98A1F", dot:"●", rank:1 }, yellow:{ color:"#C9A227", dot:"●", rank:2 } };
 // P0-P3 — LUÔN đi kèm nhãn chữ (không dùng màu làm dấu hiệu duy nhất để phân biệt).
 const ISSUE_PRIORITY_META = {
   P0: { label:"P0 · Khẩn cấp",   color:"#7C1D1D" },
@@ -13383,8 +13432,11 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate }){
   async function recomputeHealth(){
     setHealthBusy(true);
     try{
-      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeShopHealthNow", { headers: await authHeader() });
-      if(!resp.ok){ const t = await resp.text().catch(()=>""); window.alert(`Tính điểm thất bại (mã lỗi ${resp.status}). ${t.slice(0,300)}`); }
+      const r = await safeApiFetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeShopHealthNow", {}, { timeoutMs: 120000 });
+      if(!r.ok){
+        const kindLabel = { timeout:"Hết thời gian chờ", forbidden:"Không có quyền", apiError:"Lỗi API" }[r.kind] || "Lỗi";
+        window.alert(`Tính điểm thất bại (${kindLabel}): ${r.error || ""}`);
+      }
     } catch(err){ window.alert("Lỗi kết nối khi tính điểm: " + (err && err.message ? err.message : err)); }
     setHealthBusy(false);
   }
@@ -13447,18 +13499,39 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate }){
   ];
 
   // ---- Điểm sức khoẻ + nguyên nhân ----
-  const lvl = agg ? HEALTH_LEVELS[healthLevelOf(agg.score)] : HEALTH_LEVELS.none;
+  const healthTh = (summary && summary.thresholds) || {};
+  const lvl = agg ? HEALTH_LEVELS[healthLevelOf(agg.score, healthTh)] : HEALTH_LEVELS.none;
   const healthParts = HEALTH_GROUP_ORDER.map(k => ({ label:HEALTH_GROUP_LABEL[k], weight:(agg && agg.weights[k]) || 0, score: agg ? agg.groups[k].score : null }));
   const computedLabel = summary && summary.computedAt ? new Date(summary.computedAt).toLocaleString("vi-VN",{ hour:"2-digit", minute:"2-digit", day:"2-digit", month:"2-digit" }) : null;
-  const shopCards = summary ? Object.values(summary.shops||{}).filter(s => inScope(s.shopCode)).sort((a,b) => (a.score==null?999:a.score) - (b.score==null?999:b.score)) : [];
+  // Stale data guard (P0 nghiệm thu): summary > 36h → cảnh báo, không tin điểm như mới.
+  const summaryAgeHours = summary && summary.computedAt ? (Date.now() - Date.parse(summary.computedAt)) / 3600000 : null;
+  const summaryStale = summaryAgeHours != null && summaryAgeHours > 36;
+  const shopCards = summary ? Object.values(summary.shops||{}).filter(s => inScope(s.shopCode)).sort((a,b) => {
+    const sa = shopStatusFromShop(a, healthTh), sb = shopStatusFromShop(b, healthTh);
+    const rank = { urgent:0, improve:1, watch:2, good:3, none:4 };
+    return (rank[sa]-rank[sb]) || ((a.score==null?999:a.score) - (b.score==null?999:b.score));
+  }) : [];
   const selStyle = { padding:"6px 10px", fontSize:12.5, border:"1px solid var(--line)", borderRadius:8 };
 
   // ---- AREA OVERVIEW: 5 KPI khu vực (mục A đặc tả Module 6) ----
-  // "Đạt KPI" = điểm sức khoẻ > 85 (điều chỉnh theo yêu cầu của Phương ngày 25/9/2026, trước đó
-  // là ≥70) — dùng lại đúng thang điểm sức khoẻ đã có, không thêm công thức KPI mới.
+  // "Đạt KPI" = trạng thái xanh theo ngưỡng cấu hình (mặc định điểm > 85) và không có issue đỏ.
+  const kpiGreen = healthTh.kpiGreenScore != null ? healthTh.kpiGreenScore : 85;
   const totalShopsInScope = summary ? shopCards.length : (isAll ? DEFAULT_SHOPS.length : 1);
-  const shopsAtKpiCount = summary ? shopCards.filter(s => s.score!=null && s.score>85).length : null;
+  const shopsAtKpiCount = summary ? shopCards.filter(s => shopStatusFromShop(s, healthTh)==="good").length : null;
+  const shopsRedCount = summary ? shopCards.filter(s => shopStatusFromShop(s, healthTh)==="urgent").length : null;
+  const shopsGrayCount = summary ? shopCards.filter(s => shopStatusFromShop(s, healthTh)==="none").length : null;
   const shopsWithAlertCount = summary ? shopCards.filter(s => (s.issueCount||0)>0).length : null;
+  // Danh sách cửa hàng cần ưu tiên — gộp issue theo 7 nhóm đặc tả §II.
+  const priorityShops = (() => {
+    if(!summary) return [];
+    return shopCards.filter(s => shopStatusFromShop(s, healthTh)!=="good" && shopStatusFromShop(s, healthTh)!=="none")
+      .map(s => {
+        const issues = s.issues || [];
+        const groupsHit = PRIORITY_ALERT_GROUPS.filter(g => issues.some(i => g.codes.includes(i.code))).map(g => g.label);
+        const top = issues.slice().sort((a,b)=>(ISSUE_SEV[a.severity]?.rank??9)-(ISSUE_SEV[b.severity]?.rank??9))[0];
+        return { shop:s, status:shopStatusFromShop(s, healthTh), groupsHit, topIssue:top };
+      });
+  })();
 
   // ---- PERFORMANCE ANALYTICS: biểu đồ xu hướng doanh thu theo ngày (mục E đặc tả Module 6) ----
   // Dùng lại DailyLineChart + buildDaySeries đã có (tab Doanh thu > So sánh kỳ) — không viết biểu đồ mới.
@@ -13493,13 +13566,19 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate }){
       ]),
     ]),
 
-    // AREA OVERVIEW — 5 KPI khu vực (mục A đặc tả Module 6)
-    rc("div", { key:"areaOverview", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10, marginBottom:16 } }, [
-      rc(StatTile, { key:"t1", label:"Nhà thuốc trong phạm vi", value:fmtNum(totalShopsInScope), sub:isAll?"Toàn bộ chuỗi":shopLabel(adminShop), tint:"var(--pineSoft)", onClick:()=>go("shop360", isAll ? undefined : { shop:adminShop }), source:"shopList / DEFAULT_SHOPS", updatedAt:todayStr }),
-      rc(StatTile, { key:"t2", label:"Đạt KPI (điểm > 85)", value:shopsAtKpiCount==null?"—":fmtNum(shopsAtKpiCount), sub:shopsAtKpiCount==null?"Chưa có dữ liệu":`/${totalShopsInScope} nhà thuốc`, tint:"var(--pineSoft)", onClick:()=>go("shop360", isAll ? undefined : { shop:adminShop }) }),
-      rc(StatTile, { key:"t3", label:"Nhà thuốc có cảnh báo", value:shopsWithAlertCount==null?"—":fmtNum(shopsWithAlertCount), sub:shopsWithAlertCount==null?"Chưa có dữ liệu":`/${totalShopsInScope} nhà thuốc`, tint:(shopsWithAlertCount||0)>0?"#fdecec":"var(--pineSoft)", onClick:()=>go("risk"), source:"shopHealth / risks", updatedAt:(summary&&summary.generatedAtTs)?String(summary.generatedAtTs).replace("T"," ").slice(0,16):"—"}),
-      rc(StatTile, { key:"t4", label:"Vấn đề đang mở", value:fmtNum(issues.length), sub:"Toàn phạm vi đang xem", tint:issues.length>0?"#fff4e0":"var(--pineSoft)", onClick:()=>go("risk") }),
-      rc(StatTile, { key:"t5", label:"Hoàn thành đúng hạn (hôm nay)", value:onTimeTodayPct==null?"—":`${onTimeTodayPct}%`, sub:onTimeTodayPct==null?"Chưa có việc hoàn thành hôm nay":`${onTimeTodayCount}/${doneTodayN} việc`, tint:"var(--pineSoft)", onClick:()=>go("action", { tab:"done" }), source:"tasks", updatedAt: todayStr }),
+    // P0 nghiệm thu: cảnh báo dữ liệu cũ — không dùng số liệu stale mà không thông báo.
+    summaryStale && rc("div", { key:"stale", className:"card", style:{ marginBottom:12, borderColor:"var(--amber)", background:"var(--amberSoft)", padding:"10px 14px", fontSize:12.5 } }, [
+      rc("b", { key:"b" }, "Dữ liệu sức khoẻ nhà thuốc đã cũ"),
+      rc("span", { key:"s" }, ` (cập nhật lần cuối ${computedLabel || "—"}, ~${Math.round(summaryAgeHours)} giờ trước). Không báo đạt KPI khi dữ liệu chưa đủ mới — bấm “Tính lại điểm” hoặc chờ đồng bộ 08:30.`),
+    ]),
+    // AREA OVERVIEW — KPI khu vực theo đặc tả §II (xanh/vàng/đỏ/xám)
+    rc("div", { key:"areaOverview", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:10, marginBottom:16 } }, [
+      rc(StatTile, { key:"t1", label:"Nhà thuốc trong phạm vi", value:summary?fmtNum(totalShopsInScope):"—", sub:isAll?"Toàn bộ chuỗi":shopLabel(adminShop), tint:"var(--pineSoft)", onClick:()=>go("shop360", isAll ? undefined : { shop:adminShop }), source:"shopList", updatedAt:todayStr }),
+      rc(StatTile, { key:"t2", label:`Xanh · Đạt KPI (≥${kpiGreen})`, value:shopsAtKpiCount==null?"—":fmtNum(shopsAtKpiCount), sub:shopsAtKpiCount==null?"Chưa có dữ liệu":`/${totalShopsInScope} NT`, tint:"var(--pineSoft)", onClick:()=>go("shop360") }),
+      rc(StatTile, { key:"t3", label:"Đỏ · Nghiêm trọng", value:shopsRedCount==null?"—":fmtNum(shopsRedCount), sub:shopsRedCount==null?"Chưa có dữ liệu":`/${totalShopsInScope} NT`, tint:(shopsRedCount||0)>0?"#fdecec":"var(--pineSoft)", onClick:()=>go("risk") }),
+      rc(StatTile, { key:"t4", label:"Xám · Thiếu dữ liệu", value:shopsGrayCount==null?"—":fmtNum(shopsGrayCount), sub:"Không báo đạt KPI", tint:(shopsGrayCount||0)>0?"#E7E5DA":"var(--pineSoft)" }),
+      rc(StatTile, { key:"t5", label:"Có cảnh báo", value:shopsWithAlertCount==null?"—":fmtNum(shopsWithAlertCount), sub:issues.length?`${issues.length} vấn đề mở`:"—", tint:(shopsWithAlertCount||0)>0?"#fff4e0":"var(--pineSoft)", onClick:()=>go("risk"), source:"shopHealth", updatedAt:computedLabel||"—"}),
+      rc(StatTile, { key:"t6", label:"Hoàn thành đúng hạn (hôm nay)", value:onTimeTodayPct==null?"—":`${onTimeTodayPct}%`, sub:onTimeTodayPct==null?"Chưa có việc xong hôm nay":`${onTimeTodayCount}/${doneTodayN} việc`, tint:"var(--pineSoft)", onClick:()=>go("action", { tab:"done" }), source:"tasks", updatedAt:todayStr }),
     ]),
 
     // B1 (P1): KPI có actual / target / Δ / kỳ / nguồn / cập nhật — doanh thu tháng + việc quá hạn
@@ -13611,7 +13690,7 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate }){
       ]),
       !agg ? rc("div", { key:"e", className:"emptyState" }, "Chưa có điểm — bấm “Tính lại điểm” (cần đã deploy bản index.js mới).")
         : rc("div", { key:"cols", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16, marginTop:12 } },
-            HEALTH_GROUP_ORDER.map(k => { const g = agg.groups[k]; const m = HEALTH_LEVELS[healthLevelOf(g.score)];
+            HEALTH_GROUP_ORDER.map(k => { const g = agg.groups[k]; const m = HEALTH_LEVELS[healthLevelOf(g.score, healthTh)];
               return rc("div", { key:k }, [
                 rc("div", { key:"l", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:4 } }, `${HEALTH_GROUP_LABEL[k]} (${Math.round((agg.weights[k]||0)*100)}%)`),
                 rc("div", { key:"v", style:{ fontSize:24, fontWeight:800, fontFamily:"'Fraunces',serif", marginBottom:6, color:m.color } }, g.score==null ? "—" : g.score),
@@ -13623,19 +13702,51 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate }){
     // Tình hình nhà thuốc — xếp nhà thuốc cần quan tâm nhất lên đầu
     rc("div", { key:"shops", className:"card", style:{ marginBottom:16 } }, [
       rc(Head360, { key:"h", title:"Tình hình nhà thuốc", right:rc("span", { style:{ fontSize:11, color:"var(--inkSoft)" } }, "Điểm thấp xếp trước · bấm để mở hồ sơ") }),
-      shopCards.length===0 ? rc("div", { key:"e", className:"emptyState" }, "Chưa có dữ liệu điểm nhà thuốc.")
+      shopCards.length===0 ? rc(EmptyState, { key:"e", kind: summary===null ? "loading" : "noData", detail:"Chưa có dữ liệu điểm nhà thuốc — bấm Tính lại điểm." })
         : rc("div", { key:"g", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(230px,1fr))", gap:10 } }, shopCards.map(s => {
-            const m = HEALTH_LEVELS[healthLevelOf(s.score)];
+            const st = shopStatusFromShop(s, healthTh);
+            const m = HEALTH_LEVELS[st];
             return rc("div", { key:s.shopCode, onClick:()=>go("shop360", { shop:s.shopCode }), style:{ border:"1px solid var(--line)", borderLeft:`4px solid ${m.color}`, borderRadius:10, padding:"10px 12px", cursor:"pointer", background:"#fff" } }, [
-              rc("div", { key:"a", style:{ display:"flex", justifyContent:"space-between", alignItems:"baseline" } }, [
+              rc("div", { key:"a", style:{ display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:8 } }, [
                 rc("b", { key:"n", style:{ fontSize:14 } }, shopLabel(s.shopCode)),
-                rc("span", { key:"s", style:{ fontWeight:800, fontSize:18, fontFamily:"'Fraunces',serif", color:m.color } }, s.score==null ? "—" : s.score),
+                rc("span", { key:"badge", className:"sevBadge sev-"+(m.sev||"neutral") }, m.badge || m.label),
               ]),
+              rc("div", { key:"s", style:{ fontWeight:800, fontSize:20, fontFamily:"'Fraunces',serif", color:m.color, margin:"4px 0 2px" } }, s.score==null ? "—" : s.score),
               rc("div", { key:"lv", style:{ fontSize:11, color:m.color, fontWeight:700, marginBottom:6 } }, m.label),
-              rc("div", { key:"chips", style:{ display:"flex", flexWrap:"wrap", gap:6, fontSize:11 } }, HEALTH_GROUP_ORDER.map(k => { const g = s.groups[k]; const gm = HEALTH_LEVELS[healthLevelOf(g && g.score)];
+              rc("div", { key:"chips", style:{ display:"flex", flexWrap:"wrap", gap:6, fontSize:11 } }, HEALTH_GROUP_ORDER.map(k => { const g = s.groups[k]; const gm = HEALTH_LEVELS[healthLevelOf(g && g.score, healthTh)];
                 return rc("span", { key:k, title:(g && g.reason)||"", style:{ color:"var(--inkSoft)" } }, [ rc("span", { key:"d", style:{ display:"inline-block", width:7, height:7, borderRadius:"50%", background:gm.color, marginRight:3 } }), `${HEALTH_GROUP_LABEL[k]} ${g && g.score!=null ? g.score : "—"}`]);
               })),
               rc("div", { key:"i", style:{ fontSize:11.5, marginTop:6, color: s.issueCount>0 ? CL360.bad : CL360.good, fontWeight:600 } }, s.issueCount>0 ? `${s.issueCount} vấn đề đang mở` : "Không có vấn đề mở"),
+            ]);
+          })),
+    ]),
+
+    // Đặc tả §II — Danh sách cửa hàng cần ưu tiên (7 nhóm cảnh báo)
+    rc("div", { key:"priorityShops", className:"card", style:{ marginBottom:16 } }, [
+      rc(Head360, { key:"h", title:`Cửa hàng cần ưu tiên${priorityShops.length?` (${priorityShops.length})`:""}`, right:rc("span", { style:{ fontSize:11, color:"var(--inkSoft)" } }, "Xếp theo mức nghiêm trọng · bấm xem hồ sơ") }),
+      priorityShops.length===0
+        ? rc("div", { key:"ok", style:{ fontSize:13, color:"var(--pine)", fontWeight:600, padding:"8px 0" } }, summary ? "Không có cửa hàng cần ưu tiên trong phạm vi đang xem." : "Đang chờ dữ liệu sức khoẻ…")
+        : rc("div", { key:"list" }, priorityShops.slice(0, 12).map(({ shop:s, status, groupsHit, topIssue }) => {
+            const m = HEALTH_LEVELS[status];
+            const measure = topIssue && topIssue.currentValue!=null && topIssue.threshold!=null
+              ? `Hiện tại ${fmtNum(topIssue.currentValue)} · ngưỡng ${fmtNum(topIssue.threshold)}`
+              : (topIssue ? (topIssue.detail||"") : "");
+            return rc("div", { key:s.shopCode, style:{ display:"flex", flexWrap:"wrap", gap:10, alignItems:"flex-start", padding:"10px 0", borderBottom:"1px solid var(--line)" } }, [
+              rc("div", { key:"l", style:{ minWidth:90 } }, [
+                rc("b", { key:"n", style:{ fontSize:14, cursor:"pointer", color:"var(--pine)" }, onClick:()=>go("shop360", { shop:s.shopCode }) }, shopLabel(s.shopCode)),
+                rc("div", { key:"b", style:{ marginTop:4 } }, rc("span", { className:"sevBadge sev-"+(m.sev||"neutral") }, m.badge+" · "+(s.score==null?"—":s.score))),
+              ]),
+              rc("div", { key:"mid", style:{ flex:"1 1 220px", minWidth:0 } }, [
+                topIssue && rc("div", { key:"t", style:{ fontWeight:700, fontSize:13 } }, topIssue.title),
+                measure && rc("div", { key:"m", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:2 } }, measure),
+                groupsHit.length>0 && rc("div", { key:"g", style:{ fontSize:11, color:"var(--inkSoft)", marginTop:4 } }, "Nhóm: "+groupsHit.join(" · ")),
+                topIssue && rc("div", { key:"a", style:{ fontSize:12, marginTop:4, color:"var(--ink)" } }, [rc("b", { key:"k" }, "Đề xuất: "), suggestedActionForIssue(topIssue)]),
+              ]),
+              rc("div", { key:"btns", style:{ display:"flex", gap:6, flexWrap:"wrap" } }, [
+                topIssue && rc("button", { key:"d", type:"button", className:"btn btnGhost", style:{ fontSize:11.5, padding:"5px 10px" }, onClick:()=>setIssueDetail({ ...topIssue, shopCode:s.shopCode }) }, "Chi tiết"),
+                topIssue && rc("button", { key:"task", type:"button", className:"btn btnPrimary", style:{ fontSize:11.5, padding:"5px 10px" }, onClick:()=>openIssueTask({ ...topIssue, shopCode:s.shopCode }) }, "Giao việc"),
+                rc("button", { key:"p", type:"button", className:"btn", style:{ fontSize:11.5, padding:"5px 10px" }, onClick:()=>go("shop360", { shop:s.shopCode }) }, "Hồ sơ NT"),
+              ]),
             ]);
           })),
     ]),
@@ -13659,15 +13770,24 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate }){
 // Cấu hình tỷ trọng điểm sức khoẻ (mục "Hệ thống") — lưu opsConfig/shopHealthConfig.weights, backend tự chuẩn hoá về tổng 100%.
 function ShopHealthWeightsEditor(){
   const DEFAULTS = { revenue:25, hr:20, customer:20, goods:20, ops:15 };
+  const TH_DEFAULTS = { kpiGreenScore:85, kpiYellowScore:70, kpiRedScore:50 };
   const [vals, setVals] = useState(DEFAULTS);
+  const [th, setTh] = useState(TH_DEFAULTS);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
   useEffect(()=>{
     return db.collection("opsConfig").doc("shopHealthConfig").onSnapshot(d => {
-      const w = d.exists ? (d.data().weights || {}) : {};
+      const cfg = d.exists ? d.data() : {};
+      const w = cfg.weights || {};
       const next = {}; HEALTH_GROUP_ORDER.forEach(k => { next[k] = w[k]!=null ? Math.round(w[k]*(w[k]<=1?100:1)*10)/10 : DEFAULTS[k]; });
-      setVals(next); setLoaded(true);
+      setVals(next);
+      setTh({
+        kpiGreenScore: cfg.kpiGreenScore != null ? cfg.kpiGreenScore : TH_DEFAULTS.kpiGreenScore,
+        kpiYellowScore: cfg.kpiYellowScore != null ? cfg.kpiYellowScore : TH_DEFAULTS.kpiYellowScore,
+        kpiRedScore: cfg.kpiRedScore != null ? cfg.kpiRedScore : TH_DEFAULTS.kpiRedScore,
+      });
+      setLoaded(true);
     });
   }, []);
   const total = HEALTH_GROUP_ORDER.reduce((s,k) => s + (Number(vals[k])||0), 0);
@@ -13675,27 +13795,39 @@ function ShopHealthWeightsEditor(){
     if(total<=0){ setMsg("Tổng tỷ trọng phải lớn hơn 0."); return; }
     setSaving(true); setMsg("");
     try{
-      const weights = {}; HEALTH_GROUP_ORDER.forEach(k => { weights[k] = (Number(vals[k])||0)/total; });
-      await db.collection("opsConfig").doc("shopHealthConfig").set({ weights }, { merge:true });
-      setMsg("Đã lưu. Điểm mới áp dụng sau lần tính tiếp theo (08:30 hằng ngày hoặc bấm “Tính lại điểm” ở Tổng quan).");
+      const weights = {}; HEALTH_GROUP_ORDER.forEach(k => { weights[k] = Number(vals[k])||0; });
+      await db.collection("opsConfig").doc("shopHealthConfig").set({
+        weights,
+        kpiGreenScore: Number(th.kpiGreenScore)||85,
+        kpiYellowScore: Number(th.kpiYellowScore)||70,
+        kpiRedScore: Number(th.kpiRedScore)||50,
+      }, { merge:true });
+      setMsg("Đã lưu tỷ trọng & ngưỡng màu. Áp dụng từ lần tính điểm sức khoẻ tiếp theo.");
     } catch(err){ setMsg("Không lưu được: " + (err && err.message ? err.message : err)); }
     setSaving(false);
   }
   return rc("div", { className:"card", style:{ marginBottom:14 } }, [
-    rc("div", { key:"t", style:{ fontWeight:700, fontSize:17.5, marginBottom:4 } }, "Tỷ trọng điểm sức khoẻ nhà thuốc"),
-    rc("div", { key:"s", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } }, "Điểm nhà thuốc = Σ điểm từng nhóm × tỷ trọng. Mặc định 25/20/20/20/15. Nhập số tuỳ ý — hệ thống tự quy về tổng 100%."),
+    rc("div", { key:"t", style:{ fontWeight:700, fontSize:17.5, marginBottom:4 } }, "Tỷ trọng điểm sức khoẻ & ngưỡng màu cửa hàng"),
+    rc("div", { key:"s", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } }, "Điểm nhà thuốc = Σ điểm từng nhóm × tỷ trọng. Màu theo đặc tả: Xanh (đạt KPI) / Vàng (có nguy cơ) / Đỏ (không đạt) / Xám (thiếu dữ liệu). Ngưỡng cấu hình được."),
     !loaded ? rc(EmptyState, { key:"l", kind:"loading" })
       : rc("div", { key:"f" }, [
           rc("div", { key:"g", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:10, marginBottom:10 } }, HEALTH_GROUP_ORDER.map(k => rc("div", { key:k, className:"field" }, [
             rc("label", { key:"l" }, HEALTH_GROUP_LABEL[k] + " (%)"),
             rc("input", { key:"i", type:"number", min:0, max:100, value:vals[k], onChange:e=>setVals(v => ({ ...v, [k]:e.target.value })) }),
           ]))),
-          rc("div", { key:"sum", style:{ fontSize:12, marginBottom:8, color: Math.round(total)===100 ? "var(--pine)" : CL360.warn } }, `Tổng nhập: ${Math.round(total*10)/10}%${Math.round(total)===100 ? "" : " (sẽ được quy về 100%)"}`),
-          rc("button", { key:"b", type:"button", className:"btn btnPrimary", disabled:saving, onClick:save }, saving ? "Đang lưu..." : "Lưu tỷ trọng"),
+          rc("div", { key:"sum", style:{ fontSize:12, marginBottom:12, color: Math.round(total)===100 ? "var(--pine)" : CL360.warn } }, `Tổng nhập: ${Math.round(total*10)/10}%${Math.round(total)===100 ? "" : " (sẽ được quy về 100%)"}`),
+          rc("div", { key:"thTitle", style:{ fontWeight:700, fontSize:14, marginBottom:6 } }, "Ngưỡng màu trạng thái cửa hàng (điểm sức khoẻ)"),
+          rc("div", { key:"th", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:10, marginBottom:12 } }, [
+            rc("div", { key:"g", className:"field" }, [ rc("label", { key:"l" }, "Xanh · ≥ điểm"), rc("input", { key:"i", type:"number", min:0, max:100, value:th.kpiGreenScore, onChange:e=>setTh(t => ({ ...t, kpiGreenScore:e.target.value })) }) ]),
+            rc("div", { key:"y", className:"field" }, [ rc("label", { key:"l" }, "Vàng · ≥ điểm"), rc("input", { key:"i", type:"number", min:0, max:100, value:th.kpiYellowScore, onChange:e=>setTh(t => ({ ...t, kpiYellowScore:e.target.value })) }) ]),
+            rc("div", { key:"r", className:"field" }, [ rc("label", { key:"l" }, "Đỏ · < điểm"), rc("input", { key:"i", type:"number", min:0, max:100, value:th.kpiRedScore, onChange:e=>setTh(t => ({ ...t, kpiRedScore:e.target.value })) }) ]),
+          ]),
+          rc("button", { key:"b", type:"button", className:"btn btnPrimary", disabled:saving, onClick:save }, saving ? "Đang lưu..." : "Lưu tỷ trọng & ngưỡng"),
           msg && rc("div", { key:"m", style:{ fontSize:12, marginTop:8, color:"var(--inkSoft)" } }, msg),
         ]),
   ]);
 }
+
 
 // ---------- Cấu hình P0-P3 + hạn xử lý (Nâng cấp Quản lý vấn đề) ----------
 // Nguyên tắc: (1) không mã nào mặc định P0 — chỉ người có thẩm quyền tự nâng tay ở đây; (2) hạn xử lý
@@ -13809,9 +13941,8 @@ function ShopProfileView({ isAdmin, myStaff, navParam, onNavigate }){
   async function recomputeHealth(){
     setHealthBusy(true);
     try{
-      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeShopHealthNow", { headers: await authHeader() });
-      if(!resp.ok){ const t = await resp.text().catch(()=>""); window.alert(`Tính điểm thất bại (mã lỗi ${resp.status}). ${t.slice(0,300)}`); }
-    } catch(err){ window.alert("Lỗi kết nối khi tính điểm: " + (err && err.message ? err.message : err)); }
+      await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeShopHealthNow", {}, 180000);
+    } catch(err){ window.alert(`${cfErrorLabel(err)}: ${err && err.message ? err.message : err}`); }
     setHealthBusy(false);
   }
   const computedLabel = summary && summary.computedAt ? new Date(summary.computedAt).toLocaleString("vi-VN",{ hour:"2-digit", minute:"2-digit", day:"2-digit", month:"2-digit" }) : null;
@@ -14039,11 +14170,10 @@ function SmartAssistantBox(props){
     setAsking(true); setErrMsg(null);
     const snap = buildCommandCenterSnapshotText(props);
     try{
-      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/askAssistantNow", {
-        method:"POST", headers:{ "Content-Type":"application/json", ...(await authHeader()) },
+      const data = await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/askAssistantNow", {
+        method:"POST", headers:{ "Content-Type":"application/json" },
         body: JSON.stringify({ scopeLabel, snapshot:snap, question:question.trim() }),
-      });
-      const data = await resp.json();
+      }, 120000);
       setAnswerMeta({ validation:data.validation||null, fallback:data.fallback||null, promptVersion:data.promptVersion||null, dataAsOf:data.dataAsOf||null });
       if(data.ok){ setAnswer(data.result); setSnapshotUsed(data.aiInputSnapshot || snap); }
       else { setAnswer(null); setErrMsg(data.reason || data.error || "Trợ lý không trả lời được."); }
@@ -14120,11 +14250,10 @@ function CommandCenterAiBriefing({ scopeLabel, healthScore, healthParts, checkli
     setLoading(true); setErrMsg(null);
     const snap = buildSnapshot();
     try{
-      const resp = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/analyzeCommandCenterNow", {
-        method:"POST", headers:{ "Content-Type":"application/json", ...(await authHeader()) },
+      const data = await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/analyzeCommandCenterNow", {
+        method:"POST", headers:{ "Content-Type":"application/json" },
         body: JSON.stringify({ scopeLabel, snapshot: snap }),
-      });
-      const data = await resp.json();
+      }, 120000);
       const meta = { validation:data.validation||null, fallback:data.fallback||null, promptVersion:data.promptVersion||null, dataAsOf:data.dataAsOf||null };
       setAiMeta(meta);
       if(data.ok){
@@ -14243,11 +14372,15 @@ function KpiStat({ value, unit, delta, period, benchmark, level, label }){
 // Empty/error state chuẩn theo 07_UI_UX_System.md §6 — phân biệt rõ 5 tình huống, KHÔNG bao giờ
 // hiện "0" khi thực chất là lỗi/chưa tải xong dữ liệu.
 const EMPTY_STATE_META = {
-  noData:    { icon:"📄", title:"Chưa có dữ liệu" },
-  loading:   { icon:"⏳", title:"Đang tải dữ liệu…" },
-  stale:     { icon:"🕓", title:"Dữ liệu đã cũ — đang đồng bộ lại" },
-  syncFailed:{ icon:"⚠️", title:"Đồng bộ thất bại" },
-  forbidden: { icon:"🔒", title:"Không có quyền xem mục này" },
+  noData:    { icon:"○", title:"Chưa có dữ liệu" },
+  loading:   { icon:"…", title:"Đang tải dữ liệu…" },
+  stale:     { icon:"!", title:"Dữ liệu đã cũ — đang đồng bộ lại" },
+  syncFailed:{ icon:"!", title:"Đồng bộ thất bại" },
+  forbidden: { icon:"⊘", title:"Không có quyền xem mục này" },
+  apiError:  { icon:"!", title:"API lỗi hoặc hết thời gian chờ" },
+  zeroOk:    { icon:"0", title:"Giá trị thật = 0 (không phải lỗi)" },
+  emptyApi:  { icon:"○", title:"API trả về rỗng" },
+  timeout:   { icon:"!", title:"Hết thời gian chờ — thử lại" },
 };
 function EmptyState({ kind, detail }){
   const meta = EMPTY_STATE_META[kind] || EMPTY_STATE_META.noData;
@@ -15390,7 +15523,7 @@ function TaskIntelligencePanel({ onOpenTask }){
   const FN = "https://asia-southeast1-upharma-176d5.cloudfunctions.net";
   async function call(kind, path, okMsg){
     setBusy(kind); setMsg("");
-    try{ const r = await fetch(`${FN}/${path}`, { headers: await authHeader() }); const j = await r.json(); if(!j.ok) throw new Error(j.error || "Lỗi không rõ"); setMsg(okMsg(j)); }
+    try{ const j = await callCf(`${FN}/${path}`, {}, 120000); setMsg(okMsg(j)); }
     catch(err){ setMsg("Không thực hiện được: " + (err && err.message ? err.message : err)); logSystemError(path, err); }
     setBusy("");
   }
@@ -15592,9 +15725,7 @@ function Productivity360Panel({ me, thang, metrics, summary, onCreateTask }){
   async function recompute(){
     setBusy("calc"); setMsg("");
     try{
-      const r = await fetch(`${WF_FN_BASE}/computeWorkforceMetricsNow?thang=${thang}`, { headers: await authHeader() });
-      const j = await r.json();
-      if(!j.ok) throw new Error(j.error || "Lỗi không rõ");
+      const j = await callCf(`${WF_FN_BASE}/computeWorkforceMetricsNow?thang=${thang}`, {}, 180000);
       setMsg(`Đã tính lại cho ${j.staffCount} nhân viên (${j.inScope} trong phạm vi)${j.ambiguous ? ` · ${j.ambiguous} tên trùng chưa ghép được` : ""}.`);
     } catch(err){ setMsg("Không tính lại được: " + (err && err.message ? err.message : err)); logSystemError("computeWorkforceMetricsNow", err); }
     setBusy("");
@@ -15602,9 +15733,7 @@ function Productivity360Panel({ me, thang, metrics, summary, onCreateTask }){
   async function explain(){
     setBusy("ai"); setMsg("");
     try{
-      const r = await fetch(`${WF_FN_BASE}/explainWorkforceNow?staffId=${encodeURIComponent(me.id)}&thang=${thang}`, { headers: await authHeader() });
-      const j = await r.json();
-      if(!j.ok) throw new Error(j.error || "Lỗi không rõ");
+      const j = await callCf(`${WF_FN_BASE}/explainWorkforceNow?staffId=${encodeURIComponent(me.id)}&thang=${thang}`, {}, 180000);
     } catch(err){ setMsg("AI chưa giải thích được: " + (err && err.message ? err.message : err)); logSystemError("explainWorkforceNow", err); }
     setBusy("");
   }
@@ -16329,7 +16458,7 @@ function AiReportsPanel(){
   useEffect(()=>{ setNote(""); setShowFacts(false); }, [sel && sel.id]);
   async function gen(type, force){
     setBusy(type); setMsg("");
-    try{ const r = await fetch(`https://asia-southeast1-upharma-176d5.cloudfunctions.net/runAiReportNow?type=${type}${force ? "&force=1" : ""}`, { headers: await authHeader() }); const j = await r.json(); if(!j.ok) throw new Error(j.error||"Lỗi");
+    try{ const j = await callCf(`https://asia-southeast1-upharma-176d5.cloudfunctions.net/runAiReportNow?type=${type}${force ? "&force=1" : ""}`, {}, 180000);
       setMsg(j.cached ? "Số liệu chưa đổi so với lần trước — dùng lại nhận xét AI đã có (không tốn thêm lượt gọi)." : (j.skippedAi ? "Đã có nhận xét AI — giữ nguyên." : `Đã tạo báo cáo${j.aiStatus!=="ok" ? " — AI lỗi, đang hiển thị tóm tắt theo quy tắc" : ""}.`)); setSelId(null); }
     catch(err){ setMsg("Không tạo được: " + (err && err.message ? err.message : err)); }
     setBusy("");
@@ -16693,7 +16822,7 @@ function RiskCenterView({ isAdmin, myStaff, navParam, onNavigate }){
 
   async function scanNow(){
     setBusy(true); setMsg("");
-    try{ const r = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/runRiskEngineNow", { headers: await authHeader() }); const j = await r.json(); if(!j.ok) throw new Error(j.error || "Lỗi"); setMsg(`Đã quét: ${j.created} mới · ${j.updated} cập nhật · ${j.reopened} tái phát · ${j.cleared} hết điều kiện · ${j.skipped} bỏ qua theo chính sách${Object.keys(j.ruleErrors||{}).length ? ` · lỗi nguồn: ${Object.keys(j.ruleErrors).join(", ")}` : ""}.`); }
+    try{ const j = await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/runRiskEngineNow", {}, 180000); setMsg(`Đã quét: ${j.created} mới · ${j.updated} cập nhật · ${j.reopened} tái phát · ${j.cleared} hết điều kiện · ${j.skipped} bỏ qua theo chính sách${Object.keys(j.ruleErrors||{}).length ? ` · lỗi nguồn: ${Object.keys(j.ruleErrors).join(", ")}` : ""}.`); }
     catch(err){ setMsg("Không quét được: " + (err && err.message ? err.message : err)); }
     setBusy(false);
   }
@@ -16916,7 +17045,7 @@ function CareOutcomesSummary360(){
   }, []);
   async function recompute(){
     setBusy(true); setMsg("");
-    try{ const r = await fetch("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeCareOutcomesNow", { headers: await authHeader() }); const j = await r.json(); if(!j.ok) throw new Error(j.error||"Lỗi"); setMsg(`Đã đo ${j.tasks} việc chăm sóc của ${j.customers} khách.`); }
+    try{ const j = await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeCareOutcomesNow", {}, 180000); setMsg(`Đã đo ${j.tasks} việc chăm sóc của ${j.customers} khách.`); }
     catch(err){ setMsg("Không tính được: " + (err && err.message ? err.message : err)); }
     setBusy(false);
   }
@@ -17426,9 +17555,7 @@ function ReplenishView({ isAdmin, myStaff, onNavigate }){
   async function claim(c, staffId){
     setClaiming(c.phone);
     try{
-      const r = await fetch(`${REPL_FN}replenishmentClaim`, { method:"POST", headers:{ ...(await authHeader()), "Content-Type":"application/json" }, body: JSON.stringify({ phone:c.phone, staffId: staffId || undefined }) });
-      const d = await r.json();
-      if(!d.ok) throw new Error(d.error || "Không nhận được");
+      const d = await callCf(`${REPL_FN}replenishmentClaim`, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ phone:c.phone, staffId: staffId || undefined }) }, 60000);
       setData(prev => ({ ...prev, customers: prev.customers.map(x => x.phone!==c.phone ? x : { ...x, assignedStaffId:d.staffId, assignedStaffName:d.staffName,
         openTask: x.openTask || { id:d.taskId, staffName:d.staffName, sub:"Mới giao" } }) }));
       setAssignFor(null);
@@ -17452,9 +17579,7 @@ function ReplenishView({ isAdmin, myStaff, onNavigate }){
   async function load(){
     setLoading(true); setErr(null);
     try{
-      const r = await fetch(`${REPL_FN}replenishmentList?shop=all`, { headers: await authHeader() });
-      const d = await r.json();
-      if(!d.ok) throw new Error(d.error || "Lỗi tải dữ liệu");
+      const d = await callCf(`${REPL_FN}replenishmentList?shop=all`, {}, 120000);
       setData(d);
     } catch(e){ setErr(e.message || String(e)); }
     setLoading(false);
@@ -17464,9 +17589,7 @@ function ReplenishView({ isAdmin, myStaff, onNavigate }){
   async function recompute(){
     setComputing(true);
     try{
-      const r = await fetch(`${REPL_FN}computeReplenishmentNow`, { headers: await authHeader() });
-      const d = await r.json();
-      if(!d.ok) throw new Error(d.error || "Lỗi tính");
+      const d = await callCf(`${REPL_FN}computeReplenishmentNow`, {}, 180000);
       await load();
     } catch(e){ window.alert("Tính lại thất bại: " + (e.message || e)); }
     setComputing(false);
@@ -17476,10 +17599,8 @@ function ReplenishView({ isAdmin, myStaff, onNavigate }){
     setSaving(true);
     try{
       const { c, it } = modal;
-      const r = await fetch(`${REPL_FN}replenishmentContact`, { method:"POST", headers:{ ...(await authHeader()), "Content-Type":"application/json" },
-        body: JSON.stringify({ phone:c.phone, productId:it.productId, productName:it.productName, lastDate:it.lastDate, result, note:note.trim() }) });
-      const d = await r.json();
-      if(!d.ok) throw new Error(d.error || "Không lưu được");
+      const d = await callCf(`${REPL_FN}replenishmentContact`, { method:"POST", headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ phone:c.phone, productId:it.productId, productName:it.productName, lastDate:it.lastDate, result, note:note.trim() }) }, 60000);
       setData(prev => ({ ...prev, customers: prev.customers.map(x => x.phone!==c.phone ? x : {
         ...x, ...(d.claimed ? { assignedStaffId:myStaff && myStaff.id, assignedStaffName:myStaff && myStaff.name } : {}),
         items: x.items.map(y => y.productId===it.productId && y.lastDate===it.lastDate ? { ...y, contact:d.contact } : y) }) }));
@@ -17800,6 +17921,84 @@ function StaffProgressPanel({ openTasks, doneTasks, roster, fixedShop, onPick, t
   ]);
 }
 
+// ================= ĐO HIỆU QUẢ SAU XỬ LÝ (đặc tả §I Performance Management + P2-18) =================
+// So sánh tình trạng trước–sau khi hoàn thành việc gắn issue (sourceIssueCode).
+// Nguồn: tasks đã hoàn thành 90 ngày gần nhất có truocXuLy / sauXuLy / tacDong / sourceIssueCode.
+function ImpactEffectivenessPanel({ shopScope }){
+  const [rows, setRows] = useState(null); // null = loading
+  const [err, setErr] = useState(null);
+  const today = todayISO();
+  useEffect(()=>{
+    setRows(null); setErr(null);
+    let q = db.collection("tasks").where("ngayHoanThanh", ">=", addDays(today, -90));
+    const unsub = q.onSnapshot(snap => {
+      let list = snap.docs.map(d => ({ id:d.id, ...d.data() })).filter(t => t.trangThai==="Đã hoàn thành");
+      if(shopScope) list = list.filter(t => t.shop===shopScope);
+      // Chỉ việc có liên kết vấn đề hoặc có ghi trước/sau/tác động
+      list = list.filter(t => t.sourceIssueCode || t.truocXuLy || t.sauXuLy || t.tacDong);
+      list.sort((a,b) => String(b.ngayHoanThanh||"").localeCompare(String(a.ngayHoanThanh||"")));
+      setRows(list);
+    }, e => { logSystemError("impactTasks", e); setErr(e && e.message ? e.message : String(e)); setRows([]); });
+    return unsub;
+  }, [today, shopScope]);
+
+  if(err) return rc(EmptyState, { kind:"syncFailed", detail:err });
+  if(rows===null) return rc(EmptyState, { kind:"loading" });
+
+  const withBeforeAfter = rows.filter(t => t.truocXuLy || t.sauXuLy);
+  const withImpact = rows.filter(t => t.tacDong && String(t.tacDong).trim());
+  const linkedIssue = rows.filter(t => t.sourceIssueCode);
+  const byCode = {};
+  linkedIssue.forEach(t => { const k = t.sourceIssueCode || "?"; (byCode[k] = byCode[k] || []).push(t); });
+  const codeStats = Object.keys(byCode).map(code => {
+    const arr = byCode[code];
+    return { code, n:arr.length, withImpact:arr.filter(t=>t.tacDong).length, title:(arr[0]&&arr[0].sourceIssueTitle)||code };
+  }).sort((a,b)=>b.n-a.n);
+
+  return rc("div", { className:"card", style:{ marginBottom:14 } }, [
+    rc(Head360, { key:"h", title:"Hiệu quả sau xử lý (90 ngày)", right:rc("span", { style:{ fontSize:11, color:"var(--inkSoft)" } }, `${fmtNum(rows.length)} việc có dấu vết`) }),
+    rc("div", { key:"tiles", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:10, marginBottom:14 } }, [
+      rc(StatTile, { key:"a", label:"Việc gắn vấn đề", value:fmtNum(linkedIssue.length), sub:"có sourceIssueCode", tint:"var(--pineSoft)" }),
+      rc(StatTile, { key:"b", label:"Có trước–sau", value:fmtNum(withBeforeAfter.length), sub:"truocXuLy / sauXuLy", tint:"var(--pineSoft)" }),
+      rc(StatTile, { key:"c", label:"Đã ghi tác động", value:fmtNum(withImpact.length), sub:rows.length?`${Math.round(withImpact.length/rows.length*100)}% mẫu`:"—", tint:"var(--pineSoft)" }),
+      rc(StatTile, { key:"d", label:"Loại vấn đề đã xử lý", value:fmtNum(codeStats.length), sub:"mã issue khác nhau", tint:"var(--pineSoft)" }),
+    ]),
+    codeStats.length>0 && rc("div", { key:"bycode", style:{ marginBottom:14 } }, [
+      rc("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:6 } }, "Theo mã vấn đề"),
+      rc(Table360, { key:"tb", head:["Mã","Vấn đề","Số việc xong","Đã ghi tác động"],
+        rows:codeStats.slice(0,15).map(r => ({ cells:[ r.code, r.title, fmtNum(r.n), fmtNum(r.withImpact) ] })),
+        emptyText:"Chưa có việc gắn mã vấn đề." }),
+    ]),
+    rc("div", { key:"list" }, [
+      rc("div", { key:"t", style:{ fontWeight:700, fontSize:13, marginBottom:6 } }, "So sánh trước → sau"),
+      rows.length===0
+        ? rc(EmptyState, { key:"e", kind:"noData", detail:"Chưa có việc hoàn thành có ghi nhận trước/sau hoặc tác động trong 90 ngày." })
+        : rc("div", { key:"rows" }, rows.slice(0, 30).map(t => rc("div", { key:t.id, style:{ padding:"10px 0", borderBottom:"1px solid var(--line)" } }, [
+            rc("div", { key:"top", style:{ display:"flex", flexWrap:"wrap", gap:8, alignItems:"baseline", marginBottom:4 } }, [
+              rc("b", { key:"title", style:{ fontSize:13 } }, t.title || "(không tên)"),
+              t.sourceIssueCode && rc("span", { key:"code", className:"sevBadge sev-monitor" }, t.sourceIssueCode),
+              rc("span", { key:"meta", style:{ fontSize:11.5, color:"var(--inkSoft)" } },
+                [t.shop ? shopLabel(t.shop) : null, t.staffName||t.nguoiBaoCao||"", t.ngayHoanThanh||""].filter(Boolean).join(" · ")),
+            ]),
+            (t.truocXuLy || t.sauXuLy) && rc("div", { key:"ba", style:{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, fontSize:12.5, marginTop:4 } }, [
+              rc("div", { key:"b", style:{ background:"var(--claySoft)", borderRadius:8, padding:"8px 10px" } }, [
+                rc("div", { key:"l", style:{ fontSize:10.5, fontWeight:700, color:"var(--inkSoft)", textTransform:"uppercase", marginBottom:2 } }, "Trước xử lý"),
+                rc("div", { key:"v" }, t.truocXuLy || "— (chưa ghi)"),
+              ]),
+              rc("div", { key:"a", style:{ background:"var(--pineSoft)", borderRadius:8, padding:"8px 10px" } }, [
+                rc("div", { key:"l", style:{ fontSize:10.5, fontWeight:700, color:"var(--inkSoft)", textTransform:"uppercase", marginBottom:2 } }, "Sau xử lý"),
+                rc("div", { key:"v" }, t.sauXuLy || "— (chưa ghi)"),
+              ]),
+            ]),
+            t.tacDong && rc("div", { key:"imp", style:{ fontSize:12.5, marginTop:6, padding:"6px 10px", background:"#EEF2FF", borderRadius:8 } }, [rc("b", { key:"k" }, "Tác động: "), t.tacDong]),
+            t.ketQua && !t.tacDong && rc("div", { key:"kq", style:{ fontSize:12, color:"var(--inkSoft)", marginTop:4 } }, "Kết quả: "+String(t.ketQua).slice(0,180)),
+          ]))),
+    ]),
+    rc("div", { key:"hint", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:10 } },
+      "Ghi nhận trước khi giao việc (truocXuLy) và sau khi hoàn thành (sauXuLy / tacDong) để đo hiệu quả thực tế — không chỉ báo cáo kết quả tức thời."),
+  ]);
+}
+
 function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, shopScope, shopDoneTasks, roster, embedded, focusTaskId }){
   // 27/9/2026 (Phương): dùng lại màn này cho CỬA HÀNG TRƯỞNG (shopScope = mã nhà thuốc) — chỉ thấy
   // việc của nhân viên nhà thuốc mình, không thấy việc "đề xuất lên QLKV" và việc của chính CHT.
@@ -17867,6 +18066,7 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
     { id:"review", label:`Chưa nhận xét (${lists.review.length})` },
     { id:"done", label:`Đã hoàn tất (${lists.done.length})` },
     { id:"progress", label:"Tiến độ nhân viên" },
+    { id:"impact", label:"Hiệu quả sau xử lý" },
   ] : [
     { id:"mine", label:`Của tôi (${lists.mine.length})` },
     { id:"today", label:`Hôm nay (${lists.today.length})` },
@@ -17878,6 +18078,7 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
     { id:"doneWeak", label:`Xong chưa đạt (${lists.doneWeak.length})` },
     { id:"done", label:`Đã hoàn tất (${lists.done.length})` },
     { id:"progress", label:"Tiến độ nhân viên" },
+    { id:"impact", label:"Hiệu quả sau xử lý" },
   ];
   const s = search.trim().toLowerCase();
   const list = (lists[tab] || []).filter(t => {
@@ -18037,7 +18238,9 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
       rc(MiniStat360, { key:"a", label:"Cần chú ý", value:attnN, valueColor:CL360.warn, sub:"Hạn trong 1 ngày hoặc ưu tiên vừa" }),
       rc(MiniStat360, { key:"d", label:"Đã hoàn tất hôm nay", value:doneToday, valueColor:CL360.good }),
     ]),
-    tab==="progress" ? progressCard : rc("div", { key:"grid", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))", gap:12, alignItems:"start" } }, [ queue, detail ]),
+    tab==="impact" ? rc(ImpactEffectivenessPanel, { key:"impact", shopScope:shopScope||null })
+      : tab==="progress" ? progressCard
+      : rc("div", { key:"grid", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))", gap:12, alignItems:"start" } }, [ list, detail ]),
     !shopScope && rc("div", { key:"foot", style:{ position:"sticky", bottom:8, marginTop:14, background:"#fff", border:"1px solid var(--line)", padding:"10px 12px", borderRadius:9, display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap", boxShadow:"0 2px 10px rgba(35,49,41,.08)" } }, [
       rc("span", { key:"t", style:{ fontSize:11.5 } }, [ rc("b", { key:"b" }, "Nguyên tắc: "), "Detection → Issue → Owner → Deadline → Action → Evidence → Verify → KPI" ]),
       rc("button", { key:"b", type:"button", className:"btn", onClick:()=>setComposer({ heading:"Tạo task thủ công" }) }, "＋ Tạo task thủ công"),
