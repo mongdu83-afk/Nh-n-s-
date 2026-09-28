@@ -18444,9 +18444,19 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
     !embedded && rc("div", { key:"head", style:{ marginBottom:14 } }, [
       rc(PageTitle, { key:"h", style:{ marginBottom:2 } }, "Công việc cần xử lý"),
     ]),
-    embedded ? rc("div", { key:"tabs", style:{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:12 } }, tabs.map(tb =>
-        rc("button", { key:tb.id, type:"button", className: tab===tb.id ? "btn btnPrimary" : "btn btnGhost", style:{ fontSize:12, padding:"6px 11px" }, onClick:()=>{ setTab(tb.id); setSelId(null); } }, tb.label)))
-      : rc(SubTabBar, { key:"tabs", tabs, active:tab, onChange:t=>{ setTab(t); setSelId(null); } }),
+    // 28/9/2026: sidebar chỉ giữ 2 mục "Tiến độ nhân viên" + "Hiệu quả sau xử lý"; các tab việc còn lại
+    // (Của tôi, Hôm nay, Đội nhóm, Chờ xác minh, Quá hạn, ...) nằm ngay trong trang chính để gọn sidebar.
+    (() => {
+      const sideIds = ["progress", "impact"];
+      const workTabs = embedded ? tabs : tabs.filter(tb => !sideIds.includes(tb.id));
+      const sideTabs = embedded ? [] : tabs.filter(tb => sideIds.includes(tb.id));
+      const pick = id => { setTab(id); setSelId(null); };
+      return rc(React.Fragment, { key:"tabsWrap" }, [
+        rc("div", { key:"tabs", style:{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:12 } }, workTabs.map(tb =>
+          rc("button", { key:tb.id, type:"button", className: tab===tb.id ? "btn btnPrimary" : "btn btnGhost", style:{ fontSize:12, padding:"6px 11px" }, onClick:()=>pick(tb.id) }, tb.label))),
+        sideTabs.length ? rc(SubTabBar, { key:"sidetabs", tabs:sideTabs, active:tab, onChange:pick }) : null,
+      ]);
+    })(),
     rc("div", { key:"flt", style:{ display:"flex", gap:8, marginBottom:12, flexWrap:"wrap" } }, [
       rc("input", { key:"q", type:"text", value:search, onChange:e=>setSearch(e.target.value), placeholder:"⌕ Tìm task / nhà thuốc / NV / khách / SKU", style:{ ...selStyle, flex:"1 1 240px" } }),
       rc("select", { key:"l", value:fLevel, onChange:e=>setFLevel(e.target.value), style:selStyle }, [ ["Tất cả","Tất cả mức độ"], ["urgent","Khẩn cấp"], ["attention","Cần chú ý"], ["assigned","Đã giao"] ].map(o => rc("option", { key:o[0], value:o[0] }, o[1]))),
