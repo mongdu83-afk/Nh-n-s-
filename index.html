@@ -19365,7 +19365,24 @@ function App(){
   return React.createElement(Dashboard, { user, isAdmin, myStaff });
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App, null));
+class ErrorBoundary extends React.Component {
+  constructor(props){ super(props); this.state = { err: null }; }
+  static getDerivedStateFromError(err){ return { err: err }; }
+  componentDidCatch(err, info){ console.error("[ErrorBoundary]", err, info && info.componentStack); }
+  render(){
+    if(!this.state.err) return this.props.children;
+    const e = this.state.err;
+    return React.createElement("div", { style:{ padding:24, fontFamily:"system-ui,sans-serif", maxWidth:720, margin:"40px auto" } }, [
+      React.createElement("h2", { key:"h", style:{ marginTop:0 } }, "Trang gặp lỗi khi hiển thị"),
+      React.createElement("p", { key:"p" }, "Chụp màn hình dòng lỗi bên dưới gửi lại để được sửa nhanh."),
+      React.createElement("pre", { key:"e", style:{ whiteSpace:"pre-wrap", background:"#F3DAD5", padding:12, borderRadius:8, fontSize:12 } },
+        String((e && (e.stack || e.message)) || e).slice(0, 1500)),
+      React.createElement("button", { key:"b", onClick:()=>location.reload(), style:{ padding:"8px 16px", marginRight:8 } }, "Tải lại trang"),
+      React.createElement("button", { key:"b2", onClick:()=>this.setState({ err:null }), style:{ padding:"8px 16px" } }, "Thử lại"),
+    ]);
+  }
+}
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(ErrorBoundary, null, React.createElement(App, null)));
 </script>
 <script>
 /* 28/9/2026 (sửa 28/9 tối): Script xóa emoji bằng MutationObserver TRONG #root
