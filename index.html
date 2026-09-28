@@ -8847,11 +8847,12 @@ function WeeklyPlanManagerView(){
 // computeRevenueAnalytics ở backend, không phải upload file Excel như app Dashboard cũ).
 // Quản lý xem toàn chuỗi (chọn được từng shop qua dropdown), nhân viên tự động chỉ xem đúng shop
 // mình — dùng chung khuôn mẫu "adminShop" như tab Phân tích hành vi/CRM đã có.
-function RevenueRefreshButton({ refreshing, onRefresh, computedAt }){
+function RevenueRefreshButton({ refreshing, onRefresh, computedAt, canRefresh }){
   return React.createElement("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12, flexWrap:"wrap", gap:8 } }, [
     React.createElement("div", { key:"t", style:{ fontSize:12.5, color:"var(--inkSoft)" } },
       computedAt ? `Tính lúc ${new Date(computedAt).toLocaleString("vi-VN")}` : "Chưa có dữ liệu"),
-    React.createElement("button", { key:"b", className:"btn btnGhost", disabled:refreshing, onClick:onRefresh, style:{ fontSize:12, padding:"4px 10px" } }, refreshing ? "Đang tính..." : "↻ Tính lại"),
+    // 28/9/2026: chỉ quản lý mới tính lại được (backend chỉ cho admin) — nhân viên bấm sẽ bị lỗi 403.
+    canRefresh && React.createElement("button", { key:"b", className:"btn btnGhost", disabled:refreshing, onClick:onRefresh, style:{ fontSize:12, padding:"4px 10px" } }, refreshing ? "Đang tính..." : "↻ Tính lại"),
   ]);
 }
 function useRevenueAnalytics(){
@@ -9485,7 +9486,7 @@ function RevenueAnalyticsView({ isAdmin, myStaff }){
     // 19/9/2026: bỏ h2 "Doanh thu" ở đây — topbar phía trên đã hiện đúng tên tab này rồi, để cả 2
     // thành trùng tiêu đề (yêu cầu).
     !stats ? React.createElement(React.Fragment, { key:"empty" }, [
-        React.createElement(RevenueRefreshButton, { key:"rb", refreshing, onRefresh:refresh, computedAt: stats && stats.computedAt }),
+        React.createElement(RevenueRefreshButton, { key:"rb", refreshing, onRefresh:refresh, computedAt: stats && stats.computedAt, canRefresh:isAdmin }),
         React.createElement("div", { key:"e", className:"card", style:{ fontSize:13, color:"var(--inkSoft)" } }, "Chưa có dữ liệu — bấm \"Tính lại\" ở trên."),
       ])
     : React.createElement(React.Fragment, { key:"body" }, [
@@ -9605,7 +9606,7 @@ function StaffPerformanceView({ isAdmin, myStaff }){
   const needsImproveCount = employees.filter(e=>e.rating && e.rating.label==="Cần cải thiện").length;
   return React.createElement("div", { style:{ maxWidth:1200, margin:"0 auto", padding:16 } }, [
     React.createElement(PageTitle, { key:"title" }, "Hiệu suất nhân viên"),
-    React.createElement(RevenueRefreshButton, { key:"rb", refreshing, onRefresh:refresh, computedAt: stats && stats.computedAt }),
+    React.createElement(RevenueRefreshButton, { key:"rb", refreshing, onRefresh:refresh, computedAt: stats && stats.computedAt, canRefresh:isAdmin }),
     !stats ? React.createElement("div", { key:"empty", className:"card", style:{ fontSize:13, color:"var(--inkSoft)" } }, "Chưa có dữ liệu — bấm \"Tính lại\" ở trên.")
     : React.createElement(React.Fragment, { key:"body" }, [
         React.createElement(ShopFilterBar, { key:"filter", isAdmin, adminShop, setAdminShop, shopFilter }),
@@ -10511,7 +10512,7 @@ function PromoAutoDetectSection({ isAdmin, myStaff }){
   return React.createElement("div", { style:{ marginTop:24 } }, [
     React.createElement("div", { key:"title", style:{ fontWeight:700, fontSize:16.5, marginBottom:4 } }, "Ước tính tự động theo chương trình (bổ sung)"),
     React.createElement("p", { key:"sub", className:"pagesub", style:{ marginTop:0 } }, "Nhận diện tự động theo tên hàng có dấu hiệu khuyến mãi (Combo, Tặng kèm, Giảm giá...) trong 30 ngày gần nhất, rồi GỘP theo tên chương trình (phần trong ngoặc vuông ở đầu tên hàng, nếu có) — chưa có cột \"loại khuyến mãi\" riêng trong dữ liệu đồng bộ nên đây là ước tính, không phải số tuyệt đối, không thay thế báo cáo theo chương trình ở trên. Doanh số ở đây là doanh thu bán THỰC TẾ của các sản phẩm thuộc chương trình (số dương), khác với \"so sánh theo kỳ\" — không phải chi phí khuyến mãi."),
-    React.createElement(RevenueRefreshButton, { key:"rb", refreshing, onRefresh:refresh, computedAt: stats && stats.computedAt }),
+    React.createElement(RevenueRefreshButton, { key:"rb", refreshing, onRefresh:refresh, computedAt: stats && stats.computedAt, canRefresh:isAdmin }),
     !stats || !promo ? React.createElement("div", { key:"empty", className:"card", style:{ fontSize:13, color:"var(--inkSoft)" } }, "Chưa có dữ liệu — bấm \"Tính lại\" ở trên.")
     : React.createElement(React.Fragment, { key:"body" }, [
         React.createElement(ShopFilterBar, { key:"filter", isAdmin, adminShop, setAdminShop, shopFilter }),
