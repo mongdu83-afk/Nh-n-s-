@@ -12299,6 +12299,76 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
     XLSX.writeFile(wb, `Phieu_de_xuat_dieu_chuyen_${todayISO()}.xlsx`);
   }
 
+  // ===== 28/9/2026: xuất Excel cho TỪNG bảng phân tích hàng hoá (xuất toàn bộ dòng đang lọc, không chỉ trang hiện tại) =====
+  function xlsxDownload(sheetName, filePrefix, title, scope, headers, rows){
+    if(!rows || rows.length===0){ alert("Bảng đang không có dòng nào để xuất."); return; }
+    const genTxt = data && data.generatedAtTs ? new Date(data.generatedAtTs).toLocaleString("vi-VN") : "—";
+    const aoa = [
+      [title],
+      [`Ngày xuất: ${new Date().toLocaleDateString("vi-VN")} · Phạm vi: ${scope && scope!=="Tất cả" ? nt(scope) : "Tất cả nhà thuốc"} · Dữ liệu phân tích lúc: ${genTxt}`],
+      [],
+      headers,
+      ...rows,
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws["!cols"] = headers.map((h,i) => ({ wch: Math.min(42, Math.max(String(h).length+2, ...rows.slice(0,200).map(r => String(r[i]==null ? "" : r[i]).length+2))) }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, sheetName.slice(0,31));
+    XLSX.writeFile(wb, `${filePrefix}_${scope && scope!=="Tất cả" ? nt(scope)+"_" : ""}${todayISO()}.xlsx`);
+  }
+  const daysTo = d => d ? Math.round((new Date(d) - new Date()) / 86400000) : "";
+  const dOnly = d => d ? String(d).slice(0,10) : "";
+  const nz = v => v==null ? "" : v;
+  function exportTransfersXlsx(){
+    xlsxDownload("Điều chuyển","PhanTich_DieuChuyen","ĐỀ XUẤT ĐIỀU CHUYỂN HÀNG HOÁ", filterShop,
+      ["Mã hàng","Tên hàng","Từ NT","Đến NT","SL nguyên","ĐV nguyên","SL lẻ","ĐV lẻ","Đơn giá nguyên","Đơn giá lẻ","Giá trị","Hạn dùng (nơi cho)","Còn (ngày)","Tồn nơi cho (ngày bán)","Tồn nơi nhận (ngày bán)","Ghi chú","Quyết định"],
+      sortedTransfers.map(t => {
+        const hasPack = t.orderUnit && t.orderUnitQty!=null;
+        const dec = decisionFor(t);
+        return [t.productId, t.productName, nt(t.fromShop), nt(t.toShop),
+          hasPack ? t.orderUnitQty : t.qty, hasPack ? t.orderUnit : (t.unit||""), hasPack ? t.qty : "", hasPack ? (t.unit||"") : "",
+          hasPack ? nz(t.priceOrder) : nz(t.price), t.price ? nz(t.price) : "", nz(valueOf(t, t.qty)),
+          dOnly(t.fromExpiryDate), daysTo(t.fromExpiryDate), nz(t.fromDaysStock), nz(t.toDaysStock),
+          [t.priority==="P1" ? "Ưu tiên" : "", t.toOutOfStock ? "Hết hàng" : "", t.toIsRequired ? "Thường trực" : "", t.crossRegion ? "Khác KV" : ""].filter(Boolean).join(", "),
+          dec ? `${dec.trangThai}${dec.lyDo ? ": "+dec.lyDo : ""}` : ""];
+      }));
+  }
+  function exportExpiryXlsx(){
+    xlsxDownload("Sắp hết hạn","PhanTich_SapHetHan","HÀNG SẮP HẾT HẠN — NƠI KHÁC ĐANG BÁN NHANH", filterShop,
+      ["Mã hàng","Tên hàng","Đang ở NT","Tồn","ĐVT","Còn hạn (ngày)","Gợi ý chuyển tới (bán nhanh nhất)"],
+      sortedExpiryTransfers.map(e => [e.productId, e.productName, nt(e.fromShop), nz(e.qty), e.unit||"", nz(e.daysToExpiry),
+        (e.candidateDestinations||[]).map(d=>`${nt(d.shopCode)} (~${d.ads7}/ngày)`).join(", ")]));
+  }
+  function exportShortageXlsx(){
+    xlsxDownload("Đặt NCC","PhanTich_DatNCC","CẦN ĐẶT HÀNG NCC — THIẾU HÀNG, KHÔNG NƠI NÀO DƯ ĐỂ CHUYỂN", filterShop,
+      ["Mã hàng","Tên hàng","NT","Thiếu (lẻ)","ĐV thiếu","Đặt SL nguyên","ĐV nguyên","SL lẻ","ĐV lẻ","Đơn giá nguyên","Đơn giá lẻ","Giá trị","Tồn hiện tại (ngày bán)","Ghi chú"],
+      sortedShortage.map(x => {
+        const hasPack = x.orderUnit && x.orderUnitQty!=null;
+        const sugLe = x.orderUnit && x.orderUnitQty!=null && x.orderUnitFactor ? x.orderUnitQty * x.orderUnitFactor : (x.suggestedOrderQty ?? x.qty);
+        return [x.productId, x.productName, nt(x.shopCode), nz(x.qty), x.unit||"",
+          hasPack ? x.orderUnitQty : sugLe, hasPack ? x.orderUnit : (x.unit||""), hasPack ? sugLe : "", hasPack ? (x.unit||"") : "",
+          hasPack ? nz(x.priceOrder) : nz(x.price), x.price ? nz(x.price) : "", nz(nccValue(x)), nz(x.daysOfStock),
+          [x.isOutOfStock ? "Hết hàng" : "", x.isRequired ? "Thường trực" : ""].filter(Boolean).join(", ")];
+      }));
+  }
+  function exportSurplusXlsx(){
+    xlsxDownload("Dư hàng","PhanTich_DuHang","DƯ HÀNG, KHÔNG NƠI NÀO CẦN", filterShop,
+      ["Mã hàng","Tên hàng","NT","SL nguyên","ĐV nguyên","SL lẻ","ĐV lẻ","Đơn giá nguyên","Đơn giá lẻ","Giá trị dư","Hạn dùng","Còn (ngày)","Tồn hiện tại (ngày bán)"],
+      sortedSurplus.map(x => {
+        const hasPack = x.orderUnit && x.orderUnitFactor;
+        const fullN = hasPack ? Math.floor(x.qty / x.orderUnitFactor) : x.orderUnitQty;
+        const hasN = x.orderUnit && fullN!=null;
+        return [x.productId, x.productName, nt(x.shopCode),
+          hasN ? fullN : x.qty, hasN ? x.orderUnit : (x.unit||""), hasN ? x.qty : "", hasN ? (x.unit||"") : "",
+          hasN ? nz(x.priceOrder) : nz(x.price), x.price ? nz(x.price) : "", nz(valueOf(x, x.qty)),
+          dOnly(x.expiryDate), daysTo(x.expiryDate), nz(x.daysOfStock)];
+      }));
+  }
+  const titleWithExport = (key, text, onClick, disabled) => React.createElement("div", { key, style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:6 } }, [
+    React.createElement("div", { key:"t", className:"cardTitle", style:{ marginBottom:0 } }, text),
+    React.createElement("button", { key:"x", type:"button", className:"btn btnGhost", disabled, onClick, style:{ fontSize:12, padding:"5px 11px" } }, "📥 Xuất Excel"),
+  ]);
+
   const shopChipsBar = isAdmin && allShops.length>0 && React.createElement("div", { key:"chips", className:"card", style:{ marginBottom:20, padding:"12px 14px" } }, [
     React.createElement("div", { key:"lbl", style:{ fontSize:12, fontWeight:700, color:"var(--inkSoft)", marginBottom:8 } }, "Lọc theo nhà thuốc"),
     React.createElement("div", { key:"row", style:{ display:"flex", gap:8, overflowX:"auto", paddingBottom:4 } },
@@ -12338,6 +12408,23 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
       if(tonKey==="vua") return tocKey==="cham" ? "🟠 Cảnh báo" : "🟢 Tốt";
       if(tonKey==="cao") return tocKey==="cham" ? "🔴 Dư nghiêm trọng" : tocKey==="tb" ? "🔴 Dư" : "🟠 Theo dõi";
       return "—";
+    }
+    function exportFlaggedXlsx(){
+      if(flaggedStatus==="NEAR_EXPIRY"){
+        xlsxDownload("SKU sắp hết hạn","PhanTich_SKU_SapHetHan","DANH SÁCH SKU — "+STOCK_STATUS_LABELS[flaggedStatus], consShop,
+          ["Mã hàng","Tên hàng","Nhà thuốc","Tồn","ĐVT","Còn hạn (ngày)","Gợi ý chuyển tới (bán nhanh nhất)"],
+          expiryScoped.slice().sort((a,b)=>a.daysToExpiry-b.daysToExpiry).map(e => [e.productId, e.productName, nt(e.fromShop), nz(e.qty), e.unit||"", nz(e.daysToExpiry),
+            (e.candidateDestinations||[]).map(d=>`${nt(d.shopCode)} (~${d.ads7}/ngày)`).join(", ")]));
+        return;
+      }
+      xlsxDownload("SKU theo trạng thái","PhanTich_SKU_"+flaggedStatus,"DANH SÁCH SKU — "+STOCK_STATUS_LABELS[flaggedStatus], consShop,
+        ["Mã hàng","Tên hàng","Nhà thuốc","Tồn","ĐVT","ADS 7 ngày","ADS 30 ngày","DOI (ngày)","Rủi ro tồn"],
+        flaggedItems.map(it => {
+          const doi = it.doi != null ? Number(it.doi) : calcDOI(it.stockQty, it.ads30 || it.ads7);
+          const risk = doi == null ? "—" : (doi <= 7 ? "Nguy cơ hết" : doi <= 14 ? "Theo dõi" : doi >= 90 ? "Tồn lâu" : "Ổn");
+          return [it.productId, it.productName, nt(it.shopCode), nz(it.stockQty), it.unit||"",
+            it.ads7 != null ? Math.round(Number(it.ads7)*100)/100 : "", it.ads30 != null ? Math.round(Number(it.ads30)*100)/100 : "", doi == null ? "" : Math.round(doi*10)/10, risk];
+        }));
     }
     return React.createElement("div", { key:"consumption" }, [
       React.createElement("div", { key:"head", className:"card", style:{ marginBottom:16, display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10 } }, [
@@ -12392,7 +12479,10 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
       // Danh sách SKU theo trạng thái — chọn trạng thái để tải danh sách (lọc theo nhà thuốc đang chọn).
       React.createElement("div", { key:"flagged", className:"card" }, [
         React.createElement("div", { key:"h", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10, marginBottom:10 } }, [
-          React.createElement("div", { key:"t", className:"cardTitle" }, "Danh sách SKU theo trạng thái"),
+          React.createElement("div", { key:"t", style:{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" } }, [
+            React.createElement("div", { key:"tt", className:"cardTitle", style:{ marginBottom:0 } }, "Danh sách SKU theo trạng thái"),
+            React.createElement("button", { key:"x", type:"button", className:"btn btnGhost", disabled:(flaggedStatus==="NEAR_EXPIRY" ? expiryScoped.length===0 : (flaggedLoading || flaggedItems.length===0)), onClick:exportFlaggedXlsx, style:{ fontSize:12, padding:"5px 11px" } }, "📥 Xuất Excel"),
+          ]),
           React.createElement("select", { key:"sel", value:flaggedStatus, onChange:e=>setFlaggedStatus(e.target.value), style:{ fontSize:12.5, padding:"5px 8px", border:"1px solid var(--line)", borderRadius:8 } },
             Object.keys(STOCK_STATUS_LABELS).map(k => React.createElement("option",{key:k,value:k}, `${STOCK_STATUS_LABELS[k]} (${fmtNum(k==="NEAR_EXPIRY" ? expiryScoped.length : ((s.byStatus||{})[k]||0))})`))),
         ]),
@@ -12604,7 +12694,7 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
     shopChipsBar,
 
     React.createElement("div", { key:"secT", className:"card", style:{ marginBottom:20 } }, [
-      React.createElement("div", { key:"t", className:"cardTitle" }, `Đề xuất điều chuyển (${sortedTransfers.length})`),
+      titleWithExport("t", `Đề xuất điều chuyển (${sortedTransfers.length})`, exportTransfersXlsx, sortedTransfers.length===0),
       // 26/9/2026: nguyên tắc chỉ điều chuyển/đặt NCC theo ĐƠN VỊ NGUYÊN — mã chưa xác định được đơn vị
       // nguyên bị loại khỏi đề xuất; liệt kê để quản lý biết mà bổ sung quy cách trên hệ thống.
       data && data.excludedNoWholeUnitCount>0 && React.createElement("details", { key:"excl", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } }, [
@@ -12665,7 +12755,7 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
     ]),
 
     sortedExpiryTransfers.length > 0 && React.createElement("div", { key:"secExpiry", className:"card", style:{ marginBottom:20, borderColor:"var(--clay)" } }, [
-      React.createElement("div", { key:"t", className:"cardTitle" }, `⏰ Hàng sắp hết hạn — nơi khác đang bán nhanh (${sortedExpiryTransfers.length})`),
+      titleWithExport("t", `⏰ Hàng sắp hết hạn — nơi khác đang bán nhanh (${sortedExpiryTransfers.length})`, exportExpiryXlsx, sortedExpiryTransfers.length===0),
       React.createElement("div", { key:"sub", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } },
         "Chỉ là GỢI Ý để xem xét — tự kiểm tra điều kiện bảo quản/quy định trước khi chuyển thật, hệ thống không tự ghép số lượng như bảng điều chuyển ở trên."),
       React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
@@ -12683,7 +12773,7 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
     ]),
 
     React.createElement("div", { key:"secShort", className:"card", style:{ marginBottom:20 } }, [
-      React.createElement("div", { key:"t", className:"cardTitle" }, `🛒 Cần đặt hàng NCC — thiếu hàng, không nơi nào dư để chuyển (${sortedShortage.length})`),
+      titleWithExport("t", `🛒 Cần đặt hàng NCC — thiếu hàng, không nơi nào dư để chuyển (${sortedShortage.length})`, exportShortageXlsx, sortedShortage.length===0),
       React.createElement("div", { key:"sub", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:10 } },
         "Cột \"Đề xuất đặt NCC\" ước tính theo tốc độ bán 30 ngày (dùng tốc độ bán trung bình toàn chuỗi khi nhà thuốc chưa có lịch sử bán mã này) — chỉ là gợi ý, tự điều chỉnh theo quy cách đóng gói/đơn hàng tối thiểu của NCC."),
       sortedShortage.length===0
@@ -12722,7 +12812,7 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
     ]),
 
     React.createElement("div", { key:"secSurplus", className:"card" }, [
-      React.createElement("div", { key:"t", className:"cardTitle" }, `Dư hàng, không nơi nào cần — cân nhắc xử lý khác (${sortedSurplus.length})`),
+      titleWithExport("t", `Dư hàng, không nơi nào cần — cân nhắc xử lý khác (${sortedSurplus.length})`, exportSurplusXlsx, sortedSurplus.length===0),
       sortedSurplus.length===0
         ? React.createElement("div", { className:"emptyState" }, "Không có mục nào.")
         : React.createElement(React.Fragment, null, [
