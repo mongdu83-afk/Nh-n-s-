@@ -13516,7 +13516,7 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate }){
   const todoRows = [ ...mineOpen.map(t => ({ t, own:true })), ...teamOverdue.slice(0,5).map(t => ({ t, own:false })) ]
     .sort((a,b) => (rank[lvlOf(a.t)]-rank[lvlOf(b.t)]) || taskDeadlineTs360(a.t).localeCompare(taskDeadlineTs360(b.t))).slice(0, 10)
     .map(({ t, own }) => {
-      const lv = lvlMeta[lvlOf(t)]; const late = t.deadline && taskDeadlineTs360(t) < nowTs;
+      const lv = lvlMeta[lvlOf(t)] || lvlMeta.assigned; const late = t.deadline && taskDeadlineTs360(t) < nowTs;
       return { onClick:()=>go("action", { tab: own ? "mine" : "overdue" }), cells:[
         rc("span", { key:"lv" }, lv.dot),
         rc("span", { key:"ti", style:{ fontWeight:600 } }, (t.title||"(không tên)") + (own ? "" : "  · nhắc NV")),
@@ -14604,14 +14604,30 @@ function countNeedAction360(openTasks){
 }
 
 // ---------- Thành phần giao diện dùng chung ----------
+// React #31: không bao giờ đưa object thô (task/doc) làm children — chỉ string/number/element.
+function safeReactText(v, fallback){
+  if(v==null || v==="") return fallback!=null ? fallback : "";
+  if(typeof v==="string" || typeof v==="number" || typeof v==="boolean") return v;
+  if(typeof v==="object"){
+    if(v instanceof Date) return v.toLocaleString("vi-VN");
+    if(typeof v.toDate==="function"){ try{ return v.toDate().toLocaleString("vi-VN"); }catch(e){} }
+    if(v.title!=null) return String(v.title);
+    if(v.name!=null) return String(v.name);
+    if(v.label!=null) return String(v.label);
+    if(v.text!=null) return String(v.text);
+    try{ return JSON.stringify(v).slice(0,120); }catch(e){ return fallback!=null ? fallback : "—"; }
+  }
+  return String(v);
+}
 function MiniStat360({ label, value, sub, subColor, valueColor, onClick }){
   return rc("div", { onClick, style:{ border:"1px solid var(--line)", borderRadius:10, padding:"11px 13px", background:"#fff", cursor:onClick?"pointer":"default" } },
-    rc("div", { style:{ fontSize:11, color:"var(--inkSoft)", fontWeight:600 } }, label),
-    rc("div", { style:{ fontSize:22, fontWeight:700, fontFamily:"'Fraunces',serif", margin:"4px 0", color:valueColor||"var(--ink)" } }, value),
-    sub!=null && rc("div", { style:{ fontSize:11, color:subColor||"var(--inkSoft)" } }, sub));
+    rc("div", { style:{ fontSize:11, color:"var(--inkSoft)", fontWeight:600 } }, safeReactText(label)),
+    rc("div", { style:{ fontSize:22, fontWeight:700, fontFamily:"'Fraunces',serif", margin:"4px 0", color:valueColor||"var(--ink)" } }, safeReactText(value, "—")),
+    sub!=null && sub!=="" && rc("div", { style:{ fontSize:11, color:subColor||"var(--inkSoft)" } }, safeReactText(sub)));
 }
 function Pill360({ text, color }){
-  return rc("span", { style:{ flex:"none", fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:10, color, background:color+"1a", whiteSpace:"nowrap" } }, text);
+  const c = color || CL360.gray;
+  return rc("span", { style:{ flex:"none", fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:10, color:c, background:c+"1a", whiteSpace:"nowrap" } }, safeReactText(text, "—"));
 }
 function Row360({ color, title, sub, right, onClick }){
   return rc("div", { onClick, style:{ display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderBottom:"1px solid var(--line)", cursor:onClick?"pointer":"default" },
@@ -18140,14 +18156,14 @@ function ImpactEffectivenessPanel({ shopScope }){
             (t.truocXuLy || t.sauXuLy) && rc("div", { key:"ba", style:{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, fontSize:12.5, marginTop:4 } }, [
               rc("div", { key:"b", style:{ background:"var(--claySoft)", borderRadius:8, padding:"8px 10px" } }, [
                 rc("div", { key:"l", style:{ fontSize:10.5, fontWeight:700, color:"var(--inkSoft)", textTransform:"uppercase", marginBottom:2 } }, "Trước xử lý"),
-                rc("div", { key:"v" }, t.truocXuLy || "— (chưa ghi)"),
+                rc("div", { key:"v" }, safeReactText(t.truocXuLy, "— (chưa ghi)")),
               ]),
               rc("div", { key:"a", style:{ background:"var(--pineSoft)", borderRadius:8, padding:"8px 10px" } }, [
                 rc("div", { key:"l", style:{ fontSize:10.5, fontWeight:700, color:"var(--inkSoft)", textTransform:"uppercase", marginBottom:2 } }, "Sau xử lý"),
-                rc("div", { key:"v" }, t.sauXuLy || "— (chưa ghi)"),
+                rc("div", { key:"v" }, safeReactText(t.sauXuLy, "— (chưa ghi)")),
               ]),
             ]),
-            t.tacDong && rc("div", { key:"imp", style:{ fontSize:12.5, marginTop:6, padding:"6px 10px", background:"#EEF2FF", borderRadius:8 } }, [rc("b", { key:"k" }, "Tác động: "), t.tacDong]),
+            t.tacDong && rc("div", { key:"imp", style:{ fontSize:12.5, marginTop:6, padding:"6px 10px", background:"#EEF2FF", borderRadius:8 } }, [rc("b", { key:"k" }, "Tác động: "), safeReactText(t.tacDong)]),
             t.ketQua && !t.tacDong && rc("div", { key:"kq", style:{ fontSize:12, color:"var(--inkSoft)", marginTop:4 } }, "Kết quả: "+String(t.ketQua).slice(0,180)),
           ]))),
     ]),
@@ -18303,7 +18319,7 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
     const level = isDone ? null : taskLevel360(sel, nowTs, today);
     const files = sel.ketQuaFiles || [];
     const steps = [
-      { title:"Phát hiện vấn đề", sub: sel.actionInsight || sel.truocXuLy || sel.mota || sel.title || "—", ok:true },
+      { title:"Phát hiện vấn đề", sub: safeReactText(sel.actionInsight || sel.truocXuLy || sel.mota || sel.title || "—"), ok:true },
       { title:"Giao người phụ trách", sub:`${taskScope360(sel)} · giao ${dmy360(sel.ngayGiao)||"—"} bởi ${sel.nguoiGiaoViec||"—"} · hạn ${dmy360(sel.deadline)}${sel.hanGio?" "+sel.hanGio:""}`, ok:true },
       { title:"Thực hiện", sub: (sel.ketQua ? `${sel.nguoiBaoCao||"?"} (${dmy360(sel.ngayHoanThanh||sel.ngayNopKetQua)}): ${sel.ketQua}` : "Chờ báo cáo kết quả"), ok:!!sel.ketQua },
       // ===== P0-4 (mục XXI/XXII): so sánh trước/sau — chỉ hiện khi có ít nhất 1 trong 2 giá trị.
@@ -18312,19 +18328,19 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
       { title:"Kiểm tra (Verify)", sub: sel.nhanXetQuanLy ? sel.nhanXetQuanLy : "Quản lý chưa nhận xét", ok:!!sel.nhanXetQuanLy },
     ];
     detail = rc("div", { key:"det", className:"card" }, [
-      rc(Head360, { key:"h", title:"Chi tiết công việc", right: rc(Pill360, { text:`${taskSubStatusIcon(subSel)} ${subSel}`.toUpperCase(), color: isDone ? CL360.good : (isAwaiting ? CL360.warn : lvlInfo[level].color) }) }),
-      rc("div", { key:"t", style:{ fontSize:14, fontWeight:700, marginBottom:4 } }, sel.title || "(không tên)"),
+      rc(Head360, { key:"h", title:"Chi tiết công việc", right: rc(Pill360, { text:`${taskSubStatusIcon(subSel)} ${subSel}`.toUpperCase(), color: isDone ? CL360.good : (isAwaiting ? CL360.warn : ((lvlInfo[level]||lvlInfo.assigned||{}).color || CL360.gray)) }) }),
+      rc("div", { key:"t", style:{ fontSize:14, fontWeight:700, marginBottom:4 } }, safeReactText(sel.title, "(không tên)")),
       rc("div", { key:"m", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8 } }, `${moduleLabelVI(taskModule360(sel))} · ${taskScope360(sel)}`),
       (sel.mota || sel.actionRisk || sel.actionChannel || sel.actionExpectedResult) && rc("div", { key:"d", className:"readonlyBox", style:{ marginBottom:8 } },
         [sel.mota, sel.actionRisk && `Rủi ro/Cơ hội: ${sel.actionRisk}`, sel.actionChannel && `Kênh: ${sel.actionChannel}`, sel.actionExpectedResult && `Kỳ vọng: ${sel.actionExpectedResult}`].filter(Boolean).join("\n")),
       ...steps.map((st, i) => rc("div", { key:"st"+i, style:{ display:"flex", gap:9, alignItems:"center", margin:"11px 0" } }, [
         rc("span", { key:"c", style:{ width:24, height:24, borderRadius:"50%", display:"grid", placeItems:"center", background: st.ok ? CL360.good+"22" : "#E8ECEA", color: st.ok ? CL360.good : CL360.gray, fontSize:10.5, fontWeight:700, flex:"none" } }, i+1),
-        rc("div", { key:"x", style:{ flex:1, minWidth:0 } }, [ rc("div", { key:"a", style:{ fontWeight:700, fontSize:12 } }, st.title), rc("div", { key:"b", style:{ fontSize:11, color:"var(--inkSoft)", wordBreak:"break-word" } }, st.sub) ]),
+        rc("div", { key:"x", style:{ flex:1, minWidth:0 } }, [ rc("div", { key:"a", style:{ fontWeight:700, fontSize:12 } }, safeReactText(st.title)), rc("div", { key:"b", style:{ fontSize:11, color:"var(--inkSoft)", wordBreak:"break-word" } }, safeReactText(st.sub, "—")) ]),
         st.ok && rc("span", { key:"k", style:{ color:CL360.good, fontWeight:700 } }, "✓"),
       ])),
       files.length>0 && rc("div", { key:"fl", style:{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:10 } }, files.map(chip)),
       isAwaiting && rc("div", { key:"aw", style:{ background:"var(--paper)", borderRadius:8, padding:"9px 12px", marginBottom:10, fontSize:12.5 } }, [
-        rc("div", { key:"l", style:{ fontWeight:700, marginBottom:2 } }, `Kết quả (${sel.nguoiBaoCao||"?"} · ${sel.ngayNopKetQua||"?"})`), sel.ketQua||"",
+        rc("div", { key:"l", style:{ fontWeight:700, marginBottom:2 } }, `Kết quả (${sel.nguoiBaoCao||"?"} · ${sel.ngayNopKetQua||"?"})`), safeReactText(sel.ketQua, ""),
       ]),
       isAwaiting && rc("div", { key:"cf2" }, [
         rc("textarea", { key:"ta", rows:2, value:verifyText, onChange:e=>setVerifyText(e.target.value), placeholder:"Nhận xét khi duyệt / Lý do không đạt (bắt buộc nếu từ chối)...", style:{ width:"100%", padding:"8px 10px", border:"1px solid var(--line)", borderRadius:8, fontSize:13, marginBottom:8 } }),
@@ -18362,10 +18378,10 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
     list.length===0 ? rc("div", { key:"e", className:"emptyState" }, tab==="done" ? "Chưa có việc hoàn tất trong 30 ngày qua." : "Không có việc nào ở mục này.")
       : list.slice(0, 60).map(t => {
           const isDone = t.trangThai==="Đã hoàn thành"; const subT = taskSubStatus(t);
-          const lv = isDone ? { text:"Hoàn tất", color:CL360.good } : (subT==="Chờ kiểm tra" ? { text:"Chờ kiểm tra", color:CL360.warn } : (subT==="Không đạt" ? { text:"Không đạt", color:CL360.bad } : lvlInfo[t._level]));
+          const lv = isDone ? { text:"Hoàn tất", color:CL360.good } : (subT==="Chờ kiểm tra" ? { text:"Chờ kiểm tra", color:CL360.warn } : (subT==="Không đạt" ? { text:"Không đạt", color:CL360.bad } : (lvlInfo[t._level] || lvlInfo.assigned || { text:"Đã giao", color:CL360.gray })));
           return rc("div", { key:t.id, onClick:()=>setSelId(t.id), style:{ display:"flex", alignItems:"center", gap:10, padding:"10px 10px 10px 12px", marginBottom:6, borderRadius:8, cursor:"pointer",
             borderLeft:`3px solid ${lv.color}`, background: sel && sel.id===t.id ? "var(--pineSoft)" : "transparent", borderBottom:"1px solid var(--line)" } }, [
-            rc("div", { key:"t", style:{ flex:1, minWidth:0 } }, [ rc("div", { key:"a", style:{ fontWeight:600, fontSize:12.5 } }, t.title||"(không tên)"),
+            rc("div", { key:"t", style:{ flex:1, minWidth:0 } }, [ rc("div", { key:"a", style:{ fontWeight:600, fontSize:12.5 } }, safeReactText(t.title,"(không tên)")),
               rc("div", { key:"b", style:{ color:"var(--inkSoft)", fontSize:11, marginTop:2 } }, `${moduleLabelVI(taskModule360(t))} · ${taskScope360(t)} · ${isDone ? "hoàn tất "+dmy360(t.ngayHoanThanh) : "hạn "+dmy360(t.deadline)+(t.hanGio ? " "+t.hanGio : "")}`) ]),
             rc(Pill360, { key:"p", text:lv.text, color:lv.color }),
           ]);
