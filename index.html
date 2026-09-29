@@ -4822,6 +4822,129 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
     } catch(err){ alert(`${cfErrorLabel(err)}: ${err && err.message ? err.message : err}`); }
     setCampaignRefreshing(false);
   }
+  // 29/9/2026 — Chi tiết khách mua lại theo nhân viên: đọc các doc opsConfig/crmCareOutcomes_<n> (do
+  // computeCrmCampaignStats ghi sẵn), CHỈ tải khi mở tab Chiến dịch; lọc ngày/nhà thuốc/nhân viên ở trình duyệt.
+  const [careOutcomes, setCareOutcomes] = useState(null);
+  const [careOutcomesLoading, setCareOutcomesLoading] = useState(false);
+  const [coFrom, setCoFrom] = useState(()=>addDays(todayISO(), -30));
+  const [coTo, setCoTo] = useState(()=>todayISO());
+  const [coShop, setCoShop] = useState("Tất cả");
+  const [coModal, setCoModal] = useState(null); // { staffId, name } — cửa sổ chi tiết đang mở cho nhân viên nào
+  const [coOnlyReturned, setCoOnlyReturned] = useState(true);
+  async function loadCareOutcomes(){
+    setCareOutcomesLoading(true);
+    try{
+      const idx = await db.collection("opsConfig").doc("crmCareOutcomesIndex").get();
+      if(!idx.exists){ setCareOutcomes({ items:[], meta:null }); }
+      else{
+        const n = Number(idx.data().chunks||0);
+        const parts = await Promise.all(Array.from({length:n}, (_,i)=>db.collection("opsConfig").doc(`crmCareOutcomes_${i}`).get()));
+        const items = [];
+        parts.forEach(d => { if(d.exists) (d.data().items||[]).forEach(x=>items.push(x)); });
+        setCareOutcomes({ items, meta: idx.data() });
+      }
+    } catch(err){ logSystemError("crmCareOutcomes", err); setCareOutcomes({ items:[], meta:null, error: err && err.message }); }
+    setCareOutcomesLoading(false);
+  }
+  useEffect(()=>{ if(coModal && careOutcomes===null && !careOutcomesLoading) loadCareOutcomes(); }, [coModal]);
+  function openCareDetail(staffId, name){ setCoShop("Tất cả"); setCoModal({ staffId, name }); }
+  useEffect(()=>{ if(campaignStats && careOutcomes && campaignStats.computedAt && careOutcomes.meta && careOutcomes.meta.computedAt && campaignStats.computedAt > careOutcomes.meta.computedAt) loadCareOutcomes(); }, [campaignStats && campaignStats.computedAt]);
+  // Cửa sổ "Chi tiết" 1 nhân viên: lọc khoảng ngày hoàn thành CSKH + nhà thuốc, xem danh sách khách mua lại.
+  function renderCareOutcomeModal(){
+    if(!coModal) return null;
+    const shopLocked = !isAdmin ? (myStaff && myStaff.shop) : null;
+    const shopSel = shopLocked || coShop;
+    const items = (careOutcomes && careOutcomes.items) || [];
+    const mine = items.filter(x => x.staffId===coModal.staffId);
+    const shopsOfStaff = Array.from(new Set(mine.map(x=>x.shop).filter(Boolean))).sort();
+    const inRange = mine.filter(x => x.doneDay >= coFrom && x.doneDay <= coTo && (shopSel==="Tất cả" || x.shop===shopSel));
+    const custs = new Set(), retCusts = new Set(), orderIds = new Set(); let revenue = 0, retTasks = 0;
+    inRange.forEach(x => {
+      custs.add(x.customerId);
+      if(x.returned){ retTasks++; retCusts.add(x.customerId); }
+      (x.orders||[]).forEach(o => { if(!orderIds.has(o.id)){ orderIds.add(o.id); revenue += Number(o.amount)||0; } });
+    });
+    const rows = inRange.filter(x => !coOnlyReturned || x.returned).sort((a,b)=> (b.revenue||0)-(a.revenue||0) || (a.doneDay<b.doneDay?1:-1));
+    const rr = inRange.length ? Math.round(retTasks/inRange.length*100) : 0;
+    const fmtD = d => d ? `${d.slice(8,10)}/${d.slice(5,7)}/${d.slice(0,4)}` : "—";
+    const inp = { padding:"5px 8px", fontSize:12.5, border:"1px solid var(--line)", borderRadius:8, background:"#fff" };
+    const close = () => setCoModal(null);
+    function exportXlsx(){
+      const data = rows.map(x => ({
+        "Nhân viên": coModal.name, "Nhà thuốc": x.shop||"", "Khách hàng": x.customerName||"", "SĐT": x.customerPhone||x.customerId,
+        "Chiến dịch": CRM_RULE_LABELS[x.rule] || x.rule, "Ngày hoàn thành CSKH": x.doneDay,
+        "Đã mua lại": x.returned ? "Có" : "Chưa", "Ngày mua đầu tiên sau CSKH": (x.orders&&x.orders[0]) ? x.orders[0].day : "",
+        "Số đơn": x.orderCount||0, "Doanh số": x.revenue||0,
+      }));
+      const ws = XLSX.utils.json_to_sheet(data); const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Khach mua lai");
+      XLSX.writeFile(wb, `Khach_mua_lai_${(coModal.name||"NV").replace(/\s+/g,"_")}_${coFrom}_${coTo}.xlsx`);
+    }
+    const tile = (k, l, v, tone) => React.createElement("div", { key:k, style:{ flex:"1 1 120px", background:"var(--paper)", borderRadius:10, padding:"8px 10px" } }, [
+      React.createElement("div", { key:"l", style:{ fontSize:11, color:"var(--inkSoft)", fontWeight:600 } }, l),
+      React.createElement("div", { key:"v", style:{ fontSize:18, fontWeight:800, color: tone||"var(--ink)" } }, v),
+    ]);
+    const th = (k,t,left) => React.createElement("th", { key:k, style:{ textAlign:left?"left":"right", padding:"7px 10px", whiteSpace:"nowrap", fontSize:12 } }, t);
+    const td = (k,v,st) => React.createElement("td", { key:k, style:{ padding:"7px 10px", textAlign:"right", whiteSpace:"nowrap", ...(st||{}) } }, v);
+    const winDays = (careOutcomes && careOutcomes.meta && careOutcomes.meta.windowDays) || 30;
+    return React.createElement("div", { key:"coModal", className:"modalOverlay", onClick:close },
+      React.createElement("div", { className:"modal modalFull", onClick:e=>e.stopPropagation() }, [
+        React.createElement("div", { key:"h", style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10, marginBottom:10 } }, [
+          React.createElement("div", { key:"t" }, [
+            React.createElement("div", { key:"n", style:{ fontWeight:800, fontSize:17 } }, "Khách mua lại — " + coModal.name),
+            React.createElement("div", { key:"s", style:{ fontSize:11.5, color:"var(--inkSoft)" } },
+              `Lọc theo ngày hoàn thành việc CSKH · "mua lại" = có đơn trong ${winDays} ngày sau đó` + (careOutcomes && careOutcomes.meta ? ` · dữ liệu tính lúc ${new Date(careOutcomes.meta.computedAt).toLocaleString("vi-VN")}` : "")),
+          ]),
+          React.createElement("button", { key:"x", type:"button", className:"btn btnGhost", onClick:close, style:{ fontSize:13, padding:"4px 10px" } }, "✕ Đóng"),
+        ]),
+        React.createElement("div", { key:"f", style:{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center", marginBottom:12, fontSize:12.5 } }, [
+          React.createElement("span", { key:"l1" }, "Từ"),
+          React.createElement("input", { key:"f", type:"date", value:coFrom, max:coTo, onChange:e=>setCoFrom(e.target.value||coFrom), style:inp }),
+          React.createElement("span", { key:"l2" }, "đến"),
+          React.createElement("input", { key:"t", type:"date", value:coTo, min:coFrom, onChange:e=>setCoTo(e.target.value||coTo), style:inp }),
+          ...[["7 ngày",7],["30 ngày",30],["90 ngày",90]].map(([l,n]) => React.createElement("button", { key:"q"+n, type:"button", className:"btn btnGhost", style:{ fontSize:11.5, padding:"3px 8px" }, onClick:()=>{ setCoFrom(addDays(todayISO(), -n)); setCoTo(todayISO()); } }, l)),
+          React.createElement("button", { key:"qm", type:"button", className:"btn btnGhost", style:{ fontSize:11.5, padding:"3px 8px" }, onClick:()=>{ const t=todayISO(); setCoFrom(t.slice(0,8)+"01"); setCoTo(t); } }, "Tháng này"),
+          shopLocked
+            ? React.createElement("span", { key:"sh", style:{ fontWeight:600 } }, shopLocked)
+            : React.createElement("select", { key:"sh", value:coShop, onChange:e=>setCoShop(e.target.value), style:inp }, ["Tất cả", ...Array.from(new Set([...shopsOfStaff, ...DEFAULT_SHOPS]))].map(x=>React.createElement("option",{key:x,value:x}, x==="Tất cả" ? "Tất cả nhà thuốc" : x))),
+          React.createElement("label", { key:"or", style:{ display:"flex", alignItems:"center", gap:4, cursor:"pointer" } }, [
+            React.createElement("input", { key:"c", type:"checkbox", checked:coOnlyReturned, onChange:e=>setCoOnlyReturned(e.target.checked) }), "Chỉ hiện khách đã mua lại"]),
+          React.createElement("div", { key:"sp", style:{ flex:1 } }),
+          React.createElement("button", { key:"xl", type:"button", className:"btn btnGhost", disabled:rows.length===0, style:{ fontSize:12, padding:"4px 10px" }, onClick:exportXlsx }, "⬇ Xuất Excel"),
+        ]),
+        careOutcomes===null || careOutcomesLoading
+          ? React.createElement("div", { key:"ld", style:{ padding:"12px 0", fontSize:13, color:"var(--inkSoft)" } }, "Đang tải dữ liệu...")
+          : !careOutcomes.meta
+            ? React.createElement("div", { key:"em", style:{ padding:"12px 0", fontSize:13, color:"var(--amber)" } }, "Chưa có dữ liệu chi tiết — đóng cửa sổ, bấm \"↻ Tính lại\" ở đầu trang Chiến dịch rồi mở lại.")
+            : React.createElement(React.Fragment, { key:"ct" }, [
+                React.createElement("div", { key:"tiles", style:{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12 } }, [
+                  tile("a","Việc CSKH hoàn thành", fmtNum(inRange.length)),
+                  tile("b","Khách đã chăm sóc", fmtNum(custs.size)),
+                  tile("c","Khách mua lại", fmtNum(retCusts.size), "var(--pine)"),
+                  tile("d","Tỉ lệ mua lại", rr+"%", rr>=30 ? "var(--pine)" : "var(--clay)"),
+                  tile("e","Số đơn", fmtNum(orderIds.size)),
+                  tile("f","Doanh số", fmtVND(revenue), "var(--pine)"),
+                ]),
+                rows.length===0
+                  ? React.createElement("div", { key:"none", style:{ padding:"10px 0", fontSize:13, color:"var(--inkSoft)" } }, inRange.length ? "Chưa có khách nào mua lại trong khoảng này (bỏ tick \"Chỉ hiện khách đã mua lại\" để xem cả khách chưa mua)." : "Nhân viên này không có việc CSKH nào hoàn thành trong khoảng/nhà thuốc đã chọn.")
+                  : React.createElement("div", { key:"tb", style:{ overflowX:"auto", border:"1px solid var(--line)", borderRadius:10 } }, React.createElement("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5 } }, [
+                      React.createElement("thead", { key:"h" }, React.createElement("tr", { style:{ background:"#f8f8f6" } }, [
+                        th("k","Khách hàng",true), th("sh","Nhà thuốc",true), th("cd","Chiến dịch",true), th("dn","Ngày CSKH"), th("st","Mua lại",true), th("fp","Mua lần đầu sau CSKH"), th("so","Số đơn"), th("ds","Doanh số"),
+                      ])),
+                      React.createElement("tbody", { key:"b" }, rows.map(x => React.createElement("tr", { key:x.taskId, style:{ borderTop:"1px solid var(--line)" } }, [
+                        React.createElement("td", { key:"k", style:{ padding:"6px 10px" } }, [React.createElement("div",{key:"n",style:{fontWeight:600}}, x.customerName||"(không tên)"), React.createElement("div",{key:"p",style:{fontSize:11,color:"var(--inkSoft)"}}, x.customerPhone||x.customerId)]),
+                        React.createElement("td", { key:"sh", style:{ padding:"6px 10px" } }, x.shop||"—"),
+                        React.createElement("td", { key:"cd", style:{ padding:"6px 10px", fontSize:11.5 } }, CRM_RULE_LABELS[x.rule] || x.rule),
+                        td("dn", fmtD(x.doneDay)),
+                        React.createElement("td", { key:"st", style:{ padding:"6px 10px", fontWeight:600, color: x.returned ? "var(--pine)" : "var(--inkSoft)" } }, x.returned ? "✓ Đã mua" : "Chưa mua"),
+                        td("fp", x.orders && x.orders[0] ? fmtD(x.orders[0].day) : "—"),
+                        td("so", fmtNum(x.orderCount||0)), td("ds", x.revenue ? fmtVND(x.revenue) : "—", { fontWeight:600 }),
+                      ]))),
+                    ])),
+              ]),
+      ])
+    );
+  }
   // Tên rule dễ đọc cho trang Chiến dịch — khớp với sourceId trong index.js (createCrmTask).
   const CRM_RULE_LABELS = {
     C01: "VIP — Chăm sóc định kỳ", C02: "VIP — Sinh nhật",
@@ -5068,6 +5191,7 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
             React.createElement("th", { key:"r", style:{ textAlign:"right", padding:"8px 10px" } }, "Khách quay lại mua"),
             React.createElement("th", { key:"p", style:{ textAlign:"right", padding:"8px 10px" } }, "Tỉ lệ hiệu quả"),
             campaignStats && campaignStats.revenueByStaff && React.createElement("th", { key:"rv", style:{ textAlign:"right", padding:"8px 10px" } }, `Doanh số sau CSKH (${campaignStats.revenueWindowDays||30}n)`),
+            React.createElement("th", { key:"ct", style:{ textAlign:"center", padding:"8px 10px" } }, ""),
           ])),
           React.createElement("tbody", { key:"b" }, staffEffectiveness.byStaff.map(s => React.createElement("tr", { key:s.staffId, style:{ borderTop:"1px solid var(--line)" } }, [
             React.createElement("td", { key:"n", style:{ padding:"8px 10px", fontWeight:600 } }, s.staffName || s.staffId),
@@ -5076,9 +5200,12 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
             React.createElement("td", { key:"r", style:{ padding:"8px 10px", textAlign:"right" } }, s.returned),
             React.createElement("td", { key:"p", style:{ padding:"8px 10px", textAlign:"right", fontWeight:600, color: s.returnRate>=50 ? "var(--pine)" : "var(--clay)" } }, `${s.returnRate}%`),
             campaignStats && campaignStats.revenueByStaff && React.createElement("td", { key:"rv", style:{ padding:"8px 10px", textAlign:"right", fontWeight:600 } }, campaignStats.revenueByStaff[s.staffId] ? fmtVNDCompact(campaignStats.revenueByStaff[s.staffId].revenue) : "—"),
+            React.createElement("td", { key:"ct", style:{ padding:"6px 10px", textAlign:"center" } },
+              React.createElement("button", { type:"button", className:"btn btnGhost", style:{ fontSize:11.5, padding:"3px 10px", color:"var(--pine)", fontWeight:700 }, onClick:()=>openCareDetail(s.staffId, s.staffName || s.staffId) }, "Chi tiết")),
           ]))),
         ])),
       ]),
+      renderCareOutcomeModal(),
     ]);
   }
   async function applyBulkAssign(){
@@ -10627,13 +10754,12 @@ function PromoCampaignReport({ isAdmin, myStaff, monthKey, setMonthKey }){
   const [expanded, setExpanded] = useState(null);
   const [refreshingId, setRefreshingId] = useState(null);
   async function refreshOneNow(c){
-    if(!c.skuApiDocumentId || !c.skuApiShopCode) return;
+    if(!c.autoTrackSku) return;
     setRefreshingId(c.id);
     try{
-      const data = await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/trackPromoByDocumentIdNow", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({
-          documentId: c.skuApiDocumentId, shopCode: c.skuApiShopCode, name: c.name,
-          planCost: c.planCost, planRevenue: c.planRevenue, updatedBy: (myStaff && myStaff.name) || "",
-        }) }, 180000);
+      // 29/9/2026: làm mới đúng chương trình này, gộp MỌI DocumentID cùng tên chương trình (xem
+      // runRefreshPromoAutoTrackedSkuActuals ở index.js) — không tạo/đổi tên chương trình.
+      const data = await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/refreshPromoAutoTrackedSkuActualsNow?id=" + encodeURIComponent(c.id), {}, 540000);
       if(!data.ok) throw new Error(data.error||"Lỗi không rõ.");
     } catch(err){
       console.error("Làm mới CTKM lỗi:", err);
@@ -10674,8 +10800,10 @@ function PromoCampaignReport({ isAdmin, myStaff, monthKey, setMonthKey }){
           const actualRevenue = promoActualRevenueOf(c);
           const revenuePct = (actualRevenue!=null && c.planRevenue) ? (actualRevenue/c.planRevenue) : null;
           const isOpen = expanded===c.id;
+          const isAuto = !!c.autoTrackSku;
+          const shopRows = isAuto ? (c.actualByShopSku||[]) : (c.actualByShop||[]);
           return React.createElement("div", { key:c.id, className:"card", style:{ padding:"12px 14px" } }, [
-            React.createElement("div", { key:"h", style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10, cursor: c.actualByShop&&c.actualByShop.length ? "pointer":"default" }, onClick:()=>{ if(c.actualByShop&&c.actualByShop.length) setExpanded(isOpen?null:c.id); } }, [
+            React.createElement("div", { key:"h", style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10, cursor: shopRows.length ? "pointer":"default" }, onClick:()=>{ if(shopRows.length) setExpanded(isOpen?null:c.id); } }, [
               React.createElement("div", { key:"l" }, [
                 React.createElement("div", { key:"n", style:{ fontWeight:700, fontSize:13.5, display:"flex", alignItems:"center", gap:6 } }, [
                   c.name,
@@ -10700,11 +10828,21 @@ function PromoCampaignReport({ isAdmin, myStaff, monthKey, setMonthKey }){
               React.createElement("div", { key:"dt" }, [React.createElement("div",{style:{color:"var(--inkSoft)",fontSize:10.5}},"Doanh thu KH"), React.createElement("div",{style:{fontWeight:600}}, c.planRevenue!=null?fmtVND(c.planRevenue):"—")]),
               React.createElement("div", { key:"dtt" }, [React.createElement("div",{style:{color:"var(--inkSoft)",fontSize:10.5}},"Doanh thu thực tế (ước tính)"), React.createElement("div",{style:{fontWeight:700,color:"var(--pine)"}}, actualRevenue!=null?fmtVND(actualRevenue):"—")]),
               React.createElement("div", { key:"roi" }, [React.createElement("div",{style:{color:"var(--inkSoft)",fontSize:10.5}},"ROI kế hoạch"), React.createElement("div",{style:{fontWeight:600}}, roi!=null?`${roi.toFixed(1)}x`:"—")]),
-              React.createElement("div", { key:"is" }, [React.createElement("div",{style:{color:"var(--inkSoft)",fontSize:10.5}},"Đã phát hành"), React.createElement("div",{style:{fontWeight:600}}, c.actualIssued!=null?fmtNum(c.actualIssued):"—")]),
-              React.createElement("div", { key:"us" }, [React.createElement("div",{style:{color:"var(--inkSoft)",fontSize:10.5}},"Đã sử dụng"), React.createElement("div",{style:{fontWeight:600}}, c.actualUsed!=null?fmtNum(c.actualUsed):"—")]),
+              isAuto
+                ? React.createElement("div", { key:"is" }, [React.createElement("div",{style:{color:"var(--inkSoft)",fontSize:10.5}},"Số đơn áp dụng"), React.createElement("div",{style:{fontWeight:600}}, c.actualOrderCountSku!=null?fmtNum(c.actualOrderCountSku):"—")])
+                : React.createElement("div", { key:"is" }, [React.createElement("div",{style:{color:"var(--inkSoft)",fontSize:10.5}},"Đã phát hành"), React.createElement("div",{style:{fontWeight:600}}, c.actualIssued!=null?fmtNum(c.actualIssued):"—")]),
+              isAuto
+                ? React.createElement("div", { key:"us" }, [React.createElement("div",{style:{color:"var(--inkSoft)",fontSize:10.5}},"Số lượng bán"), React.createElement("div",{style:{fontWeight:600}}, c.actualQtySku!=null?fmtNum(c.actualQtySku):"—")])
+                : React.createElement("div", { key:"us" }, [React.createElement("div",{style:{color:"var(--inkSoft)",fontSize:10.5}},"Đã sử dụng"), React.createElement("div",{style:{fontWeight:600}}, c.actualUsed!=null?fmtNum(c.actualUsed):"—")]),
             ]),
-            isOpen && c.actualByShop && c.actualByShop.length>0 && React.createElement("div", { key:"shop", style:{ marginTop:10, paddingTop:10, borderTop:"1px solid var(--line)", display:"flex", flexWrap:"wrap", gap:8 } },
-              c.actualByShop.sort((a,b)=>b.count-a.count).map(s=>React.createElement("div", { key:s.key, style:{ fontSize:11.5, background:"var(--paper)", borderRadius:8, padding:"4px 9px" } }, `${s.key}: ${s.count}`))),
+            isAuto && React.createElement("div", { key:"autonote", style:{ fontSize:10.5, color:"var(--inkSoft)", marginTop:6 } },
+              (c.skuApiPromoName ? `Khớp theo tên chương trình trên hệ thống bán hàng: "${c.skuApiPromoName}"` : "Khớp theo DocumentID") +
+              (c.matchedDocCountSku!=null ? ` · ${fmtNum(c.matchedDocCountSku)} lượt áp dụng` : "") +
+              (c.skuDateStart ? ` · ${c.skuDateStart} → ${c.skuDateEnd||"nay"}` : "") +
+              (c.lastAutoRefreshTs ? ` · cập nhật ${new Date(c.lastAutoRefreshTs).toLocaleString("vi-VN")}` : "") +
+              (shopRows.length ? " · bấm tên để xem theo nhà thuốc" : "")),
+            isOpen && shopRows.length>0 && React.createElement("div", { key:"shop", style:{ marginTop:10, paddingTop:10, borderTop:"1px solid var(--line)", display:"flex", flexWrap:"wrap", gap:8 } },
+              shopRows.slice().sort((a,b)=> isAuto ? (b.revenue||0)-(a.revenue||0) : b.count-a.count).map(s=>React.createElement("div", { key:s.key, style:{ fontSize:11.5, background:"var(--paper)", borderRadius:8, padding:"4px 9px" } }, isAuto ? `${s.key}: ${fmtVND(s.revenue||0)} · ${fmtNum(s.qty||0)} sp` : `${s.key}: ${s.count}`))),
           ]);
         })
       ),
