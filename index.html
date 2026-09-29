@@ -3968,49 +3968,106 @@ function TaskAssignView({ isAdmin, myStaff, navParam }){
     formModal, viewModal,
   ]);
 }
-// ================= MODULE 5b: "HÔM NAY NHÀ THUỐC PHẢI LÀM GÌ?" (P0-3, mục XVIII đặc tả) =================
-// Tổng hợp mọi việc (collection "tasks") có hạn HÔM NAY hoặc đã quá hạn mà còn mở, xếp theo từng
-// nhà thuốc, hiển thị kiểu checklist ☑/☐ + đếm "Đã hoàn thành: X/Y" — không tạo thêm collection
-// mới, chỉ đọc lại đúng dữ liệu "tasks" đã có (giữ đúng nguyên tắc I.1 "không phá bỏ chức năng
-// đang hoạt động", chỉ bổ sung lớp hiển thị còn thiếu).
+// ================= MODULE 5b: HUB "HÔM NAY" (29/9/2026 — tối ưu vận hành P0) =================
+// Một màn mở đầu: 5–8 thẻ hành động (checklist, việc quá hạn/hôm nay, tái mua, đơn khách,
+// KPI, ảnh) → bấm là vào đúng tab. Giữ danh sách việc theo shop bên dưới (không phá luồng cũ).
 function TodayShopTasksView({ isAdmin, myStaff, onNavigate }){
   const [tasks, setTasks] = useState([]);
+  const [checklistReport, setChecklistReport] = useState(null);
+  const [replDueCount, setReplDueCount] = useState(0);
+  const [orderDueCount, setOrderDueCount] = useState(0);
   const today = todayISO();
+  const shop = myStaff && myStaff.shop;
+  const staffId = myStaff && myStaff.id;
+
   useEffect(()=>{
-    if(!isAdmin && !(myStaff && myStaff.shop)){ setTasks([]); return undefined; }
-    const q = isAdmin ? db.collection("tasks") : db.collection("tasks").where("shop","==",myStaff.shop);
+    if(!isAdmin && !shop){ setTasks([]); return undefined; }
+    const q = isAdmin ? db.collection("tasks") : db.collection("tasks").where("shop","==",shop);
     return q.onSnapshot(snap => setTasks(snap.docs.map(d=>({ id:d.id, ...d.data() }))), err => logSystemError("tasks", err));
-  }, [isAdmin, myStaff && myStaff.shop]);
+  }, [isAdmin, shop]);
+
+  // Checklist hôm nay của chính nhân viên (không admin) — collection dailyReports
+  useEffect(()=>{
+    if(isAdmin || !staffId){ setChecklistReport(null); return undefined; }
+    const id = dailyReportId(staffId, today);
+    return db.collection("dailyReports").doc(id).onSnapshot(
+      s => setChecklistReport(s.exists ? s.data() : null),
+      err => logSystemError("dailyReports", err)
+    );
+  }, [isAdmin, staffId, today]);
+
+  // Khách tái mua due (theo shop) — chỉ đếm, không tải full payload nặng
+  useEffect(()=>{
+    if(isAdmin || !shop){ setReplDueCount(0); return undefined; }
+    return db.collection("replenishDue").where("shop","==",shop).onSnapshot(
+      s => setReplDueCount(s.size),
+      () => setReplDueCount(0)
+    );
+  }, [isAdmin, shop]);
+
+  // Đơn khách chờ / hẹn hôm nay hoặc quá hạn
+  useEffect(()=>{
+    if(isAdmin || !shop){ setOrderDueCount(0); return undefined; }
+    return db.collection("customerOrders").where("shop","==",shop).where("trangThai","==","Đang chờ").onSnapshot(snap => {
+      let n = 0;
+      snap.forEach(d => {
+        const o = d.data();
+        if(!o.ngayHen || o.ngayHen <= today) n++;
+      });
+      setOrderDueCount(n);
+    }, () => setOrderDueCount(0));
+  }, [isAdmin, shop, today]);
 
   function deadlineTs(t){ return `${t.deadline}T${t.hanGio || "23:59"}`; }
   function isOverdue(t){ return t.trangThai==="Đang giao" && deadlineTs(t) < `${today}T${nowHM()}`; }
-  // "Việc hôm nay" = hạn đúng hôm nay, HOẶC đã quá hạn mà vẫn còn mở (chưa xử lý xong) — đúng tinh
-  // thần XVIII: đây là những việc nhà thuốc PHẢI xử lý ngay hôm nay, không chỉ việc mới phát sinh.
+  const openTasks = tasks.filter(t => t.trangThai==="Đang giao");
   const todayTasks = tasks.filter(t => t.shop && (t.deadline===today || isOverdue(t)));
+  const overdueOpen = openTasks.filter(isOverdue);
+  const dueTodayOpen = openTasks.filter(t => t.deadline===today && !isOverdue(t));
+  const myOpen = !isAdmin && staffId
+    ? openTasks.filter(t => t.staffId===staffId || t.assignType==="shop")
+    : openTasks;
+  const myOverdue = myOpen.filter(isOverdue);
+  const myDueToday = myOpen.filter(t => t.deadline===today || isOverdue(t));
+
   const byShop = {};
   todayTasks.forEach(t => { (byShop[t.shop] = byShop[t.shop] || []).push(t); });
-  const shopsToShow = (isAdmin ? DEFAULT_SHOPS : (myStaff ? [myStaff.shop] : [])).filter(s => byShop[s] && byShop[s].length>0);
+  const shopsToShow = (isAdmin ? DEFAULT_SHOPS : (shop ? [shop] : [])).filter(s => byShop[s] && byShop[s].length>0);
 
-  const totalToday = todayTasks.length;
-  const doneToday = todayTasks.filter(t => taskSubStatus(t)==="Đã hoàn thành").length;
+  const checklistDone = checklistReport && checklistReport.trangThai==="Đã nộp";
+  const checklistTone = checklistDone ? "healthy" : "warning";
 
-  function shopCard(shop){
-    const list = (byShop[shop]||[]).slice().sort((a,b) => {
-      const subA = taskSubStatus(a), subB = taskSubStatus(b);
-      const rank = s => s==="Đã hoàn thành" ? 1 : 0;
-      return rank(subA)-rank(subB) || deadlineTs(a).localeCompare(deadlineTs(b));
+  function actionTile({ key, title, sub, count, tone, onClick, hide }){
+    if(hide) return null;
+    const sev = tone==="critical" ? "sev-critical" : tone==="warning" ? "sev-warning" : tone==="healthy" ? "sev-healthy" : tone==="monitor" ? "sev-monitor" : "sev-neutral";
+    return React.createElement("button", {
+      key, type:"button", onClick, className:"card",
+      style:{ textAlign:"left", cursor:"pointer", padding:"12px 14px", border:"1px solid var(--line)", display:"flex", flexDirection:"column", gap:4, minHeight:88 }
+    }, [
+      React.createElement("div", { key:"t", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8 } }, [
+        React.createElement("span", { key:"a", style:{ fontWeight:700, fontSize:13.5 } }, title),
+        count!=null && React.createElement("span", { key:"b", className:"sevBadge "+sev }, count),
+      ]),
+      sub && React.createElement("div", { key:"s", style:{ fontSize:11.5, color:"var(--inkSoft)", lineHeight:1.35 } }, sub),
+    ]);
+  }
+
+  function shopCard(shopName){
+    const list = (byShop[shopName]||[]).slice().sort((a,b) => {
+      const rank = t => (isOverdue(t) && t.trangThai==="Đang giao" ? 0 : taskSubStatus(t)==="Đã hoàn thành" ? 2 : 1);
+      return rank(a)-rank(b) || deadlineTs(a).localeCompare(deadlineTs(b));
     });
     const done = list.filter(t => taskSubStatus(t)==="Đã hoàn thành").length;
-    return React.createElement("div", { key:shop, className:"card", style:{ marginBottom:14 } }, [
+    return React.createElement("div", { key:shopName, className:"card", style:{ marginBottom:14 } }, [
       React.createElement("div", { key:"h", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 } }, [
-        React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:14.5 } }, shop),
+        React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:14.5 } }, shopName),
         StatusPill(`Đã hoàn thành: ${done}/${list.length}`, done===list.length ? "good" : "warn"),
       ]),
       React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:6 } }, list.map(t => {
         const sub = taskSubStatus(t);
         const isDone = sub==="Đã hoàn thành";
         const overdue = isOverdue(t);
-        return React.createElement("div", { key:t.id, onClick:()=>onNavigate && onNavigate("tasks", isDone ? { status:"Đã hoàn thành" } : null),
+        return React.createElement("div", { key:t.id, onClick:()=>onNavigate && onNavigate("tasks", isDone ? { status:"Đã hoàn thành" } : { taskId: t.id }),
           style:{ display:"flex", alignItems:"flex-start", gap:8, padding:"7px 9px", borderRadius:7, cursor:"pointer", background:"var(--paper)" } }, [
           React.createElement("span", { key:"c", style:{ fontSize:14, lineHeight:"18px" } }, isDone ? "☑" : "☐"),
           React.createElement("div", { key:"x", style:{ flex:1, minWidth:0 } }, [
@@ -4024,12 +4081,34 @@ function TodayShopTasksView({ isAdmin, myStaff, onNavigate }){
     ]);
   }
 
-  return React.createElement("div", { style:{ maxWidth:900, margin:"0 auto", padding:16 } }, [
-    React.createElement("div", { key:"head", style:{ marginBottom:14 } }, [
-      React.createElement(PageTitle, { key:"h", style:{ marginBottom:2 } }, "Hôm nay nhà thuốc phải làm gì?"),
+  const tiles = isAdmin ? [
+    actionTile({ key:"ov", title:"Việc quá hạn (toàn chuỗi)", sub:"Cần xử lý ngay trong Action Center", count: overdueOpen.length, tone: overdueOpen.length ? "critical" : "healthy", onClick:()=>onNavigate && onNavigate("action", { tab:"overdue" }) }),
+    actionTile({ key:"td", title:"Việc hạn hôm nay", sub:"Hạn đúng ngày hôm nay còn mở", count: dueTodayOpen.length, tone: dueTodayOpen.length ? "warning" : "healthy", onClick:()=>onNavigate && onNavigate("action", { tab:"today" }) }),
+    actionTile({ key:"act", title:"Công việc cần xử lý", sub:"Khẩn cấp + cần chú ý", count: null, tone:"monitor", onClick:()=>onNavigate && onNavigate("action") }),
+    actionTile({ key:"cmd", title:"Tổng quan điều hành", sub:"Điểm nhà thuốc & ngoại lệ", count: null, tone:"neutral", onClick:()=>onNavigate && onNavigate("command") }),
+    actionTile({ key:"risk", title:"Rủi ro & cảnh báo", sub:"Tuân thủ / tồn / KPI lệch", count: null, tone:"neutral", onClick:()=>onNavigate && onNavigate("risk") }),
+    actionTile({ key:"rev", title:"Doanh thu", sub:"Nguồn sự thật doanh số tháng", count: null, tone:"neutral", onClick:()=>onNavigate && onNavigate("revenueAnalytics") }),
+  ] : [
+    actionTile({ key:"ck", title:"Checklist ngày", sub: checklistDone ? "Đã nộp hôm nay" : "Chưa nộp — ưu tiên hoàn thành trước khi hết ca", count: checklistDone ? "OK" : "!", tone: checklistTone, onClick:()=>onNavigate && onNavigate("checklist") }),
+    actionTile({ key:"tk", title:"Việc của tôi hôm nay", sub: myOverdue.length ? `${myOverdue.length} quá hạn · ${myDueToday.length} cần làm` : (myDueToday.length ? `${myDueToday.length} việc đến hạn` : "Không có việc đến hạn"), count: myDueToday.length, tone: myOverdue.length ? "critical" : (myDueToday.length ? "warning" : "healthy"), onClick:()=>onNavigate && onNavigate("tasks") }),
+    actionTile({ key:"rp", title:"Nhắc tái mua", sub:"Khách sắp/đã hết thuốc — gọi hoặc Zalo", count: replDueCount, tone: replDueCount ? "monitor" : "healthy", onClick:()=>onNavigate && onNavigate("taimua"), hide: replDueCount===0 && false }),
+    actionTile({ key:"od", title:"Đơn khách chờ", sub:"Hẹn hôm nay hoặc quá hạn chưa xử lý", count: orderDueCount, tone: orderDueCount ? "warning" : "healthy", onClick:()=>onNavigate && onNavigate("hanghoa") }),
+    actionTile({ key:"kpi", title:"Tiến độ KPI", sub:"Xem % đạt và tốc độ doanh số", count: null, tone:"neutral", onClick:()=>onNavigate && onNavigate("kpi") }),
+    actionTile({ key:"ph", title:"Ảnh checklist / CTKM", sub:"Nộp minh chứng trưng bày trong ngày", count: null, tone:"neutral", onClick:()=>onNavigate && onNavigate("photos") }),
+  ];
+
+  return React.createElement("div", { style:{ maxWidth:960, margin:"0 auto", padding:16 } }, [
+    React.createElement("div", { key:"head", style:{ marginBottom:12 } }, [
+      React.createElement(PageTitle, { key:"h", style:{ marginBottom:2 } }, isAdmin ? "Hôm nay — điều hành" : "Hôm nay"),
+      React.createElement("div", { key:"sub", style:{ fontSize:12.5, color:"var(--inkSoft)" } },
+        isAdmin
+          ? "Chỉ các việc cần xử lý ngay. Báo cáo chi tiết nằm ở Doanh thu / KPI / Rủi ro."
+          : "Làm lần lượt các thẻ bên dưới — xong ca khi checklist đã nộp và không còn việc quá hạn."),
     ]),
+    React.createElement("div", { key:"tiles", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:10, marginBottom:18 } }, tiles.filter(Boolean)),
+    React.createElement("div", { key:"sec", style:{ fontWeight:700, fontSize:13.5, marginBottom:8 } }, "Việc đến hạn / quá hạn theo nhà thuốc"),
     shopsToShow.length===0
-      ? React.createElement("div", { className:"emptyState" }, "Không có việc nào đến hạn hôm nay hoặc đang quá hạn. 🎉")
+      ? React.createElement("div", { key:"e", className:"emptyState" }, "Không có việc nào đến hạn hôm nay hoặc đang quá hạn.")
       : shopsToShow.map(shopCard),
   ]);
 }
@@ -11475,7 +11554,7 @@ function BaoCaoTuanView({ isAdmin, myStaff }){
 // render vẫn giữ nguyên, chỉ ẩn khỏi điều hướng nên có thể bật lại dễ dàng sau này nếu cần.
 // 23/9/2026: thêm "cust360" (Customer 360) vào STAFF_TABS — trước đây chỉ quản lý (isAdmin) mới
 // thấy tab này; xem Customer360View bên dưới (đã tự lọc theo nhà thuốc của nhân viên khi !isAdmin).
-const STAFF_TABS = ["checklist","homnay","photos","hanghoa","tasks","kpi","crm","cust360","taimua","training","kudos","temgia","revenueAnalytics","nhanvien","ctkm","baocaotuan","sales"]; // 27/9/2026: bỏ "Kinh nghiệm vận hành" khỏi giao diện nhân viên/CHT
+const STAFF_TABS = ["homnay","checklist","photos","hanghoa","tasks","kpi","crm","cust360","taimua","training","kudos","temgia","revenueAnalytics","nhanvien","ctkm","baocaotuan","sales"]; // 27/9/2026: bỏ "Kinh nghiệm vận hành" khỏi giao diện nhân viên/CHT
 const OPS_TABS = [
   { id:"command", label:"Tổng quan điều hành" },
   { id:"shop360", label:"Hồ sơ nhà thuốc" },
@@ -11486,7 +11565,7 @@ const OPS_TABS = [
   { id:"taimua", label:"Chăm sóc tái mua" },
   { id:"prod360", label:"Product 360" },
   { id:"checklist", label:"Checklist ngày" },
-  { id:"homnay", label:"Tình hình hôm nay" },
+  { id:"homnay", label:"Hôm nay" },
   { id:"photos", label:"Báo cáo hình ảnh" },
   { id:"hanghoa", label:"Hàng hoá & tồn kho" },
   { id:"donthuoc", label:"Thư viện đơn thuốc" },
@@ -11535,7 +11614,7 @@ const OPS_GROUPS_ADMIN_V2 = [
   { id:"hethong",      label:"Hệ thống",              tabs:["hethong"] },
 ];
 const OPS_GROUPS_STAFF_V2 = [
-  { id:"nhathuoc",     label:"Nhà thuốc",    tabs:["checklist","homnay","photos"] },
+  { id:"nhathuoc",     label:"Nhà thuốc",    tabs:["homnay","checklist","photos"] },
   { id:"congviec",     label:"Công việc",    tabs:["tasks"] },
   { id:"nhansu",       label:"Nhân sự",      tabs:["kpi","nhanvien","training","kudos"] },
   { id:"khachhang",    label:"Khách hàng",   tabs:["taimua","crm","cust360"] },
@@ -11545,7 +11624,7 @@ const OPS_GROUPS_STAFF_V2 = [
 ];
 // ----- Menu cũ (giữ nguyên để hoàn nguyên nhanh nếu cần) -----
 const MENU_LEGACY_STAFF = [
-  { id:"vanhanh", label:"Vận hành", tabs:["checklist","homnay","photos","sales","revenueAnalytics","baocaotuan","kinhnghiem"] },
+  { id:"vanhanh", label:"Vận hành", tabs:["homnay","checklist","photos","sales","revenueAnalytics","baocaotuan","kinhnghiem"] },
   { id:"tasks", label:"Công việc & KPI", tabs:["tasks","kpi"] },
   { id:"khachhang", label:"Khách hàng", tabs:["taimua","crm","cust360","ctkm"] },
   { id:"hanghoagroup", label:"Hàng hoá", tabs:["hanghoa","temgia"] },
@@ -11556,7 +11635,7 @@ const MENU_LEGACY_ADMIN = [
   { id:"nhansu", label:"Nhân sự", tabs:["emp360","tasks","kpi","nhanvien","training","kudos"] },
   { id:"khachhang", label:"Khách hàng", tabs:["taimua","cust360","crm","ctkm"] },
   { id:"hanghoagroup", label:"Hàng hoá", tabs:["prod360","hanghoa","donthuoc","temgia"] },
-  { id:"vanhanh", label:"Vận hành", tabs:["checklist","homnay","photos","revenueAnalytics","ketquangay","baocaotuan","kinhnghiem"] },
+  { id:"vanhanh", label:"Vận hành", tabs:["homnay","checklist","photos","revenueAnalytics","ketquangay","baocaotuan","kinhnghiem"] },
   { id:"action", label:"Công việc cần xử lý", tabs:["action"] },
   { id:"ai", label:"AI", tabs:["ai"] },
   { id:"hethong", label:"Hệ thống", tabs:["hethong"] },
@@ -15002,8 +15081,28 @@ function taskLevel360(t, nowTs, today){
   if(t.trangThai!=="Đang giao") return null;
   if(t.deadline && taskDeadlineTs360(t) < nowTs) return "urgent";
   if(t.actionPriority==="HIGH") return "urgent";
+  if(taskSubStatus(t)==="Chờ kiểm tra") return "attention"; // chờ QL duyệt = cần xử lý
   if(t.actionPriority==="MEDIUM" || (t.deadline && t.deadline<=addDays(today,1))) return "attention";
   return "assigned";
+}
+/** Điểm ưu tiên vận hành: hạn + mức độ + giá trị ước tính (nếu có). Dùng sort Action Center. */
+function taskOpsScore360(t, nowTs, today){
+  const level = taskLevel360(t, nowTs, today);
+  let s = level==="urgent" ? 1000 : level==="attention" ? 500 : 100;
+  if(t.deadline && taskDeadlineTs360(t) < nowTs){
+    // mỗi ngày quá hạn +50 (tối đa +500)
+    try{
+      const d0 = new Date(taskDeadlineTs360(t).replace(" ","T"));
+      const d1 = new Date(nowTs.replace(" ","T"));
+      const days = Math.max(0, Math.floor((d1 - d0) / 86400000));
+      s += Math.min(500, days * 50);
+    }catch(e){}
+  }
+  const money = Number(t.estValue || t.planRevenue || t.dueValue || t.lastAmount || 0) || 0;
+  s += Math.min(300, Math.round(money / 100000)); // +1 mỗi 100k, trần 300
+  if(t.actionPriority==="HIGH") s += 80;
+  if(t.actionPriority==="MEDIUM") s += 30;
+  return s;
 }
 function taskModule360(t){
   if(t.module) return t.module;
@@ -18645,7 +18744,12 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
   const done = (shopScope ? (shopDoneTasks||[]).filter(t => t.trangThai==="Đã hoàn thành" && (t.ngayHoanThanh||"") >= addDays(today, -30)) : doneAll).filter(inScope);
   const open = (openTasks || []).filter(inScope).map(t => ({ ...t, _level:taskLevel360(t, nowTs, today) }));
   const levelRank = { urgent:0, attention:1, assigned:2 };
-  const sortOpen = (a, b) => (levelRank[a._level] - levelRank[b._level]) || taskDeadlineTs360(a).localeCompare(taskDeadlineTs360(b));
+  // 29/9/2026: ưu tiên theo điểm ops (quá hạn dài + giá trị + priority), không chỉ level+deadline.
+  const sortOpen = (a, b) => {
+    const sa = taskOpsScore360(a, nowTs, today), sb = taskOpsScore360(b, nowTs, today);
+    if(sb !== sa) return sb - sa;
+    return (levelRank[a._level] - levelRank[b._level]) || taskDeadlineTs360(a).localeCompare(taskDeadlineTs360(b));
+  };
   const lists = {
     mine: open.filter(t => t.assignType==="admin").sort(sortOpen),
     team: open.filter(t => t.assignType!=="admin").sort(sortOpen),
@@ -19472,7 +19576,11 @@ function Dashboard({ user, isAdmin, myStaff }){
         const covered = new Set(gs.flatMap(g => g.tabs));
         return [...gs, ...leafTabs.filter(t => !covered.has(t.id)).map(t => ({ id:t.id, label:t.label, tabs:[t.id] }))];
       })();
-  const [activeTab, setActiveTabRaw] = useState(navGroups[0].tabs[0]);
+  const [activeTab, setActiveTabRaw] = useState(
+    (!isAdmin && leafTabs.some(t=>t.id==="homnay")) ? "homnay"
+    : (isAdmin && leafTabs.some(t=>t.id==="command")) ? "command"
+    : navGroups[0].tabs[0]
+  );
   // Chỉ có ý nghĩa trên điện thoại (theo CSS @media) — trên máy tính thanh tab ngang vẫn luôn
   // hiện, giá trị này không ảnh hưởng gì tới desktop.
   const [showMobileHome, setShowMobileHome] = useState(true);
@@ -19494,6 +19602,11 @@ function Dashboard({ user, isAdmin, myStaff }){
   // 20/9/2026: Action Center — 1 listener việc đang mở dùng chung cho nút "🔥 N cần xử lý", badge sidebar và màn Action Center.
   const openTasks360 = useOpenTasks360(isAdmin);
   const needAction360 = isAdmin ? countNeedAction360(openTasks360) : 0;
+  const urgentAction360 = isAdmin ? (() => {
+    const today = todayISO(); const nowTs = `${today}T${nowHM()}`;
+    let n = 0; openTasks360.forEach(t => { if(taskLevel360(t, nowTs, today)==="urgent") n++; });
+    return n;
+  })() : 0;
   const [showSearch360, setShowSearch360] = useState(false);
   const [showCompose360, setShowCompose360] = useState(false);
   function setActiveTab(tabId, param){
@@ -19591,7 +19704,7 @@ function Dashboard({ user, isAdmin, myStaff }){
         isAdmin && React.createElement("div", { key:"acts360", style:{ display:"flex", gap:8, alignItems:"center" } }, [
           React.createElement("button", { key:"s", type:"button", className:"btn", style:{ fontSize:12, padding:"6px 11px" }, onClick:()=>setShowSearch360(true) }, "⌕ Tìm kiếm"),
           React.createElement("button", { key:"g", type:"button", className:"btn", style:{ fontSize:12, padding:"6px 11px" }, onClick:()=>setShowCompose360(true) }, "＋ Giao việc"),
-          React.createElement("button", { key:"n", type:"button", className:"btn btnPrimary", style:{ fontSize:12, padding:"6px 11px", background:"#b3261e", borderColor:"#b3261e" }, onClick:()=>setActiveTab("action") }, `🔥 ${needAction360} cần xử lý`),
+          React.createElement("button", { key:"n", type:"button", className:"btn btnPrimary", style:{ fontSize:12, padding:"6px 11px", background:"#b3261e", borderColor:"#b3261e" }, onClick:()=>setActiveTab("action"), title:`${needAction360} việc cần chú ý · ${urgentAction360} khẩn cấp` }, urgentAction360>0 ? `🔥 ${urgentAction360} khẩn cấp` : (needAction360>0 ? `🔥 ${needAction360} cần xử lý` : "✓ Việc ổn")),
         ]),
         React.createElement("div", { key:"bell", className:"topbarBell" }, [
           "🔔",
