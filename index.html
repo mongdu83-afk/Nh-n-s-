@@ -12419,8 +12419,8 @@ function ProductDictionaryView({ isAdmin }){
   const list = all.filter(it => {
     if(type!=="all" && (it.type || "Chưa phân loại")!==type) return false;
     if(flt==="heso" && !it.isHeSo) return false;
-    if(flt==="missing" && it.d) return false;
-    if(flt==="unreviewed" && (!it.d || it.d.status==="reviewed")) return false;
+    if(flt==="missing" && it.d && it.d.entry) return false;
+    if(flt==="unreviewed" && (!it.d || !it.d.entry || it.d.status==="reviewed")) return false;
     if(flt==="rx" && !(it.d && pdLoaiColor(it.d.entry && it.d.entry.loai)===CL360.bad)) return false;
     if(qs){
       const e = it.d && it.d.entry;
@@ -12429,9 +12429,9 @@ function ProductDictionaryView({ isAdmin }){
     }
     return true;
   });
-  const have = all.filter(it => it.d).length;
-  const reviewed = all.filter(it => it.d && it.d.status==="reviewed").length;
-  const missingTop = rk.items.filter(it => !dict[it.pid]).length;
+  const have = all.filter(it => it.d && it.d.entry).length;
+  const reviewed = all.filter(it => it.d && it.d.entry && it.d.status==="reviewed").length;
+  const missingTop = rk.items.filter(it => !(dict[it.pid] && dict[it.pid].entry)).length;
   const lastCum = rk.items.length ? rk.items[rk.items.length-1].cumShare : 0;
   const top20Cum = rk.items.length >= 20 ? rk.items[19].cumShare : lastCum;
 
@@ -12452,6 +12452,7 @@ function ProductDictionaryView({ isAdmin }){
         e && e.loai && h(Pill360, { text:e.loai, color:pdLoaiColor(e.loai) }),
         e && e.nhomThuoc && h(Pill360, { text:e.nhomThuoc, color:CL360.gray }),
         it.isHeSo && h(Pill360, { text:"Hàng hệ số", color:"#b4720a" }),
+        it.d && it.d.official && /dung|ngung/.test(pdStrip(it.d.official.registerType)) && h(Pill360, { text:it.d.official.registerType, color:CL360.bad }),
         it.rank && h("span", { style:{ marginLeft:"auto", fontSize:11, color:"var(--inkSoft)", whiteSpace:"nowrap" } },
           fmtVNDCompact(it.rev30), "/30n · ", it.shopCount, " NT",
           tr!=null && h("span", { style:{ color: tr>=0 ? CL360.good : CL360.bad, fontWeight:700, marginLeft:4 } }, (tr>=0?"▲":"▼") + Math.abs(tr) + "%"))));
@@ -12509,6 +12510,7 @@ function ProductDictionaryView({ isAdmin }){
 }
 
 function ProductDictionaryModal({ item, pos, total, busy, onPrev, onNext, onClose, onGenerate, onSaved }){
+  // 29/9/2026: thêm "Thông tin chính thức" lấy từ API danh mục Product/GetProductInfo (lưu ở d.official).
   const h = React.createElement;
   const [editing, setEditing] = useState(false);
   const d = item.d; const e = d && d.entry;
@@ -12523,17 +12525,48 @@ function ProductDictionaryModal({ item, pos, total, busy, onPrev, onNext, onClos
   const ul = (arr) => h("ul", { style:{ margin:0, paddingLeft:18, fontSize:13, lineHeight:1.6 } }, (arr||[]).map((x,i) => h("li", { key:i }, x)));
   const p = (t) => h("div", { style:{ fontSize:13, lineHeight:1.6 } }, t || "—");
 
+  const o = d && d.official;
+  const [refreshing, setRefreshing] = useState(false);
+  async function refreshOfficial(){
+    setRefreshing(true);
+    try{ await pdCall("official", { productId:item.pid }, 90000); await onSaved(); }
+    catch(err){ window.alert("Không lấy được thông tin danh mục: " + (err.message||err)); }
+    setRefreshing(false);
+  }
+  const officialBlock = o ? h("details", { open: !e, style:{ margin:"4px 0 14px", border:"1px solid var(--line)", borderRadius:10, padding:"8px 12px", background:"var(--paper)" } },
+    h("summary", { style:{ cursor:"pointer", fontWeight:700, fontSize:13 } }, "📋 Thông tin chính thức (danh mục sản phẩm công ty)",
+      h("span", { style:{ fontWeight:400, fontSize:11, color:"var(--inkSoft)" } }, o.fetchedAt ? ` · lấy ngày ${new Date(o.fetchedAt).toLocaleDateString("vi-VN")}` : "")),
+    h("div", { style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(230px,1fr))", gap:"6px 16px", marginTop:8, fontSize:12.5 } },
+      [["Thành phần", (o.ingredients||[]).map(x => x.name + (x.content ? " " + x.content : "")).join("; ")],
+       ["Loại sản phẩm", o.productType], ["Nhóm dược lý", o.pharmacologicalType], ["Cơ quan / nhóm tác dụng", o.bodyOrgan],
+       ["Dạng bào chế / quy cách", o.dosageForm],
+       ["Quy cách đóng gói", (o.packages||[]).filter(p=>p.qty>1).map(p => `1 ${p.unit} = ${p.qty} ${o.unit}`).join("; ")],
+       ["Nhà sản xuất", o.manufacturer], ["Xuất xứ", o.origin], ["Số đăng ký", o.registrationNumber],
+       ["Trạng thái đăng ký", o.registerType], ["Bảo quản", o.storage]]
+        .filter(r => r[1]).map((r,i) => h("div", { key:i }, h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)" } }, r[0]), h("div", { style:{ fontWeight:600 } }, r[1])))),
+    (o.otherType || o.description) && h("div", { style:{ fontSize:12.5, marginTop:8, lineHeight:1.55 } }, h("b", null, "Mô tả công dụng: "), [o.otherType, o.description].filter(Boolean).join(" — ")),
+    (o.doses||[]).length>0 && h("div", { style:{ marginTop:8 } },
+      h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)", marginBottom:3 } }, "Đối tượng dùng theo danh mục"),
+      h("div", { style:{ display:"flex", flexWrap:"wrap", gap:6 } }, o.doses.map((x,i) => h("span", { key:i, style:{ fontSize:11.5, padding:"3px 8px", borderRadius:6, background:"#fff", border:"1px solid var(--line)" } },
+        [x.patient, x.ageTo ? `${x.ageFrom}–${x.ageTo} tuổi` : "", x.weightTo ? `${x.weightFrom}–${x.weightTo} kg` : "", x.pathological, x.way,
+         (x.times||[]).map(t => [t.session, t.qty ? `${t.qty}${t.qty2 ? "–"+t.qty2 : ""} ${o.unit||""}` : ""].filter(Boolean).join(" ")).filter(Boolean).join(", ")].filter(Boolean).join(" · ")))))) : null;
+
   let content;
   if(editing) content = h(ProductDictionaryEditor, { item, onCancel:()=>setEditing(false), onSaved:()=>{ setEditing(false); onSaved(); } });
-  else if(!e) content = h("div", { className:"emptyState", style:{ padding:30 } },
-    h("div", { style:{ marginBottom:10 } }, "Mã này chưa có thẻ từ điển."),
-    h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:()=>onGenerate(false) }, busy==="gen1" ? "AI đang soạn…" : "Soạn thẻ bằng AI"));
+  else if(!e) content = h("div", null, officialBlock,
+    h("div", { className:"emptyState", style:{ padding:24 } },
+      h("div", { style:{ marginBottom:10 } }, "Mã này chưa có thẻ từ điển."),
+      h("div", { className:"btnRow", style:{ justifyContent:"center", gap:6 } },
+        !o && h("button", { className:"btn", disabled:refreshing, onClick:refreshOfficial }, refreshing ? "Đang lấy…" : "Xem nhanh thông tin danh mục"),
+        h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:()=>onGenerate(false) }, busy==="gen1" ? "AI đang soạn…" : "Soạn thẻ bằng AI"))));
   else content = h("div", null,
     h("div", { style:{ fontSize:15, lineHeight:1.55, fontWeight:600, padding:"10px 14px", borderLeft:"4px solid var(--pine)", background:"var(--pineSoft, #E6F2EE)", borderRadius:"0 10px 10px 0", marginBottom:14 } }, e.tinhThan),
     h("div", { style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:10, marginBottom:12 } },
       h("div", null, h("div", { style:{ fontSize:11, color:"var(--inkSoft)" } }, "Hoạt chất / thành phần"), h("div", { style:{ fontWeight:700, fontSize:13 } }, e.hoatChat || "—")),
       h("div", null, h("div", { style:{ fontSize:11, color:"var(--inkSoft)" } }, "Nhóm tác dụng"), h("div", { style:{ fontWeight:700, fontSize:13 } }, e.nhomThuoc || "—")),
       h("div", null, h("div", { style:{ fontSize:11, color:"var(--inkSoft)" } }, "Phân loại"), e.loai ? h(Pill360, { text:e.loai, color:pdLoaiColor(e.loai) }) : "—")),
+    officialBlock,
+    !o && h("div", { style:{ fontSize:11.5, color:CL360.warn, marginBottom:10 } }, "Thẻ này được soạn khi chưa có thông tin danh mục công ty — bấm “Soạn lại (AI)” để soạn lại dựa trên dữ liệu chính thức."),
     h("div", { style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))", gap:"0 20px" } },
       h("div", null,
         sec("Dùng để làm gì", ul(e.congDung)),
@@ -12566,9 +12599,10 @@ function ProductDictionaryModal({ item, pos, total, busy, onPrev, onNext, onClos
       content,
       !editing && h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap", alignItems:"center", borderTop:"1px solid var(--line)", paddingTop:10, marginTop:6 } },
         h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } },
-          !d ? "" : d.status==="reviewed" ? h("span", { style:{ color:CL360.good, fontWeight:700 } }, `✓ Dược sĩ ${d.reviewedBy||""} đã duyệt ${d.reviewedAt ? new Date(d.reviewedAt).toLocaleDateString("vi-VN") : ""}`)
+          !e ? "" : d.status==="reviewed" ? h("span", { style:{ color:CL360.good, fontWeight:700 } }, `✓ Dược sĩ ${d.reviewedBy||""} đã duyệt ${d.reviewedAt ? new Date(d.reviewedAt).toLocaleDateString("vi-VN") : ""}`)
             : d.status==="edited" ? `Đã sửa tay bởi ${d.editedBy||"?"} — chưa duyệt` : `AI soạn ${d.generatedAt ? new Date(d.generatedAt).toLocaleDateString("vi-VN") : ""} — chưa được dược sĩ duyệt`),
         h("div", { className:"btnRow", style:{ gap:6 } },
+          o && h("button", { className:"btn btnGhost", disabled:refreshing, onClick:refreshOfficial, title:"Lấy lại thông tin từ danh mục sản phẩm công ty (không gọi AI)" }, refreshing ? "Đang lấy…" : "Làm mới danh mục"),
           e && h("button", { className:"btn btnGhost", disabled:!!busy, onClick:()=>{ if(window.confirm(d.status==="reviewed" ? "Thẻ này ĐÃ được dược sĩ duyệt. Soạn lại bằng AI sẽ ghi đè và mất trạng thái duyệt. Tiếp tục?" : "Soạn lại thẻ này bằng AI (ghi đè nội dung hiện tại)?")) onGenerate(true); } }, busy==="gen1" ? "Đang soạn…" : "Soạn lại (AI)"),
           e && h("button", { className:"btn", onClick:()=>setEditing(true) }, "Sửa / duyệt"),
           h("button", { className:"btn btnPrimary", onClick:onClose }, "Đóng")))));
