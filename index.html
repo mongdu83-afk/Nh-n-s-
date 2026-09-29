@@ -12760,11 +12760,11 @@ function ProductTrainingSection({ item }){
   const [err, setErr] = useState("");
   useEffect(()=>{
     let alive = true; setList(null); setErr("");
-    pdCall("courses", { productName:item.name }, 60000).then(d => alive && setList(d.courses||[])).catch(e => alive && setErr(e.message||String(e)));
+    pdCall("courses", { productName:item.name }, 120000).then(d => alive && setList(d.courses||[])).catch(e => alive && setErr(e.message||String(e)));
     return ()=>{ alive=false; };
   }, [item.pid]);
   if(err || (list && !list.length)) return null;
-  if(!list) return h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", margin:"4px 0 10px" } }, "Đang tìm khoá đào tạo liên quan…");
+  if(!list) return h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", margin:"4px 0 10px" } }, "Đang tìm khoá đào tạo liên quan (lần đầu có thể mất ~10 giây để AI tóm tắt)…");
   return h("div", { style:{ margin:"4px 0 14px", border:"1px solid var(--line)", borderRadius:10, padding:"8px 12px", background:"#F3F0FF" } },
     h("div", { style:{ fontWeight:700, fontSize:13, marginBottom:6 } }, "🎓 Khoá đào tạo nội bộ"),
     list.map(c => h("div", { key:c.courseId, style:{ marginBottom:8 } },
@@ -12779,8 +12779,15 @@ function ProductTrainingSection({ item }){
           l.linkSlide && l.slideTextOk===false && h("span", { style:{ marginLeft:6, fontSize:10.5, color:CL360.warn } },
             l.slideNote==="private" ? "(slide không công khai — chưa đọc được)" : l.slideNote==="image_only" ? "(slide dạng hình — chờ lượt AI đọc)" : "(chưa đọc được slide)"),
           l.slideTextOk && l.slideReadVia==="ai" && h("span", { style:{ marginLeft:6, fontSize:10.5, color:CL360.violet } }, "(AI đọc từ hình)")); })),
+      c.summary && h("div", { style:{ marginTop:8, background:"#fff", border:"1px solid var(--line)", borderRadius:8, padding:"8px 12px", fontSize:12.5, lineHeight:1.55 } },
+        h("div", { style:{ fontWeight:800, fontSize:11, letterSpacing:".04em", textTransform:"uppercase", color:CL360.violet, marginBottom:4 } }, "Tóm tắt khoá học"),
+        h("div", { style:{ marginBottom:6 } }, c.summary.tomTat),
+        [["⭐ Luận điểm bán hàng", c.summary.diemNhan], ["👥 Khách phù hợp", c.summary.khachPhuHop], ["💬 Câu tư vấn mẫu", c.summary.cauTuVan], ["➕ Bán kèm", c.summary.banKem], ["⚠ Lưu ý", c.summary.luuY]]
+          .filter(r => r[1] && r[1].length).map((r,i) => h("div", { key:i, style:{ marginTop:4 } },
+            h("div", { style:{ fontWeight:700, fontSize:12 } }, r[0]),
+            h("ul", { style:{ margin:"2px 0 0", paddingLeft:18 } }, r[1].map((x,j) => h("li", { key:j, style: r[0].startsWith("💬") ? { fontStyle:"italic" } : null }, x)))))),
       c.slideText && h("details", { style:{ marginTop:6, background:"#fff", border:"1px solid var(--line)", borderRadius:8, padding:"6px 10px" } },
-        h("summary", { style:{ cursor:"pointer", fontWeight:700, fontSize:12 } }, "📑 Xem nội dung slide đào tạo"),
+        h("summary", { style:{ cursor:"pointer", fontWeight:700, fontSize:12 } }, c.summary ? "📑 Xem toàn văn slide" : "📑 Xem nội dung slide đào tạo"),
         h("div", { style:{ fontSize:12.5, lineHeight:1.6, whiteSpace:"pre-line", marginTop:6, maxHeight:420, overflowY:"auto" } }, c.slideText)))));
 }
 
