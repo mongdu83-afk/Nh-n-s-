@@ -12602,6 +12602,460 @@ function DecisionLogRow({ decKey, d, onSaveOutcome }){
       : React.createElement("a", { key:"a", href:"#", onClick:ev=>{ ev.preventDefault(); setEditing(true); }, style:{ fontSize:11.5, color:"var(--info,#0a6bb4)" } }, d.ketQuaSauDo ? "Sửa kết quả sau đó" : "＋ Ghi kết quả sau đó"),
   ]);
 }
+
+// ================================================================================
+// ĐỐI SOÁT GỌI HÀNG ↔ HÀNG VỀ (29/9/2026) — sub-tab thứ 3 trong "Điều chuyển hàng hoá".
+// Dữ liệu do Cloud Function computeOrderFulfillment tính (hằng ngày 06:50 cho 30 ngày gần nhất,
+// hoặc bấm "Đối soát ngay" với khoảng ngày tuỳ chọn):
+//   opsConfig/orderFulfillmentSummary     — tổng hợp theo nhà thuốc/ngày, danh sách phiếu gọi, hàng về ngoài phiếu
+//   opsConfig/orderFulfillmentSuggestions — ánh xạ đề xuất đặt bổ sung (Đặt NCC + Cần nhập gấp) ↔ đã gọi/đã về
+//   orderFulfillmentLines (runId)         — từng dòng hàng: SL gọi/duyệt/về/thiếu, phiếu nhập đã ghép
+// ================================================================================
+const OF_LINE_STATUS = {
+  FULL:{ label:"Về đủ", color:"var(--pine)" }, OVER:{ label:"Về dư", color:"var(--pine)" },
+  PARTIAL:{ label:"Về thiếu", color:"var(--clay)" }, NONE:{ label:"Không về", color:"var(--clay)" },
+  PENDING:{ label:"Chờ về", color:"var(--amber)" }, PENDING_PARTIAL:{ label:"Về 1 phần, còn chờ", color:"var(--amber)" },
+  UNPROCESSED:{ label:"Phiếu chưa xử lý", color:"var(--inkSoft)" }, UNPROCESSED_PARTIAL:{ label:"Chưa xử lý, về 1 phần", color:"var(--inkSoft)" },
+  CANCELLED:{ label:"Phiếu huỷ", color:"var(--inkSoft)" }, ZERO_APPROVED:{ label:"Duyệt 0", color:"var(--inkSoft)" },
+};
+const OF_MAP_STATUS = {
+  NOT_ORDERED:{ label:"Chưa gọi hàng", color:"var(--clay)" }, NOT_RECEIVED:{ label:"Đã gọi — không về", color:"var(--clay)" },
+  RECEIVED_PARTIAL:{ label:"Đã gọi — về thiếu", color:"var(--amber)" }, ORDER_CANCELLED:{ label:"Phiếu gọi bị huỷ", color:"var(--inkSoft)" },
+  WAITING:{ label:"Đã gọi — đang chờ", color:"var(--amber)" }, RECEIVED_FULL:{ label:"Đã về đủ", color:"var(--pine)" },
+};
+const OF_FN = "https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeOrderFulfillmentNow";
+
+function ofNt(code){ return String(code||"").replace(/^SHOP/i, "NT"); }
+function ofPct(v){ return v==null ? "—" : `${String(v).replace(".", ",")}%`; }
+function ofDmy(d){ return d ? `${d.slice(8,10)}/${d.slice(5,7)}` : "—"; }
+function ofWeekStart(iso){ const d = new Date(iso+"T00:00:00Z"); const wd = (d.getUTCDay()+6)%7; d.setUTCDate(d.getUTCDate()-wd); return d.toISOString().slice(0,10); }
+function ofBucket(iso, mode){ return mode==="week" ? ofWeekStart(iso) : mode==="month" ? iso.slice(0,7) : iso; }
+function ofBucketLabel(k, mode){ return mode==="week" ? `Tuần từ ${ofDmy(k)}` : mode==="month" ? `T${k.slice(5,7)}/${k.slice(0,4)}` : `${ofDmy(k)}/${k.slice(0,4)}`; }
+function ofSum(rows){
+  const a = { orders:0, lines:0, targetValue:0, receivedValue:0, gapValue:0, full:0, partial:0, none:0, pending:0, unprocessed:0, cancelled:0 };
+  rows.forEach(r => Object.keys(a).forEach(k => { a[k] += Number(r[k])||0; }));
+  const eff = a.lines - a.cancelled;
+  a.fillValuePct = a.targetValue>0 ? Math.round(a.receivedValue/a.targetValue*1000)/10 : null;
+  a.fullLinePct = eff>0 ? Math.round(a.full/eff*1000)/10 : null;
+  return a;
+}
+function OfBar({ pct }){
+  const p = pct==null ? 0 : Math.max(0, Math.min(100, pct));
+  const c = pct==null ? "var(--line)" : p>=95 ? "var(--pine)" : p>=80 ? "var(--amber)" : "var(--clay)";
+  return React.createElement("div", { style:{ display:"flex", alignItems:"center", gap:6, minWidth:110 } }, [
+    React.createElement("div", { key:"b", style:{ flex:1, height:6, background:"var(--line)", borderRadius:3, overflow:"hidden" } },
+      React.createElement("div", { style:{ width:`${p}%`, height:"100%", background:c } })),
+    React.createElement("span", { key:"t", style:{ fontSize:11.5, fontWeight:600, color:c, minWidth:38, textAlign:"right" } }, ofPct(pct)),
+  ]);
+}
+function OfTag({ meta }){
+  if(!meta) return null;
+  return React.createElement("span", { style:{ fontSize:11.5, fontWeight:600, color:meta.color, whiteSpace:"nowrap" } }, meta.label);
+}
+async function ofExportXlsx(sheet, file, title, headers, rows){
+  if(!rows || !rows.length){ alert("Bảng đang không có dòng nào để xuất."); return; }
+  const XLSX = await ensureXlsx();
+  const aoa = [[title], [`Ngày xuất: ${new Date().toLocaleDateString("vi-VN")}`], [], headers, ...rows];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s:{ r:3, c:0 }, e:{ r:3+rows.length, c:headers.length-1 } }) };
+  ws["!cols"] = headers.map((h,i) => ({ wch: Math.min(40, Math.max(String(h).length+2, ...rows.slice(0,200).map(r => String(r[i]==null ? "" : r[i]).length+2))) }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, sheet.slice(0,31));
+  XLSX.writeFile(wb, `${file}_${todayISO()}.xlsx`);
+}
+
+function OrderFulfillmentPanel({ isAdmin, staffShop }){
+  const rc = React.createElement;
+  const [sum, setSum] = useState(null);
+  const [sug, setSug] = useState(null);
+  const [loaded, setLoaded] = useState(false);
+  const [shop, setShop] = useState(staffShop || "Tất cả");
+  const [dFrom, setDFrom] = useState("");
+  const [dTo, setDTo] = useState("");
+  const [bucketMode, setBucketMode] = useState("day");
+  const [lines, setLines] = useState([]);
+  const [linesLoading, setLinesLoading] = useState(false);
+  const [lineFilter, setLineFilter] = useState("problem");
+  const [lineSearch, setLineSearch] = useState("");
+  const [openOrder, setOpenOrder] = useState(null);
+  const [orderLines, setOrderLines] = useState({});
+  const [sugFilter, setSugFilter] = useState("gap");
+  const [runFrom, setRunFrom] = useState(addDays(todayISO(), -29));
+  const [runTo, setRunTo] = useState(todayISO());
+  const [runLag, setRunLag] = useState(10);
+  const [running, setRunning] = useState(false);
+  const [section, setSection] = useState("overview");
+  const [skuIncludePending, setSkuIncludePending] = useState(false);
+
+  useEffect(()=>{
+    const u1 = db.collection("opsConfig").doc("orderFulfillmentSummary").onSnapshot(s => { setSum(s.exists ? s.data() : null); setLoaded(true); }, err => { console.error(err); setLoaded(true); });
+    const u2 = db.collection("opsConfig").doc("orderFulfillmentSuggestions").onSnapshot(s => setSug(s.exists ? s.data() : null), ()=>{});
+    return ()=>{ u1(); u2(); };
+  }, []);
+  useEffect(()=>{ if(sum){ setDFrom(sum.fromDate); setDTo(sum.toDate); if(sum.lagDays) setRunLag(sum.lagDays); } }, [sum && sum.runId]);
+  useEffect(()=>{
+    if(!sum || !sum.runId) return;
+    setLinesLoading(true);
+    let q = db.collection("orderFulfillmentLines").where("runId","==",sum.runId);
+    q = shop!=="Tất cả" ? q.where("shopCode","==",shop) : q.where("isProblem","==",true).limit(3000);
+    q.get().then(snap => setLines(snap.docs.map(d=>d.data())))
+      .catch(err => { console.error("Lỗi tải dòng đối soát:", err); setLines([]); })
+      .finally(()=>setLinesLoading(false));
+  }, [sum && sum.runId, shop]);
+
+  async function runNow(){
+    if(runFrom > runTo){ alert("Từ ngày phải trước Đến ngày."); return; }
+    setRunning(true);
+    try{
+      const qs = `?from=${runFrom}&to=${runTo}&lag=${Number(runLag)||10}`;
+      const r = await callCf(OF_FN + qs, {}, 540000);
+      if(r && r.shopErrors) alert("Đã đối soát nhưng có nhà thuốc lỗi khi lấy dữ liệu:\n" + Object.entries(r.shopErrors).map(([k,v])=>`${ofNt(k)}: ${v}`).join("\n"));
+    } catch(err){ alert(`${cfErrorLabel(err)}: ${err && err.message ? err.message : err}`); }
+    setRunning(false);
+  }
+  async function toggleOrder(o){
+    if(openOrder===o.headerId){ setOpenOrder(null); return; }
+    setOpenOrder(o.headerId);
+    if(orderLines[o.headerId]) return;
+    const local = lines.filter(l => l.headerId===o.headerId);
+    if(shop!=="Tất cả"){ setOrderLines(m => ({ ...m, [o.headerId]: local })); return; }
+    try{
+      const snap = await db.collection("orderFulfillmentLines").where("runId","==",sum.runId).where("headerId","==",o.headerId).get();
+      setOrderLines(m => ({ ...m, [o.headerId]: snap.docs.map(d=>d.data()) }));
+    } catch(err){ console.error(err); setOrderLines(m => ({ ...m, [o.headerId]: local })); }
+  }
+
+  const adminBar = isAdmin && rc("div", { key:"run", style:{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center", fontSize:12.5 } }, [
+    rc("span", { key:"l" }, "Đối soát lại:"),
+    rc("input", { key:"f", type:"date", value:runFrom, onChange:e=>setRunFrom(e.target.value), style:{ fontSize:12.5, padding:"4px 6px", border:"1px solid var(--line)", borderRadius:6 } }),
+    rc("span", { key:"d" }, "→"),
+    rc("input", { key:"t", type:"date", value:runTo, max:todayISO(), onChange:e=>setRunTo(e.target.value), style:{ fontSize:12.5, padding:"4px 6px", border:"1px solid var(--line)", borderRadius:6 } }),
+    rc("label", { key:"lag", title:"Phiếu nhập tạo trong vòng N ngày sau khi gọi mới được ghép vào phiếu gọi đó", style:{ display:"flex", alignItems:"center", gap:4 } }, [
+      "Chờ hàng tối đa", rc("input", { key:"i", type:"number", min:1, max:30, value:runLag, onChange:e=>setRunLag(e.target.value), style:{ width:48, fontSize:12.5, padding:"4px 6px", border:"1px solid var(--line)", borderRadius:6 } }), "ngày"]),
+    rc("button", { key:"b", type:"button", className:"btn btnPrimary", disabled:running, onClick:runNow, style:{ fontSize:12.5, padding:"6px 12px" } }, running ? "Đang đối soát (1–5 phút)…" : "Đối soát ngay"),
+  ]);
+
+  if(!loaded) return rc(EmptyState, { kind:"loading" });
+  if(!sum || !sum.fromDate || !sum.toDate) return rc("div", { className:"card" }, [
+    rc("div", { key:"t", style:{ fontSize:13, color:"var(--inkSoft)", marginBottom:10 } }, isAdmin ? "Chưa có dữ liệu đối soát — chọn khoảng ngày rồi bấm \"Đối soát ngay\" để chạy lần đầu (sau đó tự chạy 06:50 hằng ngày)." : "Chưa có dữ liệu đối soát — quản lý sẽ cập nhật."),
+    adminBar,
+  ]);
+
+  const shops = (sum.shops||[]).filter(s => !staffShop || s===staffShop);
+  const inRange = d => d && (!dFrom || d>=dFrom) && (!dTo || d<=dTo);
+  const shopOk = s => shop==="Tất cả" || s===shop;
+  const days = (sum.byShopDay||[]).filter(r => shopOk(r.shopCode) && inRange(r.date));
+  const rangeFull = dFrom===sum.fromDate && dTo===sum.toDate;
+  const shopRows = shops.map(s => ({ shopCode:s, ...(rangeFull ? (sum.byShop||{})[s] : ofSum((sum.byShopDay||[]).filter(r => r.shopCode===s && inRange(r.date)))) , extraValue: ((sum.byShop||{})[s]||{}).extraValue, avgLeadDays: ((sum.byShop||{})[s]||{}).avgLeadDays, imports: ((sum.byShop||{})[s]||{}).imports })).filter(r => r && (r.orders || r.lines));
+  const tot = ofSum(days);
+  const bucketMap = {};
+  days.forEach(r => { const k = ofBucket(r.date, bucketMode); (bucketMap[k] = bucketMap[k] || []).push(r); });
+  const buckets = Object.keys(bucketMap).sort().reverse().map(k => ({ k, ...ofSum(bucketMap[k]) }));
+  const ordersF = (sum.orders||[]).filter(o => shopOk(o.shopCode) && inRange(o.orderDate));
+  const q = lineSearch.trim().toLowerCase();
+  const linesF = lines.filter(l => inRange(l.orderDate) && (lineFilter==="all" || (lineFilter==="problem" ? l.isProblem : l.status===lineFilter))
+    && (!q || `${l.productId} ${l.productName} ${l.headerId}`.toLowerCase().includes(q)))
+    .sort((a,b) => (b.gapValue||0)-(a.gapValue||0));
+  const sugRows = ((sug && sug.rows)||[]).filter(r => shopOk(r.shopCode));
+  const sugCounts = {}; sugRows.forEach(r => { sugCounts[r.mapStatus] = (sugCounts[r.mapStatus]||0)+1; });
+  const sugF = sugRows.filter(r => sugFilter==="all" ? true : sugFilter==="gap" ? ["NOT_ORDERED","NOT_RECEIVED","RECEIVED_PARTIAL"].includes(r.mapStatus) : r.mapStatus===sugFilter)
+    .filter(r => !q || `${r.productId} ${r.productName}`.toLowerCase().includes(q));
+  const extraF = (sum.extraImports||[]).filter(x => shopOk(x.shopCode) && inRange(x.date));
+  // Gộp theo MÃ HÀNG: mã nào bị thiếu, thiếu bao nhiêu lần/bao nhiêu SL/giá trị, ở những NT nào.
+  const SKU_GAP = skuIncludePending ? ["PARTIAL","NONE","PENDING","PENDING_PARTIAL","UNPROCESSED","UNPROCESSED_PARTIAL"] : ["PARTIAL","NONE"];
+  const skuMap = {};
+  lines.filter(l => inRange(l.orderDate) && SKU_GAP.includes(l.status) && (!q || `${l.productId} ${l.productName}`.toLowerCase().includes(q))).forEach(l => {
+    const k = `${l.productId}|${l.unit||""}`;
+    const a = skuMap[k] || (skuMap[k] = { productId:l.productId, productName:l.productName, unit:l.unit||"", times:0, none:0, target:0, received:0, gap:0, gapValue:0, shops:{}, headers:new Set(), last:null, lastHeader:null });
+    a.times++; if(l.status==="NONE" || l.status==="PENDING" || l.status==="UNPROCESSED") a.none++;
+    a.target += l.targetQty||0; a.received += l.receivedQty||0; a.gap += l.gapQty||0; a.gapValue += l.gapValue||0;
+    a.shops[l.shopCode] = (a.shops[l.shopCode]||0) + (l.gapQty||0); a.headers.add(l.headerId);
+    if(!a.last || l.orderDate > a.last){ a.last = l.orderDate; a.lastHeader = l.headerId; }
+  });
+  const skuRows = Object.values(skuMap).sort((a,b) => b.gapValue - a.gapValue || b.gap - a.gap);
+  const r2 = n => (Math.round((n||0)*100)/100).toLocaleString("vi-VN");
+
+  const th = (arr) => rc("thead", { key:"h" }, rc("tr", null, arr.map((h,i)=>rc("th", { key:i }, h))));
+  const kpi = (k, v, sub, color) => rc("div", { key:k, style:{ minWidth:120, flex:"1 1 120px" } }, [
+    rc("div", { key:"v", style:{ fontSize:19, fontWeight:700, color:color||"inherit" } }, v),
+    rc("div", { key:"s", style:{ fontSize:11.5, color:"var(--inkSoft)" } }, sub),
+  ]);
+  const selStyle = { fontSize:12.5, padding:"5px 8px", border:"1px solid var(--line)", borderRadius:8 };
+
+  const warnings = [];
+  if(sum.shopErrors) warnings.push(`Lỗi lấy dữ liệu: ${Object.entries(sum.shopErrors).map(([k,v])=>`${ofNt(k)} — ${v}`).join("; ")}`);
+  if(sum.detailErrorCount) warnings.push(`${fmtNum(sum.detailErrorCount)} phiếu không tải được chi tiết (số liệu các phiếu đó có thể thiếu).`);
+  if(!sum.approvedQtyField) warnings.push("Hệ thống ngoài không trả trường \"SL duyệt\" riêng trên dòng phiếu gọi → đang so với SL gọi.");
+  const mism = lines.filter(l => l.unitMismatch).length;
+  if(mism) warnings.push(`${fmtNum(mism)} dòng khác đơn vị giữa phiếu gọi và phiếu nhập mà chưa có hệ số quy đổi — cần kiểm tra tay (lọc "Khác ĐVT").`);
+
+  const header = rc("div", { key:"head", className:"card", style:{ marginBottom:16 } }, [
+    rc("div", { key:"r1", style:{ display:"flex", justifyContent:"space-between", flexWrap:"wrap", gap:10, alignItems:"center" } }, [
+      rc("div", { key:"i", style:{ fontSize:12.5, color:"var(--inkSoft)" } }, [
+        rc("div", { key:"a", style:{ fontWeight:600, color:"var(--ink)" } }, `Kỳ đối soát ${ofDmy(sum.fromDate)} → ${ofDmy(sum.toDate)}/${sum.toDate.slice(0,4)} · tính lúc ${new Date(sum.computedAt).toLocaleString("vi-VN", { timeZone:"Asia/Ho_Chi_Minh" })}`),
+        rc("div", { key:"b" }, `Ghép phiếu nhập về trong ${sum.lagDays} ngày sau khi gọi (cùng NT + cùng mã, phiếu gọi cũ hơn nhận trước). Điều chuyển từ NT khác không tính.`),
+      ]),
+      adminBar,
+    ]),
+    rc("div", { key:"r2", style:{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center", marginTop:12 } }, [
+      rc("select", { key:"s", value:shop, onChange:e=>setShop(e.target.value), style:selStyle, disabled:!!staffShop },
+        [staffShop ? null : rc("option", { key:"all", value:"Tất cả" }, "Tất cả nhà thuốc"), ...shops.map(s => rc("option", { key:s, value:s }, ofNt(s)))]),
+      rc("span", { key:"l", style:{ fontSize:12.5 } }, "Ngày gọi:"),
+      rc("input", { key:"f", type:"date", value:dFrom, min:sum.fromDate, max:sum.toDate, onChange:e=>setDFrom(e.target.value), style:selStyle }),
+      rc("span", { key:"d" }, "→"),
+      rc("input", { key:"t", type:"date", value:dTo, min:sum.fromDate, max:sum.toDate, onChange:e=>setDTo(e.target.value), style:selStyle }),
+      !rangeFull && rc("button", { key:"rs", type:"button", className:"btn btnGhost", style:{ fontSize:12, padding:"4px 10px" }, onClick:()=>{ setDFrom(sum.fromDate); setDTo(sum.toDate); } }, "Cả kỳ"),
+    ]),
+    warnings.length>0 && rc("div", { key:"w", style:{ marginTop:10, fontSize:12, color:"var(--clay)" } }, warnings.map((w,i)=>rc("div", { key:i }, "⚠ " + w))),
+  ]);
+
+  const kpis = rc("div", { key:"kpi", className:"card", style:{ marginBottom:16 } },
+    rc("div", { style:{ display:"flex", flexWrap:"wrap", gap:18 } }, [
+      kpi("o", fmtNum(tot.orders), "Phiếu gọi hàng"),
+      kpi("l", fmtNum(tot.lines - tot.cancelled), "Dòng hàng (trừ phiếu huỷ)"),
+      kpi("tv", fmtVNDCompact(tot.targetValue), "Giá trị gọi/duyệt"),
+      kpi("rv", fmtVNDCompact(tot.receivedValue), "Giá trị đã về"),
+      kpi("fv", ofPct(tot.fillValuePct), "Tỷ lệ về (giá trị)", tot.fillValuePct!=null && tot.fillValuePct<90 ? "var(--clay)" : "var(--pine)"),
+      kpi("fl", ofPct(tot.fullLinePct), "Dòng về đủ"),
+      kpi("gp", `${fmtNum(tot.partial)} / ${fmtNum(tot.none)}`, "Về thiếu / Không về", (tot.partial+tot.none)>0 ? "var(--clay)" : undefined),
+      kpi("gv", fmtVNDCompact(tot.gapValue), "Giá trị còn thiếu", tot.gapValue>0 ? "var(--clay)" : undefined),
+      kpi("pd", fmtNum(tot.pending), "Dòng đang chờ về", "var(--amber)"),
+    ]));
+
+  const SECTIONS = [["overview","Theo nhà thuốc & thời gian"],["orders",`Phiếu gọi (${fmtNum(ordersF.length)})`],["sku",`Mã hàng thiếu (${fmtNum(skuRows.length)})`],["lines","So sánh dòng hàng"],["sug",`Đề xuất đặt bổ sung (${fmtNum(sugRows.length)})`],["extra",`Hàng về ngoài phiếu (${fmtNum(extraF.length)})`]];
+  const secBar = rc("div", { key:"sec", style:{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:12 } },
+    SECTIONS.map(([id,label]) => rc("button", { key:id, type:"button", className: section===id ? "btn btnPrimary" : "btn btnGhost", style:{ fontSize:12.5, padding:"6px 12px" }, onClick:()=>setSection(id) }, label)));
+
+  // ---- Theo nhà thuốc & thời gian
+  const overview = rc(React.Fragment, { key:"ov" }, [
+    rc("div", { key:"shop", className:"card", style:{ marginBottom:16 } }, [
+      rc("div", { key:"t", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, gap:8, flexWrap:"wrap" } }, [
+        rc("div", { key:"a", className:"cardTitle" }, "Theo nhà thuốc"),
+        rc("button", { key:"x", type:"button", className:"btn btnGhost", style:{ fontSize:12, padding:"4px 10px" }, onClick:()=>ofExportXlsx("Theo NT","DoiSoat_GoiHang_TheoNT",`ĐỐI SOÁT GỌI HÀNG ↔ HÀNG VỀ THEO NHÀ THUỐC (${dFrom} → ${dTo})`,
+          ["Nhà thuốc","Phiếu gọi","Dòng","Giá trị gọi/duyệt","Giá trị đã về","Giá trị thiếu","% về (giá trị)","% dòng về đủ","Về thiếu","Không về","Chờ về","Phiếu chưa xử lý","TG về TB (ngày)","Hàng về ngoài phiếu"],
+          shopRows.map(r => [ofNt(r.shopCode), r.orders, (r.lines||0)-(r.cancelled||0), r.targetValue, r.receivedValue, r.gapValue, r.fillValuePct, r.fullLinePct, r.partial, r.none, r.pending, r.unprocessed, r.avgLeadDays, r.extraValue])) }, "📥 Excel"),
+      ]),
+      rc("div", { key:"tb", className:"tableWrap" }, rc("table", { className:"data" }, [
+        th(["Nhà thuốc","Phiếu","Dòng","Gọi/duyệt","Đã về","Còn thiếu","% về (giá trị)","Dòng đủ","Thiếu / Không về","Chờ về","TG về TB"]),
+        rc("tbody", { key:"b" }, shopRows.map(r => rc("tr", { key:r.shopCode, style:{ cursor:"pointer", background: shop===r.shopCode ? "var(--line)" : undefined }, onClick:()=>setShop(shop===r.shopCode && !staffShop ? "Tất cả" : r.shopCode) }, [
+          rc("td", { key:"s", style:{ fontWeight:600 } }, ofNt(r.shopCode)),
+          rc("td", { key:"o" }, fmtNum(r.orders)),
+          rc("td", { key:"l" }, fmtNum((r.lines||0)-(r.cancelled||0))),
+          rc("td", { key:"tv" }, fmtVNDCompact(r.targetValue)),
+          rc("td", { key:"rv" }, fmtVNDCompact(r.receivedValue)),
+          rc("td", { key:"gv", style:{ color: r.gapValue>0 ? "var(--clay)" : undefined, fontWeight:600 } }, fmtVNDCompact(r.gapValue)),
+          rc("td", { key:"fv" }, rc(OfBar, { pct:r.fillValuePct })),
+          rc("td", { key:"fl" }, ofPct(r.fullLinePct)),
+          rc("td", { key:"pn" }, `${fmtNum(r.partial)} / ${fmtNum(r.none)}`),
+          rc("td", { key:"pd" }, fmtNum(r.pending)),
+          rc("td", { key:"ld" }, r.avgLeadDays==null ? "—" : `${String(r.avgLeadDays).replace(".",",")} ngày`),
+        ]))),
+      ])),
+      rc("div", { key:"n", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:6 } }, "Bấm 1 dòng để lọc riêng nhà thuốc đó. \"TG về TB\" = số ngày từ lúc gọi tới phiếu nhập đầu tiên ghép được."),
+    ]),
+    rc("div", { key:"time", className:"card", style:{ marginBottom:16 } }, [
+      rc("div", { key:"t", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, gap:8, flexWrap:"wrap" } }, [
+        rc("div", { key:"a", className:"cardTitle" }, `Theo thời gian gọi hàng${shop!=="Tất cả" ? " — " + ofNt(shop) : ""}`),
+        rc("select", { key:"m", value:bucketMode, onChange:e=>setBucketMode(e.target.value), style:selStyle }, [["day","Theo ngày"],["week","Theo tuần"],["month","Theo tháng"]].map(([v,l])=>rc("option",{ key:v, value:v }, l))),
+      ]),
+      buckets.length===0 ? rc("div", { key:"e", className:"emptyState" }, "Không có phiếu gọi nào trong khoảng này.")
+      : rc("div", { key:"tb", className:"tableWrap" }, rc("table", { className:"data" }, [
+        th(["Thời gian","Phiếu","Dòng","Gọi/duyệt","Đã về","Còn thiếu","% về (giá trị)","Thiếu / Không về","Chờ về"]),
+        rc("tbody", { key:"b" }, buckets.map(b => rc("tr", { key:b.k }, [
+          rc("td", { key:"k", style:{ fontWeight:600 } }, ofBucketLabel(b.k, bucketMode)),
+          rc("td", { key:"o" }, fmtNum(b.orders)),
+          rc("td", { key:"l" }, fmtNum(b.lines-b.cancelled)),
+          rc("td", { key:"tv" }, fmtVNDCompact(b.targetValue)),
+          rc("td", { key:"rv" }, fmtVNDCompact(b.receivedValue)),
+          rc("td", { key:"gv", style:{ color: b.gapValue>0 ? "var(--clay)" : undefined } }, fmtVNDCompact(b.gapValue)),
+          rc("td", { key:"fv" }, rc(OfBar, { pct:b.fillValuePct })),
+          rc("td", { key:"pn" }, `${fmtNum(b.partial)} / ${fmtNum(b.none)}`),
+          rc("td", { key:"pd" }, fmtNum(b.pending)),
+        ]))),
+      ])),
+    ]),
+  ]);
+
+  // ---- Phiếu gọi
+  const lineTable = (ls, compact) => rc("div", { key:"lt", className:"tableWrap" }, rc("table", { className:"data" }, [
+    th([...(compact ? [] : ["Ngày gọi","Phiếu gọi","NT"]), "Mã hàng","Tên hàng","ĐVT","SL gọi","SL duyệt","SL về","Thiếu","% về","GT thiếu","Phiếu nhập ghép","Về sau","Trạng thái"]),
+    rc("tbody", { key:"b" }, ls.map((l,i) => rc("tr", { key:i }, [
+      ...(compact ? [] : [rc("td", { key:"d" }, ofDmy(l.orderDate)), rc("td", { key:"h", style:{ fontSize:11.5 } }, l.headerId), rc("td", { key:"s" }, ofNt(l.shopCode))]),
+      rc("td", { key:"p" }, l.productId),
+      rc("td", { key:"n" }, l.productName),
+      rc("td", { key:"u", style:{ color: l.unitMismatch ? "var(--clay)" : undefined }, title: l.unitMismatch ? "Phiếu nhập ghi đơn vị khác, chưa có hệ số quy đổi" : undefined }, (l.unit||"") + (l.unitMismatch ? " ⚠" : "")),
+      rc("td", { key:"o" }, fmtNum(l.orderedQty)),
+      rc("td", { key:"a" }, l.approvedQty==null ? "—" : fmtNum(l.approvedQty)),
+      rc("td", { key:"r", style:{ fontWeight:600 } }, (Math.round((l.receivedQty||0)*100)/100).toLocaleString("vi-VN")),
+      rc("td", { key:"g", style:{ color: l.gapQty>0 ? "var(--clay)" : undefined, fontWeight:600 } }, l.gapQty>0 ? (Math.round(l.gapQty*100)/100).toLocaleString("vi-VN") : "—"),
+      rc("td", { key:"f" }, ofPct(l.fillPct)),
+      rc("td", { key:"gv" }, l.gapValue>0 ? fmtVNDCompact(l.gapValue) : "—"),
+      rc("td", { key:"im", style:{ fontSize:11.5 } }, (l.importDocs||[]).join(", ") || "—"),
+      rc("td", { key:"ld" }, l.firstReceiveDays==null ? "—" : `${String(l.firstReceiveDays).replace(".",",")}n`),
+      rc("td", { key:"st" }, rc(OfTag, { meta:OF_LINE_STATUS[l.status] })),
+    ]))),
+  ]));
+  const ordersView = rc("div", { key:"orders", className:"card", style:{ marginBottom:16 } }, [
+    rc("div", { key:"t", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, gap:8, flexWrap:"wrap" } }, [
+      rc("div", { key:"a", className:"cardTitle" }, "Danh sách phiếu gọi hàng"),
+      rc("button", { key:"x", type:"button", className:"btn btnGhost", style:{ fontSize:12, padding:"4px 10px" }, onClick:()=>ofExportXlsx("Phiếu gọi","DoiSoat_PhieuGoi",`DANH SÁCH PHIẾU GỌI HÀNG (${dFrom} → ${dTo})`,
+        ["Mã phiếu","NT","Ngày gọi","Trạng thái phiếu","Người tạo","Người xử lý","Ưu tiên","Số dòng","GT gọi/duyệt","GT đã về","GT thiếu","% về (giá trị)","Dòng về đủ","Về thiếu","Không về","Chờ về","Ghi chú"],
+        ordersF.map(o => [o.headerId, ofNt(o.shopCode), o.orderDate, o.statusText, o.employeeName, o.approverName, o.priority===2?"Gấp":"Thường", (o.lines||0)-(o.cancelled||0), o.targetValue, o.receivedValue, o.gapValue, o.fillValuePct, o.full, o.partial, o.none, o.pending, o.note])) }, "📥 Excel"),
+    ]),
+    sum.ordersTruncated && rc("div", { key:"tr", style:{ fontSize:11.5, color:"var(--clay)", marginBottom:6 } }, "Danh sách đã cắt bớt phiếu cũ nhất do quá dài — thu hẹp khoảng ngày đối soát để xem đủ."),
+    ordersF.length===0 ? rc("div", { key:"e", className:"emptyState" }, "Không có phiếu gọi nào.")
+    : rc("div", { key:"tb", className:"tableWrap" }, rc("table", { className:"data" }, [
+      th(["","Mã phiếu","NT","Ngày gọi","Trạng thái","Người tạo","Dòng","Gọi/duyệt","Đã về","% về","Thiếu / Không về / Chờ"]),
+      rc("tbody", { key:"b" }, ordersF.flatMap(o => {
+        const open = openOrder===o.headerId;
+        const row = rc("tr", { key:o.headerId, style:{ cursor:"pointer" }, onClick:()=>toggleOrder(o) }, [
+          rc("td", { key:"x" }, open ? "▾" : "▸"),
+          rc("td", { key:"h", style:{ fontWeight:600, fontSize:12 } }, [o.headerId, o.priority===2 && rc("span", { key:"g", style:{ color:"var(--clay)", marginLeft:4, fontSize:11 } }, "GẤP")]),
+          rc("td", { key:"s" }, ofNt(o.shopCode)),
+          rc("td", { key:"d" }, o.orderTs ? new Date(o.orderTs).toLocaleString("vi-VN", { timeZone:"Asia/Ho_Chi_Minh", day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }) : ofDmy(o.orderDate)),
+          rc("td", { key:"st", style:{ color: o.status===0 ? "var(--inkSoft)" : undefined } }, o.statusText),
+          rc("td", { key:"e" }, o.employeeName || "—"),
+          rc("td", { key:"l" }, fmtNum((o.lines||0)-(o.cancelled||0))),
+          rc("td", { key:"tv" }, fmtVNDCompact(o.targetValue)),
+          rc("td", { key:"rv" }, fmtVNDCompact(o.receivedValue)),
+          rc("td", { key:"fv" }, rc(OfBar, { pct:o.fillValuePct })),
+          rc("td", { key:"pn" }, `${fmtNum(o.partial)} / ${fmtNum(o.none)} / ${fmtNum(o.pending)}`),
+        ]);
+        if(!open) return [row];
+        const ls = orderLines[o.headerId];
+        return [row, rc("tr", { key:o.headerId+"_d" }, rc("td", { colSpan:11, style:{ background:"var(--paper, #f7f7f5)", padding:10 } },
+          !ls ? rc(EmptyState, { kind:"loading" }) : ls.length===0 ? rc("div", { className:"emptyState" }, o.detailMissing ? "Không tải được chi tiết phiếu này từ hệ thống ngoài." : "Phiếu không có dòng hàng.") : lineTable(ls, true)))];
+      })),
+    ])),
+  ]);
+
+  // ---- Mã hàng thiếu (gộp)
+  const skuView = rc("div", { key:"sku", className:"card", style:{ marginBottom:16 } }, [
+    rc("div", { key:"t", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6, gap:8, flexWrap:"wrap" } }, [
+      rc("div", { key:"a", className:"cardTitle" }, `Mã hàng bị thiếu${shop!=="Tất cả" ? " — " + ofNt(shop) : " — toàn chuỗi"}`),
+      rc("div", { key:"f", style:{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" } }, [
+        rc("label", { key:"p", style:{ fontSize:12.5, display:"flex", alignItems:"center", gap:4 } }, [
+          rc("input", { key:"c", type:"checkbox", checked:skuIncludePending, onChange:e=>setSkuIncludePending(e.target.checked) }), "Tính cả dòng đang chờ về / phiếu chưa xử lý"]),
+        rc("input", { key:"q", placeholder:"Tìm mã / tên hàng", value:lineSearch, onChange:e=>setLineSearch(e.target.value), style:{ ...selStyle, minWidth:160 } }),
+        rc("button", { key:"x", type:"button", className:"btn btnGhost", style:{ fontSize:12, padding:"4px 10px" }, onClick:()=>ofExportXlsx("Mã hàng thiếu","DoiSoat_MaHangThieu",`MÃ HÀNG GỌI MÀ VỀ THIẾU / KHÔNG VỀ${shop!=="Tất cả" ? " — "+ofNt(shop) : ""} (${dFrom} → ${dTo})`,
+          ["Mã hàng","Tên hàng","ĐVT","Số lần thiếu","Trong đó không về","Số phiếu","Tổng SL gọi/duyệt","Tổng SL về","Tổng SL thiếu","GT thiếu","Nhà thuốc (SL thiếu)","Gọi gần nhất","Phiếu gần nhất"],
+          skuRows.map(a => [a.productId, a.productName, a.unit, a.times, a.none, a.headers.size, a.target, a.received, a.gap, a.gapValue,
+            Object.entries(a.shops).map(([s,g])=>`${ofNt(s)}: ${Math.round(g*100)/100}`).join("; "), a.last, a.lastHeader])) }, "📥 Excel"),
+      ]),
+    ]),
+    rc("div", { key:"n", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8 } }, skuIncludePending
+      ? "Gồm dòng về thiếu, không về, đang chờ về và phiếu chưa xử lý."
+      : `Chỉ tính dòng đã quá ${sum.lagDays} ngày chờ mà vẫn về thiếu hoặc không về (dòng còn trong hạn chờ chưa tính là thiếu).`),
+    linesLoading ? rc(EmptyState, { key:"ld", kind:"loading" }) : skuRows.length===0 ? rc("div", { key:"e", className:"emptyState" }, "Không có mã hàng nào bị thiếu trong khoảng này.")
+    : rc(React.Fragment, { key:"tb" }, [
+      rc("div", { key:"c", style:{ fontSize:12, marginBottom:6 } }, `${fmtNum(skuRows.length)} mã hàng · tổng giá trị thiếu ${fmtVND(skuRows.reduce((s,a)=>s+a.gapValue,0))} (sắp theo giá trị thiếu giảm dần)`),
+      rc("div", { key:"t", className:"tableWrap" }, rc("table", { className:"data" }, [
+        th(["Mã hàng","Tên hàng","ĐVT","Lần thiếu","Không về","Tổng gọi","Tổng về","Tổng thiếu","GT thiếu","Nhà thuốc thiếu","Gọi gần nhất"]),
+        rc("tbody", { key:"b" }, skuRows.slice(0, 800).map(a => rc("tr", { key:a.productId+a.unit, style:{ cursor:"pointer" }, title:"Bấm để xem từng dòng của mã này", onClick:()=>{ setLineSearch(a.productId); setLineFilter("problem"); setSection("lines"); } }, [
+          rc("td", { key:"p", style:{ fontWeight:600 } }, a.productId),
+          rc("td", { key:"n" }, a.productName),
+          rc("td", { key:"u" }, a.unit),
+          rc("td", { key:"t" }, fmtNum(a.times)),
+          rc("td", { key:"z", style:{ color: a.none>0 ? "var(--clay)" : undefined } }, fmtNum(a.none)),
+          rc("td", { key:"o" }, r2(a.target)),
+          rc("td", { key:"r" }, r2(a.received)),
+          rc("td", { key:"g", style:{ color:"var(--clay)", fontWeight:700 } }, r2(a.gap)),
+          rc("td", { key:"v", style:{ fontWeight:600 } }, fmtVNDCompact(a.gapValue)),
+          rc("td", { key:"s", style:{ fontSize:11.5 } }, Object.entries(a.shops).sort((x,y)=>y[1]-x[1]).map(([s,g])=>`${ofNt(s)} (${r2(g)})`).join(", ")),
+          rc("td", { key:"l", style:{ fontSize:11.5 } }, `${ofDmy(a.last)} · ${a.lastHeader}`),
+        ]))),
+      ])),
+    ]),
+  ]);
+
+  // ---- So sánh dòng hàng
+  const linesView = rc("div", { key:"lines", className:"card", style:{ marginBottom:16 } }, [
+    rc("div", { key:"t", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, gap:8, flexWrap:"wrap" } }, [
+      rc("div", { key:"a", className:"cardTitle" }, "So sánh hàng gọi ↔ hàng về (từng dòng)"),
+      rc("div", { key:"f", style:{ display:"flex", gap:6, flexWrap:"wrap" } }, [
+        rc("select", { key:"s", value:lineFilter, onChange:e=>setLineFilter(e.target.value), style:selStyle }, [
+          rc("option", { key:"problem", value:"problem" }, "Thiếu / không về / chờ"),
+          ...(shop!=="Tất cả" ? [rc("option", { key:"all", value:"all" }, "Tất cả dòng")] : []),
+          ...Object.keys(OF_LINE_STATUS).map(k => rc("option", { key:k, value:k }, OF_LINE_STATUS[k].label))]),
+        rc("input", { key:"q", placeholder:"Tìm mã / tên hàng / mã phiếu", value:lineSearch, onChange:e=>setLineSearch(e.target.value), style:{ ...selStyle, minWidth:180 } }),
+        rc("button", { key:"x", type:"button", className:"btn btnGhost", style:{ fontSize:12, padding:"4px 10px" }, onClick:()=>ofExportXlsx("Dòng hàng","DoiSoat_DongHang",`SO SÁNH HÀNG GỌI ↔ HÀNG VỀ${shop!=="Tất cả" ? " — "+ofNt(shop) : ""} (${dFrom} → ${dTo})`,
+          ["Ngày gọi","Phiếu gọi","NT","Mã hàng","Tên hàng","ĐVT","SL gọi","SL duyệt","SL về","SL thiếu","% về","Đơn giá","GT thiếu","Phiếu nhập ghép","Về sau (ngày)","Trạng thái","Khác ĐVT","Ghi chú duyệt"],
+          linesF.map(l => [l.orderDate, l.headerId, ofNt(l.shopCode), l.productId, l.productName, l.unit, l.orderedQty, l.approvedQty, l.receivedQty, l.gapQty, l.fillPct, l.price, l.gapValue, (l.importDocs||[]).join(", "), l.firstReceiveDays, (OF_LINE_STATUS[l.status]||{}).label||l.status, l.unitMismatch?"Có":"", l.noteApprove||""])) }, "📥 Excel"),
+      ]),
+    ]),
+    shop==="Tất cả" && rc("div", { key:"n", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:6 } }, "Đang xem toàn chuỗi → chỉ tải các dòng thiếu/không về/chờ về. Chọn 1 nhà thuốc để xem cả dòng về đủ."),
+    linesLoading ? rc(EmptyState, { key:"ld", kind:"loading" }) : linesF.length===0 ? rc("div", { key:"e", className:"emptyState" }, "Không có dòng nào khớp bộ lọc.")
+    : rc(React.Fragment, { key:"tb" }, [
+      rc("div", { key:"c", style:{ fontSize:12, marginBottom:6 } }, `${fmtNum(linesF.length)} dòng · giá trị thiếu ${fmtVND(linesF.reduce((s,l)=>s+(l.gapValue||0),0))} (sắp theo giá trị thiếu giảm dần)`),
+      lineTable(linesF.slice(0, 800), false),
+      linesF.length>800 && rc("div", { key:"m", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:6 } }, `Hiển thị 800/${fmtNum(linesF.length)} dòng — xuất Excel để xem đủ.`),
+    ]),
+  ]);
+
+  // ---- Đề xuất đặt bổ sung
+  const sugView = rc("div", { key:"sug", className:"card", style:{ marginBottom:16 } }, [
+    rc("div", { key:"t", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6, gap:8, flexWrap:"wrap" } }, [
+      rc("div", { key:"a", className:"cardTitle" }, "Đề xuất đặt hàng bổ sung ↔ đã gọi / đã về"),
+      rc("div", { key:"f", style:{ display:"flex", gap:6, flexWrap:"wrap" } }, [
+        rc("select", { key:"s", value:sugFilter, onChange:e=>setSugFilter(e.target.value), style:selStyle }, [
+          rc("option", { key:"gap", value:"gap" }, "Chưa gọi / gọi mà không về đủ"),
+          rc("option", { key:"all", value:"all" }, `Tất cả (${fmtNum(sugRows.length)})`),
+          ...Object.keys(OF_MAP_STATUS).map(k => rc("option", { key:k, value:k }, `${OF_MAP_STATUS[k].label} (${fmtNum(sugCounts[k]||0)})`))]),
+        rc("button", { key:"x", type:"button", className:"btn btnGhost", style:{ fontSize:12, padding:"4px 10px" }, onClick:()=>ofExportXlsx("Đề xuất bổ sung","DoiSoat_DeXuatBoSung","ĐỀ XUẤT ĐẶT HÀNG BỔ SUNG ↔ PHIẾU GỌI / HÀNG VỀ",
+          ["Nguồn đề xuất","NT","Mã hàng","Tên hàng","SL đề xuất","ĐVT đề xuất","Tồn","Đủ bán (ngày)","Gọi gần nhất","Phiếu gọi","SL gọi (kỳ)","SL về","SL thiếu","ĐVT gọi","Trạng thái"],
+          sugF.map(r => [r.source==="NCC" ? "Cần đặt NCC (Điều chuyển)" : "Cần nhập gấp (Tốc độ)", ofNt(r.shopCode), r.productId, r.productName, r.suggestQty, r.suggestUnit, r.stockQty, r.daysOfStock, r.lastOrderDate, r.lastHeaderId, r.orderedQty, r.receivedQty, r.gapQty, r.orderUnit, (OF_MAP_STATUS[r.mapStatus]||{}).label])) }, "📥 Excel"),
+      ]),
+    ]),
+    rc("div", { key:"n", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8 } },
+      `Nguồn: "Cần đặt hàng NCC" ở tab Điều chuyển${sug && sug.transferSuggestionsAt ? ` (phân tích lúc ${new Date(sug.transferSuggestionsAt).toLocaleString("vi-VN")})` : ""} + "🔴 Cần nhập gấp" ở tab Tốc độ tiêu thụ. So với phiếu gọi trong kỳ ${ofDmy(sum.fromDate)} → ${ofDmy(sum.toDate)}.`),
+    rc("div", { key:"cnt", style:{ display:"flex", gap:14, flexWrap:"wrap", marginBottom:10 } }, Object.keys(OF_MAP_STATUS).map(k => rc("div", { key:k, style:{ cursor:"pointer" }, onClick:()=>setSugFilter(k) }, [
+      rc("div", { key:"v", style:{ fontSize:17, fontWeight:700, color:OF_MAP_STATUS[k].color } }, fmtNum(sugCounts[k]||0)),
+      rc("div", { key:"l", style:{ fontSize:11.5, color:"var(--inkSoft)" } }, OF_MAP_STATUS[k].label)]))),
+    sugF.length===0 ? rc("div", { key:"e", className:"emptyState" }, sug ? "Không có mục nào." : "Chưa có dữ liệu — cần chạy đối soát.")
+    : rc("div", { key:"tb", className:"tableWrap" }, rc("table", { className:"data" }, [
+      th(["Nguồn","NT","Mã hàng","Tên hàng","Đề xuất","Tồn / Đủ bán","Gọi gần nhất","SL gọi","SL về","Thiếu","Trạng thái"]),
+      rc("tbody", { key:"b" }, sugF.slice(0, 800).map((r,i) => rc("tr", { key:i }, [
+        rc("td", { key:"src", style:{ fontSize:11.5 } }, r.source==="NCC" ? "🛒 Đặt NCC" : "🔴 Nhập gấp"),
+        rc("td", { key:"s" }, ofNt(r.shopCode)),
+        rc("td", { key:"p" }, r.productId),
+        rc("td", { key:"n" }, r.productName),
+        rc("td", { key:"q" }, r.suggestQty==null ? "—" : `${fmtNum(r.suggestQty)} ${r.suggestUnit||""}`),
+        rc("td", { key:"st" }, `${r.stockQty==null ? "—" : fmtNum(r.stockQty)} / ${r.daysOfStock==null ? "—" : fmtNum(r.daysOfStock)+"n"}`),
+        rc("td", { key:"d", style:{ fontSize:11.5 } }, r.lastOrderDate ? `${ofDmy(r.lastOrderDate)} · ${r.lastHeaderId}` : "—"),
+        rc("td", { key:"o" }, r.orderedQty==null ? "—" : `${fmtNum(r.orderedQty)} ${r.orderUnit||""}`),
+        rc("td", { key:"r" }, r.receivedQty==null ? "—" : (Math.round(r.receivedQty*100)/100).toLocaleString("vi-VN")),
+        rc("td", { key:"g", style:{ color: r.gapQty>0 ? "var(--clay)" : undefined, fontWeight:600 } }, r.gapQty>0 ? (Math.round(r.gapQty*100)/100).toLocaleString("vi-VN") : "—"),
+        rc("td", { key:"m" }, rc(OfTag, { meta:OF_MAP_STATUS[r.mapStatus] })),
+      ]))),
+    ])),
+  ]);
+
+  // ---- Hàng về ngoài phiếu gọi
+  const extraView = rc("div", { key:"extra", className:"card", style:{ marginBottom:16 } }, [
+    rc("div", { key:"t", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6, gap:8, flexWrap:"wrap" } }, [
+      rc("div", { key:"a", className:"cardTitle" }, "Hàng về không khớp phiếu gọi nào"),
+      rc("button", { key:"x", type:"button", className:"btn btnGhost", style:{ fontSize:12, padding:"4px 10px" }, onClick:()=>ofExportXlsx("Hàng về ngoài phiếu","DoiSoat_HangVeNgoaiPhieu","HÀNG VỀ NGOÀI PHIẾU GỌI",
+        ["Ngày","Phiếu nhập","NT nhận","Bên xuất","Loại","Mã hàng","Tên hàng","SL","ĐVT","Đơn giá","Giá trị","Trạng thái phiếu nhập"],
+        extraF.map(x => [x.date, x.docId, ofNt(x.shopCode), x.senderCode, x.fromShop ? "Điều chuyển từ NT khác" : "Kho/NCC — dư hoặc không có phiếu gọi", x.productId, x.productName, x.qty, x.unit, x.price, x.value, x.importStatus])) }, "📥 Excel"),
+    ]),
+    rc("div", { key:"n", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8 } }, "Gồm: hàng kho/NCC gửi về nhiều hơn SL gọi, gửi về khi không có phiếu gọi trong khoảng chờ, và hàng điều chuyển từ nhà thuốc khác (không tính cho phiếu gọi)."),
+    extraF.length===0 ? rc("div", { key:"e", className:"emptyState" }, "Không có.")
+    : rc("div", { key:"tb", className:"tableWrap" }, rc("table", { className:"data" }, [
+      th(["Ngày","Phiếu nhập","NT","Bên xuất","Mã hàng","Tên hàng","SL","Giá trị","Trạng thái"]),
+      rc("tbody", { key:"b" }, extraF.slice(0, 500).map((x,i) => rc("tr", { key:i }, [
+        rc("td", { key:"d" }, ofDmy(x.date)), rc("td", { key:"doc", style:{ fontSize:11.5 } }, x.docId), rc("td", { key:"s" }, ofNt(x.shopCode)),
+        rc("td", { key:"f" }, x.fromShop ? `${ofNt(x.senderCode)} (điều chuyển)` : x.senderCode || "—"),
+        rc("td", { key:"p" }, x.productId), rc("td", { key:"n" }, x.productName),
+        rc("td", { key:"q" }, `${(Math.round(x.qty*100)/100).toLocaleString("vi-VN")} ${x.unit||""}`),
+        rc("td", { key:"v" }, fmtVNDCompact(x.value)), rc("td", { key:"st", style:{ fontSize:11.5 } }, x.importStatus),
+      ]))),
+    ])),
+  ]);
+
+  return rc("div", { key:"of" }, [header, kpis, secBar,
+    section==="overview" ? overview : section==="orders" ? ordersView : section==="sku" ? skuView : section==="lines" ? linesView : section==="sug" ? sugView : extraView]);
+}
+
 function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
   // 28/9/2026: mở tab cho nhân viên — mặc định lọc sẵn nhà thuốc của mình nhưng được đổi sang nhà thuốc khác/"Tất cả" (để trao đổi điều chuyển), các thao tác
   // của quản lý (phân tích/tính lại, ngưỡng, đồng bộ danh mục, duyệt điều chuyển, nhật ký) được ẩn.
@@ -12759,6 +13213,25 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
   const [flaggedLoading, setFlaggedLoading] = useState(false);
   const [consShop, setConsShop] = useState(staffShop || "Tất cả"); // 27/9/2026: bộ lọc nhà thuốc cho tab Tốc độ tiêu thụ
   const [flaggedStatus, setFlaggedStatus] = useState("URGENT_REPLENISH");
+  // 29/9/2026: ánh xạ "đã gọi hàng chưa / hàng về chưa" cho từng SKU ở tab Tốc độ tiêu thụ — đọc doc
+  // nhỏ opsConfig/orderFulfillmentSuggestions (byKey "shop|mã") do computeOrderFulfillment tính sẵn.
+  const [ofByKey, setOfByKey] = useState(null);
+  const [ofPeriod, setOfPeriod] = useState(null);
+  useEffect(()=>{
+    if(invSubTab!=="tocdo" || ofByKey) return;
+    db.collection("opsConfig").doc("orderFulfillmentSuggestions").get()
+      .then(snap => { const d = snap.exists ? snap.data() : null; setOfByKey((d && d.byKey) || {}); setOfPeriod(d ? `${d.fromDate} → ${d.toDate}` : null); })
+      .catch(()=>setOfByKey({}));
+  }, [invSubTab]);
+  function ofCellText(shopCode, pid){
+    const x = ofByKey && ofByKey[`${shopCode}|${pid}`];
+    if(!x || !x.d) return { t: ofByKey ? "Chưa gọi" : "—", c: ofByKey ? "var(--clay)" : undefined };
+    const recv = Math.round((x.r||0)*100)/100, ord = Math.round((x.o||0)*100)/100;
+    const st = String(x.s||"");
+    const c = recv >= ord - 1e-9 ? "var(--pine)" : st.startsWith("PENDING") ? "var(--amber)" : "var(--clay)";
+    const tail = recv >= ord - 1e-9 ? "đủ" : st.startsWith("PENDING") ? "đang chờ" : "thiếu";
+    return { t: `${x.d.slice(8,10)}/${x.d.slice(5,7)} · gọi ${ord.toLocaleString("vi-VN")} · về ${recv.toLocaleString("vi-VN")} ${x.u||""} (${tail})`, c };
+  }
   // 20/9/2026: nhảy tới đúng "Tốc độ tiêu thụ" + đúng trạng thái khi được điều hướng từ tab Tổng
   // quan (VD bấm "SKU cần nhập gấp") — không thì trang này luôn mở mặc định ở "Điều chuyển".
   useEffect(()=>{
@@ -13084,12 +13557,12 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
         return;
       }
       xlsxDownload("SKU theo trạng thái","PhanTich_SKU_"+flaggedStatus,"DANH SÁCH SKU — "+STOCK_STATUS_LABELS[flaggedStatus], consShop,
-        ["Mã hàng","Tên hàng","Nhà thuốc","Tồn","ĐVT","ADS 7 ngày","ADS 30 ngày","DOI (ngày)","Rủi ro tồn"],
+        ["Mã hàng","Tên hàng","Nhà thuốc","Tồn","ĐVT","ADS 7 ngày","ADS 30 ngày","DOI (ngày)","Rủi ro tồn","Gọi hàng / Về"],
         flaggedItems.map(it => {
           const doi = it.doi != null ? Number(it.doi) : calcDOI(it.stockQty, it.ads30 || it.ads7);
           const risk = doi == null ? "—" : (doi <= 7 ? "Nguy cơ hết" : doi <= 14 ? "Theo dõi" : doi >= 90 ? "Tồn lâu" : "Ổn");
           return [it.productId, it.productName, nt(it.shopCode), nz(it.stockQty), it.unit||"",
-            it.ads7 != null ? Math.round(Number(it.ads7)*100)/100 : "", it.ads30 != null ? Math.round(Number(it.ads30)*100)/100 : "", doi == null ? "" : Math.round(doi*10)/10, risk];
+            it.ads7 != null ? Math.round(Number(it.ads7)*100)/100 : "", it.ads30 != null ? Math.round(Number(it.ads30)*100)/100 : "", doi == null ? "" : Math.round(doi*10)/10, risk, ofCellText(it.shopCode, it.productId).t];
         }));
     }
     return React.createElement("div", { key:"consumption" }, [
@@ -13177,7 +13650,7 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
                     React.createElement("caption", { key:"cap", style:{ captionSide:"bottom", fontSize:11.5, color:"var(--inkSoft)", textAlign:"left", paddingTop:6 } },
                       `Hiển thị ${fmtNum(flaggedItems.length)}/${fmtNum((s.byStatus||{})[flaggedStatus]||flaggedItems.length)} mã${flaggedItems.length < ((s.byStatus||{})[flaggedStatus]||0) ? " — chọn 1 nhà thuốc để xem đầy đủ hơn" : ""}.`),
                     React.createElement("thead",{key:"h"}, React.createElement("tr",null,
-                      ["Mã hàng","Tên hàng","Nhà thuốc","Tồn","ADS 7n","ADS 30n","DOI (ngày)","Rủi ro tồn","Việc"].map((h,i)=>React.createElement("th",{key:i},h)))),
+                      ["Mã hàng","Tên hàng","Nhà thuốc","Tồn","ADS 7n","ADS 30n","DOI (ngày)","Rủi ro tồn","Gọi hàng / Về"+(ofPeriod ? ` (${ofPeriod})` : ""),"Việc"].map((h,i)=>React.createElement("th",{key:i},h)))),
                     React.createElement("tbody",{key:"b"}, flaggedItems.map((it,i) => {
                       const doi = it.doi != null ? Number(it.doi) : calcDOI(it.stockQty, it.ads30 || it.ads7);
                       const risk = doi == null ? "—" : (doi <= 7 ? "Nguy cơ hết" : doi <= 14 ? "Theo dõi" : doi >= 90 ? "Tồn lâu" : "Ổn");
@@ -13191,6 +13664,7 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
                         React.createElement("td",{key:"a30"}, it.ads30 != null ? Math.round(Number(it.ads30)*100)/100 : "—"),
                         React.createElement("td",{key:"doi", style:{ fontWeight:700, color: riskColor }}, doi == null ? "—" : doiLabel(doi)),
                         React.createElement("td",{key:"rk", style:{ color: riskColor, fontWeight:600, fontSize:12 }}, risk),
+                        (()=>{ const oc = ofCellText(it.shopCode, it.productId); return React.createElement("td",{key:"of", style:{ fontSize:11.5, color: oc.c, cursor:"pointer" }, title:"Bấm để xem đối soát gọi hàng ↔ hàng về", onClick:()=>setInvSubTab("doisoat") }, oc.t); })(),
                         React.createElement("td",{key:"tk"}, React.createElement("button", {
                           type:"button", className:"btn btnGhost", style:{ fontSize:11, padding:"3px 8px" },
                           onClick:()=>{
@@ -13225,8 +13699,9 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
     React.createElement(InventoryFormulaNote, { key:"doi" }),
     composer && React.createElement(TaskComposer360, { key:"cmp", preset:composer, onClose:()=>setComposer(null) }),
 
-    React.createElement(SubTabBar, { key:"subtabs", tabs:[{ id:"dieuchuyen", label:"Điều chuyển" }, { id:"tocdo", label:"📉 Tốc độ tiêu thụ" }], active:invSubTab==="dieuchuyen" ? "dieuchuyen" : "tocdo", onChange:setInvSubTab }),
+    React.createElement(SubTabBar, { key:"subtabs", tabs:[{ id:"dieuchuyen", label:"Điều chuyển" }, { id:"tocdo", label:"📉 Tốc độ tiêu thụ" }, { id:"doisoat", label:"🧾 Gọi hàng ↔ Hàng về" }], active:invSubTab==="dieuchuyen" ? "dieuchuyen" : invSubTab==="doisoat" ? "doisoat" : "tocdo", onChange:setInvSubTab }),
 
+    invSubTab === "doisoat" ? React.createElement(OrderFulfillmentPanel, { key:"ofpanel", isAdmin, staffShop }) :
     invSubTab !== "dieuchuyen" ? renderConsumptionTab() : React.createElement(React.Fragment, { key:"dctab" }, [
     React.createElement("div", { key:"top", className:"card", style:{ marginBottom:20 } }, [
       React.createElement("div", { key:"row", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:12 } }, [
@@ -15113,8 +15588,9 @@ function DataQualityCommandBanner({ onNavigate }){
   const KEY_LABEL = {
     salesOrders:"Đơn bán", inventory:"Tồn kho", workRegistrations:"Đăng ký ca",
     employeePlan:"Chỉ tiêu NV", inventoryExpiry:"Hàng cận date", customerUpgrades:"Nâng hạng KH", replenishment:"Tái mua",
+    orderFulfillment:"Đối soát gọi hàng",
   };
-  const keys = ["salesOrders","inventory","workRegistrations","employeePlan","inventoryExpiry","customerUpgrades","replenishment"];
+  const keys = ["salesOrders","inventory","workRegistrations","employeePlan","inventoryExpiry","customerUpgrades","replenishment","orderFulfillment"];
   const rows = keys.map(k => {
     const h = health && health[k];
     const fatal = h && h.ok !== true && (h.fatalError || h.error); // ok===true: lỗi cũ còn sót, bỏ qua
