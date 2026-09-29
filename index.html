@@ -4949,7 +4949,40 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
     const shopData = (!isAllShops && campaignStats.byShop && campaignStats.byShop[shopFilter]) ? campaignStats.byShop[shopFilter] : null;
     const activeCampaign = shopData || campaignStats;
     const rules = Object.keys(activeCampaign.byRule||{}).sort();
-    const days = Object.keys(activeCampaign.byDay||{}).sort().slice(-14); // 14 ngày gần nhất cho gọn
+    // 29/9/2026 — Dashboard chiến dịch + DOANH SỐ SAU CHĂM SÓC (tính ở computeCrmCampaignStats, index.js):
+    // doanh số các đơn khách mua trong N ngày sau khi nhân viên hoàn thành việc CSKH, mỗi đơn chỉ tính 1 lần.
+    const revWin = campaignStats.revenueWindowDays || 30;
+    const hasRevenue = !!campaignStats.revenue;
+    const revAll = (shopData ? shopData.revenue : campaignStats.revenue) || null;
+    const revByRule = (shopData ? shopData.revenueByRule : campaignStats.revenueByRule) || {};
+    const revByDayMap = (shopData ? shopData.revenueByDay : campaignStats.revenueByDay) || {};
+    const totalAll = rules.reduce((a,r)=>a+(activeCampaign.byRule[r].total||0),0);
+    const doneAll = rules.reduce((a,r)=>a+(activeCampaign.byRule[r].completed||0),0);
+    const pct = (a,b) => b ? Math.round(a/b*100) : 0;
+    // 14 ngày liên tục (kể cả ngày không có số) để 2 biểu đồ cùng trục ngày
+    const dayList = []; { const t=new Date(); for(let i=13;i>=0;i--){ const d=new Date(t); d.setDate(t.getDate()-i); dayList.push(d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")); } }
+    const tile = (key, label, value, sub, tone) => React.createElement("div", { key, className:"card", style:{ flex:"1 1 150px", minWidth:140, padding:"10px 12px", margin:0 } }, [
+      React.createElement("div", { key:"l", style:{ fontSize:11.5, color:"var(--inkSoft)", fontWeight:600 } }, label),
+      React.createElement("div", { key:"v", style:{ fontSize:22, fontWeight:800, marginTop:2, color: tone || "var(--ink)" } }, value),
+      sub && React.createElement("div", { key:"s", style:{ fontSize:11, color:"var(--inkSoft)", marginTop:2 } }, sub),
+    ]);
+    const barChart = (key, title, subtitle, getVal, fmt, color) => {
+      const vals = dayList.map(getVal);
+      const max = Math.max(...vals, 1);
+      const sum = vals.reduce((a,b)=>a+b,0);
+      return React.createElement("div", { key, className:"card", style:{ flex:"1 1 340px", margin:0 } }, [
+        React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:14 } }, title),
+        React.createElement("div", { key:"s", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:10 } }, subtitle + " · tổng 14 ngày: " + fmt(sum)),
+        React.createElement("div", { key:"bars", style:{ display:"flex", alignItems:"flex-end", gap:3, height:110, borderBottom:"1px solid var(--line)" } },
+          dayList.map((d,i) => React.createElement("div", { key:d, title:`${d.slice(8,10)}/${d.slice(5,7)}: ${fmt(vals[i])}`, style:{ flex:1, height:"100%", display:"flex", flexDirection:"column", justifyContent:"flex-end", cursor:"default" } },
+            React.createElement("div", { style:{ width:"100%", height: vals[i] ? `${Math.max(vals[i]/max*100,3)}%` : "0", background:color, borderRadius:"4px 4px 0 0" } })))),
+        React.createElement("div", { key:"x", style:{ display:"flex", gap:3, marginTop:3 } },
+          dayList.map((d,i) => React.createElement("div", { key:d, style:{ flex:1, textAlign:"center", fontSize:9, color:"var(--inkSoft)" } }, (i%2===0 || dayList.length<=7) ? d.slice(8,10)+"/"+d.slice(5,7) : ""))),
+      ]);
+    };
+    const th = (key, text, left) => React.createElement("th", { key, style:{ textAlign: left ? "left" : "right", padding:"8px 10px", whiteSpace:"nowrap" } }, text);
+    const td = (key, v, extra) => React.createElement("td", { key, style:{ padding:"8px 10px", textAlign:"right", whiteSpace:"nowrap", ...(extra||{}) } }, v);
+    const sortedRules = rules.slice().sort((a,b) => ((revByRule[b]&&revByRule[b].revenue)||0) - ((revByRule[a]&&revByRule[a].revenue)||0) || activeCampaign.byRule[b].total - activeCampaign.byRule[a].total);
     return React.createElement("div", { key:"campaign" }, [
       React.createElement("div", { key:"head", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12, flexWrap:"wrap", gap:8 } }, [
         React.createElement("div", { key:"t", style:{ fontSize:12.5, color:"var(--inkSoft)" } },
@@ -4960,45 +4993,57 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
           React.createElement("button", { key:"refresh", className:"btn btnGhost", disabled:campaignRefreshing, onClick:refreshCampaignStats, style:{ fontSize:12, padding:"4px 10px" } }, campaignRefreshing ? "Đang tính..." : "↻ Tính lại"),
         ]),
       ]),
+      !hasRevenue && React.createElement("div", { key:"norev", style:{ fontSize:12, color:"var(--amber)", marginBottom:10 } }, "Chưa có số doanh số sau chăm sóc — bấm \"↻ Tính lại\" để tính lần đầu."),
+      React.createElement("div", { key:"tiles", style:{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:16 } }, [
+        tile("t1", "Tổng việc CSKH", fmtNum(totalAll), `${rules.length} chiến dịch`),
+        tile("t2", "Đã hoàn thành", `${pct(doneAll,totalAll)}%`, `${fmtNum(doneAll)} việc · ${fmtNum(totalAll-doneAll)} đang mở`, pct(doneAll,totalAll)>=50 ? "var(--pine)" : "var(--clay)"),
+        tile("t3", `Khách quay lại mua (${revWin} ngày)`, revAll ? `${pct(revAll.returnedTasks, revAll.tasks)}%` : "—", revAll ? `${fmtNum(revAll.returnedTasks)}/${fmtNum(revAll.tasks)} việc · ${fmtNum(revAll.customers)} khách` : "", revAll && pct(revAll.returnedTasks, revAll.tasks)>=30 ? "var(--pine)" : "var(--clay)"),
+        tile("t4", `Doanh số sau CSKH (${revWin} ngày)`, revAll ? fmtVNDCompact(revAll.revenue) : "—", revAll ? `${fmtNum(revAll.orders)} đơn` : "", "var(--pine)"),
+        tile("t5", "Giá trị TB / đơn", revAll && revAll.orders ? fmtVNDCompact(revAll.revenue/revAll.orders) : "—", "đơn mua sau CSKH"),
+        tile("t6", "Doanh số / việc hoàn thành", revAll && revAll.tasks ? fmtVNDCompact(revAll.revenue/revAll.tasks) : "—", "hiệu quả trung bình 1 lần chăm sóc"),
+      ]),
+      React.createElement("div", { key:"charts", style:{ display:"flex", gap:12, flexWrap:"wrap", marginBottom:16 } }, [
+        barChart("c1", "Việc CSKH tạo ra theo ngày", "14 ngày gần nhất", d => (activeCampaign.byDay && activeCampaign.byDay[d] ? activeCampaign.byDay[d].total : 0), v => fmtNum(v)+" việc", "var(--pine)"),
+        hasRevenue && barChart("c2", "Doanh số từ khách đã chăm sóc", `theo ngày mua, đơn trong ${revWin} ngày sau CSKH`, d => (revByDayMap[d] ? revByDayMap[d].revenue : 0), v => fmtVNDCompact(v), "var(--amber)"),
+      ]),
       React.createElement("div", { key:"byrule", className:"card", style:{ marginBottom:16, padding:0, overflowX:"auto" } },
         React.createElement("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5 } }, [
           React.createElement("thead", { key:"h" }, React.createElement("tr", { style:{ background:"#f8f8f6" } }, [
-            React.createElement("th", { key:"r", style:{ textAlign:"left", padding:"8px 10px" } }, "Chiến dịch"),
-            React.createElement("th", { key:"t", style:{ textAlign:"right", padding:"8px 10px" } }, "Tổng số"),
-            React.createElement("th", { key:"c", style:{ textAlign:"right", padding:"8px 10px" } }, "Đã hoàn thành"),
-            React.createElement("th", { key:"o", style:{ textAlign:"right", padding:"8px 10px" } }, "Đang mở"),
-            React.createElement("th", { key:"p", style:{ textAlign:"right", padding:"8px 10px" } }, "Tỉ lệ hoàn thành"),
+            th("r","Chiến dịch",true), th("t","Tổng số"), th("c","Hoàn thành"), th("o","Đang mở"), th("p","Tỉ lệ HT"),
+            hasRevenue && th("rt","Khách mua lại"), hasRevenue && th("od","Số đơn"), hasRevenue && th("rv",`Doanh số (${revWin}n)`), hasRevenue && th("av","DS / việc"),
           ])),
-          React.createElement("tbody", { key:"b" }, rules.map(r => {
-            const s = activeCampaign.byRule[r];
-            const open = s.total - s.completed;
-            const rate = s.total ? Math.round((s.completed/s.total)*100) : 0;
-            return React.createElement("tr", { key:r, style:{ borderTop:"1px solid var(--line)" } }, [
-              React.createElement("td", { key:"r", style:{ padding:"8px 10px" } }, [
-                React.createElement("div", { key:"n", style:{ fontWeight:600 } }, CRM_RULE_LABELS[r] || r),
-                React.createElement("div", { key:"id", style:{ fontSize:10.5, color:"var(--inkSoft)" } }, r),
-              ]),
-              React.createElement("td", { key:"t", style:{ padding:"8px 10px", textAlign:"right" } }, s.total),
-              React.createElement("td", { key:"c", style:{ padding:"8px 10px", textAlign:"right" } }, s.completed),
-              React.createElement("td", { key:"o", style:{ padding:"8px 10px", textAlign:"right" } }, open),
-              React.createElement("td", { key:"p", style:{ padding:"8px 10px", textAlign:"right", fontWeight:600, color: rate>=50 ? "var(--pine)" : "var(--clay)" } }, `${rate}%`),
-            ]);
-          })),
+          React.createElement("tbody", { key:"b" }, [
+            ...sortedRules.map(r => {
+              const s = activeCampaign.byRule[r];
+              const rv = revByRule[r] || null;
+              const rate = pct(s.completed, s.total);
+              const rr = rv ? pct(rv.returnedTasks, rv.tasks) : 0;
+              return React.createElement("tr", { key:r, style:{ borderTop:"1px solid var(--line)" } }, [
+                React.createElement("td", { key:"r", style:{ padding:"8px 10px" } }, [
+                  React.createElement("div", { key:"n", style:{ fontWeight:600 } }, CRM_RULE_LABELS[r] || r),
+                  React.createElement("div", { key:"id", style:{ fontSize:10.5, color:"var(--inkSoft)" } }, r),
+                ]),
+                td("t", fmtNum(s.total)), td("c", fmtNum(s.completed)), td("o", fmtNum(s.total - s.completed)),
+                td("p", `${rate}%`, { fontWeight:600, color: rate>=50 ? "var(--pine)" : "var(--clay)" }),
+                hasRevenue && td("rt", rv ? `${rr}% (${fmtNum(rv.returnedTasks)})` : "—", { color: rv && rr>=30 ? "var(--pine)" : "var(--inkSoft)" }),
+                hasRevenue && td("od", rv ? fmtNum(rv.orders) : "—"),
+                hasRevenue && td("rv", rv ? fmtVNDCompact(rv.revenue) : "—", { fontWeight:700 }),
+                hasRevenue && td("av", rv && rv.tasks ? fmtVNDCompact(rv.revenue/rv.tasks) : "—"),
+              ]);
+            }),
+            rules.length>1 && React.createElement("tr", { key:"sum", style:{ borderTop:"2px solid var(--line)", background:"#f8f8f6", fontWeight:700 } }, [
+              React.createElement("td", { key:"r", style:{ padding:"8px 10px" } }, "Tổng"),
+              td("t", fmtNum(totalAll)), td("c", fmtNum(doneAll)), td("o", fmtNum(totalAll-doneAll)), td("p", `${pct(doneAll,totalAll)}%`),
+              hasRevenue && td("rt", revAll ? `${pct(revAll.returnedTasks, revAll.tasks)}% (${fmtNum(revAll.returnedTasks)})` : "—"),
+              hasRevenue && td("od", revAll ? fmtNum(revAll.orders) : "—"),
+              hasRevenue && td("rv", revAll ? fmtVNDCompact(revAll.revenue) : "—"),
+              hasRevenue && td("av", revAll && revAll.tasks ? fmtVNDCompact(revAll.revenue/revAll.tasks) : "—"),
+            ]),
+          ]),
         ])
       ),
-      days.length>0 && React.createElement("div", { key:"byday", className:"card", style:{ marginBottom:16 } }, [
-        React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15.5, marginBottom:10 } }, "Số action tạo ra theo ngày (14 ngày gần nhất)"),
-        React.createElement("div", { key:"bars", style:{ display:"flex", alignItems:"flex-end", gap:4, height:100 } },
-          days.map(d => {
-            const s = activeCampaign.byDay[d];
-            const max = Math.max(...days.map(dd=>activeCampaign.byDay[dd].total), 1);
-            return React.createElement("div", { key:d, title:`${d}: ${s.total} action`, style:{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:3 } }, [
-              React.createElement("div", { key:"bar", style:{ width:"100%", height:`${Math.max((s.total/max)*80,2)}px`, background:"var(--pine)", borderRadius:3 } }),
-              React.createElement("div", { key:"lbl", style:{ fontSize:9, color:"var(--inkSoft)" } }, d.slice(5)),
-            ]);
-          })
-        ),
-      ]),
+      hasRevenue && React.createElement("div", { key:"revnote", style:{ fontSize:11, color:"var(--inkSoft)", margin:"-8px 0 16px" } },
+        `Doanh số sau CSKH = tổng các đơn khách mua trong ${revWin} ngày kể từ sau ngày nhân viên hoàn thành việc chăm sóc (mỗi đơn chỉ tính 1 lần, kể cả khi khách được chăm sóc nhiều lần). "Khách mua lại" = % việc hoàn thành mà sau đó khách có mua. Việc hoàn thành gần đây (< ${revWin} ngày) vẫn đang trong thời gian theo dõi nên số còn tăng thêm.`),
 
       // Đề xuất bổ sung (9/2026) — Hiệu quả CSKH theo nhân viên: % khách phát sinh đơn mua mới
       // trong vòng 30 ngày sau khi nhân viên hoàn thành 1 việc chăm sóc do Action Engine tạo.
@@ -5022,6 +5067,7 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
             React.createElement("th", { key:"t", style:{ textAlign:"right", padding:"8px 10px" } }, "Việc đã hoàn thành"),
             React.createElement("th", { key:"r", style:{ textAlign:"right", padding:"8px 10px" } }, "Khách quay lại mua"),
             React.createElement("th", { key:"p", style:{ textAlign:"right", padding:"8px 10px" } }, "Tỉ lệ hiệu quả"),
+            campaignStats && campaignStats.revenueByStaff && React.createElement("th", { key:"rv", style:{ textAlign:"right", padding:"8px 10px" } }, `Doanh số sau CSKH (${campaignStats.revenueWindowDays||30}n)`),
           ])),
           React.createElement("tbody", { key:"b" }, staffEffectiveness.byStaff.map(s => React.createElement("tr", { key:s.staffId, style:{ borderTop:"1px solid var(--line)" } }, [
             React.createElement("td", { key:"n", style:{ padding:"8px 10px", fontWeight:600 } }, s.staffName || s.staffId),
@@ -5029,6 +5075,7 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
             React.createElement("td", { key:"t", style:{ padding:"8px 10px", textAlign:"right" } }, s.totalCompleted),
             React.createElement("td", { key:"r", style:{ padding:"8px 10px", textAlign:"right" } }, s.returned),
             React.createElement("td", { key:"p", style:{ padding:"8px 10px", textAlign:"right", fontWeight:600, color: s.returnRate>=50 ? "var(--pine)" : "var(--clay)" } }, `${s.returnRate}%`),
+            campaignStats && campaignStats.revenueByStaff && React.createElement("td", { key:"rv", style:{ padding:"8px 10px", textAlign:"right", fontWeight:600 } }, campaignStats.revenueByStaff[s.staffId] ? fmtVNDCompact(campaignStats.revenueByStaff[s.staffId].revenue) : "—"),
           ]))),
         ])),
       ]),
