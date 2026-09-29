@@ -12763,7 +12763,11 @@ function ProductTrainingSection({ item }){
       (c.lessons||[]).length>0 && h("ul", { style:{ margin:"4px 0 0", paddingLeft:18, fontSize:12, lineHeight:1.55 } },
         c.lessons.slice(0,6).map((l,i) => h("li", { key:i }, l.name,
           l.linkSlide && h("a", { href:l.linkSlide, target:"_blank", rel:"noopener noreferrer", style:{ marginLeft:6, fontSize:11 } }, "slide ↗"),
-          l.linkVideo && l.linkVideo!==l.linkSlide && h("a", { href:l.linkVideo, target:"_blank", rel:"noopener noreferrer", style:{ marginLeft:6, fontSize:11 } }, "video ↗")))))));
+          l.linkVideo && l.linkVideo!==l.linkSlide && h("a", { href:l.linkVideo, target:"_blank", rel:"noopener noreferrer", style:{ marginLeft:6, fontSize:11 } }, "video ↗"),
+          l.linkSlide && l.slideTextOk===false && h("span", { style:{ marginLeft:6, fontSize:10.5, color:CL360.warn } }, "(slide không công khai — chưa đọc được)")))),
+      c.slideText && h("details", { style:{ marginTop:6, background:"#fff", border:"1px solid var(--line)", borderRadius:8, padding:"6px 10px" } },
+        h("summary", { style:{ cursor:"pointer", fontWeight:700, fontSize:12 } }, "📑 Xem nội dung slide đào tạo"),
+        h("div", { style:{ fontSize:12.5, lineHeight:1.6, whiteSpace:"pre-line", marginTop:6, maxHeight:420, overflowY:"auto" } }, c.slideText)))));
 }
 
 function ProductDictionaryAddModal({ onClose, onPick }){
