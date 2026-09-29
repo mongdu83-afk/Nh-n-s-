@@ -12380,6 +12380,7 @@ function ProductDictionaryView({ isAdmin }){
   const [view, setView] = useState("rank"); // rank | group
   const [openIdx, setOpenIdx] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [showElearn, setShowElearn] = useState(false);
 
   async function load(){
     setErr(null);
@@ -12481,6 +12482,7 @@ function ProductDictionaryView({ isAdmin }){
       h("div", { className:"btnRow", style:{ gap:6, flexWrap:"wrap" } },
         missingTop>0 && h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:()=>generate(null) }, busy==="gen" ? "AI đang soạn…" : `Soạn thẻ cho ${Math.min(12, missingTop)} mã tiếp theo`),
         h("button", { className:"btn", disabled:!!busy, onClick:()=>setShowAdd(true) }, "+ Thêm mã ngoài top"),
+        h("button", { className:"btn", disabled:!!busy, onClick:()=>setShowElearn(true) }, "🎓 Web đào tạo"),
         h("button", { className:"btn btnGhost", disabled:!!busy, onClick:rerank }, busy==="rank" ? "Đang xếp hạng…" : "Cập nhật xếp hạng"))),
     msg && h("div", { className:"card", style:{ fontSize:12.5, padding:"8px 12px", marginBottom:10 } }, msg),
     h("div", { className:"metrics" },
@@ -12506,7 +12508,8 @@ function ProductDictionaryView({ isAdmin }){
       onGenerate:(force)=>generate([list[openIdx].pid], force),
       onSaved: load,
     }),
-    showAdd && h(ProductDictionaryAddModal, { onClose:()=>setShowAdd(false), onPick:(pid)=>{ setShowAdd(false); generate([pid]); } }));
+    showAdd && h(ProductDictionaryAddModal, { onClose:()=>setShowAdd(false), onPick:(pid)=>{ setShowAdd(false); generate([pid]); } }),
+    showElearn && h(ElearnConnectModal, { onClose:()=>setShowElearn(false), onChanged:()=>{} }));
 }
 
 function ProductDictionaryModal({ item, pos, total, busy, onPrev, onNext, onClose, onGenerate, onSaved }){
@@ -12559,7 +12562,7 @@ function ProductDictionaryModal({ item, pos, total, busy, onPrev, onNext, onClos
 
   let content;
   if(editing) content = h(ProductDictionaryEditor, { item, onCancel:()=>setEditing(false), onSaved:()=>{ setEditing(false); onSaved(); } });
-  else if(!e) content = h("div", null, officialBlock,
+  else if(!e) content = h("div", null, officialBlock, h(ProductTrainingSection, { item }),
     h("div", { className:"emptyState", style:{ padding:24 } },
       h("div", { style:{ marginBottom:10 } }, "Mã này chưa có thẻ từ điển."),
       h("div", { className:"btnRow", style:{ justifyContent:"center", gap:6 } },
@@ -12572,6 +12575,7 @@ function ProductDictionaryModal({ item, pos, total, busy, onPrev, onNext, onClos
       h("div", null, h("div", { style:{ fontSize:11, color:"var(--inkSoft)" } }, "Nhóm tác dụng"), h("div", { style:{ fontWeight:700, fontSize:13 } }, e.nhomThuoc || "—")),
       h("div", null, h("div", { style:{ fontSize:11, color:"var(--inkSoft)" } }, "Phân loại"), e.loai ? h(Pill360, { text:e.loai, color:pdLoaiColor(e.loai) }) : "—")),
     officialBlock,
+    h(ProductTrainingSection, { item }),
     !o && h("div", { style:{ fontSize:11.5, color:CL360.warn, marginBottom:10 } }, "Thẻ này được soạn khi chưa có thông tin danh mục công ty — bấm “Soạn lại (AI)” để soạn lại dựa trên dữ liệu chính thức."),
     h("div", { style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))", gap:"0 20px" } },
       h("div", null,
@@ -12585,6 +12589,7 @@ function ProductDictionaryModal({ item, pos, total, busy, onPrev, onNext, onClos
         sec("Tư vấn bán kèm", (e.banKem||[]).length ? h("ul", { style:{ margin:0, paddingLeft:18, fontSize:13, lineHeight:1.6 } }, e.banKem.map((b,i) => h("li", { key:i }, h("b", null, b.sanPham), b.lyDo ? " — " + b.lyDo : ""))) : p("—")),
         sec("Thay thế khi hết hàng", p(e.thayThe)))),
     sec("💼 Góc kinh doanh", p(e.gocKinhDoanh), "biz"),
+    d.usedTraining && h("div", { style:{ fontSize:11.5, color:CL360.violet, fontWeight:600, marginTop:-6, marginBottom:10 } }, "Thẻ này được soạn có dùng tài liệu web đào tạo nội bộ."),
     (e.thuatNgu||[]).length>0 && sec("Giải thích thuật ngữ", h("div", { style:{ display:"grid", gap:4 } }, e.thuatNgu.map((t,i) => h("div", { key:i, style:{ fontSize:12.5, lineHeight:1.5 } }, h("b", null, t.tu), ": ", t.giaiThich)))),
     (e.doTinCay && pdStrip(e.doTinCay)!=="cao") && h("div", { style:{ fontSize:12, color:CL360.warn, fontWeight:600, marginBottom:8 } }, `Độ tin cậy: ${e.doTinCay}${e.ghiChuDoTinCay ? " — " + e.ghiChuDoTinCay : ""}. Nên nhờ dược sĩ kiểm tra lại.`));
 
@@ -12667,6 +12672,94 @@ function ProductDictionaryEditor({ item, onCancel, onSaved }){
         h("button", { className:"btn btnGhost", onClick:onCancel }, "Huỷ"),
         h("button", { className:"btn", disabled:saving, onClick:()=>save(false) }, "Lưu nháp"),
         h("button", { className:"btn btnPrimary", disabled:saving, onClick:()=>save(true) }, saving ? "Đang lưu…" : "Lưu & đánh dấu dược sĩ đã duyệt"))));
+}
+
+// ===== 29/9/2026: KẾT NỐI WEB ĐÀO TẠO NỘI BỘ (elearning.upharma.vn) — dùng cho Từ điển sản phẩm =====
+function ElearnConnectModal({ onClose, onChanged }){
+  const h = React.createElement;
+  const [st, setSt] = useState(null);
+  const [userName, setUserName] = useState("");
+  const [token, setToken] = useState("");
+  const [routes, setRoutes] = useState("");
+  const [busy, setBusy] = useState("");
+  const [msg, setMsg] = useState(null);
+  async function load(){
+    try{ const d = await pdCall("elearnStatus", {}, 30000); setSt(d); setRoutes((d.routeIds||[]).join(", ")); }
+    catch(e){ setMsg({ bad:true, text:e.message||String(e) }); }
+  }
+  useEffect(()=>{ load(); }, []);
+  async function save(){
+    setBusy("save"); setMsg(null);
+    try{
+      const r = await pdCall("elearnConfig", { userName:userName.trim()||undefined, token:token.trim()||undefined, routeIds: routes.split(/[\s,;]+/).filter(Boolean) }, 60000);
+      if(r.ok===false) setMsg({ bad:true, text:r.error });
+      else { setMsg({ bad:false, text:`Kết nối được ✓ — lộ trình "${r.test.routeName}".` }); setToken(""); await load(); }
+    } catch(e){ setMsg({ bad:true, text:e.message||String(e) }); }
+    setBusy("");
+  }
+  async function sync(force){
+    setBusy("sync"); setMsg({ bad:false, text:"Đang đồng bộ khoá học và đọc slide (có thể 2–5 phút)…" });
+    try{
+      const r = await pdCall("elearnSync", { force:!!force }, 540000);
+      if(r.ok===false) setMsg({ bad:true, text:(r.authError ? "Token hết hạn hoặc sai — dán Token mới. " : "") + r.error });
+      else { const m = r.meta; setMsg({ bad:false, text:`Xong: ${m.courseCount} khoá học, tải chi tiết ${m.detailFetched} khoá, đọc được chữ ${m.slidesOk} slide${m.slidesPrivate?` (${m.slidesPrivate} slide không công khai — chỉ dùng tên/mô tả)`:""}.` }); onChanged && onChanged(); }
+      await load();
+    } catch(e){ setMsg({ bad:true, text:e.message||String(e) }); }
+    setBusy("");
+  }
+  const m = st && st.meta;
+  const inp = { width:"100%", padding:"7px 9px", border:"1px solid var(--line)", borderRadius:8, fontSize:12.5 };
+  return h("div", { className:"modalOverlay", onClick:onClose },
+    h("div", { className:"modal", onClick:e=>e.stopPropagation(), style:{ maxWidth:560 } },
+      h("div", { style:{ fontWeight:700, fontSize:18, marginBottom:4 } }, "🎓 Kết nối web đào tạo nội bộ"),
+      h("div", { style:{ fontSize:12, color:"var(--inkSoft)", lineHeight:1.55, marginBottom:10 } },
+        "Lấy khoá học (Sản phẩm hệ số, Nhóm thuốc, Bệnh học…) và nội dung slide từ elearning.upharma.vn, ghép với mã hàng để thẻ từ điển viết đúng thông điệp đào tạo của công ty. Tự đồng bộ sáng thứ Hai hằng tuần."),
+      st && h("div", { className:"readonlyBox", style:{ fontSize:12.5, marginBottom:10, lineHeight:1.6 } },
+        st.connected ? h("div", null, "Đang kết nối bằng tài khoản ", h("b", null, st.userName), st.tokenUpdatedAt ? ` · token dán ngày ${new Date(st.tokenUpdatedAt).toLocaleDateString("vi-VN")}` : "") : h("div", { style:{ color:CL360.warn, fontWeight:700 } }, "Chưa kết nối."),
+        m && (m.ok===false
+          ? h("div", { style:{ color:CL360.bad } }, `Lần đồng bộ gần nhất lỗi: ${m.error||""}${m.authError?" → cần dán Token mới.":""}`)
+          : m.syncedAt && h("div", null, `Đồng bộ ${new Date(m.syncedAt).toLocaleString("vi-VN")}: ${m.courseCount} khoá · ${m.slidesOk} slide đọc được`,
+              m.types && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, Object.entries(m.types).map(([k,v]) => `${k}: ${v}`).join(" · "))))),
+      h("div", { className:"field", style:{ marginBottom:8 } }, h("label", null, "UserName (số điện thoại đăng nhập web đào tạo)"),
+        h("input", { value:userName, onChange:e=>setUserName(e.target.value), placeholder: st && st.connected ? "(giữ nguyên nếu để trống)" : "VD 09xxxxxxxx", style:inp })),
+      h("div", { className:"field", style:{ marginBottom:8 } }, h("label", null, "Token"),
+        h("input", { type:"password", value:token, onChange:e=>setToken(e.target.value), placeholder: st && st.connected ? "(giữ nguyên nếu để trống)" : "dạng xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", style:inp })),
+      h("details", { style:{ fontSize:12, marginBottom:8, color:"var(--inkSoft)" } }, h("summary", { style:{ cursor:"pointer" } }, "Lấy UserName/Token ở đâu?"),
+        h("ol", { style:{ margin:"6px 0 0", paddingLeft:18, lineHeight:1.6 } },
+          h("li", null, "Đăng nhập elearning.upharma.vn, mở 1 lộ trình học."),
+          h("li", null, "Bấm F12 → Network → Fetch/XHR → chọn request GetCourseLstByRoute → tab Payload."),
+          h("li", null, "Chép giá trị UserName và Token vào 2 ô trên."))),
+      h("div", { className:"field", style:{ marginBottom:10 } }, h("label", null, "Mã lộ trình cần lấy (cách nhau dấu phẩy)"),
+        h("input", { value:routes, onChange:e=>setRoutes(e.target.value), placeholder:"LT112503587", style:inp }),
+        h("div", { style:{ fontSize:11, color:"var(--inkSoft)", marginTop:3 } }, "Mã nằm cuối địa chỉ trang lộ trình, VD elearning.upharma.vn/lo-trinh/LT112503587. Thêm các lộ trình có khoá Sản phẩm hệ số / Nhóm thuốc / Bệnh học.")),
+      msg && h("div", { style:{ fontSize:12.5, marginBottom:8, color: msg.bad ? CL360.bad : CL360.good, fontWeight:600 } }, msg.text),
+      h("div", { className:"btnRow", style:{ justifyContent:"flex-end", gap:6, flexWrap:"wrap" } },
+        h("button", { className:"btn btnGhost", onClick:onClose }, "Đóng"),
+        h("button", { className:"btn", disabled:!!busy, onClick:save }, busy==="save" ? "Đang kiểm tra…" : "Lưu & kiểm tra"),
+        h("button", { className:"btn btnPrimary", disabled:!!busy || !(st && st.connected), onClick:()=>sync(false) }, busy==="sync" ? "Đang đồng bộ…" : "Đồng bộ ngay"))));
+}
+function ProductTrainingSection({ item }){
+  const h = React.createElement;
+  const [list, setList] = useState(null);
+  const [err, setErr] = useState("");
+  useEffect(()=>{
+    let alive = true; setList(null); setErr("");
+    pdCall("courses", { productName:item.name }, 60000).then(d => alive && setList(d.courses||[])).catch(e => alive && setErr(e.message||String(e)));
+    return ()=>{ alive=false; };
+  }, [item.pid]);
+  if(err || (list && !list.length)) return null;
+  if(!list) return h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", margin:"4px 0 10px" } }, "Đang tìm khoá đào tạo liên quan…");
+  return h("div", { style:{ margin:"4px 0 14px", border:"1px solid var(--line)", borderRadius:10, padding:"8px 12px", background:"#F3F0FF" } },
+    h("div", { style:{ fontWeight:700, fontSize:13, marginBottom:6 } }, "🎓 Khoá đào tạo nội bộ"),
+    list.map(c => h("div", { key:c.courseId, style:{ marginBottom:8 } },
+      h("div", { style:{ display:"flex", gap:6, alignItems:"center", flexWrap:"wrap" } },
+        h("a", { href:c.url, target:"_blank", rel:"noopener noreferrer", style:{ fontWeight:700, fontSize:12.5 } }, c.name + " ↗"),
+        c.type && h(Pill360, { text:c.type, color:CL360.violet }),
+        c.hasSlideText && h("span", { style:{ fontSize:10.5, color:CL360.good, fontWeight:700 } }, "✓ AI đã đọc slide")),
+      (c.lessons||[]).length>0 && h("ul", { style:{ margin:"4px 0 0", paddingLeft:18, fontSize:12, lineHeight:1.55 } },
+        c.lessons.slice(0,6).map((l,i) => h("li", { key:i }, l.name,
+          l.linkSlide && h("a", { href:l.linkSlide, target:"_blank", rel:"noopener noreferrer", style:{ marginLeft:6, fontSize:11 } }, "slide ↗"),
+          l.linkVideo && l.linkVideo!==l.linkSlide && h("a", { href:l.linkVideo, target:"_blank", rel:"noopener noreferrer", style:{ marginLeft:6, fontSize:11 } }, "video ↗")))))));
 }
 
 function ProductDictionaryAddModal({ onClose, onPick }){
