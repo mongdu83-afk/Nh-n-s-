@@ -8927,7 +8927,13 @@ function WeeklyPlanManagerView(){
     !mgrAi || mgrAi.aiStatus!=="ok"
       ? React.createElement("div", { key:"e", style:{ fontSize:12.5, color:"var(--inkSoft)" } }, mgrAi && mgrAi.aiStatus==="failed" ? "Lần phân tích trước bị lỗi — bấm nút để thử lại." : "Bấm nút để AI gộp báo cáo tuần của tất cả nhà thuốc (kết quả + kế hoạch tuần tới), so với tuần trước và đề xuất việc nên giao. Chỉ chạy khi bạn bấm (mỗi lần 1 lượt gọi AI).")
       : !aiA
-        ? React.createElement("div", { key:"raw", style:{ fontSize:12.5, whiteSpace:"pre-wrap" } }, mgrAi.rawText || "Không đọc được kết quả.")
+        ? React.createElement("div", { key:"raw", style:{ fontSize:12.5 } }, [
+            React.createElement("div", { key:"m", style:{ color:"var(--clay)", marginBottom:6 } }, "Chưa đọc được định dạng kết quả của AI (có thể bị cắt giữa chừng) — bấm \"Phân tích lại\" để chạy lại."),
+            mgrAi.rawText && React.createElement("details", { key:"d" }, [
+              React.createElement("summary", { key:"s", style:{ cursor:"pointer", color:"var(--inkSoft)" } }, "Xem bản thô"),
+              React.createElement("div", { key:"t", style:{ whiteSpace:"pre-wrap", marginTop:4 } }, mgrAi.rawText),
+            ]),
+          ])
         : React.createElement("div", { key:"body", style:{ fontSize:13, lineHeight:1.5 } }, [
             aiA.overview && React.createElement("div", { key:"ov", style:{ marginBottom:8 } }, aiA.overview),
             aiA.revenue && React.createElement("div", { key:"rv", style:{ marginBottom:8 } }, [React.createElement("b",{key:"b"},"Doanh thu: "), aiA.revenue]),
