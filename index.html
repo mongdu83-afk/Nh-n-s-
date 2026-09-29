@@ -8737,6 +8737,7 @@ function wpEmptyRow(extra){ return { id: uid(), noiDung:"", target:"", nguoiThuc
 // để trống (staffCategoryKey: null), quản lý tự ghi tay như bình thường.
 const WEEKPLAN_SECTIONS = [
   { key:"doanhThu", label:"💰 Doanh thu", color:"#d98a1f", staffCategoryKey:null, isRevenue:true },
+  { key:"khachHang", label:"🤝 Khách hàng", color:"#2f6fb0", staffCategoryKey:"khachHang" },
   { key:"nhanSu", label:"👥 Nhân sự", color:"#0f6b5c", staffCategoryKey:"nhanSu" },
   { key:"hangHoa", label:"📦 Hàng hoá", color:"#d98a1f", staffCategoryKey:"hangHoa" },
   { key:"coSoVatChat", label:"🏬 Cơ sở vật chất", color:"#B0483A", staffCategoryKey:"coSoVatChat" },
@@ -8827,9 +8828,36 @@ function WeeklyPlanManagerView(){
     const out = [];
     staffReports.forEach(r => {
       const rows = (r.ketQua && r.ketQua[staffCategoryKey]) || [];
-      rows.forEach(row => { if(row.ketQua && row.ketQua.trim()) out.push({ shop:r.shop, text:row.ketQua.trim() }); });
+      rows.forEach(row => {
+        const kq = (row.ketQua||"").trim();
+        if(kq) out.push({ shop:r.shop, noiDung:(row.noiDung||"").trim(), target:(row.target||"").trim(), ketQua:kq });
+      });
     });
     return out;
+  }
+  // Tóm tắt gọn: 1 dòng / nhà thuốc, ghép "nội dung → kết quả", bỏ trùng, cắt bớt chữ dài;
+  // bấm "xem đầy đủ" để mở chi tiết. Không gọi AI — chạy tức thời trên trình duyệt.
+  function wpClip(t, n){ t = String(t||"").replace(/\s+/g," ").trim(); return t.length>n ? t.slice(0,n-1).trimEnd()+"…" : t; }
+  function wpNorm(t){ return String(t||"").toLowerCase().replace(/\s+/g," ").trim(); }
+  function summarizeRollup(rollupRows){
+    const byShop = {};
+    rollupRows.forEach(r => { (byShop[r.shop] = byShop[r.shop] || []).push(r); });
+    const shops = Object.keys(byShop).sort();
+    return shops.map(shop => {
+      const seen = new Set();
+      const items = [];
+      byShop[shop].forEach(r => {
+        const key = wpNorm(r.noiDung)+"|"+wpNorm(r.ketQua);
+        if(seen.has(key)) return;
+        seen.add(key);
+        items.push(r);
+      });
+      const short = items.slice(0,3).map(r => {
+        const nd = wpClip(r.noiDung, 45), kq = wpClip(r.ketQua, 80);
+        return nd && wpNorm(nd)!==wpNorm(kq) ? `${nd} → ${kq}` : kq;
+      });
+      return { shop, total:items.length, short, more: Math.max(0, items.length-3), full:items };
+    });
   }
 
   const weekNav = React.createElement("div", { key:"nav", style:{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap", marginBottom:12 } }, [
@@ -8862,17 +8890,34 @@ function WeeklyPlanManagerView(){
   const sectionCards = WEEKPLAN_SECTIONS.map(s => {
     const rows = draft[s.key] || [];
     const rollupRows = staffRollupFor(s.staffCategoryKey);
+    const rollupSummary = summarizeRollup(rollupRows);
     return React.createElement("div", { key:s.key, className:"card", style:{ marginBottom:16, borderLeft:`4px solid ${s.color}` } }, [
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16.5, marginBottom:10 } }, s.label),
       s.isRevenue && React.createElement("div", { key:"rollup", style:{ fontSize:12.5, background:"var(--pineSoft)", borderRadius:8, padding:"8px 10px", marginBottom:10 } },
         revenueRollup.shopsReported>0
           ? `📊 Tự động từ báo cáo tuần các shop: ${fmtVND(revenueRollup.total)} thực hiện${revenueRollup.targetTotal ? ` / ${fmtVND(revenueRollup.targetTotal)} chỉ tiêu` : ""} (${revenueRollup.shopsReported}/${DEFAULT_SHOPS.length} nhà thuốc đã báo cáo tuần này).`
           : (staffReportsLoading ? "Đang tải báo cáo tuần các shop..." : "Chưa có nhà thuốc nào báo cáo doanh số tuần này.")),
-      s.staffCategoryKey && React.createElement("div", { key:"rollup2", style:{ fontSize:12, background:"var(--paper)", borderRadius:8, padding:"8px 10px", marginBottom:10 } }, [
-        React.createElement("div", { key:"l", style:{ fontWeight:700, marginBottom:4 } }, `Kết quả nhân viên đã báo cáo (tự động, ${rollupRows.length} mục)`),
-        rollupRows.length===0
+      s.staffCategoryKey && React.createElement("div", { key:"rollup2", style:{ fontSize:12.5, background:"var(--paper)", borderRadius:8, padding:"8px 10px", marginBottom:10 } }, [
+        React.createElement("div", { key:"l", style:{ fontWeight:700, marginBottom:6 } },
+          rollupSummary.length>0
+            ? `Tóm tắt từ nhà thuốc (${rollupSummary.length}/${DEFAULT_SHOPS.length} nhà thuốc · ${rollupRows.length} mục)`
+            : "Tóm tắt từ nhà thuốc"),
+        rollupSummary.length===0
           ? React.createElement("div", { key:"e", style:{ color:"var(--inkSoft)" } }, staffReportsLoading ? "Đang tải..." : "Chưa có nhà thuốc nào báo cáo mục này tuần này.")
-          : React.createElement("ul", { key:"ul", style:{ margin:0, paddingLeft:18 } }, rollupRows.map((r,i) => React.createElement("li", { key:i }, `${r.shop}: ${r.text}`))),
+          : React.createElement("div", { key:"ul", style:{ display:"flex", flexDirection:"column", gap:6 } }, rollupSummary.map(g =>
+              React.createElement("div", { key:g.shop, style:{ lineHeight:1.45 } }, [
+                React.createElement("b", { key:"s" }, shopLabel(g.shop)+": "),
+                g.short.join(" · "),
+                g.more>0 && React.createElement("span", { key:"m", style:{ color:"var(--inkSoft)" } }, ` (+${g.more} mục)`),
+                (g.more>0 || g.full.some(x => x.noiDung.length>45 || x.ketQua.length>80)) && React.createElement("details", { key:"d", style:{ marginTop:2 } }, [
+                  React.createElement("summary", { key:"sm", style:{ cursor:"pointer", color:"var(--pine)", fontSize:11.5 } }, "Xem đầy đủ"),
+                  React.createElement("ul", { key:"u", style:{ margin:"4px 0 0", paddingLeft:18 } }, g.full.map((x,i) =>
+                    React.createElement("li", { key:i }, [
+                      x.noiDung && React.createElement("span", { key:"n", style:{ color:"var(--inkSoft)" } }, x.noiDung+(x.target?` (target: ${x.target})`:"")+" → "),
+                      x.ketQua,
+                    ]))),
+                ]),
+              ]))),
       ]),
       ...rows.map(r => React.createElement("div", { key:r.id, className:"weeklyRow" }, [
         rows.length>1 && React.createElement("div", { key:"rm", style:{ textAlign:"right" } },
