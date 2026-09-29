@@ -12689,9 +12689,13 @@ function ElearnConnectModal({ onClose, onChanged }){
   }
   useEffect(()=>{ load(); }, []);
   async function save(){
+    // 29/9/2026: chặn lưu nhầm email/mật khẩu do trình duyệt tự điền
+    const u = userName.trim(), t = token.trim().replace(/^"|"$/g, "");
+    if(u && /@/.test(u)) return setMsg({ bad:true, text:"UserName của web đào tạo là SỐ ĐIỆN THOẠI (xem ở tab Payload), không phải email — có thể trình duyệt đã tự điền, xoá đi và nhập lại." });
+    if(t && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(t)) return setMsg({ bad:true, text:"Token không đúng dạng xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx — có thể trình duyệt đã tự điền mật khẩu, xoá đi và dán lại Token." });
     setBusy("save"); setMsg(null);
     try{
-      const r = await pdCall("elearnConfig", { userName:userName.trim()||undefined, token:token.trim()||undefined, routeIds: routes.split(/[\s,;]+/).filter(Boolean) }, 60000);
+      const r = await pdCall("elearnConfig", { userName:u||undefined, token:t||undefined, routeIds: routes.split(/[\s,;]+/).filter(Boolean) }, 60000);
       if(r.ok===false) setMsg({ bad:true, text:r.error });
       else { setMsg({ bad:false, text:`Kết nối được ✓ — lộ trình "${r.test.routeName}".` }); setToken(""); await load(); }
     } catch(e){ setMsg({ bad:true, text:e.message||String(e) }); }
@@ -12721,9 +12725,9 @@ function ElearnConnectModal({ onClose, onChanged }){
           : m.syncedAt && h("div", null, `Đồng bộ ${new Date(m.syncedAt).toLocaleString("vi-VN")}: ${m.courseCount} khoá · ${m.slidesOk} slide đọc được`,
               m.types && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, Object.entries(m.types).map(([k,v]) => `${k}: ${v}`).join(" · "))))),
       h("div", { className:"field", style:{ marginBottom:8 } }, h("label", null, "UserName (số điện thoại đăng nhập web đào tạo)"),
-        h("input", { value:userName, onChange:e=>setUserName(e.target.value), placeholder: st && st.connected ? "(giữ nguyên nếu để trống)" : "VD 09xxxxxxxx", style:inp })),
+        h("input", { value:userName, onChange:e=>setUserName(e.target.value), name:"elearn-user-x", autoComplete:"off", "data-lpignore":"true", "data-form-type":"other", placeholder: st && st.connected ? "(giữ nguyên nếu để trống)" : "VD 09xxxxxxxx", style:inp })),
       h("div", { className:"field", style:{ marginBottom:8 } }, h("label", null, "Token"),
-        h("input", { type:"password", value:token, onChange:e=>setToken(e.target.value), placeholder: st && st.connected ? "(giữ nguyên nếu để trống)" : "dạng xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", style:inp })),
+        h("input", { type:"text", value:token, onChange:e=>setToken(e.target.value), name:"elearn-token-x", autoComplete:"off", spellCheck:false, "data-lpignore":"true", "data-form-type":"other", placeholder: st && st.connected ? "(giữ nguyên nếu để trống)" : "dạng xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", style:{ ...inp, WebkitTextSecurity: token ? "disc" : "none", fontFamily:"monospace" } })),
       h("details", { style:{ fontSize:12, marginBottom:8, color:"var(--inkSoft)" } }, h("summary", { style:{ cursor:"pointer" } }, "Lấy UserName/Token ở đâu?"),
         h("ol", { style:{ margin:"6px 0 0", paddingLeft:18, lineHeight:1.6 } },
           h("li", null, "Đăng nhập elearning.upharma.vn, mở 1 lộ trình học."),
