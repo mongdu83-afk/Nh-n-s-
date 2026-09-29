@@ -6648,7 +6648,7 @@ function KpiView({ isAdmin, myStaff }){
   function syncHealthRow(label, health){
     if(!health) return React.createElement("div", { key:label, style:{ fontSize:12, color:"var(--inkSoft)", padding:"4px 0" } }, `${label}: chưa có lần chạy nào ghi nhận được.`);
     const at = health.atTs ? new Date(health.atTs).toLocaleString("vi-VN") : "—";
-    const errMsg = health.fatalError || (health.shopErrors ? Object.entries(health.shopErrors).map(([shop,e])=>`${shop}: ${e}`).join("; ") : "");
+    const errMsg = (health.ok !== true && health.fatalError) || (health.shopErrors ? Object.entries(health.shopErrors).map(([shop,e])=>`${shop}: ${e}`).join("; ") : "");
     return React.createElement("div", { key:label, style:{ fontSize:12, padding:"4px 0", borderBottom:"1px solid var(--line)" } }, [
       React.createElement("span", { key:"l", style:{ fontWeight:600 } }, label + ": "),
       React.createElement("span", { key:"s", style:{ color: health.ok ? "var(--pine)" : "var(--clay)", fontWeight:600 } }, health.ok ? "Ổn" : "Lỗi"),
@@ -7577,11 +7577,11 @@ const SYNC_ALL_TASKS = [
   { key:"inventory", label:"Tồn kho", url:"https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncInventoryNow",
     format:d => d && d.ok===false ? ("Lỗi: "+(d.error||"không rõ nguyên nhân")) : `Đã lấy ${d.totalItems ?? 0} dòng tồn kho từ ${d.shopCount ?? 0} nhà thuốc.` },
   { key:"plan", label:"Chỉ tiêu nhân viên (KPI)", url:"https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncEmployeePlanNow",
-    format:d => `Đã lấy ${d.totalRecords ?? 0} bản ghi chỉ tiêu/kết quả nhân viên (tháng ${d.month ?? "—"}/${d.year ?? "—"}).` },
+    format:d => d && d.ok===false ? ("Lỗi: "+(d.error||"không rõ nguyên nhân")) : `Đã lấy ${d.totalRecords ?? 0} bản ghi chỉ tiêu/kết quả nhân viên (tháng ${d.month ?? "—"}/${d.year ?? "—"}).` },
   { key:"expiry", label:"Hàng cận date (KPI)", url:"https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncInventoryExpiryNow",
-    format:d => `Đã cập nhật tỷ lệ hàng cận date cho ${d.shopCount ?? 0} nhà thuốc.` },
+    format:d => d && d.ok===false ? ("Lỗi: "+(d.error||"không rõ nguyên nhân")) : `Đã cập nhật tỷ lệ hàng cận date cho ${d.shopCount ?? 0} nhà thuốc.` },
   { key:"levelup", label:"Nâng hạng khách hàng", url:"https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncCustomerLevelUpgradesNow",
-    format:d => `Đã ghi nhận ${d.totalUpgrades ?? 0} lượt nâng hạng (tháng ${d.monthKey ?? "—"}).` },
+    format:d => d && d.ok===false ? ("Lỗi: "+(d.error||"không rõ nguyên nhân")) : `Đã ghi nhận ${d.totalUpgrades ?? 0} lượt nâng hạng (tháng ${d.monthKey ?? "—"}).` },
 ];
 function SyncAllDataButton(){
   const [running, setRunning] = useState(false);
@@ -7594,7 +7594,7 @@ function SyncAllDataButton(){
       setStatuses(prev => ({ ...prev, [t.key]: { state:"running", message:"" } }));
       try{
         const data = await callCf(t.url, {}, 180000);
-        setStatuses(prev => ({ ...prev, [t.key]: { state:"done", message:t.format(data) } }));
+        setStatuses(prev => ({ ...prev, [t.key]: { state: data && data.ok===false ? "error" : "done", message:t.format(data) } }));
       } catch(err){
         console.error(`Đồng bộ "${t.label}" lỗi:`, err);
         setStatuses(prev => ({ ...prev, [t.key]: { state:"error", message:cfErrorLabel(err) + ": " + (err && err.message ? err.message : String(err)) } }));
@@ -7717,11 +7717,14 @@ function SyncHealthPanel(){
   const keys = Object.keys(SYNC_HEALTH_LABELS);
   const rows = keys.map(k => {
     const h = health && health[k];
-    const ok = h && h.ok !== false && !h.fatalError && !h.error;
+    // 29/9/2026: ok===true là kết quả của LẦN CHẠY MỚI NHẤT → bỏ qua fatalError/error còn sót từ lần lỗi trước
+    // (backend cũ ghi merge:true nên không xoá được lỗi cũ — xem writeSyncHealth trong index.js).
+    const staleErr = h && h.ok === true;
+    const ok = h && (staleErr || (h.ok !== false && !h.fatalError && !h.error));
     const has = !!h;
     let detail = "—";
     if(h){
-      if(h.fatalError || h.error) detail = String(h.fatalError || h.error).slice(0, 120);
+      if(!staleErr && (h.fatalError || h.error)) detail = String(h.fatalError || h.error).slice(0, 120);
       else if(h.totalOrders != null) detail = `${h.totalOrders} đơn · ${h.totalLines ?? "—"} dòng · ${h.shopCount ?? "—"} shop`;
       else if(h.totalItems != null) detail = `${h.totalItems} dòng · ${h.shopCount ?? "—"} shop`;
       else if(h.totalRecords != null) detail = `${h.totalRecords} bản ghi · ${h.shopCount ?? "—"} shop`;
@@ -14736,7 +14739,7 @@ function DataQualityCommandBanner({ onNavigate }){
   const keys = ["salesOrders","inventory","workRegistrations","employeePlan","inventoryExpiry","customerUpgrades","replenishment"];
   const rows = keys.map(k => {
     const h = health && health[k];
-    const fatal = h && (h.fatalError || h.error);
+    const fatal = h && h.ok !== true && (h.fatalError || h.error); // ok===true: lỗi cũ còn sót, bỏ qua
     const ok = h ? (h.ok !== false && !fatal) : null;
     const partial = h && h.partial === true;
     return { k, label: KEY_LABEL[k]||k, ok, partial, at: h && (h.atTs || h.at),
@@ -19217,7 +19220,8 @@ function DataQualityPanel(){
   const keys = ["salesOrders","inventory","workRegistrations","employeePlan","inventoryExpiry","customerUpgrades","replenishment"];
   const rows = keys.map(k => {
     const h = health && health[k];
-    return { k, ok: h ? (h.ok !== false && !h.fatalError && !h.error) : null, at: h && h.atTs, err: h && (h.fatalError || h.error) };
+    const fatal = h && h.ok !== true && (h.fatalError || h.error); // ok===true: lỗi cũ còn sót, bỏ qua
+    return { k, ok: h ? (h.ok !== false && !fatal) : null, at: h && h.atTs, err: fatal || null };
   });
   const stale = rows.filter(r => r.at && (Date.now() - Date.parse(r.at)) > 36*3600*1000).length;
   const bad = rows.filter(r => r.ok === false).length;
