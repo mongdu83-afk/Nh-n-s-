@@ -11539,6 +11539,7 @@ function HangHoaView({ isAdmin, myStaff, navParam }){
     { id:"orders", label:"Khách đặt hàng" },
     { id:"tonkho", label:"Tồn kho" },
     { id:"transfer", label:"Phân tích hàng hoá" },
+    { id:"lostsales", label:"Doanh thu mất do hết hàng" }, // 29/9/2026
     { id:"kiemke", label:"Kiểm kê" },
   ];
   const subTabs = subTabsAll.filter(t => !t.adminOnly || isAdmin);
@@ -11553,6 +11554,7 @@ function HangHoaView({ isAdmin, myStaff, navParam }){
     activeSub==="kiemke" && React.createElement(InventoryView, { key:"v", userName:(myStaff&&myStaff.name)||"", userShop:(myStaff&&myStaff.shop)||"" }),
     activeSub==="tonkho" && React.createElement(InventoryHealthView, { key:"v", isAdmin, myStaff }),
     activeSub==="transfer" && React.createElement(TransferSuggestionsView, { key:"v", navParam, myStaff, isAdmin }),
+    activeSub==="lostsales" && React.createElement(LostSalesView, { key:"v", isAdmin, myStaff }),
   ]);
 }
 function NhanVienView({ isAdmin, myStaff }){
@@ -11704,6 +11706,644 @@ function BaoCaoTuanView({ isAdmin, myStaff }){
   ]);
 }
 
+
+// =====================================================================================================
+// ===== 29/9/2026 (Phương): TAB "GIÁ ĐỐI THỦ" — nhóm Kinh doanh & Marketing, CHỈ quản lý thấy
+// =====================================================================================================
+// Mọi đọc/ghi đi qua Cloud Function competitorPriceApiNow (Admin SDK) → không phụ thuộc Firestore rules.
+// Bước 1 (một lần): ghép mã hàng Upharma ↔ link sản phẩm trên web đối thủ + hệ số quy đổi đơn vị.
+// Bước 2 (tự động 04:20 mỗi ngày, hoặc bấm "Lấy giá ngay"): đọc giá, quy về 1 đơn vị lẻ Upharma, so sánh.
+const CP_API = "https://asia-southeast1-upharma-176d5.cloudfunctions.net/competitorPriceApiNow";
+const CP_SITE_COLS = [
+  { key:"longchau", label:"Long Châu", host:"nhathuoclongchau.com.vn" },
+  { key:"pharmacity", label:"Pharmacity", host:"pharmacity.vn" },
+  { key:"ankhang", label:"An Khang", host:"nhathuocankhang.com" },
+];
+// Màu cố định theo thực thể (không đổi khi lọc): Upharma, Long Châu, Pharmacity, An Khang, Khác
+const CP_SERIES_COLORS = { "Upharma":"#2a78d6", "Long Châu":"#eb6834", "Pharmacity":"#1baf7a", "An Khang":"#eda100" };
+const CP_OTHER_COLORS = ["#e87ba4", "#008300", "#7c3aed", "#64748b"];
+const CP_STATUS_TEXT = {
+  ok:"Lấy được", manual:"Giá tay", noprice:"Không thấy giá", hidden:"Web ẩn giá", blocked:"Web chặn",
+  notfound:"Link hỏng", error:"Lỗi", unit_changed:"Đổi đơn vị", skipped:"Chưa chạy",
+};
+function cpCall(action, payload, timeoutMs){
+  return callCf(CP_API, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ action, ...(payload||{}) }) }, timeoutMs || 60000);
+}
+function cpStripVN(s){ return String(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/đ/g,"d").replace(/Đ/g,"D").toLowerCase(); }
+function cpGapTone(gap, thr){
+  if(gap==null) return { text:"—", color:CL360.gray, key:"na" };
+  if(gap > thr) return { text:`Upharma đắt hơn ${gap.toLocaleString("vi-VN")}%`, color:CL360.bad, key:"higher" };
+  if(gap < -thr) return { text:`Upharma rẻ hơn ${Math.abs(gap).toLocaleString("vi-VN")}%`, color:CL360.good, key:"lower" };
+  return { text:`Ngang giá (${gap>0?"+":""}${gap.toLocaleString("vi-VN")}%)`, color:CL360.info, key:"equal" };
+}
+function cpNeedsCheck(latest){
+  if(!latest) return true;
+  return (latest.links||[]).some(l => l.url && l.status!=="ok");
+}
+function cpGoogleSearchUrl(host, name){
+  return "https://www.google.com/search?q=" + encodeURIComponent(`site:${host} ${name||""}`);
+}
+
+function CompetitorPriceView({ isAdmin }){
+  const h = React.createElement;
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState("");
+  const [msg, setMsg] = useState("");
+  const [q, setQ] = useState("");
+  const [filter, setFilter] = useState("all");
+  const [thr, setThr] = useState(5);
+  const [editing, setEditing] = useState(null); // null | "new" | item
+  const [historyOf, setHistoryOf] = useState(null);
+  const [showImport, setShowImport] = useState(false);
+  const [catalog, setCatalog] = useState(null);
+
+  async function load(){
+    setErr(null);
+    try{ const d = await cpCall("list", {}, 60000); setData(d); }
+    catch(e){ setErr(e); }
+  }
+  useEffect(()=>{ if(isAdmin) load(); }, [isAdmin]);
+  async function ensureCatalog(){
+    if(catalog) return catalog;
+    const d = await cpCall("catalog", {}, 90000);
+    const rows = (d.rows||[]).map(r => ({ id:r[0], name:r[1], unit:r[2], orderUnit:r[3], orderFactor:r[4], s:cpStripVN(r[0]+" "+r[1]) }));
+    setCatalog(rows);
+    return rows;
+  }
+  async function runAll(){
+    if(!window.confirm("Lấy giá mới cho TOÀN BỘ mã đang theo dõi? Mất khoảng 2–3 giây cho mỗi link.")) return;
+    setBusy("run"); setMsg("");
+    try{
+      const r = await cpCall("run", {}, 1800000);
+      setMsg(`Đã lấy giá: ${r.ok}/${r.links} link thành công${r.blocked?` · ${r.blocked} link bị web chặn`:""}${r.unitChanged?` · ${r.unitChanged} link đổi đơn vị`:""} (${r.durationSec}s).`);
+      await load();
+    } catch(e){ setMsg("Lỗi: " + (e.message||e)); }
+    setBusy("");
+  }
+
+  if(!isAdmin) return h(EmptyState, { kind:"forbidden", detail:"Chức năng này chỉ dành cho quản lý." });
+  if(err) return h("div", { style:{ maxWidth:1200, margin:"0 auto", padding:16 } },
+    h(EmptyState, { kind: emptyKindFromError(err), detail: err.message }),
+    h("button", { className:"btn", onClick:load }, "Thử lại"));
+  if(!data) return h("div", { className:"emptyState" }, "Đang tải dữ liệu giá đối thủ…");
+
+  const items = data.items || [];
+  const meta = data.meta;
+  // Cột website: 3 đối thủ chính + các website khác có trong dữ liệu (gộp thành 1 cột "Khác")
+  const rows = items.map(it => {
+    const latest = it.latest;
+    const gap = latest ? latest.gapPct : null;
+    const tone = cpGapTone(gap, thr);
+    return { ...it, latest, gap, tone, check: cpNeedsCheck(latest), name: it.map.productName || (latest && latest.productName) || "", s: cpStripVN(it.map.productId+" "+(it.map.productName||"")) };
+  });
+  const cnt = { all:rows.length, higher:0, lower:0, equal:0, check:0 };
+  rows.forEach(r => { if(cnt[r.tone.key]!=null) cnt[r.tone.key]++; if(r.check) cnt.check++; });
+  const qs = cpStripVN(q.trim());
+  let shown = rows.filter(r => (!qs || r.s.includes(qs)) && (filter==="all" || (filter==="check" ? r.check : r.tone.key===filter)));
+  shown = shown.sort((a,b) => (b.gap==null?-1e9:b.gap) - (a.gap==null?-1e9:a.gap));
+
+  function siteCell(latest, siteKey){
+    const links = latest ? (latest.links||[]).filter(l => siteKey==="other" ? !CP_SITE_COLS.some(c=>c.key===l.site) : l.site===siteKey) : [];
+    if(!links.length) return h("span", { style:{ color:"var(--inkSoft)" } }, "—");
+    return h("div", { style:{ display:"flex", flexDirection:"column", gap:3 } }, links.map((l,i) => {
+      const isMin = latest.minCompetitor!=null && l.converted===latest.minCompetitor;
+      return h("div", { key:i, title: (l.error||"") + (l.title?`\n${l.title}`:"") },
+        l.converted!=null
+          ? h("div", { style:{ fontWeight: isMin?800:600 } }, fmtVND(l.converted), isMin && h("span", { style:{ fontSize:10, color:CL360.bad, marginLeft:4 } }, "▼ rẻ nhất"))
+          : null,
+        h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)" } },
+          l.price!=null ? `${fmtVND(l.price)}${l.unitDetected||l.webUnit?"/"+(l.unitDetected||l.webUnit):""}${l.factor&&l.factor!==1?` ÷${l.factor}`:""}` : "",
+          l.status!=="ok" && h("span", { style:{ marginLeft:4, color: l.source==="manual" && l.status==="manual" ? CL360.info : CL360.warn, fontWeight:700 } },
+            (l.status!=="ok" ? "⚠ " : "") + (CP_STATUS_TEXT[l.status]||l.status) + (l.source==="manual" && l.status!=="manual" ? " → dùng giá tay" : "")),
+          siteKey==="other" && h("span", { style:{ marginLeft:4 } }, "· " + (l.siteLabel||"")),
+          l.url && h("a", { href:l.url, target:"_blank", rel:"noopener noreferrer", style:{ marginLeft:5 } }, "↗")));
+    }));
+  }
+  const hasOther = rows.some(r => r.latest && (r.latest.links||[]).some(l => !CP_SITE_COLS.some(c=>c.key===l.site)));
+  const siteCols = hasOther ? [...CP_SITE_COLS, { key:"other", label:"Khác / khảo sát tay" }] : CP_SITE_COLS;
+
+  const metric = (cls, label, value, f) => h("div", { className:"metric"+(cls?" "+cls:""), style:{ cursor:"pointer", outline: filter===f ? "2px solid var(--pine)" : "none" }, onClick:()=>setFilter(filter===f?"all":f) },
+    h("div", { className:"label" }, label), h("div", { className:"value" }, fmtNum(value)));
+
+  return h("div", { style:{ maxWidth:1280, margin:"0 auto", padding:16 } },
+    h("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12, flexWrap:"wrap", marginBottom:10 } },
+      h("div", { style:{ fontSize:12, color:"var(--inkSoft)", lineHeight:1.55, maxWidth:620 } },
+        "Giá đối thủ được quy về ", h("b", null, "1 đơn vị lẻ Upharma"), " (giá web ÷ hệ số quy đổi) rồi so với giá bán lẻ Upharma trong tồn kho. Máy tự lấy giá lúc 04:20 mỗi ngày. Giá online có thể khác giá tại quầy — xem như chỉ báo xu hướng.",
+        h("div", { style:{ marginTop:4 } }, meta && meta.ranAt
+          ? `Lần lấy giá gần nhất: ${new Date(meta.ranAt).toLocaleString("vi-VN")} · ${meta.ok||0}/${meta.links||0} link thành công${meta.blocked?` · ${meta.blocked} bị chặn`:""}${meta.fatalError?` · LỖI: ${meta.fatalError}`:""}`
+          : "Chưa có lần lấy giá tự động nào.")),
+      h("div", { className:"btnRow", style:{ gap:6, flexWrap:"wrap" } },
+        h("button", { className:"btn btnPrimary", onClick:()=>setEditing("new") }, "+ Ghép sản phẩm"),
+        h("button", { className:"btn", onClick:()=>setShowImport(true) }, "Nhập từ Excel"),
+        h("button", { className:"btn", disabled:!!busy || !items.length, onClick:runAll }, busy==="run" ? "Đang lấy giá…" : "Lấy giá ngay"),
+        h("button", { className:"btn btnGhost", disabled:!items.length, onClick:()=>cpExportExcel(rows) }, "Xuất Excel"))),
+    msg && h("div", { className:"card", style:{ fontSize:12.5, padding:"8px 12px", marginBottom:10 } }, msg),
+    h("div", { className:"metrics" },
+      metric("", "Mã đang theo dõi", cnt.all, "all"),
+      metric("warn", `Upharma đắt hơn > ${thr}%`, cnt.higher, "higher"),
+      metric("", "Ngang giá", cnt.equal, "equal"),
+      metric("good", `Upharma rẻ hơn > ${thr}%`, cnt.lower, "lower"),
+      metric("gold", "Link cần kiểm tra", cnt.check, "check")),
+    h("div", { style:{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap", marginBottom:10 } },
+      h("input", { value:q, onChange:e=>setQ(e.target.value), placeholder:"Tìm mã / tên hàng…", style:{ flex:"1 1 220px", maxWidth:340, padding:"7px 10px", border:"1px solid var(--line)", borderRadius:8 } }),
+      h("label", { style:{ fontSize:12, color:"var(--inkSoft)", display:"flex", alignItems:"center", gap:6 } }, "Ngưỡng cảnh báo",
+        h("input", { type:"number", min:0, max:50, step:1, value:thr, onChange:e=>setThr(Math.max(0, Number(e.target.value)||0)), style:{ width:60, padding:"5px 6px", border:"1px solid var(--line)", borderRadius:6 } }), "%"),
+      filter!=="all" && h("button", { className:"btn btnGhost", style:{ fontSize:11.5, padding:"4px 10px" }, onClick:()=>setFilter("all") }, "Bỏ lọc ✕")),
+    !items.length
+      ? h("div", { className:"card", style:{ fontSize:13, lineHeight:1.6 } },
+          h("div", { style:{ fontWeight:700, marginBottom:6 } }, "Chưa có sản phẩm nào được ghép"),
+          "Bấm ", h("b", null, "+ Ghép sản phẩm"), " để ghép từng mã (có nút tìm nhanh trên Long Châu / Pharmacity / An Khang), hoặc ", h("b", null, "Nhập từ Excel"), " để ghép hàng loạt. Nên bắt đầu với 50–100 mã chủ lực: hàng hệ số và hàng bán chạy không kê đơn.")
+      : h("div", { className:"tableWrap" }, h("table", { className:"data tblCompact" },
+          h("thead", null, h("tr", null,
+            h("th", null, "Sản phẩm"), h("th", { className:"num" }, "Giá Upharma"),
+            siteCols.map(c => h("th", { key:c.key, className:"num" }, c.label)),
+            h("th", null, "Chênh lệch"), h("th", null, ""))),
+          h("tbody", null, shown.map(r => h("tr", { key:r.id, style: r.tone.key==="higher" ? { background:"#FBE3E1" } : null },
+            h("td", { style:{ minWidth:200 } },
+              h("div", { style:{ fontWeight:600 } }, r.name || r.map.productId),
+              h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)" } }, r.map.productId, r.map.unit ? ` · giá quy về 1 ${r.map.unit}` : "")),
+            h("td", { className:"num" },
+              h("div", { style:{ fontWeight:700 } }, r.latest ? fmtVND(r.latest.upharmaPrice) : "—"),
+              r.latest && r.latest.upharmaPriceSource==="manual" && h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)" } }, "nhập tay"),
+              r.latest && r.latest.upharmaMin!=null && r.latest.upharmaMax!=null && r.latest.upharmaMin!==r.latest.upharmaMax && h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)" } }, `${fmtNum(r.latest.upharmaMin)}–${fmtNum(r.latest.upharmaMax)} giữa các shop`)),
+            siteCols.map(c => h("td", { key:c.key, className:"num" }, siteCell(r.latest, c.key))),
+            h("td", null, h(Pill360, { text:r.tone.text, color:r.tone.color }),
+              r.latest && r.latest.fetchDate && h("div", { style:{ fontSize:10, color:"var(--inkSoft)", marginTop:3 } }, "ngày " + r.latest.fetchDate.split("-").reverse().join("/"))),
+            h("td", { style:{ whiteSpace:"nowrap" } },
+              h("button", { className:"btn btnGhost", style:{ fontSize:11, padding:"4px 8px" }, onClick:()=>setEditing(r) }, "Sửa"),
+              h("button", { className:"btn btnGhost", style:{ fontSize:11, padding:"4px 8px", marginLeft:4 }, onClick:()=>setHistoryOf(r) }, "Lịch sử"))))))),
+    editing && h(CompetitorMapEditor, { item: editing==="new" ? null : editing, ensureCatalog,
+      onClose:()=>setEditing(null), onSaved:()=>{ setEditing(null); load(); } }),
+    historyOf && h(CompetitorHistoryModal, { item:historyOf, onClose:()=>setHistoryOf(null) }),
+    showImport && h(CompetitorImportModal, { onClose:()=>setShowImport(false), onDone:()=>{ setShowImport(false); load(); } }));
+}
+
+async function cpExportExcel(rows){
+  try{
+    const XLSX = await ensureXlsx();
+    const out = [];
+    rows.forEach(r => {
+      const L = r.latest;
+      (r.map.links||[]).forEach((l,i) => {
+        const res = L ? (L.links||[])[i] : null;
+        out.push({
+          "Mã hàng": r.map.productId, "Tên hàng": r.name, "Đơn vị Upharma": r.map.unit || "",
+          "Giá Upharma": L ? L.upharmaPrice : "", "Đối thủ": l.siteLabel || l.site, "Link": l.url || "",
+          "Đơn vị trên web": l.webUnit || "", "Hệ số quy đổi": l.factor || 1,
+          "Giá trên web": res ? res.price : "", "Giá quy đổi": res ? res.converted : "",
+          "Trạng thái": res ? (CP_STATUS_TEXT[res.status]||res.status) : "", "Chênh lệch % (Upharma so với rẻ nhất)": L ? L.gapPct : "",
+          "Giá nhập tay": l.manualPrice || "", "Nguồn (nếu nhập tay)": l.url ? "" : (l.siteLabel||""),
+        });
+      });
+    });
+    const ws = XLSX.utils.json_to_sheet(out);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Gia doi thu");
+    XLSX.writeFile(wb, `gia-doi-thu-${todayISO()}.xlsx`);
+  } catch(e){ window.alert("Không xuất được Excel: " + (e.message||e)); }
+}
+
+function CompetitorMapEditor({ item, ensureCatalog, onClose, onSaved }){
+  const h = React.createElement;
+  const m = item ? item.map : null;
+  const [pid, setPid] = useState(m ? m.productId : "");
+  const [pname, setPname] = useState(m ? (m.productName||"") : "");
+  const [punit, setPunit] = useState(m ? (m.unit||"") : "");
+  const [pack, setPack] = useState(null); // { orderUnit, orderFactor }
+  const [search, setSearch] = useState("");
+  const [cat, setCat] = useState(null);
+  const [catErr, setCatErr] = useState("");
+  const [links, setLinks] = useState(() => (m && m.links && m.links.length ? m.links : [{ url:"", factor:1, webUnit:"" }]).map(l => ({ ...l, _test:null })));
+  const [override, setOverride] = useState(m && m.upharmaPriceOverride ? String(m.upharmaPriceOverride) : "");
+  const [note, setNote] = useState(m ? (m.note||"") : "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(()=>{
+    let alive = true;
+    ensureCatalog().then(rows => {
+      if(!alive) return; setCat(rows);
+      if(m){ const c = rows.find(r => r.id===m.productId); if(c) setPack({ orderUnit:c.orderUnit, orderFactor:c.orderFactor }); }
+    }).catch(e => alive && setCatErr(e.message||String(e)));
+    return ()=>{ alive=false; };
+  }, []);
+  const qs = cpStripVN(search.trim());
+  const matches = !m && cat && qs.length>=2 ? cat.filter(r => qs.split(/\s+/).every(w => r.s.includes(w))).slice(0, 12) : [];
+  function choose(r){ setPid(r.id); setPname(r.name); setPunit(r.unit); setPack({ orderUnit:r.orderUnit, orderFactor:r.orderFactor }); setSearch(""); }
+
+  function suggestFactor(webUnit){
+    const w = cpStripVN(webUnit);
+    if(!w) return null;
+    if(punit && cpStripVN(punit)===w) return 1;
+    if(pack && pack.orderUnit && cpStripVN(pack.orderUnit)===w && pack.orderFactor>0) return pack.orderFactor;
+    // Đọc quy cách trong tên hàng, VD "(15 vỉ x 12 viên)" → 1 vỉ = 12 viên, 1 hộp = 180 viên
+    const mm = /(\d+)\s*(vi|goi|ong|chai|lo|tui|tuyp)\s*x\s*(\d+)\s*([a-z]+)/.exec(cpStripVN(pname));
+    if(mm && punit && cpStripVN(punit)===mm[4]){
+      if(w===mm[2]) return Number(mm[3]);
+      if(w==="hop") return Number(mm[1]) * Number(mm[3]);
+    }
+    return null;
+  }
+  function upd(i, patch){ setLinks(ls => ls.map((l,j) => j===i ? { ...l, ...patch } : l)); }
+  async function test(i){
+    const l = links[i];
+    if(!l.url) return;
+    upd(i, { _test:{ loading:true } });
+    try{
+      const d = await cpCall("test", { url:l.url.trim(), webUnit:l.webUnit||"" }, 60000);
+      const r = d.result || {};
+      const patch = { _test:r };
+      if(r.ok && r.unitDetected){
+        patch.webUnit = r.unitDetected;
+        const f = suggestFactor(r.unitDetected);
+        if(f && (!l.factor || l.factor===1)) patch.factor = f;
+      }
+      upd(i, patch);
+    } catch(e){ upd(i, { _test:{ ok:false, error:e.message||String(e) } }); }
+  }
+  async function save(){
+    setError("");
+    if(!pid.trim()) return setError("Chọn mã hàng Upharma trước.");
+    const clean = links.map(l => ({ url:(l.url||"").trim(), factor:Number(l.factor)||1, webUnit:l.webUnit||"", manualPrice:l.manualPrice||null, manualDate:l.manualDate||null, siteLabel:l.url ? "" : (l.siteLabel||"") }))
+      .filter(l => l.url || l.manualPrice);
+    if(!clean.length) return setError("Cần ít nhất 1 link đối thủ hoặc 1 giá khảo sát tay.");
+    setSaving(true);
+    try{
+      await cpCall("save", { productId:pid.trim(), productName:pname, links:clean, upharmaPriceOverride:override||null, note }, 180000);
+      onSaved();
+    } catch(e){ setError(e.message||String(e)); setSaving(false); }
+  }
+  async function remove(){
+    if(!window.confirm(`Bỏ theo dõi giá đối thủ cho "${pname||pid}"?`)) return;
+    setSaving(true);
+    try{ await cpCall("delete", { productId:pid }, 30000); onSaved(); }
+    catch(e){ setError(e.message||String(e)); setSaving(false); }
+  }
+  const inp = { padding:"6px 8px", border:"1px solid var(--line)", borderRadius:6, fontSize:12.5 };
+
+  return h("div", { className:"modalOverlay", onClick:onClose },
+    h("div", { className:"modal modalWide", onClick:e=>e.stopPropagation(), style:{ maxHeight:"90vh", overflowY:"auto" } },
+      h("div", { style:{ fontWeight:700, fontSize:18, marginBottom:4 } }, m ? "Sửa ghép giá đối thủ" : "Ghép sản phẩm với đối thủ"),
+      h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:12 } }, "Dán link trang sản phẩm của đối thủ → bấm “Thử lấy giá” để kiểm tra máy đọc được giá và đơn vị → chỉnh hệ số quy đổi nếu cần → Lưu."),
+      // --- Chọn sản phẩm Upharma
+      m ? h("div", { className:"readonlyBox", style:{ marginBottom:12 } }, h("b", null, pname || pid), ` · ${pid}${punit?` · bán lẻ theo ${punit}`:""}`)
+        : h("div", { className:"field", style:{ marginBottom:12, position:"relative" } },
+            h("label", null, "Sản phẩm Upharma"),
+            pid ? h("div", { style:{ display:"flex", gap:8, alignItems:"center" } },
+                h("div", { className:"readonlyBox", style:{ flex:1 } }, h("b", null, pname), ` · ${pid}${punit?` · bán lẻ theo ${punit}`:""}`),
+                h("button", { className:"btn btnGhost", onClick:()=>{ setPid(""); setPname(""); setPunit(""); setPack(null); } }, "Đổi"))
+              : h("input", { value:search, onChange:e=>setSearch(e.target.value), autoFocus:true, placeholder: cat ? "Gõ mã hoặc tên hàng (VD: panadol extra)…" : (catErr ? "Không tải được danh mục — gõ đúng mã hàng rồi Enter" : "Đang tải danh mục hàng…"),
+                  onKeyDown:e=>{ if(e.key==="Enter" && search.trim() && (!cat || !matches.length)){ setPid(search.trim()); setPname(""); } } }),
+            matches.length>0 && h("div", { style:{ position:"absolute", zIndex:5, left:0, right:0, top:"100%", background:"#fff", border:"1px solid var(--line)", borderRadius:8, boxShadow:"0 6px 20px rgba(0,0,0,.08)", maxHeight:280, overflowY:"auto" } },
+              matches.map(r => h("div", { key:r.id, onClick:()=>choose(r), style:{ padding:"7px 10px", cursor:"pointer", borderBottom:"1px solid var(--line)", fontSize:12.5 } },
+                h("b", null, r.name), h("span", { style:{ color:"var(--inkSoft)" } }, ` · ${r.id} · ${r.unit||"?"}${r.orderUnit?` (1 ${r.orderUnit} = ${r.orderFactor} ${r.unit})`:""}`))))),
+      pack && pack.orderUnit && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:-6, marginBottom:10 } }, `Quy cách Upharma: 1 ${pack.orderUnit} = ${pack.orderFactor} ${punit}. Giá đối thủ sẽ được quy về 1 ${punit||"đơn vị lẻ"}.`),
+      // --- Tìm nhanh trên web đối thủ
+      pname && h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", marginBottom:10, fontSize:12 } }, "Tìm nhanh:",
+        CP_SITE_COLS.map(s => h("a", { key:s.key, className:"btn btnGhost", style:{ fontSize:11.5, padding:"4px 10px" }, href:cpGoogleSearchUrl(s.host, pname), target:"_blank", rel:"noopener noreferrer" }, `${s.label} ↗`))),
+      // --- Danh sách link
+      h("div", { style:{ display:"flex", flexDirection:"column", gap:10 } }, links.map((l,i) => {
+        const t = l._test;
+        const isManual = !l.url && (l.manualPrice!=null || l._manual);
+        return h("div", { key:i, className:"card", style:{ padding:10, margin:0 } },
+          isManual
+            ? h("div", { style:{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" } },
+                h("span", { style:{ fontSize:12, fontWeight:700 } }, "Giá khảo sát tay"),
+                h("input", { value:l.siteLabel||"", onChange:e=>upd(i,{ siteLabel:e.target.value }), placeholder:"Nơi khảo sát (VD: Long Châu Q.7)", style:{ ...inp, flex:"1 1 180px" } }))
+            : h("div", { style:{ display:"flex", gap:6, alignItems:"center" } },
+                h("input", { value:l.url||"", onChange:e=>upd(i,{ url:e.target.value, _test:null }), placeholder:"https://nhathuoclongchau.com.vn/thuoc/…", style:{ ...inp, flex:1, minWidth:0 } }),
+                h("button", { className:"btn", disabled:!l.url || (t && t.loading), onClick:()=>test(i), style:{ fontSize:12, padding:"6px 10px", whiteSpace:"nowrap" } }, t && t.loading ? "Đang thử…" : "Thử lấy giá")),
+          t && !t.loading && h("div", { style:{ fontSize:12, marginTop:6, color: t.ok ? CL360.good : CL360.bad } },
+            t.ok ? `✓ ${t.site ? t.site.label+": " : ""}${fmtVND(t.price)}${t.unitDetected?" / "+t.unitDetected:" (không rõ đơn vị)"} — đọc bằng ${t.method}${t.title?` · “${t.title.slice(0,70)}”`:""}`
+                 : `✗ ${t.error || "Không lấy được giá"}`),
+          t && t.ok && t.candidates && t.candidates.length>1 && h("div", { style:{ fontSize:11, color:"var(--inkSoft)", marginTop:2 } },
+            "Các mức giá khác thấy trên trang: " + t.candidates.slice(0,5).map(c => fmtVND(c.price)+(c.unit?"/"+c.unit:"")).join(", ")),
+          h("div", { style:{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"center", marginTop:8, fontSize:12 } },
+            !isManual && h(React.Fragment, null,
+              h("label", { style:{ display:"flex", alignItems:"center", gap:5 } }, "Giá web tính theo",
+                h("input", { value:l.webUnit||"", onChange:e=>upd(i,{ webUnit:e.target.value }), placeholder:"hộp / vỉ / viên", style:{ ...inp, width:90 } })),
+              h("label", { style:{ display:"flex", alignItems:"center", gap:5 } }, `= `,
+                h("input", { type:"number", min:0.001, step:"any", value:l.factor==null?1:l.factor, onChange:e=>upd(i,{ factor:e.target.value }), style:{ ...inp, width:80 } }),
+                ` ${punit||"đơn vị lẻ"} Upharma`),
+              (()=>{
+                const f = suggestFactor(l.webUnit);
+                if(f && Number(l.factor)!==f) return h("button", { className:"btn btnGhost", style:{ fontSize:11, padding:"3px 8px" }, onClick:()=>upd(i,{ factor:f }) }, `Dùng ${f} (theo quy cách)`);
+                if(!f && l.webUnit && punit && cpStripVN(l.webUnit)!==cpStripVN(punit) && Number(l.factor||1)===1)
+                  return h("span", { style:{ color:CL360.warn, fontWeight:700, fontSize:11.5 } }, `⚠ Web tính theo ${l.webUnit}, Upharma bán lẻ theo ${punit} — nhập 1 ${l.webUnit} = ? ${punit}`);
+                return null;
+              })()),
+            h("label", { style:{ display:"flex", alignItems:"center", gap:5 } }, isManual ? "Giá (đã quy về 1 "+(punit||"đơn vị lẻ")+")" : "Giá tay dự phòng",
+              h("input", { value:l.manualPrice||"", onChange:e=>upd(i,{ manualPrice:e.target.value.replace(/[^\d]/g,"") || null, manualDate:todayISO() }), placeholder:"đ", style:{ ...inp, width:100 } })),
+            h("button", { className:"btn btnGhost", style:{ fontSize:11, padding:"3px 8px", marginLeft:"auto", color:CL360.bad }, onClick:()=>setLinks(ls => ls.filter((_,j)=>j!==i)) }, "Xoá dòng")));
+      })),
+      h("div", { className:"btnRow", style:{ marginTop:8, gap:6 } },
+        h("button", { className:"btn btnGhost", onClick:()=>setLinks(ls => [...ls, { url:"", factor:1, webUnit:"" }]) }, "+ Thêm link đối thủ"),
+        h("button", { className:"btn btnGhost", onClick:()=>setLinks(ls => [...ls, { url:"", factor:1, _manual:true, siteLabel:"" }]) }, "+ Giá khảo sát tay")),
+      h("div", { style:{ display:"flex", gap:12, flexWrap:"wrap", marginTop:12 } },
+        h("div", { className:"field", style:{ flex:"1 1 200px" } }, h("label", null, `Giá Upharma nhập tay (bỏ trống = lấy từ tồn kho)`),
+          h("input", { value:override, onChange:e=>setOverride(e.target.value.replace(/[^\d]/g,"")), placeholder:"đ / " + (punit||"đơn vị lẻ") })),
+        h("div", { className:"field", style:{ flex:"2 1 260px" } }, h("label", null, "Ghi chú"),
+          h("input", { value:note, onChange:e=>setNote(e.target.value), placeholder:"VD: hàng hệ số, đối thủ hay chạy KM" }))),
+      error && h("div", { style:{ color:"var(--clay)", fontSize:12.5, marginTop:8 } }, error),
+      h("div", { className:"btnRow", style:{ marginTop:14, justifyContent:"space-between" } },
+        m ? h("button", { className:"btn btnDanger", disabled:saving, onClick:remove }, "Bỏ theo dõi") : h("span"),
+        h("div", { style:{ display:"flex", gap:8 } },
+          h("button", { className:"btn btnGhost", onClick:onClose }, "Huỷ"),
+          h("button", { className:"btn btnPrimary", disabled:saving, onClick:save }, saving ? "Đang lưu & lấy giá…" : "Lưu & lấy giá")))));
+}
+
+function CompetitorImportModal({ onClose, onDone }){
+  const h = React.createElement;
+  const [rows, setRows] = useState(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  async function downloadTemplate(){
+    try{
+      const XLSX = await ensureXlsx();
+      const ws = XLSX.utils.aoa_to_sheet([
+        ["Mã hàng", "Link", "Hệ số quy đổi", "Đơn vị trên web", "Giá nhập tay", "Nguồn (nếu nhập tay)"],
+        ["VD-MA-HANG", "https://nhathuoclongchau.com.vn/thuoc/panadol-extra-do-500mg-180v-sanofi-16965.html", 1, "viên", "", ""],
+        ["VD-MA-HANG", "https://www.pharmacity.vn/thuoc-dieu-tri-giam-cac-con-dau-ha-sot-panadol-extra-180-vien-hop.html", 12, "vỉ", "", ""],
+        ["VD-MA-HANG", "", "", "", 1500, "Khảo sát Long Châu Q.7"],
+      ]);
+      ws["!cols"] = [{ wch:14 }, { wch:70 }, { wch:14 }, { wch:16 }, { wch:13 }, { wch:24 }];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Ghep gia doi thu");
+      XLSX.writeFile(wb, "mau-ghep-gia-doi-thu.xlsx");
+    } catch(e){ setError(e.message||String(e)); }
+  }
+  async function onFile(e){
+    setError(""); setRows(null); setResult(null);
+    const f = e.target.files && e.target.files[0];
+    if(!f) return;
+    try{
+      const XLSX = await ensureXlsx();
+      const wb = XLSX.read(await f.arrayBuffer(), { type:"array" });
+      const raw = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval:"" });
+      const pick = (o, names) => { const k = Object.keys(o).find(k => names.includes(cpStripVN(k).trim())); return k ? o[k] : ""; };
+      const out = raw.map(o => ({
+        productId: String(pick(o, ["ma hang","ma","ma sp","ma san pham","productid"])).trim(),
+        url: String(pick(o, ["link","url","link doi thu"])).trim(),
+        factor: Number(pick(o, ["he so quy doi","he so","factor"])) || 1,
+        webUnit: String(pick(o, ["don vi tren web","don vi web","don vi"])).trim(),
+        manualPrice: Number(String(pick(o, ["gia nhap tay","gia tay","gia"])).replace(/[^\d]/g,"")) || null,
+        siteLabel: String(pick(o, ["nguon (neu nhap tay)","nguon","noi khao sat"])).trim(),
+      })).filter(r => r.productId && r.productId!=="VD-MA-HANG" && (r.url || r.manualPrice));
+      if(!out.length) throw new Error("Không đọc được dòng nào — kiểm tra lại tên cột theo file mẫu.");
+      setRows(out);
+    } catch(err){ setError(err.message||String(err)); }
+  }
+  async function submit(){
+    setBusy(true); setError("");
+    try{ const r = await cpCall("import", { rows }, 180000); setResult(r); }
+    catch(e){ setError(e.message||String(e)); }
+    setBusy(false);
+  }
+  return h("div", { className:"modalOverlay", onClick:onClose },
+    h("div", { className:"modal", onClick:e=>e.stopPropagation() },
+      h("div", { style:{ fontWeight:700, fontSize:18, marginBottom:4 } }, "Nhập bảng ghép từ Excel"),
+      h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:12, lineHeight:1.55 } },
+        "Mỗi dòng = 1 link đối thủ của 1 mã hàng (1 mã có thể nhiều dòng). Hệ số quy đổi = 1 đơn vị giá trên web bằng bao nhiêu đơn vị lẻ Upharma (VD web để giá theo Vỉ 12 viên, Upharma bán lẻ theo Viên → 12). Link đã có sẽ được cập nhật, không bị nhân đôi."),
+      h("div", { className:"btnRow", style:{ gap:8, marginBottom:10 } },
+        h("button", { className:"btn btnGhost", onClick:downloadTemplate }, "Tải file mẫu"),
+        h("label", { className:"btn" }, "Chọn file Excel…", h("input", { type:"file", accept:".xlsx,.xls,.csv", onChange:onFile, style:{ display:"none" } }))),
+      rows && !result && h("div", { style:{ fontSize:12.5, marginBottom:10 } }, `Đọc được ${rows.length} dòng, ${new Set(rows.map(r=>r.productId)).size} mã hàng.`),
+      result && h("div", { className:"card", style:{ fontSize:12.5 } },
+        `Xong: thêm mới ${result.created} mã, cập nhật ${result.updated} mã${result.skipped && result.skipped.length ? `, bỏ qua ${result.skipped.length} mã (link không hợp lệ)` : ""}. Bấm “Lấy giá ngay” ở màn hình chính để lấy giá luôn, hoặc chờ lượt tự động 04:20.`),
+      error && h("div", { style:{ color:"var(--clay)", fontSize:12.5, marginBottom:8 } }, error),
+      h("div", { className:"btnRow", style:{ justifyContent:"flex-end", gap:8, marginTop:8 } },
+        result ? h("button", { className:"btn btnPrimary", onClick:onDone }, "Đóng")
+          : h(React.Fragment, null,
+              h("button", { className:"btn btnGhost", onClick:onClose }, "Huỷ"),
+              h("button", { className:"btn btnPrimary", disabled:!rows || busy, onClick:submit }, busy ? "Đang nhập…" : "Nhập")))));
+}
+
+function CompetitorHistoryModal({ item, onClose }){
+  const h = React.createElement;
+  const [rows, setRows] = useState(null);
+  const [error, setError] = useState("");
+  const [hover, setHover] = useState(null);
+  useEffect(()=>{
+    cpCall("history", { productId:item.map.productId }, 60000).then(d => setRows(d.rows||[])).catch(e => setError(e.message||String(e)));
+  }, []);
+  const name = item.name || item.map.productId;
+  let body;
+  if(error) body = h("div", { style:{ color:"var(--clay)" } }, error);
+  else if(!rows) body = h("div", { className:"emptyState" }, "Đang tải…");
+  else if(!rows.length) body = h("div", { className:"emptyState" }, "Chưa có lịch sử — dữ liệu tích luỹ mỗi ngày sau lần lấy giá đầu tiên.");
+  else {
+    const seriesNames = ["Upharma"];
+    rows.forEach(r => Object.keys(r.sites||{}).forEach(k => { if(!seriesNames.includes(k)) seriesNames.push(k); }));
+    let oi = 0;
+    const colorOf = {}; seriesNames.forEach(n => { colorOf[n] = CP_SERIES_COLORS[n] || CP_OTHER_COLORS[(oi++) % CP_OTHER_COLORS.length]; });
+    const val = (r, n) => n==="Upharma" ? r.upharmaPrice : (r.sites||{})[n];
+    const all = []; rows.forEach(r => seriesNames.forEach(n => { const v = val(r,n); if(v!=null) all.push(v); }));
+    const W = 640, H = 240, P = { l:62, r:16, t:12, b:28 };
+    let lo = Math.min(...all), hi = Math.max(...all);
+    if(lo===hi){ lo = lo*0.9; hi = hi*1.1; } else { const pad=(hi-lo)*0.12; lo=Math.max(0,lo-pad); hi=hi+pad; }
+    const x = i => P.l + (rows.length===1 ? (W-P.l-P.r)/2 : i*(W-P.l-P.r)/(rows.length-1));
+    const y = v => P.t + (hi - v) * (H-P.t-P.b) / (hi-lo);
+    const ticks = [0,1,2,3].map(k => lo + (hi-lo)*k/3);
+    const dStr = d => d.slice(8,10)+"/"+d.slice(5,7);
+    const xLabelEvery = Math.max(1, Math.ceil(rows.length/8));
+    body = h("div", null,
+      h("div", { style:{ display:"flex", gap:14, flexWrap:"wrap", fontSize:12, marginBottom:6 } },
+        seriesNames.map(n => h("span", { key:n, style:{ display:"flex", alignItems:"center", gap:5 } },
+          h("span", { style:{ width:14, height:2, background:colorOf[n], display:"inline-block", borderRadius:2 } }), n))),
+      h("div", { style:{ position:"relative" } },
+        h("svg", { viewBox:`0 0 ${W} ${H}`, style:{ width:"100%", height:"auto", display:"block" }, onMouseLeave:()=>setHover(null) },
+          ticks.map((t,k) => h("g", { key:"t"+k },
+            h("line", { x1:P.l, x2:W-P.r, y1:y(t), y2:y(t), stroke:"#E8E5D8", strokeWidth:1 }),
+            h("text", { x:P.l-6, y:y(t)+4, textAnchor:"end", fontSize:10.5, fill:"#6B6858" }, fmtNum(t)))),
+          rows.map((r,i) => i % xLabelEvery===0 && h("text", { key:"x"+i, x:x(i), y:H-8, textAnchor:"middle", fontSize:10.5, fill:"#6B6858" }, dStr(r.date))),
+          hover!=null && h("line", { x1:x(hover), x2:x(hover), y1:P.t, y2:H-P.b, stroke:"#9A9785", strokeWidth:1 }),
+          seriesNames.map(n => {
+            const pts = rows.map((r,i) => { const v = val(r,n); return v==null ? null : [x(i), y(v)]; });
+            let d = ""; let pen = false;
+            pts.forEach(p => { if(!p){ pen=false; return; } d += (pen?"L":"M") + p[0].toFixed(1) + " " + p[1].toFixed(1) + " "; pen = true; });
+            return h("g", { key:"s"+n },
+              h("path", { d, fill:"none", stroke:colorOf[n], strokeWidth:2, strokeLinejoin:"round", strokeLinecap:"round" }),
+              pts.map((p,i) => p && (rows.length<=31 || hover===i) && h("circle", { key:i, cx:p[0], cy:p[1], r: hover===i?4.5:3, fill:colorOf[n], stroke:"#fff", strokeWidth:1.5 })));
+          }),
+          rows.map((r,i) => h("rect", { key:"hit"+i, x: x(i) - (W-P.l-P.r)/Math.max(1,rows.length-1)/2, y:P.t, width: Math.max(8,(W-P.l-P.r)/Math.max(1,rows.length-1)), height:H-P.t-P.b, fill:"transparent", onMouseEnter:()=>setHover(i) }))),
+        hover!=null && h("div", { style:{ position:"absolute", top:4, left: `${Math.min(70, Math.max(2, x(hover)/W*100 - 10))}%`, background:"#fff", border:"1px solid var(--line)", borderRadius:8, padding:"6px 9px", fontSize:11.5, boxShadow:"0 4px 14px rgba(0,0,0,.08)", pointerEvents:"none" } },
+          h("div", { style:{ fontWeight:700, marginBottom:3 } }, rows[hover].date.split("-").reverse().join("/")),
+          seriesNames.map(n => { const v = val(rows[hover], n); return v==null ? null : h("div", { key:n, style:{ display:"flex", gap:6, alignItems:"center" } },
+            h("span", { style:{ width:8, height:8, borderRadius:"50%", background:colorOf[n] } }), `${n}: `, h("b", null, fmtVND(v))); }))),
+      h("div", { className:"tableWrap", style:{ marginTop:12, maxHeight:220, overflowY:"auto" } }, h("table", { className:"data tblCompact" },
+        h("thead", null, h("tr", null, h("th", null, "Ngày"), seriesNames.map(n => h("th", { key:n, className:"num" }, n)), h("th", { className:"num" }, "Chênh lệch"))),
+        h("tbody", null, rows.slice().reverse().map(r => h("tr", { key:r.date },
+          h("td", null, r.date.split("-").reverse().join("/")),
+          seriesNames.map(n => h("td", { key:n, className:"num" }, fmtVND(val(r,n)))),
+          h("td", { className:"num" }, r.gapPct==null ? "—" : `${r.gapPct>0?"+":""}${r.gapPct.toLocaleString("vi-VN")}%`)))))));
+  }
+  return h("div", { className:"modalOverlay", onClick:onClose },
+    h("div", { className:"modal modalWide", onClick:e=>e.stopPropagation() },
+      h("div", { style:{ fontWeight:700, fontSize:18, marginBottom:2 } }, "Lịch sử giá — " + name),
+      h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } }, `Giá đã quy về 1 ${item.map.unit || "đơn vị lẻ"} Upharma. Chênh lệch = Upharma so với đối thủ rẻ nhất.`),
+      body,
+      h("div", { className:"btnRow", style:{ justifyContent:"flex-end", marginTop:10 } }, h("button", { className:"btn btnGhost", onClick:onClose }, "Đóng"))));
+}
+
+
+// =====================================================================================================
+// ===== 29/9/2026 (Phương): "DOANH THU MẤT DO HẾT HÀNG" — tab con trong Hàng hoá & tồn kho
+// =====================================================================================================
+// Dữ liệu: opsConfig/lostSalesSummary do backend tính mỗi sáng 06:10 (cùng lượt Consumption Engine —
+// buildLostSalesSummary ở index.js). Quản lý xem toàn chuỗi + giao việc; nhân viên/CHT chỉ thấy shop mình.
+function lsStrip(s){ return String(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/đ/g,"d").replace(/Đ/g,"D").toLowerCase(); }
+function LostSalesView({ isAdmin, myStaff }){
+  const h = React.createElement;
+  const [doc, setDoc] = useState(undefined);
+  const [shop, setShop] = useState(isAdmin ? "all" : ((myStaff && myStaff.shop) || ""));
+  const [act, setAct] = useState("all");
+  const [q, setQ] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [compose, setCompose] = useState(null);
+  const [hoverT, setHoverT] = useState(null);
+  const [limit, setLimit] = useState(50);
+  useEffect(()=>db.collection("opsConfig").doc("lostSalesSummary").onSnapshot(
+    d => setDoc(d.exists ? d.data() : null), e => { setDoc(null); setMsg("Không đọc được dữ liệu: " + (e.message||e)); }), []);
+  async function recompute(){
+    setBusy(true); setMsg("");
+    try{ await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeInventoryConsumptionNow", {}, 540000); setMsg("Đã tính lại xong."); }
+    catch(e){ setMsg(cfErrorLabel(e) + ": " + (e.message||e)); }
+    setBusy(false);
+  }
+  if(doc===undefined) return h("div", { className:"emptyState" }, "Đang tải…");
+  const wrap = (...c) => h("div", { style:{ maxWidth:1200, margin:"0 auto", padding:16 } }, ...c);
+  if(!doc) return wrap(
+    h("div", { className:"card", style:{ fontSize:13, lineHeight:1.6 } },
+      h("div", { style:{ fontWeight:700, marginBottom:6 } }, "Chưa có dữ liệu doanh thu mất do hết hàng"),
+      "Số liệu được tính tự động lúc 06:10 mỗi sáng cùng lượt phân tích tốc độ tiêu thụ.",
+      isAdmin && h("div", { style:{ marginTop:10 } }, h("button", { className:"btn btnPrimary", disabled:busy, onClick:recompute }, busy ? "Đang tính (1–3 phút)…" : "Tính ngay"))),
+    msg && h("div", { style:{ fontSize:12.5, marginTop:8 } }, msg));
+
+  const shopsAll = Object.keys(doc.byShop||{}).sort();
+  const isAll = shop==="all";
+  const sb = isAll ? { perDay:doc.perDay, lost30:doc.lost30, skuCount:doc.skuCount, transferable:doc.transferablePerDay } : ((doc.byShop||{})[shop] || { perDay:0, lost30:0, skuCount:0, transferable:0 });
+  const qs = lsStrip(q.trim());
+  const allItems = (doc.items||[]).filter(it => isAll || it.shop===shop);
+  const items = allItems.filter(it => (act==="all" || it.action===act) && (!qs || lsStrip(it.pid+" "+it.name).includes(qs)));
+  const maxShop = Math.max(1, ...shopsAll.map(s => (doc.byShop[s]||{}).perDay||0));
+  const trend = (doc.trend||[]).map(t => ({ date:t.date, v: isAll ? t.perDay : ((t.byShop||{})[shop]||0) }));
+  const logDays = doc.logStartDate ? daysBetween(doc.logStartDate, doc.date || todayISO()) + 1 : null;
+
+  function trendChart(){
+    if(trend.length < 2) return h("div", { style:{ fontSize:12, color:"var(--inkSoft)" } }, "Biểu đồ xu hướng sẽ hiện từ ngày thứ 2 (mỗi sáng thêm 1 điểm).");
+    const W = 560, H = 150, P = { l:56, r:12, t:10, b:24 };
+    const vals = trend.map(t => t.v); const hi = Math.max(...vals) * 1.15 || 1;
+    const x = i => P.l + i * (W-P.l-P.r) / (trend.length-1);
+    const y = v => P.t + (hi - v) * (H-P.t-P.b) / hi;
+    const d = trend.map((t,i) => (i?"L":"M") + x(i).toFixed(1) + " " + y(t.v).toFixed(1)).join(" ");
+    const every = Math.max(1, Math.ceil(trend.length/7));
+    return h("div", { style:{ position:"relative" } },
+      h("svg", { viewBox:`0 0 ${W} ${H}`, style:{ width:"100%", height:"auto", display:"block" }, onMouseLeave:()=>setHoverT(null) },
+        [0, 0.5, 1].map((k,i) => h("g", { key:i },
+          h("line", { x1:P.l, x2:W-P.r, y1:y(hi*k/1.15), y2:y(hi*k/1.15), stroke:"#E8E5D8" }),
+          h("text", { x:P.l-6, y:y(hi*k/1.15)+4, textAnchor:"end", fontSize:10.5, fill:"#6B6858" }, fmtVNDCompact(hi*k/1.15)))),
+        trend.map((t,i) => (i % every===0 || i===trend.length-1) && h("text", { key:"x"+i, x:x(i), y:H-6, textAnchor: i===trend.length-1 ? "end" : (i===0 ? "start" : "middle"), fontSize:10.5, fill:"#6B6858" }, t.date.slice(8,10)+"/"+t.date.slice(5,7))),
+        hoverT!=null && h("line", { x1:x(hoverT), x2:x(hoverT), y1:P.t, y2:H-P.b, stroke:"#9A9785" }),
+        h("path", { d, fill:"none", stroke:"#B3261E", strokeWidth:2, strokeLinejoin:"round", strokeLinecap:"round" }),
+        trend.map((t,i) => h("circle", { key:"c"+i, cx:x(i), cy:y(t.v), r: hoverT===i ? 4.5 : (trend.length<=31 ? 3 : 0), fill:"#B3261E", stroke:"#fff", strokeWidth:1.5 })),
+        trend.map((t,i) => h("rect", { key:"r"+i, x:x(i)-(W-P.l-P.r)/(trend.length-1)/2, y:P.t, width:Math.max(8,(W-P.l-P.r)/(trend.length-1)), height:H-P.t-P.b, fill:"transparent", onMouseEnter:()=>setHoverT(i) }))),
+      hoverT!=null && h("div", { style:{ position:"absolute", top:0, left:`${Math.min(72, Math.max(2, x(hoverT)/W*100-10))}%`, background:"#fff", border:"1px solid var(--line)", borderRadius:8, padding:"5px 9px", fontSize:11.5, pointerEvents:"none", boxShadow:"0 4px 14px rgba(0,0,0,.08)" } },
+        h("b", null, trend[hoverT].date.split("-").reverse().join("/")), " · mất ", h("b", null, fmtVND(trend[hoverT].v)), "/ngày"));
+  }
+
+  function actionCell(it){
+    if(it.action==="transfer"){
+      const s = it.sources.filter(x => x.surplus>=1);
+      return h("div", null,
+        h(Pill360, { text:"Điều chuyển", color:CL360.info }),
+        h("div", { style:{ fontSize:11, marginTop:3 } }, s.slice(0,2).map((x,i) => h("div", { key:i }, `Từ ${shopLabel(x.shop)}: dư ${fmtNum(x.surplus)} (tồn ${fmtNum(x.qty)})`))),
+        h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)" } }, `Cần ~${fmtNum(it.need7)} cho 7 ngày`));
+    }
+    return h("div", null,
+      h(Pill360, { text:"Đặt hàng NCC", color:CL360.warn }),
+      h("div", { style:{ fontSize:11, marginTop:3 } }, it.sources.length ? `Shop khác có tồn nhưng không dư (${it.sources.map(x=>shopLabel(x.shop)).join(", ")})` : "Cả chuỗi không shop nào dư"),
+      h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)" } }, `Cần ~${fmtNum(it.need7)} cho 7 ngày`));
+  }
+  function openCompose(it){
+    const src = it.sources.find(x => x.surplus>=1);
+    setCompose({
+      heading:`Giao việc — ${it.name}`,
+      title: it.action==="transfer"
+        ? `Điều chuyển ${it.name} từ ${shopLabel(src.shop)} sang ${shopLabel(it.shop)}`
+        : `Đặt hàng gấp ${it.name} cho ${shopLabel(it.shop)}`,
+      mota: `Mã ${it.pid} đang HẾT HÀNG ở ${shopLabel(it.shop)} ${it.streak} ngày liên tiếp, ước tính mất ${fmtVND(it.perDay)}/ngày doanh thu (nhu cầu ~${it.demand}/ngày). `
+        + (it.action==="transfer" ? `${shopLabel(src.shop)} đang dư khoảng ${src.surplus} — đề xuất chuyển ~${Math.min(src.surplus, it.need7)}.` : `Không shop nào dư — đề xuất đặt NCC ~${it.need7} (đủ 7 ngày).`),
+      module:"Goods", shopOnly:true, shop: it.action==="transfer" ? src.shop : it.shop,
+    });
+  }
+
+  const shown = items.slice(0, limit);
+  const multiShop = (doc.topProducts||[]).filter(p => p.shopCount>=2);
+
+  return wrap(
+    h("div", { style:{ display:"flex", justifyContent:"space-between", gap:12, flexWrap:"wrap", alignItems:"flex-start", marginBottom:10 } },
+      h("div", { style:{ fontSize:12, color:"var(--inkSoft)", lineHeight:1.55, maxWidth:680 } },
+        "Ước tính số tiền bán được nếu mã hàng ", h("b", null, "đang hết"), " vẫn còn hàng: nhu cầu/ngày (tính trên những ngày còn hàng) × doanh thu bình quân 1 đơn vị. Chỉ tính mã có bán trong 30 ngày gần nhất.",
+        h("div", { style:{ marginTop:3 } }, `Cập nhật: ${doc.computedAt ? new Date(doc.computedAt).toLocaleString("vi-VN") : "—"} (tự động 06:10 mỗi sáng).`,
+          logDays!=null && logDays < 30 && h("span", { style:{ color:CL360.warn } }, ` Nhật ký hết hàng mới có ${logDays} ngày nên số lũy kế 30 ngày còn thấp hơn thực tế.`))),
+      h("div", { className:"btnRow", style:{ gap:6 } },
+        isAdmin && h("select", { value:shop, onChange:e=>setShop(e.target.value), style:{ padding:"7px 9px", border:"1px solid var(--line)", borderRadius:8 } },
+          h("option", { value:"all" }, "Toàn chuỗi"), shopsAll.map(s => h("option", { key:s, value:s }, shopLabel(s)))),
+        isAdmin && h("button", { className:"btn", disabled:busy, onClick:recompute }, busy ? "Đang tính…" : "Tính lại"))),
+    msg && h("div", { className:"card", style:{ fontSize:12.5, padding:"8px 12px" } }, msg),
+    h("div", { className:"metrics" },
+      h("div", { className:"metric warn" }, h("div", { className:"label" }, "Doanh thu mất / ngày"), h("div", { className:"value" }, fmtVND(sb.perDay))),
+      h("div", { className:"metric" }, h("div", { className:"label" }, "Nếu kéo dài 30 ngày"), h("div", { className:"value" }, fmtVNDCompact((sb.perDay||0)*30))),
+      h("div", { className:"metric" }, h("div", { className:"label" }, "Đã mất (ước tính 30 ngày qua)"), h("div", { className:"value" }, fmtVNDCompact(sb.lost30))),
+      h("div", { className:"metric" }, h("div", { className:"label" }, "Mã đang hết (có bán)"), h("div", { className:"value" }, fmtNum(sb.skuCount))),
+      h("div", { className:"metric good" }, h("div", { className:"label" }, "Gỡ được ngay bằng điều chuyển"), h("div", { className:"value" }, fmtVND(sb.transferable)), h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)" } }, "/ngày — shop khác đang dư"))),
+    h("div", { style:{ display:"grid", gridTemplateColumns: isAdmin && isAll ? "repeat(auto-fit,minmax(320px,1fr))" : "1fr", gap:12, marginBottom:16 } },
+      isAdmin && isAll && h("div", { className:"card", style:{ margin:0 } },
+        h("div", { className:"cardTitle", style:{ marginBottom:8 } }, "Theo nhà thuốc (đ/ngày)"),
+        shopsAll.slice().sort((a,b)=>(doc.byShop[b].perDay||0)-(doc.byShop[a].perDay||0)).map(s => {
+          const v = doc.byShop[s];
+          return h("div", { key:s, onClick:()=>setShop(s), title:"Bấm để xem riêng nhà thuốc này", style:{ display:"grid", gridTemplateColumns:"54px 1fr 150px", gap:8, alignItems:"center", padding:"4px 0", cursor:"pointer", fontSize:12 } },
+            h("span", { style:{ fontWeight:600 } }, shopLabel(s)),
+            h("div", { style:{ background:"#F0EEE2", borderRadius:4, height:12 } },
+              h("div", { style:{ width:`${Math.max(1, (v.perDay||0)/maxShop*100)}%`, height:12, background:"#B3261E", borderRadius:"0 4px 4px 0" } })),
+            h("span", { style:{ textAlign:"right", fontVariantNumeric:"tabular-nums" } }, fmtVND(v.perDay), h("span", { style:{ color:"var(--inkSoft)", fontSize:10.5 } }, ` · ${v.skuCount} mã`)));
+        })),
+      h("div", { className:"card", style:{ margin:0 } },
+        h("div", { className:"cardTitle", style:{ marginBottom:6 } }, `Xu hướng tiền mất/ngày${isAll ? "" : " — " + shopLabel(shop)}`),
+        trendChart())),
+    isAdmin && isAll && multiShop.length>0 && h("div", { className:"card", style:{ marginBottom:16 } },
+      h("div", { className:"cardTitle", style:{ marginBottom:4 } }, "Mã hết ở nhiều nhà thuốc cùng lúc — ưu tiên cho mua hàng"),
+      h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8 } }, "Hết đồng loạt thường là vấn đề nguồn hàng/đặt hàng chứ không phải phân bổ."),
+      h("div", { style:{ display:"flex", flexWrap:"wrap", gap:6 } }, multiShop.slice(0,20).map(p =>
+        h("div", { key:p.pid, style:{ border:"1px solid var(--line)", borderRadius:8, padding:"6px 9px", fontSize:12, background: p.allOut ? "#FBE3E1" : "#fff" } },
+          h("b", null, p.name), ` · hết ở ${p.shopCount} shop · ${fmtVND(p.perDay)}/ngày`, p.allOut && h("span", { style:{ color:CL360.bad, fontWeight:700 } }, " · không shop nào dư"))))),
+    h("div", { style:{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center", marginBottom:10 } },
+      h("input", { value:q, onChange:e=>setQ(e.target.value), placeholder:"Tìm mã / tên hàng…", style:{ flex:"1 1 200px", maxWidth:320, padding:"7px 10px", border:"1px solid var(--line)", borderRadius:8 } }),
+      [["all","Tất cả"],["transfer","Điều chuyển được"],["order","Phải đặt hàng"]].map(([k,l]) =>
+        h("button", { key:k, className:"btn"+(act===k?" btnPrimary":""), style:{ fontSize:12, padding:"5px 11px" }, onClick:()=>setAct(k) },
+          `${l} (${allItems.filter(it => k==="all" || it.action===k).length})`))),
+    !items.length ? h("div", { className:"card", style:{ fontSize:13 } }, allItems.length ? "Không có mã nào khớp bộ lọc." : "Không có mã bán được nào đang hết hàng 👍")
+    : h("div", { className:"tableWrap" }, h("table", { className:"data tblCompact" },
+        h("thead", null, h("tr", null,
+          h("th", null, "Sản phẩm"), isAll && h("th", null, "Nhà thuốc"), h("th", { className:"num" }, "Hết liên tiếp"),
+          h("th", { className:"num" }, "Nhu cầu/ngày"), h("th", { className:"num" }, "Mất/ngày"), h("th", { className:"num" }, "Đã mất 30 ngày"),
+          h("th", null, "Cách xử lý"), isAdmin && h("th", null, ""))),
+        h("tbody", null, shown.map(it => h("tr", { key:it.shop+"|"+it.pid },
+          h("td", { style:{ minWidth:180 } }, h("div", { style:{ fontWeight:600 } }, it.name), h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)" } }, it.pid, it.velocity==="FAST" && h("span", { style:{ color:CL360.bad, fontWeight:700 } }, " · bán nhanh"))),
+          isAll && h("td", null, shopLabel(it.shop)),
+          h("td", { className:"num" }, `${it.streak} ngày`),
+          h("td", { className:"num" }, (it.demand||0).toLocaleString("vi-VN")),
+          h("td", { className:"num", style:{ fontWeight:700, color:CL360.bad } }, fmtVND(it.perDay)),
+          h("td", { className:"num" }, fmtVND(it.lost30)),
+          h("td", { style:{ minWidth:190 } }, actionCell(it)),
+          isAdmin && h("td", null, h("button", { className:"btn btnGhost", style:{ fontSize:11, padding:"4px 9px" }, onClick:()=>openCompose(it) }, "Giao việc"))))))),
+    items.length > limit && h("div", { style:{ textAlign:"center" } }, h("button", { className:"btn btnGhost", onClick:()=>setLimit(limit+50) }, `Xem thêm (${items.length-limit} mã)`)),
+    compose && h(TaskComposer360, { preset:compose, onClose:()=>setCompose(null), onSaved:()=>setCompose(null) }));
+}
+
 // ================= APP SHELL =================
 // ===== Gộp tab (yêu cầu 19/9/2026): "Hàng hoá" gộp Khách đặt hàng + Kiểm kê + Tồn kho (Tổng
 // quan) + Điều chuyển hàng hoá; "Nhân viên" gộp Hiệu suất + Danh sách; "Báo cáo tuần" gộp Báo
@@ -11739,6 +12379,7 @@ const OPS_TABS = [
   { id:"crm", label:"Danh sách khách hàng" },
   { id:"nhanvien", label:"Danh sách nhân viên" },
   { id:"ctkm", label:"Khuyến mại" },
+  { id:"giadoithu", label:"Giá đối thủ" }, // 29/9/2026: so giá đối thủ (chỉ quản lý)
   { id:"training", label:"Đào tạo & Buddy" },
   { id:"kudos", label:"Ghi nhận & Quà" },
   { id:"temgia", label:"Tem giá" },
@@ -11768,7 +12409,7 @@ const OPS_GROUPS_ADMIN_V2 = [
   { id:"nhansu",       label:"Nhân sự",      tabs:["nhanvien","emp360","kpi","training","kudos"] },
   { id:"khachhang",    label:"Khách hàng",   tabs:["crm","cust360","taimua"] },
   { id:"hanghoagroup", label:"Hàng hoá",     tabs:["hanghoa","prod360","donthuoc"] },
-  { id:"kinhdoanh",    label:"Kinh doanh & Marketing", tabs:["revenueAnalytics","ctkm","temgia"] },
+  { id:"kinhdoanh",    label:"Kinh doanh & Marketing", tabs:["revenueAnalytics","ctkm","giadoithu","temgia"] },
   { id:"baocao",       label:"Báo cáo & Phân tích",   tabs:["ketquangay","baocaotuan"] },
   { id:"ruiro",        label:"Rủi ro & Tuân thủ",     tabs:["risk","kinhnghiem"] },
   { id:"ai",           label:"AI Commander",          tabs:["ai"] },
@@ -11795,7 +12436,7 @@ const MENU_LEGACY_ADMIN = [
   { id:"command", label:"Tổng quan điều hành", tabs:["command","risk","shop360"] },
   { id:"nhansu", label:"Nhân sự", tabs:["emp360","tasks","kpi","nhanvien","training","kudos"] },
   { id:"khachhang", label:"Khách hàng", tabs:["taimua","cust360","crm","ctkm"] },
-  { id:"hanghoagroup", label:"Hàng hoá", tabs:["prod360","hanghoa","donthuoc","temgia"] },
+  { id:"hanghoagroup", label:"Hàng hoá", tabs:["prod360","hanghoa","donthuoc","temgia","giadoithu"] },
   { id:"vanhanh", label:"Vận hành", tabs:["homnay","checklist","photos","revenueAnalytics","ketquangay","baocaotuan","kinhnghiem"] },
   { id:"action", label:"Công việc cần xử lý", tabs:["action"] },
   { id:"ai", label:"AI", tabs:["ai"] },
@@ -14090,6 +14731,7 @@ const TAB_STYLE = {
   revenueAnalytics: { icon:"💵", color:"#0d9488" },
   staffPerformance: { icon:"🏆", color:"#0891b2" },
   ctkm:             { icon:"🎁", color:"#b4720a" },
+  giadoithu:        { icon:"⚖️", color:"#b3261e" },
   inventoryHealth:  { icon:"📊", color:"#0f6b5c" },
   hanghoa:          { icon:"📦", color:"#0f6b5c" },
   nhanvien:         { icon:"👥", color:"#475569" },
@@ -20326,7 +20968,7 @@ function Dashboard({ user, isAdmin, myStaff }){
   const whoLabel = isAdmin ? "Quản lý" : (myStaff ? `${myStaff.name} · ${myStaff.shop}` : "");
   const activeTabInfo = leafTabs.find(t=>t.id===activeTab);
   const activeGroup = navGroups.find(g => g.tabs.includes(activeTab)) || navGroups[0];
-  const FEATURE_KEYWORDS = { taimua:"tai mua nhac het thuoc cham soc", crm:"crm khach hang phan khuc", cust360:"ho so khach", emp360:"ho so nhan vien", prod360:"ho so hang hoa san pham", hanghoa:"ton kho kiem ke dieu chuyen dat hang toc do tieu thu", action:"cong viec can xu ly cho kiem tra qua han tien do", tasks:"giao viec", risk:"rui ro canh bao tuan thu", kinhnghiem:"kinh nghiem", photos:"hinh anh minh chung", revenueAnalytics:"doanh thu", ctkm:"khuyen mai", temgia:"tem gia", kpi:"kpi chi tieu", ketquangay:"ket qua ngay", baocaotuan:"bao cao tuan", sales:"doanh so ngay", checklist:"checklist", homnay:"hom nay", shop360:"ho so nha thuoc" };
+  const FEATURE_KEYWORDS = { taimua:"tai mua nhac het thuoc cham soc", crm:"crm khach hang phan khuc", cust360:"ho so khach", emp360:"ho so nhan vien", prod360:"ho so hang hoa san pham", hanghoa:"ton kho kiem ke dieu chuyen dat hang toc do tieu thu", action:"cong viec can xu ly cho kiem tra qua han tien do", tasks:"giao viec", risk:"rui ro canh bao tuan thu", kinhnghiem:"kinh nghiem", photos:"hinh anh minh chung", revenueAnalytics:"doanh thu", ctkm:"khuyen mai", giadoithu:"gia doi thu so gia long chau pharmacity an khang canh tranh", temgia:"tem gia", kpi:"kpi chi tieu", ketquangay:"ket qua ngay", baocaotuan:"bao cao tuan", sales:"doanh so ngay", checklist:"checklist", homnay:"hom nay", shop360:"ho so nha thuoc" };
   const featureItems = navGroups.flatMap(g => g.tabs.map(id => ({ id, label:(leafTabs.find(t=>t.id===id)||{}).label || id, group:g.label, keywords:FEATURE_KEYWORDS[id] || "" })));
   function groupUnread(g){ return g.tabs.reduce((s,id)=>s+(unreadCount[id]||0),0) + (g.tabs.includes("action") ? needAction360 : 0); }
   const totalUnread = Object.values(unreadCount).reduce((a,b)=>a+(b||0), 0);
@@ -20472,6 +21114,7 @@ function Dashboard({ user, isAdmin, myStaff }){
         activeTab==="sales" && React.createElement(SalesReportView, { key:viewResetKey, isAdmin:false, myStaff }),
         activeTab==="nhanvien" && React.createElement(NhanVienView, { key:viewResetKey, isAdmin, myStaff }),
         activeTab==="ctkm" && React.createElement(PromoAnalyticsView, { key:viewResetKey, isAdmin, myStaff }),
+        activeTab==="giadoithu" && isAdmin && React.createElement(CompetitorPriceView, { key:viewResetKey, isAdmin }),
         activeTab==="ai" && React.createElement(AiHubView, { key:viewResetKey, onNavigate:setActiveTab }),
         activeTab==="hethong" && isAdmin && React.createElement(SystemHubView, { key:viewResetKey }),
       ])),
