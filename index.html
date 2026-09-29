@@ -8823,6 +8823,19 @@ function WeeklyPlanManagerView(){
     setDraft(d => ({ ...d, [sectionKey]: (d[sectionKey]||[]).map(r => r.id===rowId ? { ...r, [field]:value } : r) }));
   }
   function addRow(sectionKey){ setDraft(d => ({ ...d, [sectionKey]: [...(d[sectionKey]||[]), wpEmptyRow()] })); }
+  // Đưa đầu việc AI tổng hợp xuống các dòng kế hoạch bên dưới (bỏ dòng trống, không thêm trùng nội dung). Quản lý vẫn sửa được trước khi bấm Lưu.
+  function addAiPlanRows(sectionKey, actions){
+    setDraft(d => {
+      const cur = (d[sectionKey]||[]).filter(r => (r.noiDung||r.target||r.nguoiThucHien||r.deadline||r.ketQua||"").toString().trim());
+      const have = new Set(cur.map(r => (r.noiDung||"").trim()));
+      const add = (actions||[]).map(a => {
+        const nd = ((a.task||"").trim() + (a.shops ? ` (${a.shops})` : "")).trim();
+        return wpEmptyRow({ noiDung: nd, target: a.target||"", nguoiThucHien: a.owner||"", deadline: /^\d{4}-\d{2}-\d{2}$/.test(a.deadline||"") ? a.deadline : "" });
+      }).filter(r => r.noiDung && !have.has(r.noiDung));
+      const next = [...cur, ...add];
+      return { ...d, [sectionKey]: next.length ? next : [wpEmptyRow()] };
+    });
+  }
   function removeRow(sectionKey, rowId){ setDraft(d => ({ ...d, [sectionKey]: (d[sectionKey]||[]).filter(r=>r.id!==rowId) })); }
   async function handleSave(){
     setSaving(true);
@@ -9041,12 +9054,23 @@ function WeeklyPlanManagerView(){
                 ]),
               ]))),
       ]),
-      s.staffCategoryKey && aiSectionByKey[s.staffCategoryKey] && aiSectionByKey[s.staffCategoryKey].plan && React.createElement("div", { key:"aiplan", style:{ fontSize:12.5, background:"var(--pineSoft)", borderRadius:8, padding:"8px 10px", marginBottom:10, lineHeight:1.5 } }, [
-        React.createElement("div",{key:"h",style:{fontWeight:700,marginBottom:2}}, "🤖 Tổng hợp đánh giá kế hoạch tuần tới"),
-        aiSectionByKey[s.staffCategoryKey].plan.assessment,
-        (aiSectionByKey[s.staffCategoryKey].plan.strengths||[]).length>0 && aiLabel("Kế hoạch tốt:"), aiList(aiSectionByKey[s.staffCategoryKey].plan.strengths),
-        (aiSectionByKey[s.staffCategoryKey].plan.gaps||[]).length>0 && aiLabel("Còn thiếu / chưa có kế hoạch:"), aiList(aiSectionByKey[s.staffCategoryKey].plan.gaps),
-        (aiSectionByKey[s.staffCategoryKey].plan.watchShops||[]).length>0 && aiLabel("Nhà thuốc cần chỉnh kế hoạch:"), aiList(aiSectionByKey[s.staffCategoryKey].plan.watchShops),
+      s.staffCategoryKey && aiSectionByKey[s.staffCategoryKey] && aiSectionByKey[s.staffCategoryKey].plan && Array.isArray(aiSectionByKey[s.staffCategoryKey].plan.actions) && React.createElement("div", { key:"aiplan", style:{ fontSize:12.5, background:"var(--pineSoft)", borderRadius:8, padding:"8px 10px", marginBottom:10, lineHeight:1.5 } }, [
+        React.createElement("div",{key:"h",style:{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:2}}, [
+          React.createElement("b",{key:"t"}, "🤖 Tổng hợp kế hoạch triển khai tuần tới"),
+          aiSectionByKey[s.staffCategoryKey].plan.actions.length>0 && React.createElement("button",{key:"all",type:"button",className:"btn btnGhost",style:{fontSize:11.5,padding:"3px 9px"},onClick:()=>addAiPlanRows(s.key, aiSectionByKey[s.staffCategoryKey].plan.actions)}, "＋ Đưa tất cả vào kế hoạch"),
+        ]),
+        aiSectionByKey[s.staffCategoryKey].plan.focus && React.createElement("div",{key:"f"}, [React.createElement("b",{key:"b"},"Trọng tâm: "), aiSectionByKey[s.staffCategoryKey].plan.focus]),
+        aiSectionByKey[s.staffCategoryKey].plan.actions.length===0
+          ? React.createElement("div",{key:"e",style:{color:"var(--inkSoft)"}}, "Chưa có đầu việc nào.")
+          : React.createElement("ol",{key:"ol",style:{margin:"6px 0 2px",paddingLeft:20}}, aiSectionByKey[s.staffCategoryKey].plan.actions.map((a,i) =>
+              React.createElement("li",{key:i,style:{marginBottom:5}}, [
+                React.createElement("span",{key:"t",style:{fontWeight:600}}, a.task||""),
+                a.shops && React.createElement("span",{key:"s"}, " — "+a.shops),
+                React.createElement("div",{key:"m",style:{fontSize:11.5,color:"var(--inkSoft)"}}, [
+                  [a.target?("🎯 "+a.target):null, a.owner?("👤 "+a.owner):null, a.deadline?("📅 "+a.deadline):null].filter(Boolean).join(" · "),
+                  React.createElement("button",{key:"add",type:"button",className:"btn btnGhost",style:{fontSize:11,padding:"1px 7px",marginLeft:8},onClick:()=>addAiPlanRows(s.key,[a])}, "＋ Đưa vào kế hoạch"),
+                ]),
+              ]))),
       ]),
       ...rows.map(r => React.createElement("div", { key:r.id, className:"weeklyRow" }, [
         rows.length>1 && React.createElement("div", { key:"rm", style:{ textAlign:"right" } },
