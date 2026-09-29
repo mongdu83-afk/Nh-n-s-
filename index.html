@@ -12344,6 +12344,319 @@ function LostSalesView({ isAdmin, myStaff }){
     compose && h(TaskComposer360, { preset:compose, onClose:()=>setCompose(null), onSaved:()=>setCompose(null) }));
 }
 
+
+// =====================================================================================================
+// ===== 29/9/2026 (Phương): TAB "TỪ ĐIỂN SẢN PHẨM" — cho quản lý không chuyên dược nắm "tinh thần" từng mã
+// =====================================================================================================
+// Dữ liệu qua Cloud Function productDictionaryApiNow (xếp hạng bán chạy khu vực + thẻ từ điển do AI soạn,
+// sửa/duyệt tay). Xem khối "TỪ ĐIỂN SẢN PHẨM" trong index.js.
+const PD_API = "https://asia-southeast1-upharma-176d5.cloudfunctions.net/productDictionaryApiNow";
+function pdCall(action, payload, timeoutMs){
+  return callCf(PD_API, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ action, ...(payload||{}) }) }, timeoutMs || 90000);
+}
+function pdStrip(s){ return String(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/đ/g,"d").replace(/Đ/g,"D").toLowerCase(); }
+function pdLoaiColor(loai){
+  const l = pdStrip(loai);
+  if(l.includes("ke don") && !l.includes("khong")) return CL360.bad;
+  if(l.includes("khong ke don")) return CL360.info;
+  if(l.includes("thuc pham")) return CL360.good;
+  if(l.includes("my pham")) return CL360.violet;
+  return CL360.gray;
+}
+function pdTrend(it){
+  if(!it.revPrev30) return null;
+  return Math.round((it.rev30 - it.revPrev30) / it.revPrev30 * 100);
+}
+
+function ProductDictionaryView({ isAdmin }){
+  const h = React.createElement;
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState("");
+  const [msg, setMsg] = useState("");
+  const [q, setQ] = useState("");
+  const [type, setType] = useState("all");
+  const [flt, setFlt] = useState("all"); // all | heso | missing | unreviewed | rx
+  const [view, setView] = useState("rank"); // rank | group
+  const [openIdx, setOpenIdx] = useState(null);
+  const [showAdd, setShowAdd] = useState(false);
+
+  async function load(){
+    setErr(null);
+    try{ setData(await pdCall("list", {}, 300000)); } catch(e){ setErr(e); }
+  }
+  useEffect(()=>{ if(isAdmin) load(); }, [isAdmin]);
+  async function generate(ids, force){
+    setBusy(ids ? "gen1" : "gen"); setMsg(ids ? "" : "AI đang soạn thẻ (khoảng 10–20 giây mỗi mã, chạy 3 mã song song)…");
+    try{
+      const r = await pdCall("generate", ids ? { productIds:ids, force:!!force } : { limit:12 }, 540000);
+      setMsg(`Đã soạn ${r.generated}/${r.requested} thẻ${r.failed?` · ${r.failed} lỗi (thử lại sau)`:""}${r.skipped?` · ${r.skipped} thẻ đã duyệt nên giữ nguyên`:""}.`);
+      await load();
+    } catch(e){ setMsg("Lỗi: " + (e.message||e)); }
+    setBusy("");
+  }
+  async function rerank(){
+    setBusy("rank"); setMsg("");
+    try{ await pdCall("rank", {}, 540000); await load(); setMsg("Đã cập nhật xếp hạng bán chạy 30 ngày."); }
+    catch(e){ setMsg("Lỗi: " + (e.message||e)); }
+    setBusy("");
+  }
+
+  if(!isAdmin) return h(EmptyState, { kind:"forbidden", detail:"Chức năng này chỉ dành cho quản lý." });
+  const wrap = (...c) => h("div", { style:{ maxWidth:1200, margin:"0 auto", padding:16 } }, ...c);
+  if(err) return wrap(h(EmptyState, { kind: emptyKindFromError(err), detail: err.message }), h("button", { className:"btn", onClick:load }, "Thử lại"));
+  if(!data) return h("div", { className:"emptyState" }, "Đang tải từ điển… (lần đầu mở cần xếp hạng bán chạy, mất khoảng 1 phút)");
+
+  const rk = data.ranking || { items:[] };
+  const dict = data.dict || {};
+  // Mã ngoài top đã được soạn thêm thẻ → nối vào cuối danh sách
+  const inRank = new Set(rk.items.map(x => x.pid));
+  const extra = Object.values(dict).filter(d => d.productId && !inRank.has(d.productId)).map(d => ({ pid:d.productId, name:d.name||d.productId, rank:null, type:"", extra:true }));
+  const all = [...rk.items, ...extra].map(it => ({ ...it, d: dict[it.pid] || null }));
+  const types = {};
+  all.forEach(it => { const t = it.type || "Chưa phân loại"; types[t] = (types[t]||0) + 1; });
+  const qs = pdStrip(q.trim());
+  const list = all.filter(it => {
+    if(type!=="all" && (it.type || "Chưa phân loại")!==type) return false;
+    if(flt==="heso" && !it.isHeSo) return false;
+    if(flt==="missing" && it.d) return false;
+    if(flt==="unreviewed" && (!it.d || it.d.status==="reviewed")) return false;
+    if(flt==="rx" && !(it.d && pdLoaiColor(it.d.entry && it.d.entry.loai)===CL360.bad)) return false;
+    if(qs){
+      const e = it.d && it.d.entry;
+      const s = pdStrip([it.pid, it.name, e && e.hoatChat, e && e.nhomThuoc, e && e.tinhThan, e && (e.congDung||[]).join(" ")].join(" "));
+      if(!qs.split(/\s+/).every(w => s.includes(w))) return false;
+    }
+    return true;
+  });
+  const have = all.filter(it => it.d).length;
+  const reviewed = all.filter(it => it.d && it.d.status==="reviewed").length;
+  const missingTop = rk.items.filter(it => !dict[it.pid]).length;
+  const lastCum = rk.items.length ? rk.items[rk.items.length-1].cumShare : 0;
+  const top20Cum = rk.items.length >= 20 ? rk.items[19].cumShare : lastCum;
+
+  function card(it){
+    const e = it.d && it.d.entry;
+    const tr = it.rank ? pdTrend(it) : null;
+    const idx = list.indexOf(it);
+    return h("div", { key:it.pid, className:"card", onClick:()=>setOpenIdx(idx), style:{ margin:0, cursor:"pointer", display:"flex", flexDirection:"column", gap:6, padding:"12px 14px" } },
+      h("div", { style:{ display:"flex", gap:8, alignItems:"flex-start" } },
+        it.rank && h("span", { style:{ flex:"none", minWidth:28, height:22, padding:"0 6px", borderRadius:6, background: it.rank<=10 ? "var(--pine)" : "#F0EEE2", color: it.rank<=10 ? "#fff" : "#5A5748", fontSize:11.5, fontWeight:800, display:"flex", alignItems:"center", justifyContent:"center" } }, "#"+it.rank),
+        h("div", { style:{ flex:1, minWidth:0 } },
+          h("div", { style:{ fontWeight:700, fontSize:13.5, lineHeight:1.3 } }, it.name),
+          h("div", { style:{ fontSize:11, color:"var(--inkSoft)", marginTop:2 } }, e && e.hoatChat ? e.hoatChat : (it.type || it.pid))),
+        it.d && it.d.status==="reviewed" && h("span", { title:"Dược sĩ đã duyệt", style:{ color:CL360.good, fontWeight:800 } }, "✓")),
+      e ? h("div", { style:{ fontSize:12.5, lineHeight:1.5, color:"var(--ink)", display:"-webkit-box", WebkitLineClamp:3, WebkitBoxOrient:"vertical", overflow:"hidden" } }, e.tinhThan)
+        : h("div", { style:{ fontSize:12, color:"var(--inkSoft)", fontStyle:"italic" } }, "Chưa có thẻ từ điển — bấm để soạn."),
+      h("div", { style:{ display:"flex", gap:5, flexWrap:"wrap", alignItems:"center", marginTop:"auto" } },
+        e && e.loai && h(Pill360, { text:e.loai, color:pdLoaiColor(e.loai) }),
+        e && e.nhomThuoc && h(Pill360, { text:e.nhomThuoc, color:CL360.gray }),
+        it.isHeSo && h(Pill360, { text:"Hàng hệ số", color:"#b4720a" }),
+        it.rank && h("span", { style:{ marginLeft:"auto", fontSize:11, color:"var(--inkSoft)", whiteSpace:"nowrap" } },
+          fmtVNDCompact(it.rev30), "/30n · ", it.shopCount, " NT",
+          tr!=null && h("span", { style:{ color: tr>=0 ? CL360.good : CL360.bad, fontWeight:700, marginLeft:4 } }, (tr>=0?"▲":"▼") + Math.abs(tr) + "%"))));
+  }
+  const grid = (arr) => h("div", { style:{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(270px,1fr))", gap:10 } }, arr.map(card));
+  let body;
+  if(!list.length) body = h("div", { className:"card", style:{ fontSize:13 } }, "Không có mã nào khớp bộ lọc.");
+  else if(view==="group"){
+    const groups = {};
+    list.forEach(it => { const g = (it.d && it.d.entry && it.d.entry.nhomThuoc) || "Chưa có thẻ / chưa phân nhóm"; (groups[g] = groups[g] || []).push(it); });
+    const order = Object.keys(groups).sort((a,b) => groups[b].reduce((s,x)=>s+(x.rev30||0),0) - groups[a].reduce((s,x)=>s+(x.rev30||0),0));
+    body = h("div", null, order.map(g => h("div", { key:g, style:{ marginBottom:18 } },
+      h("div", { style:{ fontWeight:800, fontSize:14, margin:"4px 0 8px", display:"flex", gap:8, alignItems:"baseline" } }, g,
+        h("span", { style:{ fontWeight:500, fontSize:11.5, color:"var(--inkSoft)" } }, `${groups[g].length} mã · ${fmtVNDCompact(groups[g].reduce((s,x)=>s+(x.rev30||0),0))}/30 ngày`)),
+      grid(groups[g]))));
+  } else body = grid(list);
+
+  const chip = (k, label, cur, set) => h("button", { key:k, className:"btn"+(cur===k?" btnPrimary":""), style:{ fontSize:11.5, padding:"4px 10px" }, onClick:()=>set(k) }, label);
+
+  return wrap(
+    h("div", { style:{ display:"flex", justifyContent:"space-between", gap:12, flexWrap:"wrap", alignItems:"flex-start", marginBottom:10 } },
+      h("div", { style:{ fontSize:12, color:"var(--inkSoft)", lineHeight:1.55, maxWidth:640 } },
+        "Những mã bán chạy nhất khu vực (doanh thu 30 ngày), mỗi mã có 1 thẻ giải thích bằng ngôn ngữ đời thường: sản phẩm là gì, dùng khi nào, cần cẩn trọng gì, bán kèm gì. ",
+        h("b", null, "Nội dung do AI soạn để tham khảo nội bộ"), " — mã có dấu ", h("span", { style:{ color:CL360.good, fontWeight:800 } }, "✓"), " đã được dược sĩ duyệt.",
+        h("div", { style:{ marginTop:3 } }, `Xếp hạng: ${rk.from ? rk.mid.split("-").reverse().join("/") + " – " + rk.to.split("-").reverse().join("/") : "—"} · tự cập nhật sáng thứ Hai hằng tuần.`)),
+      h("div", { className:"btnRow", style:{ gap:6, flexWrap:"wrap" } },
+        missingTop>0 && h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:()=>generate(null) }, busy==="gen" ? "AI đang soạn…" : `Soạn thẻ cho ${Math.min(12, missingTop)} mã tiếp theo`),
+        h("button", { className:"btn", disabled:!!busy, onClick:()=>setShowAdd(true) }, "+ Thêm mã ngoài top"),
+        h("button", { className:"btn btnGhost", disabled:!!busy, onClick:rerank }, busy==="rank" ? "Đang xếp hạng…" : "Cập nhật xếp hạng"))),
+    msg && h("div", { className:"card", style:{ fontSize:12.5, padding:"8px 12px", marginBottom:10 } }, msg),
+    h("div", { className:"metrics" },
+      h("div", { className:"metric" }, h("div", { className:"label" }, "Mã bán chạy theo dõi"), h("div", { className:"value" }, fmtNum(rk.items.length))),
+      h("div", { className:"metric" }, h("div", { className:"label" }, "Top 20 chiếm"), h("div", { className:"value" }, (top20Cum||0).toLocaleString("vi-VN") + "%"), h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)" } }, `doanh thu khu vực · top ${rk.items.length} chiếm ${(lastCum||0).toLocaleString("vi-VN")}%`)),
+      h("div", { className:"metric good" }, h("div", { className:"label" }, "Đã có thẻ từ điển"), h("div", { className:"value" }, `${have}/${all.length}`)),
+      h("div", { className:"metric gold" }, h("div", { className:"label" }, "Dược sĩ đã duyệt"), h("div", { className:"value" }, fmtNum(reviewed)))),
+    h("div", { style:{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center", marginBottom:8 } },
+      h("input", { value:q, onChange:e=>setQ(e.target.value), placeholder:"Tìm tên, hoạt chất, công dụng (VD: đau dạ dày)…", style:{ flex:"1 1 240px", maxWidth:380, padding:"7px 10px", border:"1px solid var(--line)", borderRadius:8 } }),
+      h("div", { className:"btnRow", style:{ gap:4 } }, chip("rank","Theo xếp hạng",view,setView), chip("group","Theo nhóm tác dụng",view,setView))),
+    h("div", { style:{ display:"flex", gap:4, flexWrap:"wrap", marginBottom:6 } },
+      chip("all", "Tất cả", flt, setFlt), chip("heso", "Hàng hệ số", flt, setFlt), chip("rx", "Thuốc kê đơn", flt, setFlt),
+      chip("missing", "Chưa có thẻ", flt, setFlt), chip("unreviewed", "Chưa duyệt", flt, setFlt)),
+    h("div", { style:{ display:"flex", gap:4, flexWrap:"wrap", marginBottom:12 } },
+      chip("all", `Mọi ngành hàng (${all.length})`, type, setType),
+      Object.keys(types).sort((a,b)=>types[b]-types[a]).map(t => chip(t, `${t} (${types[t]})`, type, setType))),
+    body,
+    openIdx!=null && list[openIdx] && h(ProductDictionaryModal, {
+      item:list[openIdx], pos:openIdx, total:list.length, busy,
+      onPrev: openIdx>0 ? ()=>setOpenIdx(openIdx-1) : null,
+      onNext: openIdx<list.length-1 ? ()=>setOpenIdx(openIdx+1) : null,
+      onClose:()=>setOpenIdx(null),
+      onGenerate:(force)=>generate([list[openIdx].pid], force),
+      onSaved: load,
+    }),
+    showAdd && h(ProductDictionaryAddModal, { onClose:()=>setShowAdd(false), onPick:(pid)=>{ setShowAdd(false); generate([pid]); } }));
+}
+
+function ProductDictionaryModal({ item, pos, total, busy, onPrev, onNext, onClose, onGenerate, onSaved }){
+  const h = React.createElement;
+  const [editing, setEditing] = useState(false);
+  const d = item.d; const e = d && d.entry;
+  useEffect(()=>{ setEditing(false); }, [item.pid]);
+  useEffect(()=>{
+    function k(ev){ if(editing) return; if(ev.key==="ArrowRight" && onNext) onNext(); if(ev.key==="ArrowLeft" && onPrev) onPrev(); if(ev.key==="Escape") onClose(); }
+    window.addEventListener("keydown", k); return ()=>window.removeEventListener("keydown", k);
+  });
+  const tr = item.rank ? pdTrend(item) : null;
+  const sec = (title, children, tone) => h("div", { style:{ marginBottom:12, padding: tone ? "10px 12px" : 0, borderRadius:10, background: tone==="warn" ? "#FBE3E1" : tone==="biz" ? "var(--goldSoft, #FBF1D6)" : tone==="ask" ? "#E8F1FA" : "transparent" } },
+    h("div", { style:{ fontSize:11, fontWeight:800, letterSpacing:".04em", textTransform:"uppercase", color:"#5A5748", marginBottom:4 } }, title), children);
+  const ul = (arr) => h("ul", { style:{ margin:0, paddingLeft:18, fontSize:13, lineHeight:1.6 } }, (arr||[]).map((x,i) => h("li", { key:i }, x)));
+  const p = (t) => h("div", { style:{ fontSize:13, lineHeight:1.6 } }, t || "—");
+
+  let content;
+  if(editing) content = h(ProductDictionaryEditor, { item, onCancel:()=>setEditing(false), onSaved:()=>{ setEditing(false); onSaved(); } });
+  else if(!e) content = h("div", { className:"emptyState", style:{ padding:30 } },
+    h("div", { style:{ marginBottom:10 } }, "Mã này chưa có thẻ từ điển."),
+    h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:()=>onGenerate(false) }, busy==="gen1" ? "AI đang soạn…" : "Soạn thẻ bằng AI"));
+  else content = h("div", null,
+    h("div", { style:{ fontSize:15, lineHeight:1.55, fontWeight:600, padding:"10px 14px", borderLeft:"4px solid var(--pine)", background:"var(--pineSoft, #E6F2EE)", borderRadius:"0 10px 10px 0", marginBottom:14 } }, e.tinhThan),
+    h("div", { style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:10, marginBottom:12 } },
+      h("div", null, h("div", { style:{ fontSize:11, color:"var(--inkSoft)" } }, "Hoạt chất / thành phần"), h("div", { style:{ fontWeight:700, fontSize:13 } }, e.hoatChat || "—")),
+      h("div", null, h("div", { style:{ fontSize:11, color:"var(--inkSoft)" } }, "Nhóm tác dụng"), h("div", { style:{ fontWeight:700, fontSize:13 } }, e.nhomThuoc || "—")),
+      h("div", null, h("div", { style:{ fontSize:11, color:"var(--inkSoft)" } }, "Phân loại"), e.loai ? h(Pill360, { text:e.loai, color:pdLoaiColor(e.loai) }) : "—")),
+    h("div", { style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))", gap:"0 20px" } },
+      h("div", null,
+        sec("Dùng để làm gì", ul(e.congDung)),
+        sec("Ai hay mua", p(e.khachDienHinh)),
+        sec("Khi nào khách tìm mua", ul(e.khiNaoKhachMua)),
+        sec("Cách dùng (chung)", p(e.cachDung))),
+      h("div", null,
+        sec("⚠ Lưu ý an toàn", ul(e.luuY), "warn"),
+        sec("Nhân viên nên hỏi khách", ul(e.cauHoiKhach), "ask"),
+        sec("Tư vấn bán kèm", (e.banKem||[]).length ? h("ul", { style:{ margin:0, paddingLeft:18, fontSize:13, lineHeight:1.6 } }, e.banKem.map((b,i) => h("li", { key:i }, h("b", null, b.sanPham), b.lyDo ? " — " + b.lyDo : ""))) : p("—")),
+        sec("Thay thế khi hết hàng", p(e.thayThe)))),
+    sec("💼 Góc kinh doanh", p(e.gocKinhDoanh), "biz"),
+    (e.thuatNgu||[]).length>0 && sec("Giải thích thuật ngữ", h("div", { style:{ display:"grid", gap:4 } }, e.thuatNgu.map((t,i) => h("div", { key:i, style:{ fontSize:12.5, lineHeight:1.5 } }, h("b", null, t.tu), ": ", t.giaiThich)))),
+    (e.doTinCay && pdStrip(e.doTinCay)!=="cao") && h("div", { style:{ fontSize:12, color:CL360.warn, fontWeight:600, marginBottom:8 } }, `Độ tin cậy: ${e.doTinCay}${e.ghiChuDoTinCay ? " — " + e.ghiChuDoTinCay : ""}. Nên nhờ dược sĩ kiểm tra lại.`));
+
+  return h("div", { className:"modalOverlay", onClick:onClose },
+    h("div", { className:"modal modalWide", onClick:ev=>ev.stopPropagation(), style:{ maxHeight:"92vh", overflowY:"auto", maxWidth:920 } },
+      h("div", { style:{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"flex-start", marginBottom:10 } },
+        h("div", { style:{ minWidth:0 } },
+          h("div", { style:{ fontWeight:800, fontSize:18.5, lineHeight:1.3 } }, item.rank ? `#${item.rank} · ` : "", item.name),
+          h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:3 } },
+            item.pid, item.type ? " · " + item.type : "", item.group ? " / " + item.group : "",
+            item.rank ? ` · ${fmtVND(item.rev30)} trong 30 ngày (${(item.share||0).toLocaleString("vi-VN")}% doanh thu khu vực) · ${fmtNum(item.qty30)} ${item.unit||""} · bán ở ${item.shopCount} nhà thuốc` : "",
+            tr!=null && h("span", { style:{ color: tr>=0 ? CL360.good : CL360.bad, fontWeight:700 } }, ` · ${tr>=0?"tăng":"giảm"} ${Math.abs(tr)}% so với 30 ngày trước`),
+            item.isHeSo && h("span", { style:{ color:"#b4720a", fontWeight:700 } }, " · Hàng hệ số"))),
+        h("div", { style:{ display:"flex", gap:4, flex:"none" } },
+          h("button", { className:"btn btnGhost", disabled:!onPrev, onClick:onPrev, title:"Mã trước (←)" }, "‹"),
+          h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)", alignSelf:"center" } }, `${pos+1}/${total}`),
+          h("button", { className:"btn btnGhost", disabled:!onNext, onClick:onNext, title:"Mã sau (→)" }, "›"))),
+      content,
+      !editing && h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap", alignItems:"center", borderTop:"1px solid var(--line)", paddingTop:10, marginTop:6 } },
+        h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } },
+          !d ? "" : d.status==="reviewed" ? h("span", { style:{ color:CL360.good, fontWeight:700 } }, `✓ Dược sĩ ${d.reviewedBy||""} đã duyệt ${d.reviewedAt ? new Date(d.reviewedAt).toLocaleDateString("vi-VN") : ""}`)
+            : d.status==="edited" ? `Đã sửa tay bởi ${d.editedBy||"?"} — chưa duyệt` : `AI soạn ${d.generatedAt ? new Date(d.generatedAt).toLocaleDateString("vi-VN") : ""} — chưa được dược sĩ duyệt`),
+        h("div", { className:"btnRow", style:{ gap:6 } },
+          e && h("button", { className:"btn btnGhost", disabled:!!busy, onClick:()=>{ if(window.confirm(d.status==="reviewed" ? "Thẻ này ĐÃ được dược sĩ duyệt. Soạn lại bằng AI sẽ ghi đè và mất trạng thái duyệt. Tiếp tục?" : "Soạn lại thẻ này bằng AI (ghi đè nội dung hiện tại)?")) onGenerate(true); } }, busy==="gen1" ? "Đang soạn…" : "Soạn lại (AI)"),
+          e && h("button", { className:"btn", onClick:()=>setEditing(true) }, "Sửa / duyệt"),
+          h("button", { className:"btn btnPrimary", onClick:onClose }, "Đóng")))));
+}
+
+function ProductDictionaryEditor({ item, onCancel, onSaved }){
+  const h = React.createElement;
+  const e0 = (item.d && item.d.entry) || {};
+  const lines = (arr) => (arr||[]).join("\n");
+  const [f, setF] = useState({
+    tinhThan:e0.tinhThan||"", hoatChat:e0.hoatChat||"", nhomThuoc:e0.nhomThuoc||"", loai:e0.loai||"",
+    congDung:lines(e0.congDung), khachDienHinh:e0.khachDienHinh||"", khiNaoKhachMua:lines(e0.khiNaoKhachMua), cachDung:e0.cachDung||"",
+    luuY:lines(e0.luuY), cauHoiKhach:lines(e0.cauHoiKhach),
+    banKem:(e0.banKem||[]).map(b => b.sanPham + (b.lyDo ? " — " + b.lyDo : "")).join("\n"),
+    thayThe:e0.thayThe||"", gocKinhDoanh:e0.gocKinhDoanh||"",
+    thuatNgu:(e0.thuatNgu||[]).map(t => t.tu + ": " + t.giaiThich).join("\n"),
+  });
+  const [reviewer, setReviewer] = useState((item.d && item.d.reviewedBy) || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const set = (k) => (ev) => setF({ ...f, [k]: ev.target.value });
+  const split = (s) => String(s||"").split("\n").map(x=>x.trim()).filter(Boolean);
+  async function save(reviewed){
+    if(reviewed && !reviewer.trim()) return setError("Nhập tên dược sĩ duyệt.");
+    setSaving(true); setError("");
+    const entry = {
+      ...e0, tinhThan:f.tinhThan, hoatChat:f.hoatChat, nhomThuoc:f.nhomThuoc, loai:f.loai,
+      congDung:split(f.congDung), khachDienHinh:f.khachDienHinh, khiNaoKhachMua:split(f.khiNaoKhachMua), cachDung:f.cachDung,
+      luuY:split(f.luuY), cauHoiKhach:split(f.cauHoiKhach),
+      banKem:split(f.banKem).map(x => { const i = x.search(/\s[—-]\s/); return i>0 ? { sanPham:x.slice(0,i).trim(), lyDo:x.slice(i+3).trim() } : { sanPham:x, lyDo:"" }; }),
+      thayThe:f.thayThe, gocKinhDoanh:f.gocKinhDoanh,
+      thuatNgu:split(f.thuatNgu).map(x => { const i = x.indexOf(":"); return i>0 ? { tu:x.slice(0,i).trim(), giaiThich:x.slice(i+1).trim() } : { tu:x, giaiThich:"" }; }),
+      doTinCay: reviewed ? "cao" : e0.doTinCay, ghiChuDoTinCay: reviewed ? "" : e0.ghiChuDoTinCay,
+    };
+    try{ await pdCall("save", { productId:item.pid, name:item.name, entry, reviewed, reviewerName:reviewer.trim() }, 30000); onSaved(); }
+    catch(err){ setError(err.message||String(err)); setSaving(false); }
+  }
+  const fld = (k, label, rows, hint) => h("div", { className:"field", style:{ marginBottom:8 } },
+    h("label", null, label, hint && h("span", { style:{ fontWeight:400, color:"var(--inkSoft)" } }, " — " + hint)),
+    rows ? h("textarea", { value:f[k], onChange:set(k), rows, style:{ width:"100%", fontSize:12.5, fontFamily:"inherit" } }) : h("input", { value:f[k], onChange:set(k) }));
+  return h("div", null,
+    fld("tinhThan", "Tinh thần sản phẩm", 2),
+    h("div", { style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:"0 10px" } },
+      fld("hoatChat", "Hoạt chất / thành phần"), fld("nhomThuoc", "Nhóm tác dụng"), fld("loai", "Phân loại", 0, "Thuốc kê đơn / không kê đơn / TPCN…")),
+    h("div", { style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))", gap:"0 12px" } },
+      fld("congDung", "Dùng để làm gì", 3, "mỗi dòng 1 ý"), fld("khiNaoKhachMua", "Khi nào khách tìm mua", 3, "mỗi dòng 1 ý"),
+      fld("khachDienHinh", "Ai hay mua", 2), fld("cachDung", "Cách dùng (chung, không ghi liều)", 2),
+      fld("luuY", "Lưu ý an toàn", 4, "mỗi dòng 1 ý"), fld("cauHoiKhach", "Nhân viên nên hỏi khách", 4, "mỗi dòng 1 câu"),
+      fld("banKem", "Tư vấn bán kèm", 3, "“Sản phẩm — lý do”"), fld("thayThe", "Thay thế khi hết hàng", 3)),
+    fld("gocKinhDoanh", "Góc kinh doanh", 3),
+    fld("thuatNgu", "Giải thích thuật ngữ", 3, "“Từ: giải thích”"),
+    h("div", { style:{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center", borderTop:"1px solid var(--line)", paddingTop:10 } },
+      h("input", { value:reviewer, onChange:ev=>setReviewer(ev.target.value), placeholder:"Tên dược sĩ duyệt", style:{ padding:"7px 9px", border:"1px solid var(--line)", borderRadius:8, flex:"0 1 220px" } }),
+      error && h("span", { style:{ color:"var(--clay)", fontSize:12.5 } }, error),
+      h("div", { style:{ marginLeft:"auto", display:"flex", gap:6 } },
+        h("button", { className:"btn btnGhost", onClick:onCancel }, "Huỷ"),
+        h("button", { className:"btn", disabled:saving, onClick:()=>save(false) }, "Lưu nháp"),
+        h("button", { className:"btn btnPrimary", disabled:saving, onClick:()=>save(true) }, saving ? "Đang lưu…" : "Lưu & đánh dấu dược sĩ đã duyệt"))));
+}
+
+function ProductDictionaryAddModal({ onClose, onPick }){
+  const h = React.createElement;
+  const [q, setQ] = useState("");
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  async function search(ev){
+    ev && ev.preventDefault();
+    if(q.trim().length<2) return;
+    setLoading(true); setError("");
+    try{ const r = await pdCall("search", { q:q.trim() }, 90000); setRows(r.rows||[]); if(!(r.rows||[]).length) setError("Không tìm thấy mã nào."); }
+    catch(e){ setError(e.message||String(e)); }
+    setLoading(false);
+  }
+  return h("div", { className:"modalOverlay", onClick:onClose },
+    h("div", { className:"modal", onClick:ev=>ev.stopPropagation() },
+      h("div", { style:{ fontWeight:700, fontSize:18, marginBottom:4 } }, "Thêm mã ngoài top bán chạy"),
+      h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } }, "Tìm theo tên hoặc mã hàng, chọn 1 mã để AI soạn thẻ từ điển."),
+      h("form", { onSubmit:search, style:{ display:"flex", gap:6, marginBottom:10 } },
+        h("input", { value:q, onChange:ev=>setQ(ev.target.value), autoFocus:true, placeholder:"VD: gaviscon", style:{ flex:1, padding:"7px 10px", border:"1px solid var(--line)", borderRadius:8 } }),
+        h("button", { className:"btn btnPrimary", type:"submit", disabled:loading }, loading ? "Đang tìm…" : "Tìm")),
+      error && h("div", { style:{ fontSize:12.5, color:"var(--clay)", marginBottom:8 } }, error),
+      h("div", { style:{ maxHeight:340, overflowY:"auto" } }, rows.map(r =>
+        h("div", { key:r.pid, onClick:()=>onPick(r.pid), style:{ padding:"8px 10px", borderBottom:"1px solid var(--line)", cursor:"pointer", fontSize:12.5 } },
+          h("b", null, r.name), h("span", { style:{ color:"var(--inkSoft)" } }, ` · ${r.pid}${r.type?" · "+r.type:""}`)))),
+      h("div", { className:"btnRow", style:{ justifyContent:"flex-end", marginTop:10 } }, h("button", { className:"btn btnGhost", onClick:onClose }, "Đóng"))));
+}
+
 // ================= APP SHELL =================
 // ===== Gộp tab (yêu cầu 19/9/2026): "Hàng hoá" gộp Khách đặt hàng + Kiểm kê + Tồn kho (Tổng
 // quan) + Điều chuyển hàng hoá; "Nhân viên" gộp Hiệu suất + Danh sách; "Báo cáo tuần" gộp Báo
@@ -12365,6 +12678,7 @@ const OPS_TABS = [
   { id:"cust360", label:"Customer 360" },
   { id:"taimua", label:"Chăm sóc tái mua" },
   { id:"prod360", label:"Product 360" },
+  { id:"tudien", label:"Từ điển sản phẩm" }, // 29/9/2026: cho quản lý không chuyên dược
   { id:"checklist", label:"Checklist ngày" },
   { id:"homnay", label:"Hôm nay" },
   { id:"photos", label:"Báo cáo hình ảnh" },
@@ -12408,7 +12722,7 @@ const OPS_GROUPS_ADMIN_V2 = [
   { id:"congviec",     label:"Công việc",    tabs:["action","tasks"] },
   { id:"nhansu",       label:"Nhân sự",      tabs:["nhanvien","emp360","kpi","training","kudos"] },
   { id:"khachhang",    label:"Khách hàng",   tabs:["crm","cust360","taimua"] },
-  { id:"hanghoagroup", label:"Hàng hoá",     tabs:["hanghoa","prod360","donthuoc"] },
+  { id:"hanghoagroup", label:"Hàng hoá",     tabs:["hanghoa","prod360","tudien","donthuoc"] },
   { id:"kinhdoanh",    label:"Kinh doanh & Marketing", tabs:["revenueAnalytics","ctkm","giadoithu","temgia"] },
   { id:"baocao",       label:"Báo cáo & Phân tích",   tabs:["ketquangay","baocaotuan"] },
   { id:"ruiro",        label:"Rủi ro & Tuân thủ",     tabs:["risk","kinhnghiem"] },
@@ -12436,7 +12750,7 @@ const MENU_LEGACY_ADMIN = [
   { id:"command", label:"Tổng quan điều hành", tabs:["command","risk","shop360"] },
   { id:"nhansu", label:"Nhân sự", tabs:["emp360","tasks","kpi","nhanvien","training","kudos"] },
   { id:"khachhang", label:"Khách hàng", tabs:["taimua","cust360","crm","ctkm"] },
-  { id:"hanghoagroup", label:"Hàng hoá", tabs:["prod360","hanghoa","donthuoc","temgia","giadoithu"] },
+  { id:"hanghoagroup", label:"Hàng hoá", tabs:["prod360","hanghoa","tudien","donthuoc","temgia","giadoithu"] },
   { id:"vanhanh", label:"Vận hành", tabs:["homnay","checklist","photos","revenueAnalytics","ketquangay","baocaotuan","kinhnghiem"] },
   { id:"action", label:"Công việc cần xử lý", tabs:["action"] },
   { id:"ai", label:"AI", tabs:["ai"] },
@@ -14732,6 +15046,7 @@ const TAB_STYLE = {
   staffPerformance: { icon:"🏆", color:"#0891b2" },
   ctkm:             { icon:"🎁", color:"#b4720a" },
   giadoithu:        { icon:"⚖️", color:"#b3261e" },
+  tudien:           { icon:"📖", color:"#0f6b5c" },
   inventoryHealth:  { icon:"📊", color:"#0f6b5c" },
   hanghoa:          { icon:"📦", color:"#0f6b5c" },
   nhanvien:         { icon:"👥", color:"#475569" },
@@ -20968,7 +21283,7 @@ function Dashboard({ user, isAdmin, myStaff }){
   const whoLabel = isAdmin ? "Quản lý" : (myStaff ? `${myStaff.name} · ${myStaff.shop}` : "");
   const activeTabInfo = leafTabs.find(t=>t.id===activeTab);
   const activeGroup = navGroups.find(g => g.tabs.includes(activeTab)) || navGroups[0];
-  const FEATURE_KEYWORDS = { taimua:"tai mua nhac het thuoc cham soc", crm:"crm khach hang phan khuc", cust360:"ho so khach", emp360:"ho so nhan vien", prod360:"ho so hang hoa san pham", hanghoa:"ton kho kiem ke dieu chuyen dat hang toc do tieu thu", action:"cong viec can xu ly cho kiem tra qua han tien do", tasks:"giao viec", risk:"rui ro canh bao tuan thu", kinhnghiem:"kinh nghiem", photos:"hinh anh minh chung", revenueAnalytics:"doanh thu", ctkm:"khuyen mai", giadoithu:"gia doi thu so gia long chau pharmacity an khang canh tranh", temgia:"tem gia", kpi:"kpi chi tieu", ketquangay:"ket qua ngay", baocaotuan:"bao cao tuan", sales:"doanh so ngay", checklist:"checklist", homnay:"hom nay", shop360:"ho so nha thuoc" };
+  const FEATURE_KEYWORDS = { taimua:"tai mua nhac het thuoc cham soc", crm:"crm khach hang phan khuc", cust360:"ho so khach", emp360:"ho so nhan vien", prod360:"ho so hang hoa san pham", hanghoa:"ton kho kiem ke dieu chuyen dat hang toc do tieu thu", action:"cong viec can xu ly cho kiem tra qua han tien do", tasks:"giao viec", risk:"rui ro canh bao tuan thu", kinhnghiem:"kinh nghiem", photos:"hinh anh minh chung", revenueAnalytics:"doanh thu", ctkm:"khuyen mai", tudien:"tu dien san pham thuoc hoat chat cong dung duoc", giadoithu:"gia doi thu so gia long chau pharmacity an khang canh tranh", temgia:"tem gia", kpi:"kpi chi tieu", ketquangay:"ket qua ngay", baocaotuan:"bao cao tuan", sales:"doanh so ngay", checklist:"checklist", homnay:"hom nay", shop360:"ho so nha thuoc" };
   const featureItems = navGroups.flatMap(g => g.tabs.map(id => ({ id, label:(leafTabs.find(t=>t.id===id)||{}).label || id, group:g.label, keywords:FEATURE_KEYWORDS[id] || "" })));
   function groupUnread(g){ return g.tabs.reduce((s,id)=>s+(unreadCount[id]||0),0) + (g.tabs.includes("action") ? needAction360 : 0); }
   const totalUnread = Object.values(unreadCount).reduce((a,b)=>a+(b||0), 0);
@@ -21092,6 +21407,7 @@ function Dashboard({ user, isAdmin, myStaff }){
         activeTab==="emp360" && isAdmin && React.createElement(Employee360View, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab }),
         activeTab==="cust360" && React.createElement(Customer360View, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab }),
         activeTab==="prod360" && isAdmin && React.createElement(Product360View, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab }),
+        activeTab==="tudien" && isAdmin && React.createElement(ProductDictionaryView, { key:viewResetKey, isAdmin }),
         activeTab==="checklist" && React.createElement(DailyChecklistView, { key:viewResetKey, isAdmin, myStaff }),
         activeTab==="homnay" && React.createElement(TodayShopTasksView, { key:viewResetKey, isAdmin, myStaff, onNavigate:setActiveTab }),
         activeTab==="photos" && React.createElement(ImageReportView, { key:viewResetKey, isAdmin, myStaff }),
