@@ -12625,6 +12625,13 @@ const OF_MAP_STATUS = {
 };
 const OF_FN = "https://asia-southeast1-upharma-176d5.cloudfunctions.net/computeOrderFulfillmentNow";
 
+// Doc tổng hợp lưu các danh sách lớn dạng chuỗi JSON (<tên>Json) để tránh giới hạn chỉ mục Firestore.
+function ofUnpack(d){
+  if(!d) return null;
+  const out = { ...d };
+  Object.keys(d).forEach(k => { if(/Json$/.test(k) && typeof d[k]==="string"){ try{ out[k.slice(0,-4)] = JSON.parse(d[k]); }catch(e){ console.error("Lỗi đọc", k, e); } delete out[k]; } });
+  return out;
+}
 function ofNt(code){ return String(code||"").replace(/^SHOP/i, "NT"); }
 function ofPct(v){ return v==null ? "—" : `${String(v).replace(".", ",")}%`; }
 function ofDmy(d){ return d ? `${d.slice(8,10)}/${d.slice(5,7)}` : "—"; }
@@ -12632,11 +12639,12 @@ function ofWeekStart(iso){ const d = new Date(iso+"T00:00:00Z"); const wd = (d.g
 function ofBucket(iso, mode){ return mode==="week" ? ofWeekStart(iso) : mode==="month" ? iso.slice(0,7) : iso; }
 function ofBucketLabel(k, mode){ return mode==="week" ? `Tuần từ ${ofDmy(k)}` : mode==="month" ? `T${k.slice(5,7)}/${k.slice(0,4)}` : `${ofDmy(k)}/${k.slice(0,4)}`; }
 function ofSum(rows){
-  const a = { orders:0, lines:0, targetValue:0, receivedValue:0, gapValue:0, full:0, partial:0, none:0, pending:0, unprocessed:0, cancelled:0 };
+  const a = { orders:0, lines:0, targetValue:0, receivedValue:0, gapValue:0, full:0, partial:0, none:0, pending:0, unprocessed:0, cancelled:0, leadDaysSum:0, leadN:0 };
   rows.forEach(r => Object.keys(a).forEach(k => { a[k] += Number(r[k])||0; }));
   const eff = a.lines - a.cancelled;
   a.fillValuePct = a.targetValue>0 ? Math.round(a.receivedValue/a.targetValue*1000)/10 : null;
   a.fullLinePct = eff>0 ? Math.round(a.full/eff*1000)/10 : null;
+  a.avgLeadDays = a.leadN ? Math.round(a.leadDaysSum/a.leadN*10)/10 : null;
   return a;
 }
 function OfBar({ pct }){
@@ -12686,13 +12694,17 @@ function OrderFulfillmentPanel({ isAdmin, staffShop }){
   const [running, setRunning] = useState(false);
   const [section, setSection] = useState("overview");
   const [skuIncludePending, setSkuIncludePending] = useState(false);
+  // Loại phiếu gọi: PAIR = "DNB.XNK..." ghép 1-1 với phiếu nhập "XNK..." cùng số; DNB = phiếu gọi NT tự tạo (ghép theo thời gian).
+  const [otype, setOtype] = useState("PAIR");
 
   useEffect(()=>{
-    const u1 = db.collection("opsConfig").doc("orderFulfillmentSummary").onSnapshot(s => { setSum(s.exists ? s.data() : null); setLoaded(true); }, err => { console.error(err); setLoaded(true); });
-    const u2 = db.collection("opsConfig").doc("orderFulfillmentSuggestions").onSnapshot(s => setSug(s.exists ? s.data() : null), ()=>{});
+    const u1 = db.collection("opsConfig").doc("orderFulfillmentSummary").onSnapshot(s => { setSum(s.exists ? ofUnpack(s.data()) : null); setLoaded(true); }, err => { console.error(err); setLoaded(true); });
+    const u2 = db.collection("opsConfig").doc("orderFulfillmentSuggestions").onSnapshot(s => setSug(s.exists ? ofUnpack(s.data()) : null), ()=>{});
     return ()=>{ u1(); u2(); };
   }, []);
   useEffect(()=>{ if(sum){ setDFrom(sum.fromDate); setDTo(sum.toDate); if(sum.lagDays) setRunLag(sum.lagDays); } }, [sum && sum.runId]);
+  // Kỳ nào không có phiếu DNB.XNK (cặp 1-1) thì mặc định xem tất cả loại phiếu.
+  useEffect(()=>{ if(sum && sum.byShopDay && !sum.byShopDay.some(r => r.orderType==="PAIR")) setOtype("all"); }, [sum && sum.runId]);
   useEffect(()=>{
     if(!sum || !sum.runId) return;
     setLinesLoading(true);
@@ -12744,16 +12756,17 @@ function OrderFulfillmentPanel({ isAdmin, staffShop }){
   const shops = (sum.shops||[]).filter(s => !staffShop || s===staffShop);
   const inRange = d => d && (!dFrom || d>=dFrom) && (!dTo || d<=dTo);
   const shopOk = s => shop==="Tất cả" || s===shop;
-  const days = (sum.byShopDay||[]).filter(r => shopOk(r.shopCode) && inRange(r.date));
+  const typeOk = t => otype==="all" || (t||"DNB")===otype;
+  const days = (sum.byShopDay||[]).filter(r => shopOk(r.shopCode) && inRange(r.date) && typeOk(r.orderType));
   const rangeFull = dFrom===sum.fromDate && dTo===sum.toDate;
-  const shopRows = shops.map(s => ({ shopCode:s, ...(rangeFull ? (sum.byShop||{})[s] : ofSum((sum.byShopDay||[]).filter(r => r.shopCode===s && inRange(r.date)))) , extraValue: ((sum.byShop||{})[s]||{}).extraValue, avgLeadDays: ((sum.byShop||{})[s]||{}).avgLeadDays, imports: ((sum.byShop||{})[s]||{}).imports })).filter(r => r && (r.orders || r.lines));
+  const shopRows = shops.map(s => ({ shopCode:s, ...ofSum((sum.byShopDay||[]).filter(r => r.shopCode===s && inRange(r.date) && typeOk(r.orderType))), extraValue: ((sum.byShop||{})[s]||{}).extraValue, imports: ((sum.byShop||{})[s]||{}).imports })).filter(r => r && (r.orders || r.lines));
   const tot = ofSum(days);
   const bucketMap = {};
   days.forEach(r => { const k = ofBucket(r.date, bucketMode); (bucketMap[k] = bucketMap[k] || []).push(r); });
   const buckets = Object.keys(bucketMap).sort().reverse().map(k => ({ k, ...ofSum(bucketMap[k]) }));
-  const ordersF = (sum.orders||[]).filter(o => shopOk(o.shopCode) && inRange(o.orderDate));
+  const ordersF = (sum.orders||[]).filter(o => shopOk(o.shopCode) && inRange(o.orderDate) && typeOk(o.orderType));
   const q = lineSearch.trim().toLowerCase();
-  const linesF = lines.filter(l => inRange(l.orderDate) && (lineFilter==="all" || (lineFilter==="problem" ? l.isProblem : l.status===lineFilter))
+  const linesF = lines.filter(l => inRange(l.orderDate) && typeOk(l.orderType) && (lineFilter==="all" || (lineFilter==="problem" ? l.isProblem : l.status===lineFilter))
     && (!q || `${l.productId} ${l.productName} ${l.headerId}`.toLowerCase().includes(q)))
     .sort((a,b) => (b.gapValue||0)-(a.gapValue||0));
   const sugRows = ((sug && sug.rows)||[]).filter(r => shopOk(r.shopCode));
@@ -12764,7 +12777,7 @@ function OrderFulfillmentPanel({ isAdmin, staffShop }){
   // Gộp theo MÃ HÀNG: mã nào bị thiếu, thiếu bao nhiêu lần/bao nhiêu SL/giá trị, ở những NT nào.
   const SKU_GAP = skuIncludePending ? ["PARTIAL","NONE","PENDING","PENDING_PARTIAL","UNPROCESSED","UNPROCESSED_PARTIAL"] : ["PARTIAL","NONE"];
   const skuMap = {};
-  lines.filter(l => inRange(l.orderDate) && SKU_GAP.includes(l.status) && (!q || `${l.productId} ${l.productName}`.toLowerCase().includes(q))).forEach(l => {
+  lines.filter(l => inRange(l.orderDate) && typeOk(l.orderType) && SKU_GAP.includes(l.status) && (!q || `${l.productId} ${l.productName}`.toLowerCase().includes(q))).forEach(l => {
     const k = `${l.productId}|${l.unit||""}`;
     const a = skuMap[k] || (skuMap[k] = { productId:l.productId, productName:l.productName, unit:l.unit||"", times:0, none:0, target:0, received:0, gap:0, gapValue:0, shops:{}, headers:new Set(), last:null, lastHeader:null });
     a.times++; if(l.status==="NONE" || l.status==="PENDING" || l.status==="UNPROCESSED") a.none++;
@@ -12793,13 +12806,19 @@ function OrderFulfillmentPanel({ isAdmin, staffShop }){
     rc("div", { key:"r1", style:{ display:"flex", justifyContent:"space-between", flexWrap:"wrap", gap:10, alignItems:"center" } }, [
       rc("div", { key:"i", style:{ fontSize:12.5, color:"var(--inkSoft)" } }, [
         rc("div", { key:"a", style:{ fontWeight:600, color:"var(--ink)" } }, `Kỳ đối soát ${ofDmy(sum.fromDate)} → ${ofDmy(sum.toDate)}/${sum.toDate.slice(0,4)} · tính lúc ${new Date(sum.computedAt).toLocaleString("vi-VN", { timeZone:"Asia/Ho_Chi_Minh" })}`),
-        rc("div", { key:"b" }, `Ghép phiếu nhập về trong ${sum.lagDays} ngày sau khi gọi (cùng NT + cùng mã, phiếu gọi cũ hơn nhận trước). Điều chuyển từ NT khác không tính.`),
+        rc("div", { key:"b" }, otype==="PAIR"
+          ? "Phiếu gọi DNB.XNK… so thẳng với phiếu nhập XNK… cùng số (chỉ khác tiền tố \"DNB.\")."
+          : `Phiếu gọi DNB… (NT tự tạo) ghép với phiếu nhập về trong ${sum.lagDays} ngày sau khi gọi (cùng NT + cùng mã, phiếu cũ hơn nhận trước; phiếu nhập đã có cặp DNB.XNK không dùng). Điều chuyển từ NT khác không tính.`),
       ]),
       adminBar,
     ]),
     rc("div", { key:"r2", style:{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center", marginTop:12 } }, [
       rc("select", { key:"s", value:shop, onChange:e=>setShop(e.target.value), style:selStyle, disabled:!!staffShop },
         [staffShop ? null : rc("option", { key:"all", value:"Tất cả" }, "Tất cả nhà thuốc"), ...shops.map(s => rc("option", { key:s, value:s }, ofNt(s)))]),
+      rc("select", { key:"ot", value:otype, onChange:e=>setOtype(e.target.value), style:selStyle, title:"DNB.XNK… = phiếu gọi ghép 1-1 với phiếu nhập XNK… cùng số" }, [
+        rc("option", { key:"PAIR", value:"PAIR" }, "Phiếu gọi DNB.XNK ↔ phiếu nhập XNK (1-1)"),
+        rc("option", { key:"DNB", value:"DNB" }, "Phiếu gọi NT tự tạo (DNB…)"),
+        rc("option", { key:"all", value:"all" }, "Tất cả loại phiếu")]),
       rc("span", { key:"l", style:{ fontSize:12.5 } }, "Ngày gọi:"),
       rc("input", { key:"f", type:"date", value:dFrom, min:sum.fromDate, max:sum.toDate, onChange:e=>setDFrom(e.target.value), style:selStyle }),
       rc("span", { key:"d" }, "→"),
@@ -12892,7 +12911,7 @@ function OrderFulfillmentPanel({ isAdmin, staffShop }){
       rc("td", { key:"gv" }, l.gapValue>0 ? fmtVNDCompact(l.gapValue) : "—"),
       rc("td", { key:"im", style:{ fontSize:11.5 } }, (l.importDocs||[]).join(", ") || "—"),
       rc("td", { key:"ld" }, l.firstReceiveDays==null ? "—" : `${String(l.firstReceiveDays).replace(".",",")}n`),
-      rc("td", { key:"st" }, rc(OfTag, { meta:OF_LINE_STATUS[l.status] })),
+      rc("td", { key:"st" }, [rc(OfTag, { key:"t", meta:OF_LINE_STATUS[l.status] }), l.pairDocId && l.pairImportFound===false && rc("div", { key:"m", style:{ fontSize:10.5, color:"var(--clay)" } }, `Chưa thấy ${l.pairDocId}`)]),
     ]))),
   ]));
   const ordersView = rc("div", { key:"orders", className:"card", style:{ marginBottom:16 } }, [
@@ -12910,7 +12929,7 @@ function OrderFulfillmentPanel({ isAdmin, staffShop }){
         const open = openOrder===o.headerId;
         const row = rc("tr", { key:o.headerId, style:{ cursor:"pointer" }, onClick:()=>toggleOrder(o) }, [
           rc("td", { key:"x" }, open ? "▾" : "▸"),
-          rc("td", { key:"h", style:{ fontWeight:600, fontSize:12 } }, [o.headerId, o.priority===2 && rc("span", { key:"g", style:{ color:"var(--clay)", marginLeft:4, fontSize:11 } }, "GẤP")]),
+          rc("td", { key:"h", style:{ fontWeight:600, fontSize:12 } }, [rc("span", { key:"id" }, o.headerId), o.priority===2 && rc("span", { key:"g", style:{ color:"var(--clay)", marginLeft:4, fontSize:11 } }, "GẤP")]),
           rc("td", { key:"s" }, ofNt(o.shopCode)),
           rc("td", { key:"d" }, o.orderTs ? new Date(o.orderTs).toLocaleString("vi-VN", { timeZone:"Asia/Ho_Chi_Minh", day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }) : ofDmy(o.orderDate)),
           rc("td", { key:"st", style:{ color: o.status===0 ? "var(--inkSoft)" : undefined } }, o.statusText),
@@ -13220,7 +13239,7 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
   useEffect(()=>{
     if(invSubTab!=="tocdo" || ofByKey) return;
     db.collection("opsConfig").doc("orderFulfillmentSuggestions").get()
-      .then(snap => { const d = snap.exists ? snap.data() : null; setOfByKey((d && d.byKey) || {}); setOfPeriod(d ? `${d.fromDate} → ${d.toDate}` : null); })
+      .then(snap => { const d = snap.exists ? ofUnpack(snap.data()) : null; setOfByKey((d && d.byKey) || {}); setOfPeriod(d ? `${d.fromDate} → ${d.toDate}` : null); })
       .catch(()=>setOfByKey({}));
   }, [invSubTab]);
   function ofCellText(shopCode, pid){
