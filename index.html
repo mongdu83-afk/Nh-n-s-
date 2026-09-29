@@ -9016,6 +9016,14 @@ function WeeklyPlanManagerView(){
                 ]),
               ]))),
       ]),
+      s.staffCategoryKey && aiSectionByKey[s.staffCategoryKey] && React.createElement("div", { key:"aisec", style:{ fontSize:12.5, background:"var(--pineSoft)", borderRadius:8, padding:"8px 10px", marginBottom:10, lineHeight:1.5 } }, [
+        React.createElement("div",{key:"h",style:{fontWeight:700,marginBottom:2}}, "🤖 Tổng hợp đánh giá"),
+        aiSectionByKey[s.staffCategoryKey].assessment,
+        (aiSectionByKey[s.staffCategoryKey].highlights||[]).length>0 && aiLabel("Nổi bật:"), aiList(aiSectionByKey[s.staffCategoryKey].highlights),
+        (aiSectionByKey[s.staffCategoryKey].issues||[]).length>0 && aiLabel("Vấn đề:"), aiList(aiSectionByKey[s.staffCategoryKey].issues),
+        (aiSectionByKey[s.staffCategoryKey].watchShops||[]).length>0 && aiLabel("Nhà thuốc cần chú ý:"), aiList(aiSectionByKey[s.staffCategoryKey].watchShops),
+        aiSectionByKey[s.staffCategoryKey].trend && React.createElement("div",{key:"tr",style:{marginTop:4,color:"var(--inkSoft)"}}, [React.createElement("b",{key:"b"},"So với tuần trước: "), aiSectionByKey[s.staffCategoryKey].trend]),
+      ]),
       s.staffCategoryKey && React.createElement("div", { key:"plan2", style:{ fontSize:12.5, background:"var(--amberSoft)", borderRadius:8, padding:"8px 10px", marginBottom:10 } }, [
         React.createElement("div", { key:"l", style:{ fontWeight:700, marginBottom:6 } },
           `Kế hoạch tuần tới của nhà thuốc (${wpWeekLabel(addDays(weekStart,7))})` + (planSummary.length>0 ? ` — ${planSummary.length}/${DEFAULT_SHOPS.length} nhà thuốc · ${planRows.length} mục` : "")),
@@ -9033,13 +9041,12 @@ function WeeklyPlanManagerView(){
                 ]),
               ]))),
       ]),
-      s.staffCategoryKey && aiSectionByKey[s.staffCategoryKey] && React.createElement("div", { key:"aisec", style:{ fontSize:12.5, background:"var(--pineSoft)", borderRadius:8, padding:"8px 10px", marginBottom:10, lineHeight:1.5 } }, [
-        React.createElement("div",{key:"h",style:{fontWeight:700,marginBottom:2}}, "🤖 Tổng hợp đánh giá"),
-        aiSectionByKey[s.staffCategoryKey].assessment,
-        (aiSectionByKey[s.staffCategoryKey].highlights||[]).length>0 && aiLabel("Nổi bật:"), aiList(aiSectionByKey[s.staffCategoryKey].highlights),
-        (aiSectionByKey[s.staffCategoryKey].issues||[]).length>0 && aiLabel("Vấn đề:"), aiList(aiSectionByKey[s.staffCategoryKey].issues),
-        (aiSectionByKey[s.staffCategoryKey].watchShops||[]).length>0 && aiLabel("Nhà thuốc cần chú ý:"), aiList(aiSectionByKey[s.staffCategoryKey].watchShops),
-        aiSectionByKey[s.staffCategoryKey].trend && React.createElement("div",{key:"tr",style:{marginTop:4,color:"var(--inkSoft)"}}, [React.createElement("b",{key:"b"},"So với tuần trước: "), aiSectionByKey[s.staffCategoryKey].trend]),
+      s.staffCategoryKey && aiSectionByKey[s.staffCategoryKey] && aiSectionByKey[s.staffCategoryKey].plan && React.createElement("div", { key:"aiplan", style:{ fontSize:12.5, background:"var(--pineSoft)", borderRadius:8, padding:"8px 10px", marginBottom:10, lineHeight:1.5 } }, [
+        React.createElement("div",{key:"h",style:{fontWeight:700,marginBottom:2}}, "🤖 Tổng hợp đánh giá kế hoạch tuần tới"),
+        aiSectionByKey[s.staffCategoryKey].plan.assessment,
+        (aiSectionByKey[s.staffCategoryKey].plan.strengths||[]).length>0 && aiLabel("Kế hoạch tốt:"), aiList(aiSectionByKey[s.staffCategoryKey].plan.strengths),
+        (aiSectionByKey[s.staffCategoryKey].plan.gaps||[]).length>0 && aiLabel("Còn thiếu / chưa có kế hoạch:"), aiList(aiSectionByKey[s.staffCategoryKey].plan.gaps),
+        (aiSectionByKey[s.staffCategoryKey].plan.watchShops||[]).length>0 && aiLabel("Nhà thuốc cần chỉnh kế hoạch:"), aiList(aiSectionByKey[s.staffCategoryKey].plan.watchShops),
       ]),
       ...rows.map(r => React.createElement("div", { key:r.id, className:"weeklyRow" }, [
         rows.length>1 && React.createElement("div", { key:"rm", style:{ textAlign:"right" } },
