@@ -7557,7 +7557,7 @@ function ComboDayPanel({ k }){
   const rows = items.map(it => {
     const u = it.donViGia || it.donVi || "";
     let qty = it.soLuong || 1, txt = "", note = "";
-    if(it.khiCan){ note = "dùng khi cần — số lượng giữ theo phác đồ"; txt = `${qty} ${u}`; }
+    if(it.khiCan){ note = "dùng khi cần — số lượng giữ nguyên" + (it.tuPos ? " theo đơn mẫu" : ""); txt = `${qty} ${u}`; }
     else if(it.lieuNgay > 0){
       const need = Math.ceil(it.lieuNgay * days);
       const same = it.donViLieu && (!u || pdStrip(it.donViLieu)===pdStrip(u));
@@ -7594,6 +7594,7 @@ function fixDays(t){ return String(t||"").replace(/^\s*📚\s*/, ""); } // KHÔN
 function isDayRange(t){ return /\d+\s*[-–—]\s*\d+\s*ngày/.test(String(t||"")); }
 function comboQtyText(it){ // "2 viên/ngày × 3 ngày = 6 viên"
   const u = it.donViGia || it.donVi || "";
+  if(it.tuPos) return `${it.soLuong||1} ${u}`; // đơn mẫu POS: cách dùng hiện ngay dòng dưới
   const lan = it.lanNgay ? `${it.moiLan ? `${it.moiLan}${it.moiLan2 ? "–"+it.moiLan2 : ""} ${it.donViLieu||""} × ` : ""}${it.lanNgay}${it.lanNgay2 ? "–"+it.lanNgay2 : ""} lần/ngày` : "";
   if(it.lieuNgay && it.soNgayDung) return `${lan ? lan + " · " : ""}${it.khiCan ? "khi cần, tối đa " : ""}${it.lieuNgay}/ngày × ${it.soNgayDung} ngày → ${it.soLuong||1} ${u}` + (it.soLuongGhiChu ? ` (${it.soLuongGhiChu})` : "");
   if(lan) return `${lan} → ${it.soLuong||1} ${u}`;
@@ -7672,6 +7673,7 @@ function DosingProtocolCard({ p, canEdit, onChanged }){
   return h("div", null,
     (p.lms||[]).length>0 && h("div", { style:{ marginTop:6 } }, h("span", { style:{ fontSize:11.5, fontWeight:700, color:"#0a6bb4", background:"#EAF2FB", borderRadius:12, padding:"3px 10px" } }, "📚 Soạn theo bài LMS: " + p.lms.map(l => "“" + l.name + "”").join(", "))),
     c.tomTat && h("div", { style:{ fontSize:13, color:"var(--inkSoft)", marginTop:4 } }, slideText(c.tomTat)),
+    p.pos && h(PosDiseaseBox, { pos:p.pos, compact:true }),
     h(BenhHocBox, { bh:p.benhHoc, lms:p.lms, onRefresh: canEdit && (p.lms||[]).length ? async ()=>{
       try{ const r = await pdCall("benhHocRefresh", { id:p.id }, 120000); if(!r.ok) window.alert(r.reason || "Chưa tóm tắt được."); else { window.alert(`Đã tóm tắt lại kiến thức bệnh học từ bài LMS (${r.slide ? r.slide.label : ""}).`); onChanged && onChanged(); } }
       catch(e){ window.alert("Lỗi: " + (e.message||e)); } } : null }),
@@ -13149,6 +13151,68 @@ const SYMPTOM_COMMON = ["Sốt", "Ho khan", "Ho có đờm", "Đau họng", "S�
   "Mất ngủ", "Mệt mỏi", "Ù tai", "Đau mắt đỏ", "Ngứa mắt", "Tiểu buốt", "Đau lưng", "Sưng khớp", "Khàn tiếng", "Mất thăng bằng", "Say xe", "Bong gân", "Vết thương"];
 const SYMPTOM_CONDS = ["Có thai", "Cho con bú", "Tăng huyết áp", "Tiểu đường", "Đau dạ dày", "Bệnh gan / thận", "Hen / bệnh phổi", "Tim mạch", "Đang dùng thuốc chống đông / aspirin"];
 // Quản lý: từ khách nói app chưa hiểu → gán vào triệu chứng (cả chuỗi hiểu) + ca nhân viên chọn khác bệnh app xếp đầu.
+// 30/9/2026 (Phương): lấy HOẠT CHẤT + HÀM LƯỢNG + LIỀU từ API danh mục cho hàng đang tồn → tìm được hàng thay thế cùng
+// hoạt chất / cùng nhóm slide dù tên hàng là tên thương mại, và quy liều slide (mg) ra số viên.
+// 30/9/2026 (Phương): bệnh mẫu POS — triệu chứng, phác đồ, đơn mẫu theo đối tượng (đồng bộ từ SampleDisease trên POS)
+function PosDiseaseBox({ pos, compact }){
+  const h = React.createElement;
+  const [open, setOpen] = useState(!compact);
+  const [ai, setAi] = useState(0);
+  if(!pos) return null;
+  const pre = { whiteSpace:"pre-line", fontSize:12, background:"#fff", border:"1px solid #F3DDA8", borderRadius:8, padding:"6px 8px", marginTop:3, lineHeight:1.5 };
+  const dm = pos.donMau || [];
+  return h("div", { style:{ marginTop:8, border:"1px solid #F3C9A0", background:"#FFFAF3", borderRadius:10, padding:"8px 10px" } },
+    h("div", { style:{ display:"flex", justifyContent:"space-between", cursor:"pointer", gap:8 }, onClick:()=>setOpen(!open) },
+      h("b", { style:{ fontSize:13, color:"#b4570a" } }, "🧾 Thông tin bệnh từ POS" + (pos.name ? ` — ${pos.name}` : "")),
+      h("span", { style:{ fontSize:12, fontWeight:700, color:"#b4570a" } }, open ? "Thu gọn ▲" : "Mở ▼")),
+    open && h("div", null,
+      pos.symptom && h("div", { style:{ marginTop:6 } }, h("b", { style:{ fontSize:12.5 } }, "Triệu chứng:"), h("div", { style:pre }, pos.symptom)),
+      pos.regimen && h("div", { style:{ marginTop:6 } }, h("b", { style:{ fontSize:12.5 } }, "Phác đồ:"), h("div", { style:pre }, pos.regimen)),
+      dm.length>0 && h("div", { style:{ marginTop:6 } },
+        h("b", { style:{ fontSize:12.5 } }, "Đơn mẫu theo đối tượng: "),
+        dm.map((g, i) => h("button", { key:i, type:"button", onClick:()=>setAi(i), style:{ fontSize:11.5, fontWeight:800, padding:"2px 9px", marginRight:4, borderRadius:12, cursor:"pointer", border:"1px solid #b4570a", background: ai===i ? "#b4570a" : "#fff", color: ai===i ? "#fff" : "#b4570a" } }, g.age)),
+        dm[ai] && h("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12, marginTop:4 } }, h("tbody", null,
+          h("tr", null, ["Thuốc","Hoạt chất","Cách dùng","SL"].map(x => h("th", { key:x, style:{ textAlign: x==="SL" ? "right" : "left", fontSize:11, color:"var(--inkSoft)", padding:"3px 4px" } }, x))),
+          dm[ai].items.map((it, j) => h("tr", { key:j },
+            h("td", { style:{ padding:"3px 4px", borderTop:"1px dashed #F3DDA8", fontWeight:700 } }, it.ten),
+            h("td", { style:{ padding:"3px 4px", borderTop:"1px dashed #F3DDA8", color:"var(--inkSoft)" } }, it.hoatChat),
+            h("td", { style:{ padding:"3px 4px", borderTop:"1px dashed #F3DDA8" } }, it.cachDung),
+            h("td", { style:{ padding:"3px 4px", borderTop:"1px dashed #F3DDA8", textAlign:"right" } }, it.qty))))))));
+}
+function PosSyncBox(){
+  const h = React.createElement;
+  const [m, setM] = useState(null); const [busy, setBusy] = useState(false); const [msg, setMsg] = useState("");
+  useEffect(()=>{ pdCall("posDiseaseStatus", {}, 60000).then(r => setM(r.meta)).catch(()=>{}); }, []);
+  async function run(){ setBusy(true); setMsg("Đang đồng bộ bệnh mẫu & đơn mẫu từ POS…");
+    try{ const r = await pdCall("posDiseaseSync", {}, 480000); setMsg(`Đã lưu ${r.luu}/${r.tong} bệnh mẫu` + (r.loi ? ` · lỗi ${r.loi}` : "")); setM({ count:r.tong, saved:r.luu, at:new Date().toISOString() }); }
+    catch(e){ setMsg("Lỗi: " + (e.message||String(e))); } setBusy(false); }
+  return h("div", { style:{ margin:"4px 0 10px", padding:"8px 10px", border:"1px solid #F3C9A0", borderRadius:8, background:"#FFFAF3", fontSize:12.5, display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, flexWrap:"wrap" } },
+    h("div", null, h("b", null, "🧾 Bệnh mẫu & đơn mẫu POS"),
+      h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, m ? `${m.saved||m.count||0} bệnh mẫu · đồng bộ lúc ${String(m.at||"").slice(0,16).replace("T"," ")} (tự động 2h30 sáng mỗi ngày)` : "Chưa đồng bộ lần nào"),
+      msg && h("div", { style:{ fontSize:11.5, marginTop:2 } }, msg)),
+    h("button", { className:"btn btnPrimary", disabled:busy, style:{ fontSize:12, padding:"4px 10px" }, onClick:run }, busy ? "Đang đồng bộ…" : "🔄 Đồng bộ ngay"));
+}
+function OfficialFillBox(){
+  const h = React.createElement;
+  const [st, setSt] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  useEffect(()=>{ pdCall("officialFillStatus", {}, 120000).then(setSt).catch(e => setMsg(e.message||String(e))); }, []);
+  async function run(){
+    setBusy(true); setMsg("Đang lấy từ API danh mục (mỗi lượt ~6 phút)…");
+    try{ const r = await pdCall("officialFill", {}, 480000); setMsg(`Vừa lấy ${r.vuaLay} mã · lỗi ${r.loi} · còn ${r.conLai} mã chưa lấy` + (r.conLai ? " → bấm tiếp" : " — xong")); setSt({ ...(st||{}), tong:r.tong, daCo:r.daCo }); }
+    catch(e){ setMsg("Lỗi: " + (e.message||String(e))); }
+    setBusy(false);
+  }
+  const con = st ? Math.max(0, (st.tong||0) - (st.daCo||0)) : null;
+  return h("div", { style:{ margin:"4px 0 10px", padding:"8px 10px", border:"1px solid var(--line)", borderRadius:8, background:"#F4F8FD", fontSize:12.5 } },
+    h("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, flexWrap:"wrap" } },
+      h("div", null, h("b", null, "💊 Hoạt chất & liều từ API danh mục"),
+        h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, st ? `Hàng đang tồn: ${st.tong} mã · đã có thông tin danh mục ${st.daCo} · còn ${con} mã chưa lấy` : "Đang kiểm tra…")),
+      h("button", { className:"btn btnPrimary", disabled:busy || con===0, style:{ fontSize:12, padding:"4px 10px" }, onClick:run }, busy ? "Đang lấy…" : "Lấy từ API")),
+    msg && h("div", { style:{ fontSize:11.5, marginTop:4 } }, msg),
+    h("div", { style:{ fontSize:11, color:"var(--inkSoft)", marginTop:3 } }, "Để app tìm hàng thay thế cùng hoạt chất/cùng nhóm slide trong toàn bộ tồn nhà thuốc (kể cả hàng tên thương mại) và quy liều slide (mg) ra số viên."));
+}
 function SymptomLearnPanel(){
   const h = React.createElement;
   const [open, setOpen] = useState(false);
@@ -13166,6 +13230,8 @@ function SymptomLearnPanel(){
     open && (!d ? h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", padding:"8px 0" } }, "Đang tải…")
       : d.error ? h("div", { style:{ color:CL360.bad, fontSize:12.5 } }, "Lỗi: " + d.error)
       : h("div", { style:{ marginTop:6 } },
+        h(PosSyncBox),
+        h(OfficialFillBox),
         h("div", { style:{ fontSize:12, color:"var(--inkSoft)" } }, "Từ nhân viên gõ mà app chưa hiểu. Gán 1 lần → cả chuỗi hiểu từ lần tư vấn sau."),
         !d.terms.length ? h("div", { style:{ fontSize:12.5, padding:"6px 0" } }, "Chưa có từ nào cần gán.")
         : h("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5, marginTop:4 } }, h("tbody", null, d.terms.map(t => h("tr", { key:t.key },
@@ -13288,6 +13354,7 @@ function SymptomConsultView({ isAdmin, myStaff }){
         h("div", { style:{ color:CL360.warn, fontWeight:700 } }, "Bệnh này mới có bài học trên LMS, CHƯA có phác đồ cắt liều được duyệt — nhân viên mời dược sĩ/CHT tư vấn."),
         h(BenhHocBox, { bh:drugs.benhHoc, lms:sel && sel.lms ? [sel.lms] : [] }))
     : h("div", null,
+        drugs.pos && h(PosDiseaseBox, { pos:drugs.pos, compact:true }),
         (drugs.protocol.khuyenDiKham||[]).length>0 && h("div", { style:{ fontSize:12, color:CL360.bad, marginTop:6 } }, h("b", null, "Không cắt liều — khuyên đi khám khi: "), drugs.protocol.khuyenDiKham.map(x => String(x).replace(/^\s*📚\s*/, "")).join(" · ")),
         (res.tranh||[]).length>0 && h("div", { style:{ fontSize:12, marginTop:6, background:"#FBE3E1", borderRadius:8, padding:"6px 10px" } }, "⛔ Với khách này TRÁNH: ", res.tranh.map((t,i) => h("span", { key:i }, i>0 && " · ", h("b", null, t.hoatChat), " (" + t.lyDo + ")"))),
         (drugs.combos||[]).length>0 ? h("div", { style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))", gap:8, marginTop:8 } },
@@ -13295,7 +13362,8 @@ function SymptomConsultView({ isAdmin, myStaff }){
             const items = k0.items.map((it, j) => { const a = swaps[i+"_"+j]; if(!a) return it;
               return { ...it, pid:a.pid, ten:a.ten, tonShop:a.ton, donViGia:a.donVi || it.donViGia, thanhTien: a.donGia ? Math.round(a.donGia * (it.soLuong||1)) : null, nguonGia:a.nguonGia, swappedFrom:it.ten, thayThe:[], tuSlide:false, hhs1:false, tranh:null }; });
             const delta = k0.items.reduce((d, it, j) => swaps[i+"_"+j] ? d - (it.thanhTien || 0) + (items[j].thanhTien || 0) : d, 0);
-            const k = { ...k0, items, tongTien: (k0.tongTien || 0) + delta || null }; const t = tones[i] || tones[0]; const out = k.items.filter(it => it.tonShop===0).length; const bad = k.items.filter(it => it.tranh).length;
+            const nDM = drugs.combos.filter(x => x.donMau).length;
+            const k = { ...k0, items, tongTien: (k0.tongTien || 0) + delta || null }; const t = k0.donMau ? { b:"#b4570a", bg:"#FFFAF3", icon:"🧾" } : (tones[i - nDM] || tones[0]); const out = k.items.filter(it => it.tonShop===0).length; const bad = k.items.filter(it => it.tranh).length;
             return h("div", { key:i, style:{ border:"1.5px solid " + t.b, background:t.bg, borderRadius:10, padding:"8px 10px", fontSize:12 } },
               h("div", { style:{ display:"flex", justifyContent:"space-between", gap:6 } }, h("b", { style:{ fontSize:13 } }, t.icon + " " + k.ten), h("b", { style:{ fontSize:15, color:t.b } }, k.tongTien ? "~" + fmtMoney360(k.tongTien) : "—")),
               h("div", { style:{ fontSize:11.5, fontWeight:800, color: k.soNgay ? t.b : CL360.warn } }, "⏱ " + (k.soNgay ? `Liệu trình ${k.soNgay} ngày` : "Chưa chốt số ngày theo liều — hỏi CHT/dược sĩ")),
@@ -13305,7 +13373,7 @@ function SymptomConsultView({ isAdmin, myStaff }){
               k.items.map((it, j) => h("div", { key:j, style:{ borderTop:"1px dashed var(--line)", padding:"4px 0", opacity: it.tranh ? .6 : 1 } },
                 it.swappedFrom && h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)" } }, "Thay cho: ", h("s", null, it.swappedFrom), " ", h("a", { href:"#", onClick:(ev)=>{ ev.preventDefault(); const n = { ...swaps }; delete n[i+"_"+j]; setSwaps(n); }, style:{ color:"var(--pine)" } }, "↺ bỏ thay")),
                 it.pid ? h("a", { href:"#", onClick:(ev)=>{ ev.preventDefault(); setOpenPid(openPid===it.pid ? null : it.pid); }, style:{ color:"var(--ink)", fontWeight:700, textDecoration: it.tranh ? "line-through" : "none" } }, it.ten) : h("b", null, it.ten),
-                " · " + comboQtyText(it), it.thanhTien ? h("span", { style:{ color:"var(--inkSoft)" } }, ` · ${fmtMoney360(it.thanhTien)}${it.nguonGia==="pos" ? " (giá POS)" : ""}`) : null,
+                " · " + comboQtyText(it), it.cachDung ? h("div", { style:{ fontSize:11.5, color:"#b4570a", fontWeight:700 } }, "Cách dùng (đơn mẫu): " + it.cachDung) : null, it.thanhTien ? h("span", { style:{ color:"var(--inkSoft)" } }, ` · ${fmtMoney360(it.thanhTien)}${it.nguonGia==="pos" ? " (giá POS)" : ""}`) : null,
                 it.hhs1 && tag("★HHS1", { color:"#b4720a" }, "Hàng hệ số 1", "h"), it.rx && tag("℞ KÊ ĐƠN", { color:CL360.bad, border:"1px solid "+CL360.bad }, "Chỉ bán khi có đơn", "r"),
                 stockTag(it.tonShop),
                 it.tranh && h("div", { style:{ fontSize:11, color:CL360.bad, fontWeight:700 } }, "⛔ Tránh: " + it.tranh),
@@ -13347,11 +13415,12 @@ function SymptomConsultView({ isAdmin, myStaff }){
       : res.benh.map(b => h("div", { key:b.id, onClick:()=>pick(b.id), style:{ cursor:"pointer", border: b.id===selId ? "2px solid var(--pine)" : "1px solid var(--line)", background: b.id===selId ? "#F6FCF8" : "#fff", borderRadius:10, padding:"8px 12px", marginTop:8 } },
         h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8 } },
           h("div", null, h("b", null, b.title), b.doiTuong ? h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, " · " + b.doiTuong) : null,
+            b.pos && h("span", { style:{ ...SLIDE_TAG_STYLE, marginLeft:6, color:"#b4570a", background:"#FFF1E0" } }, "🧾 ĐƠN MẪU POS"),
             b.lms && h("span", { style:{ ...SLIDE_TAG_STYLE, marginLeft:6 } }, "📚 LMS"),
-            h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, b.kind==="lms" ? " · chưa có phác đồ" : b.status==="approved" ? " · phác đồ đã duyệt" : " · phác đồ nháp")),
+            h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, b.kind==="lms" ? " · chưa có phác đồ" : b.kind==="pos" ? " · bệnh mẫu POS" : b.status==="approved" ? " · phác đồ đã duyệt" : " · phác đồ nháp")),
           h("b", { style:{ color: b.phuHop>=70 ? CL360.good : b.phuHop>=40 ? CL360.warn : CL360.gray } }, b.phuHop + "%")),
         h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, (b.khop||[]).length ? "Khớp: " + b.khop.join(" ✓ ") + " ✓" : "", (b.thieu||[]).length ? " · chưa hỏi: " + b.thieu.join(", ") : "",
-          !b.byProfile && b.kind!=="lms" ? h("span", { style:{ color:CL360.warn } }, " · chưa có hồ sơ triệu chứng") : null),
+          !b.byProfile && b.kind!=="lms" && b.kind!=="pos" ? h("span", { style:{ color:CL360.warn } }, " · chưa có hồ sơ triệu chứng") : null),
         (b.loai||[]).length>0 && h("div", { style:{ fontSize:11.5, color:CL360.bad } }, "Loại trừ: " + b.loai.join(" · ")),
         b.boiCanh && h("div", { style:{ fontSize:11, color:"#7c3aed" } }, "Bối cảnh: " + b.boiCanh),
         h("div", { style:{ background:"#F0EEE2", borderRadius:4, height:6, marginTop:4 } }, h("div", { style:{ width:b.phuHop + "%", height:6, borderRadius:4, background: b.phuHop>=70 ? CL360.good : b.phuHop>=40 ? CL360.warn : CL360.gray } })))),
