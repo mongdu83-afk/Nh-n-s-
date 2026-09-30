@@ -7448,14 +7448,17 @@ function slideText(x){
   if(!/^\s*📚\s*/.test(t)) return t;
   return [t.replace(/^\s*📚\s*/, ""), h("span", { key:"sl", style:SLIDE_TAG_STYLE, title:"Theo slide bệnh học trên LMS" }, "📚 slide")];
 }
-function BenhHocBox({ bh, lms, onRefresh }){
+function BenhHocBox({ bh: bh0, lms, onRefresh }){
+  let bh = bh0;
   const h = React.createElement;
   const [open, setOpen] = useState(false); // 30/9/2026 (Phương): mặc định THU GỌN
   if(!bh && !(lms||[]).length) return null;
   if(!open) return h("div", { onClick:()=>setOpen(true), style:{ marginTop:10, borderLeft:"4px solid #0a6bb4", background:"#F4F8FD", borderRadius:10, padding:"8px 12px", display:"flex", justifyContent:"space-between", alignItems:"center", cursor:"pointer", gap:8 } },
     h("div", { style:{ fontWeight:800, fontSize:13 } }, "📚 Kiến thức bệnh học (tóm tắt từ slide LMS)"),
     h("span", { style:{ fontSize:12, fontWeight:700, color:"#0a6bb4", whiteSpace:"nowrap" } }, "Mở ▼"));
-  const row = (label, body) => body && h("div", { style:{ marginTop:4 } }, h("b", null, label + ": "), body);
+  const isEmptyTxt = (t) => !t || /^(chưa có dữ liệu|không có|không rõ|n\/a)\.?$/i.test(String(t).trim());
+  const row = (label, body) => !isEmptyTxt(body) && h("div", { style:{ marginTop:4 } }, h("b", null, label + ": "), body);
+  if(bh && isEmptyTxt(bh.nhanBiet) && !(bh.nhomThuoc||[]).length && !(bh.chuyenKham||[]).length) bh = null;
   const list = (label, items) => (items||[]).length>0 && h("div", { style:{ marginTop:4 } }, h("b", null, label + ":"),
     h("ul", { style:{ margin:"2px 0 0", paddingLeft:18 } }, items.map((x,i) => h("li", { key:i }, x))));
   return h("div", { style:{ marginTop:10, borderLeft:"4px solid #0a6bb4", background:"#F4F8FD", borderRadius:10, padding:"9px 12px", fontSize:12.5, lineHeight:1.55 } },
@@ -7620,7 +7623,7 @@ function DosingProtocolCard({ p, canEdit, onChanged }){
     (p.lms||[]).length>0 && h("div", { style:{ marginTop:6 } }, h("span", { style:{ fontSize:11.5, fontWeight:700, color:"#0a6bb4", background:"#EAF2FB", borderRadius:12, padding:"3px 10px" } }, "📚 Soạn theo bài LMS: " + p.lms.map(l => "“" + l.name + "”").join(", "))),
     c.tomTat && h("div", { style:{ fontSize:13, color:"var(--inkSoft)", marginTop:4 } }, slideText(c.tomTat)),
     h(BenhHocBox, { bh:p.benhHoc, lms:p.lms, onRefresh: canEdit && (p.lms||[]).length ? async ()=>{
-      try{ const r = await pdCall("benhHocRefresh", { id:p.id }, 120000); if(!r.ok) window.alert(r.reason || "Chưa tóm tắt được."); else { window.alert("Đã tóm tắt lại kiến thức bệnh học từ bài LMS."); onChanged && onChanged(); } }
+      try{ const r = await pdCall("benhHocRefresh", { id:p.id }, 120000); if(!r.ok) window.alert(r.reason || "Chưa tóm tắt được."); else { window.alert(`Đã tóm tắt lại kiến thức bệnh học từ bài LMS (${r.slide ? r.slide.label : ""}).`); onChanged && onChanged(); } }
       catch(e){ window.alert("Lỗi: " + (e.message||e)); } } : null }),
     h(SymProfileBox, { prof:p.symProfile }),
     Sec("1. Hỏi trước khi cắt (bắt buộc)", c.cauHoiBatBuoc),
@@ -13208,6 +13211,7 @@ function SymptomConsultView({ isAdmin, myStaff }){
       h("input", { value:q, onChange:e=>setQ(e.target.value), onKeyDown:e=>{ if(e.key==="Enter"){ e.preventDefault(); addSym(filtered[0] && q.trim().length<3 ? filtered[0] : q); } },
         placeholder:"Gõ triệu chứng rồi Enter… VD: xây xẩm, buồn nôn", style:{ width:"100%", marginTop:6, padding:"7px 9px", border:"1.5px solid var(--pine)", borderRadius:8, fontSize:13 } }),
       sym.length>0 && h("div", null, lbl("Đã chọn"), sym.map(s => chip(true, s + " ✕", ()=>setSym(sym.filter(x => x!==s)), null, "s"+s))),
+      sym.some(x => /^(thuốc|chống |giảm |kháng |tuần hoàn|bổ )/i.test(x.trim())) && h("div", { style:{ fontSize:11.5, color:CL360.warn, marginTop:4 } }, "💡 Ô này nhập TRIỆU CHỨNG khách kể (VD: chóng mặt, buồn nôn, đau đầu) — không nhập tên nhóm thuốc. App tự gợi ý thuốc ở bước ④."),
       lbl(res && (res.hayDiKem||[]).length ? "Hay đi kèm — bấm để thêm" : "Triệu chứng hay gặp — bấm để thêm"),
       h("div", null, filtered.map(s => chip(false, "+ " + s, ()=>addSym(s), null, "f"+s))),
       lbl("Bị bao lâu · mức độ"),
@@ -13286,7 +13290,10 @@ function SymptomConsultView({ isAdmin, myStaff }){
       h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:2 } }, "Đối chiếu từ khoá với nội dung phác đồ và slide đào tạo — không dùng AI. ",
         (res.hieu||[]).length>0 && h("span", null, "App hiểu: ", h("b", null, res.hieu.join(", ")), ". "),
         (res.khongHieu||[]).length>0 && h("span", { style:{ color:CL360.warn } }, "Chưa có trong từ điển triệu chứng: " + res.khongHieu.join(", ") + " (vẫn tìm trong nội dung bài học).")),
-      !(res.benh||[]).length ? h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", marginTop:8 } }, "Không khớp bệnh nào trong thư viện — hỏi thêm triệu chứng hoặc mời dược sĩ tư vấn.")
+      !(res.benh||[]).length ? h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", marginTop:8 } }, "Không khớp bệnh nào trong thư viện — hỏi thêm triệu chứng hoặc mời dược sĩ tư vấn.",
+          isAdmin && h("div", { style:{ fontSize:11, marginTop:6, background:"#F6F5F0", borderRadius:6, padding:"6px 8px", color:"var(--ink)" } },
+            h("b", null, `Chẩn đoán (quản lý) · bản ${res.engine || "cũ — chưa deploy bản mới"} · thư viện ${res.libSize!=null ? res.libSize : "?"} bệnh`),
+            (res.diag||[]).map((d,i) => h("div", { key:i }, `${d.title}: ${d.phuHop}% · khớp [${(d.khop||[]).join(", ")}]${(d.loai||[]).length ? " · loại trừ: " + d.loai.join(", ") : ""} · ${d.byProfile ? "hồ sơ: " + (d.chinh||[]).join(" / ") : "từ khoá: " + (d.core||[]).join(", ")}`))))
       : res.benh.map(b => h("div", { key:b.id, onClick:()=>pick(b.id), style:{ cursor:"pointer", border: b.id===selId ? "2px solid var(--pine)" : "1px solid var(--line)", background: b.id===selId ? "#F6FCF8" : "#fff", borderRadius:10, padding:"8px 12px", marginTop:8 } },
         h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8 } },
           h("div", null, h("b", null, b.title), b.doiTuong ? h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, " · " + b.doiTuong) : null,
