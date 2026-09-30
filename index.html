@@ -7488,21 +7488,28 @@ function doseTachLe(it){ if(it.tachLe===true || it.tachLe===false) return it.tac
 function ComboDosePanel({ k }){
   const h = React.createElement;
   const items = (k.items||[]).filter(it => !it.tranh);
-  const lans = items.map(it => it.lanNgay).filter(x => x > 0);
-  const maxLan = lans.length ? Math.min(4, Math.max(...lans)) : 3;
-  const [n, setN] = useState(maxLan * 2);
+  // 30/9/2026 (Phương): số lần/ngày CHỈ theo API danh mục / slide LMS — món không có nguồn KHÔNG bỏ vào túi liều, không mặc định 3 lần
+  const known = items.filter(it => it.lanNgay > 0 || !doseTachLe(it));
+  const noDose = items.filter(it => !(it.lanNgay > 0) && doseTachLe(it));
+  const lans = known.map(it => it.lanNgay).filter(x => x > 0);
+  const maxLan = lans.length ? Math.min(4, Math.max(...lans)) : 0;
+  const [n, setN] = useState(Math.max(1, maxLan) * 3); // mặc định 3 ngày (liệu trình tối thiểu)
+  if(!maxLan) return h("div", { style:{ marginTop:6, background:"#fff", border:"1px solid var(--line)", borderRadius:10, padding:"8px 10px", fontSize:12, color:CL360.warn } },
+    "Danh mục sản phẩm (API) và slide LMS chưa ghi số lần uống/ngày cho các thuốc trong combo này → app không tự chia túi liều. Xem liều trên nhãn/tờ HDSD hoặc hỏi dược sĩ.");
   const days = Math.ceil(n / maxLan);
   const times = DOSE_TIMES[maxLan] || DOSE_TIMES[3];
   let total = 0, perDose = 0, missing = 0;
-  const rows = items.map(it0 => { let it = it0;
+  const rows = known.map(it0 => { let it = it0;
     const lan = Math.min(maxLan, it.lanNgay || maxLan);
     const doses = lan >= maxLan ? n : Math.min(n, Math.ceil(days * lan));
-    const moiLan = it.moiLan || 1;
+    const moiLan = it.moiLan || 0; // không có nguồn ghi lượng mỗi lần → không tự cho 1 viên
     const tach = doseTachLe(it);
     let qty, money, note = "";
     const sameUnit = it.donViLieu && (it.donViGia||it.donVi) && pdStrip(it.donViLieu)===pdStrip(it.donViGia||it.donVi);
     it = { ...it, giaLe: it.giaLe || (sameUnit ? it.donGia : null) };
-    if(tach){
+    if(tach && !moiLan){
+      qty = null; money = null; note = `danh mục/slide chưa ghi lượng mỗi lần theo ${it.donViLieu || "viên"} — xem nhãn`;
+    } else if(tach){
       qty = doses * moiLan;
       money = it.giaLe ? qty * it.giaLe : null;
       if(!it.giaLe) note = "chưa có giá lẻ theo " + (it.donViLieu || "viên");
@@ -7527,11 +7534,46 @@ function ComboDosePanel({ k }){
     rows.map((r, i) => h("div", { key:i, style:{ borderTop:"1px dashed var(--line)", padding:"4px 0" } },
       h("div", { style:{ display:"flex", justifyContent:"space-between", gap:6 } }, h("b", null, r.it.ten), h("b", { style:{ whiteSpace:"nowrap" } }, r.money ? fmtMoney360(r.money) : "—")),
       h("div", { style:{ fontSize:11.5 } }, r.tach
-        ? `${r.it.moiLan || 1} ${r.it.donViLieu || "viên"}/liều × ${r.doses} liều = ${r.qty} ${r.it.donViLieu || "viên"}` + (r.lan < maxLan ? ` (${r.lan} lần/ngày — chỉ túi ${r.inBags})` : "")
+        ? (r.qty==null ? `? ${r.it.donViLieu || "viên"}/liều × ${r.doses} liều` : `${r.it.moiLan}${r.it.moiLan2 ? "–"+r.it.moiLan2 : ""} ${r.it.donViLieu || "viên"}/liều × ${r.doses} liều = ${r.qty} ${r.it.donViLieu || "viên"}`) + ` · ${r.it.lanNgay} lần/ngày` + (r.lan < maxLan ? ` — chỉ túi ${r.inBags}` : "")
         : `Bán nguyên 1 ${r.it.donViGia || r.it.donVi || "đơn vị"} — dùng riêng ${r.it.moiLan ? `${r.it.moiLan}${r.it.donViLieu || ""}/lần` : "theo hướng dẫn"}`),
       r.tach && r.note && h("div", { style:{ fontSize:10.5, color:CL360.warn } }, r.note))),
+    noDose.length>0 && h("div", { style:{ marginTop:4, fontSize:11.5, color:CL360.warn } }, "⚠ Chưa có số lần uống/ngày trong danh mục & slide nên KHÔNG bỏ vào túi liều: " + noDose.map(it => it.ten).join(", ") + " — xem nhãn/hỏi dược sĩ."),
     perDose>0 && h("div", { style:{ fontSize:11, color:"var(--inkSoft)", marginTop:4 } }, `Giá 1 liều ≈ ${fmtMoney360(perDose)} (chưa tính món bán nguyên chai/hộp)` + (missing ? ` · ${missing} món chưa có giá` : "")),
     h("div", { style:{ marginTop:6, background:"#FFF8E6", border:"1px solid #F3DDA8", borderRadius:8, padding:"5px 8px", fontSize:11.5 } }, "🧾 Nhãn túi liều: ", h("b", null, label)));
+}
+// 30/9/2026 (Phương): bán THEO LIỆU TRÌNH — nhân viên chọn số ngày (tối thiểu 3), số lượng & tiền tự tính theo liều/ngày (API danh mục / slide LMS)
+function ComboDayPanel({ k }){
+  const h = React.createElement;
+  const MIN = 3;
+  const [days, setDays] = useState(Math.max(MIN, Number(k.soNgay) || MIN));
+  const items = (k.items||[]).filter(it => !it.tranh);
+  let total = 0, missing = 0;
+  const rows = items.map(it => {
+    const u = it.donViGia || it.donVi || "";
+    let qty = it.soLuong || 1, txt = "", note = "";
+    if(it.khiCan){ note = "dùng khi cần — số lượng giữ theo phác đồ"; txt = `${qty} ${u}`; }
+    else if(it.lieuNgay > 0){
+      const need = Math.ceil(it.lieuNgay * days);
+      const same = it.donViLieu && (!u || pdStrip(it.donViLieu)===pdStrip(u));
+      if(same){ qty = need; txt = `${it.lieuNgay} ${it.donViLieu}/ngày × ${days} ngày = ${qty} ${u || it.donViLieu}`; }
+      else if(it.quyCach && it.quyCach.qty > 0){ qty = Math.max(1, Math.ceil(need / it.quyCach.qty)); txt = `${it.lieuNgay} ${it.donViLieu}/ngày × ${days} ngày = ${need} ${it.donViLieu} → ${qty} ${u}`; note = `1 ${it.quyCach.unit} = ${it.quyCach.qty} ${it.quyCach.base}`; }
+      else { txt = `${it.lieuNgay} ${it.donViLieu||""}/ngày × ${days} ngày = cần ${need} ${it.donViLieu||""}`; note = `bán ${qty} ${u} — đối chiếu dung tích/quy cách`; }
+    } else { txt = `${qty} ${u}`; note = "chưa có liều trong danh mục/slide — số lượng giữ theo phác đồ, xem nhãn"; }
+    const money = it.donGia ? Math.round(it.donGia * qty) : null;
+    if(money) total += money; else missing++;
+    return { it, txt, note, money };
+  });
+  const btn = (t, on, dis) => h("button", { type:"button", onClick:on, disabled:dis, style:{ width:26, height:26, border:"1px solid var(--line)", borderRadius:6, background: dis ? "var(--paper)" : "#fff", fontWeight:800, cursor: dis ? "not-allowed" : "pointer", opacity: dis ? .5 : 1 } }, t);
+  return h("div", { style:{ marginTop:6, background:"#fff", border:"1px solid var(--line)", borderRadius:10, padding:"8px 10px", fontSize:12 } },
+    h("div", { style:{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" } },
+      h("b", null, "Số ngày:"), btn("−", ()=>setDays(Math.max(MIN, days-1)), days<=MIN), h("b", { style:{ minWidth:24, textAlign:"center", fontSize:14 } }, days), btn("+", ()=>setDays(Math.min(30, days+1))),
+      h("span", { style:{ color:"var(--inkSoft)", fontSize:11 } }, `(tối thiểu ${MIN} ngày)`),
+      h("b", { style:{ marginLeft:"auto", fontSize:15, color:"var(--pine)" } }, total ? "~" + fmtMoney360(total) : "—")),
+    rows.map((r, i) => h("div", { key:i, style:{ borderTop:"1px dashed var(--line)", padding:"4px 0", marginTop: i ? 0 : 6 } },
+      h("div", { style:{ display:"flex", justifyContent:"space-between", gap:6 } }, h("b", null, r.it.ten), h("b", { style:{ whiteSpace:"nowrap" } }, r.money ? fmtMoney360(r.money) : "—")),
+      h("div", { style:{ fontSize:11.5 } }, r.txt),
+      r.note && h("div", { style:{ fontSize:10.5, color:CL360.warn } }, r.note))),
+    missing>0 && h("div", { style:{ fontSize:11, color:"var(--inkSoft)", marginTop:4 } }, `${missing} món chưa có giá — tổng tiền chưa đủ`));
 }
 function ComboModeToggle({ k }){
   const h = React.createElement;
@@ -7539,15 +7581,17 @@ function ComboModeToggle({ k }){
   const seg = (id, t) => h("button", { type:"button", onClick:()=>setMode(id), style:{ padding:"3px 9px", fontSize:11, fontWeight:800, border:"none", cursor:"pointer", background: mode===id ? "var(--pine)" : "#fff", color: mode===id ? "#fff" : "var(--ink)" } }, t);
   return h("div", { style:{ marginTop:6 } },
     h("div", { style:{ display:"inline-flex", border:"1px solid var(--pine)", borderRadius:7, overflow:"hidden" } }, seg("ngay", "Theo liệu trình"), seg("lieu", "Theo số liều")),
-    mode==="lieu" && h(ComboDosePanel, { k }));
+    mode==="ngay" ? h(ComboDayPanel, { k }) : h(ComboDosePanel, { k }));
 }
 // 30/9/2026 (Phương): liệu trình ghi 1 con số theo LIỀU DÙNG MỖI NGÀY; phác đồ cũ còn ghi khoảng "3–5 ngày" → nhắc soạn lại, không tự đổi.
 function fixDays(t){ return String(t||"").replace(/^\s*📚\s*/, ""); } // KHÔNG tự đổi khoảng ngày — số ngày phải tính theo liều (AI soạn lại)
 function isDayRange(t){ return /\d+\s*[-–—]\s*\d+\s*ngày/.test(String(t||"")); }
 function comboQtyText(it){ // "2 viên/ngày × 3 ngày = 6 viên"
   const u = it.donViGia || it.donVi || "";
-  if(it.lieuNgay && it.soNgayDung) return `${it.khiCan ? "khi cần, tối đa " : ""}${it.lieuNgay}/ngày × ${it.soNgayDung} ngày → ${it.soLuong||1} ${u}`;
-  return `${it.soLuong||1} ${u}`;
+  const lan = it.lanNgay ? `${it.moiLan ? `${it.moiLan}${it.moiLan2 ? "–"+it.moiLan2 : ""} ${it.donViLieu||""} × ` : ""}${it.lanNgay}${it.lanNgay2 ? "–"+it.lanNgay2 : ""} lần/ngày` : "";
+  if(it.lieuNgay && it.soNgayDung) return `${lan ? lan + " · " : ""}${it.khiCan ? "khi cần, tối đa " : ""}${it.lieuNgay}/ngày × ${it.soNgayDung} ngày → ${it.soLuong||1} ${u}` + (it.soLuongGhiChu ? ` (${it.soLuongGhiChu})` : "");
+  if(lan) return `${lan} → ${it.soLuong||1} ${u}`;
+  return `${it.soLuong||1} ${u} · chưa có liều trong danh mục/slide — xem nhãn`;
 }
 function fmtMoney360(n){ return n==null ? "—" : Math.round(n).toLocaleString("vi-VN") + "đ"; }
 function DosingComboCards({ c, open, setOpen }){
@@ -13144,7 +13188,7 @@ function SymptomConsultView({ isAdmin, myStaff }){
   const [selId, setSelId] = useState(null);
   const [drugs, setDrugs] = useState(null);
   const [dBusy, setDBusy] = useState(false);
-  const [shop, setShop] = useState((myStaff && myStaff.shop) || "");
+  const [shop, setShop] = useState((myStaff && myStaff.shop) || (()=>{ try{ return localStorage.getItem("symShop") || ""; }catch(e){ return ""; } })());
   const [logged, setLogged] = useState("");
   const [openPid, setOpenPid] = useState(null);
   const [answers, setAnswers] = useState({}); // câu hỏi Có/Không → tính lại điểm (không gọi AI)
@@ -13187,7 +13231,7 @@ function SymptomConsultView({ isAdmin, myStaff }){
   const sel = res && (res.benh||[]).find(b => b.id===selId);
   const tones = [{ b:"#16A34A", bg:"#F6FCF8", icon:"①" }, { b:"#0a6bb4", bg:"#F4F8FD", icon:"②" }, { b:"#B4720A", bg:"#FFFCF1", icon:"③" }];
   const tag = (t, st, title, key) => h("span", { key, title, style:{ fontSize:10, fontWeight:800, borderRadius:4, padding:"0 4px", marginLeft:3, whiteSpace:"nowrap", ...st } }, t);
-  const stockTag = (n) => n==null ? null : n>0 ? h("span", { style:{ color:CL360.good, fontWeight:800, fontSize:11, marginLeft:4 } }, `✓ tồn ${n}`) : h("span", { style:{ color:CL360.bad, fontWeight:800, fontSize:11, marginLeft:4 } }, `✗ hết tại ${shopLabel(shop||"")}`);
+  const stockTag = (n) => n==null ? (shop ? null : h("span", { style:{ color:"var(--inkSoft)", fontSize:10.5, marginLeft:4 } }, "· chọn nhà thuốc để xem tồn")) : n>0 ? h("span", { style:{ color:CL360.good, fontWeight:800, fontSize:11, marginLeft:4 } }, `✓ tồn ${n}`) : h("span", { style:{ color:CL360.bad, fontWeight:800, fontSize:11, marginLeft:4 } }, `✗ hết tại ${shopLabel(shop||"")}`);
   const suggestSym = [...new Set([...(res && res.hayDiKem || []), ...SYMPTOM_COMMON])].filter(s => !sym.some(x => x.toLowerCase()===s.toLowerCase()));
   const filtered = q.trim() ? suggestSym.filter(s => pdStrip(s).includes(pdStrip(q))).slice(0, 8) : suggestSym.slice(0, res ? 12 : 16);
 
@@ -13228,7 +13272,7 @@ function SymptomConsultView({ isAdmin, myStaff }){
     h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap", alignItems:"center" } },
       h("b", null, "④ Thuốc gợi ý — " + (sel ? sel.title : "")),
       h("span", { style:{ fontSize:12, color:"var(--inkSoft)" } }, "ưu tiên hàng còn tồn tại ",
-        isAdmin && res && res.shops ? h("select", { value:shop, onChange:e=>{ setShop(e.target.value); pick(selId, null, e.target.value); }, style:{ fontSize:12, padding:"2px 4px", border:"1px solid var(--line)", borderRadius:6 } },
+        isAdmin && res && res.shops ? h("select", { value:shop, onChange:e=>{ setShop(e.target.value); try{ localStorage.setItem("symShop", e.target.value); }catch(er){} pick(selId, null, e.target.value); }, style:{ fontSize:12, padding:"2px 4px", border: shop ? "1px solid var(--line)" : "2px solid "+CL360.warn, borderRadius:6 } },
           h("option", { value:"" }, "— chọn nhà thuốc —"), res.shops.map(s => h("option", { key:s, value:s }, shopLabel(s))))
         : h("b", null, shop ? shopLabel(shop) : "(chưa gắn nhà thuốc)"))),
     dBusy ? h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", padding:"12px 0" } }, "Đang lấy thuốc & tồn kho…")
@@ -13260,12 +13304,12 @@ function SymptomConsultView({ isAdmin, myStaff }){
                 stockTag(it.tonShop),
                 it.tranh && h("div", { style:{ fontSize:11, color:CL360.bad, fontWeight:700 } }, "⛔ Tránh: " + it.tranh),
                 it.tonShop===0 && h("div", { style:{ margin:"4px 0 0 6px", padding:"5px 8px", borderLeft:"3px solid " + ((it.thayThe||[]).length ? CL360.good : CL360.gray), background:"#fff", borderRadius:6, fontSize:11.5 } },
-                  !(it.thayThe||[]).length ? h("span", { style:{ color:"var(--inkSoft)" } }, "Nhà thuốc chưa có mã cùng hoạt chất / cùng công dụng còn tồn — mời CHT xử lý (đặt hàng).")
+                  !(it.thayThe||[]).length ? h("span", { style:{ color:"var(--inkSoft)" } }, "Nhà thuốc chưa có mã cùng hoạt chất / cùng công dụng còn tồn" + ((it.daTim||[]).length ? ` (đã tìm cả thuốc slide cùng nhóm: ${it.daTim.join(", ")})` : "") + " — mời CHT xử lý (đặt hàng).")
                   : ["hoatchat", "congdung"].map(lv => { const arr = it.thayThe.filter(a => a.loai===lv); if(!arr.length) return null;
                       return h("div", { key:lv },
-                        h("div", { style:{ fontSize:10, fontWeight:800, color:"var(--inkSoft)", textTransform:"uppercase", marginTop:2 } }, lv==="hoatchat" ? "① Cùng hoạt chất — còn tồn tại nhà thuốc" : "② Cùng công dụng" + (arr[0].nhom ? ` (${arr[0].nhom})` : "")),
+                        h("div", { style:{ fontSize:10, fontWeight:800, color:"var(--inkSoft)", textTransform:"uppercase", marginTop:2 } }, lv==="hoatchat" ? "① Cùng hoạt chất — còn tồn tại nhà thuốc" : "② Cùng công dụng — thuốc slide khuyên cùng nhóm, còn tồn"),
                         arr.map(a => h("div", { key:a.pid, style:{ display:"flex", justifyContent:"space-between", gap:6, alignItems:"center" } },
-                          h("span", null, a.ten, h("span", { style:{ color:CL360.good, fontWeight:700 } }, ` · tồn ${a.ton}`), a.donGia ? h("span", { style:{ color:"var(--inkSoft)" } }, ` · ${fmtMoney360(a.donGia)}/${a.donVi||""}`) : null),
+                          h("span", null, a.ten, lv==="congdung" && a.nhom ? h("span", { style:{ fontSize:10, fontWeight:800, color:"#0a6bb4", background:"#EAF2FB", borderRadius:4, padding:"0 4px", marginLeft:4 } }, "📚 " + a.nhom) : null, h("span", { style:{ color:CL360.good, fontWeight:700 } }, ` · tồn ${a.ton}`), a.donGia ? h("span", { style:{ color:"var(--inkSoft)" } }, ` · ${fmtMoney360(a.donGia)}/${a.donVi||""}`) : null),
                           h("button", { type:"button", onClick:()=>setSwaps({ ...swaps, [i+"_"+j]:a }), style:{ fontSize:10.5, fontWeight:800, border:"1px solid "+CL360.good, color:CL360.good, background:"#fff", borderRadius:6, padding:"1px 6px", cursor:"pointer", whiteSpace:"nowrap" } }, "Dùng mã này")))); })),
                 it.pid===openPid && h(DoseOfficialInline, { pid:it.pid }))),
               h(ComboModeToggle, { k }),
