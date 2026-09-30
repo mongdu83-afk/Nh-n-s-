@@ -13256,7 +13256,7 @@ function ElearnConnectModal({ onClose, onChanged }){
     try{
       const r = await pdCall("elearnSync", { force:!!force }, 540000);
       if(r.ok===false) setMsg({ bad:true, text:(r.authError ? "Token hết hạn hoặc sai — dán Token mới. " : "") + r.error });
-      else { const m = r.meta; setMsg({ bad:false, text:`Xong: ${m.courseCount} khoá học, tải chi tiết ${m.detailFetched} khoá, đọc được ${m.slidesOk} bộ slide${m.slidesAi?` (${m.slidesAi} bộ dạng hình do AI đọc)`:""}${m.slidesPrivate?` · ${m.slidesPrivate} bộ không công khai — chỉ dùng tên/mô tả`:""}${m.slidesImageOnly?` · còn ${m.slidesImageOnly} bộ dạng hình sẽ đọc ở lượt sau`:""}.` }); onChanged && onChanged(); }
+      else { const m = r.meta; setMsg({ bad:false, text:`Xong: ${m.courseCount} khoá học, tải chi tiết ${m.detailFetched} khoá, đọc được ${m.slidesOk} bộ slide${m.slidesAi?` (${m.slidesAi} bộ dạng hình do AI đọc)`:""}${m.slidesPrivate?` · ${m.slidesPrivate} bộ không công khai — chỉ dùng tên/mô tả`:""}${m.slidesImageOnly?` · còn ${m.slidesImageOnly} bộ dạng hình sẽ đọc ở lượt sau`:""}.${m.timeCut?` Còn ${m.timeCut} khoá chưa kịp đọc (giới hạn thời gian) — bấm "Đồng bộ ngay" thêm lần nữa.`:""}` }); onChanged && onChanged(); }
       await load();
     } catch(e){ setMsg({ bad:true, text:e.message||String(e) }); }
     setBusy("");
