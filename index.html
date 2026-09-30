@@ -14386,37 +14386,60 @@ function openPasteModal(){
   });
 }
 function loadXlsx(){ return new Promise((ok, no) => { if(window.XLSX) return ok(); const s = document.createElement("script"); s.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"; s.onload = ok; s.onerror = () => no(new Error("Không tải được thư viện Excel")); document.head.appendChild(s); }); }
+// 30/9/2026: nhập Excel — KÉO THẢ file vào tab hoặc vào ô trong hộp thoại, hoặc bấm chọn file. Tự tìm dòng tiêu đề
+// (file có dòng tiêu đề/tên bảng phía trên vẫn đọc được), nhận cả cột của app tem giá cũ (Loại tem, Giá thường, % giảm, Tiền giảm).
+async function importExcelFile(f){
+  await loadXlsx();
+  const wb = XLSX.read(await f.arrayBuffer(), { type:"array", cellDates:true });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const aoa = XLSX.utils.sheet_to_json(ws, { header:1, defval:"", raw:true, blankrows:false });
+  let hi = aoa.findIndex(r => r.some(c => /^(ten|ma)\b|ten san pham|ma sp/.test(strip(c))));
+  if(hi < 0) hi = 0;
+  const head = aoa[hi].map(c => String(c).trim());
+  const data = aoa.slice(hi + 1).map(r => { const o = {}; head.forEach((k, i) => { if(k) o[k] = r[i]; }); return o; });
+  if(!data.length) throw new Error("File không có dòng dữ liệu dưới dòng tiêu đề.");
+  const keys = head.filter(Boolean); const find = (...res) => keys.find(k => res.some(re => re.test(strip(k))));
+  const kCode = find(/^ma( sp| san pham| hang)?$/, /^code|sku/, /^ma\b/), kName = find(/^ten/, /name/), kUnit = find(/dvt|don vi/);
+  const kKm = find(/gia km|khuyen mai|gia giam|gia ban km/);
+  const kPrice = keys.find(k => /^gia|price/.test(strip(k)) && k !== kKm);
+  const kPct = find(/% ?giam|phan tram/), kOff = find(/tien giam/), kType = find(/loai tem|^loai/);
+  const kFrom = find(/tu ngay|bat dau|from/), kTo = find(/den ngay|ket thuc|^to$/), kQty = find(/^sl|so tem|so luong|qty/), kTpl = find(/^mau/);
+  const tplByName = {}; Object.entries(TPL).forEach(([k,t]) => { tplByName[strip(t.name)] = k; tplByName[strip(t.name.split(" (")[0])] = k; });
+  const dv = (v) => v instanceof Date ? new Date(v.getTime() - v.getTimezoneOffset()*60000).toISOString().slice(0,10) : (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(String(v).trim()) ? String(v).trim().split("/").reverse().map(x => x.padStart(2,"0")).join("-") : String(v||"").trim());
+  return data.map(d => {
+    const code = String(kCode ? d[kCode] : "").trim(); const b = code && S.bookByCode[code.toLowerCase()] ? S.bookByCode[code.toLowerCase()][0] : null;
+    const price = num(kPrice ? d[kPrice] : null) ?? (b ? b[3] : null);
+    let promo = num(kKm ? d[kKm] : null);
+    if(promo == null && price != null){ const pc = num(kPct ? d[kPct] : null), off = num(kOff ? d[kOff] : null); if(pc) promo = Math.round(price * (1 - pc/100) / 100) * 100; else if(off) promo = price - off; }
+    const isKmType = kType && /km|khuyen/.test(strip(d[kType]));
+    const tpl = (kTpl && tplByName[strip(d[kTpl])]) || ((promo != null || isKmType) ? S.defKm : S.defGia);
+    return newRow({ tpl, code, name: String(kName ? d[kName] : "").trim() || (b ? b[1] : ""), unit: String(kUnit ? d[kUnit] : "").trim() || (b ? b[2] : ""), price: price ?? "", promo: promo ?? "", from: dv(kFrom ? d[kFrom] : ""), to: dv(kTo ? d[kTo] : ""), qty: Math.max(1, Number(kQty ? d[kQty] : 1) || 1) });
+  }).filter(r => r.name || r.code);
+}
+function isExcelFile(f){ return f && /\.(xlsx|xls|csv)$/i.test(f.name || ""); }
+async function importAndAdd(f, onErr){
+  try{ const add = await importExcelFile(f); if(!add.length) throw new Error("Không đọc được dòng nào — kiểm tra file có cột Tên hoặc Mã."); addRows(add, `Đã nhập ${add.length} dòng từ ${f.name}`); return true; }
+  catch(err){ (onErr || ((m) => toast(m, 5000)))("Lỗi: " + (err.message || err)); return false; }
+}
 function openExcel(){
-  modal(`<h3>📥 Nhập Excel / CSV</h3><div class="note">Các cột app tự nhận: <b>Mã</b>, <b>Tên</b>, <b>Giá</b> (giá gốc), <b>Giá KM</b>, <b>ĐVT</b>, <b>Từ ngày</b>, <b>Đến ngày</b>, <b>SL</b> (số tem), <b>Mẫu</b> (tên mẫu). Thiếu giá mà có mã → tự lấy từ sổ giá.</div>
-    <div class="btns"><input type="file" id="tg-xf" accept=".xlsx,.xls,.csv"><button class="btn" id="tg-xTpl">Tải file mẫu</button></div>
-    <div id="tg-xm" class="note" style="margin-top:8px"></div><div class="bar"><span></span><button class="btn" data-close>Đóng</button></div>`, (bg, close) => {
+  modal(`<h3>📥 Nhập Excel / CSV</h3><div class="note">Các cột app tự nhận: <b>Mã</b>, <b>Tên</b>, <b>Giá</b> (giá gốc), <b>Giá KM</b> (hoặc <b>% giảm</b> / <b>Tiền giảm</b>), <b>ĐVT</b>, <b>Từ ngày</b>, <b>Đến ngày</b>, <b>SL</b> (số tem), <b>Mẫu</b>. Thiếu giá mà có mã → tự lấy từ sổ giá. Dùng được cả file của app tem giá cũ.</div>
+    <label id="tg-xdrop" style="display:block;margin-top:10px;border:2px dashed #b9d6cc;border-radius:12px;padding:22px 12px;text-align:center;cursor:pointer;background:#F6FBF8">
+      <div style="font-size:15px;font-weight:700">⬇ Kéo thả file Excel vào đây</div><div class="note">hoặc bấm để chọn file (.xlsx, .xls, .csv)</div>
+      <input type="file" id="tg-xf" accept=".xlsx,.xls,.csv" style="display:none"></label>
+    <div class="btns"><button class="btn" id="tg-xTpl">Tải file mẫu</button></div>
+    <div id="tg-xm" class="note" style="margin-top:8px;color:var(--tg-bad)"></div><div class="bar"><span></span><button class="btn" data-close>Đóng</button></div>`, (bg, close) => {
     bg.querySelector("#tg-xTpl").onclick = async () => {
       await loadXlsx();
       const ws = XLSX.utils.aoa_to_sheet([["Mã","Tên","ĐVT","Giá","Giá KM","Từ ngày","Đến ngày","SL","Mẫu"],["PA0012","Panadol Extra","Hộp",215000,189000,"2026-10-01","2026-10-31",2,"Giảm %"],["PR0100","Siro ho Prospan 100ml","Chai",95000,"","","",1,"Cổ điển"]]);
       const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Tem"); XLSX.writeFile(wb, "mau-tem-gia.xlsx");
     };
-    bg.querySelector("#tg-xf").onchange = async (e) => {
-      const f = e.target.files[0]; if(!f) return;
-      try{
-        await loadXlsx();
-        const wb = XLSX.read(await f.arrayBuffer(), { type:"array", cellDates:true });
-        const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval:"", raw:true });
-        if(!data.length) throw new Error("File không có dòng dữ liệu.");
-        const keys = Object.keys(data[0]); const find = (...res) => keys.find(k => res.some(re => re.test(strip(k))));
-        const kCode = find(/^ma( sp| san pham| hang)?$/, /^code|sku/), kName = find(/^ten/, /name/), kUnit = find(/dvt|don vi/), kKm = find(/km|khuyen mai|gia giam|gia ban km/);
-        const kPrice = keys.find(k => /^gia|price/.test(strip(k)) && k !== kKm);
-        const kFrom = find(/tu ngay|bat dau|from/), kTo = find(/den ngay|ket thuc|to$/), kQty = find(/^sl|so tem|so luong|qty/), kTpl = find(/^mau/);
-        const tplByName = {}; Object.entries(TPL).forEach(([k,t]) => { tplByName[strip(t.name)] = k; tplByName[strip(t.name.split(" (")[0])] = k; });
-        const dv = (v) => v instanceof Date ? v.toISOString().slice(0,10) : (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(String(v)) ? String(v).split("/").reverse().map(x => x.padStart(2,"0")).join("-") : String(v||""));
-        const add = data.map(d => {
-          const code = String(kCode ? d[kCode] : "").trim(); const b = code && S.bookByCode[code.toLowerCase()] ? S.bookByCode[code.toLowerCase()][0] : null;
-          const price = num(kPrice ? d[kPrice] : null) ?? (b ? b[3] : null); const promo = num(kKm ? d[kKm] : null);
-          const tpl = (kTpl && tplByName[strip(d[kTpl])]) || (promo != null ? S.defKm : S.defGia);
-          return newRow({ tpl, code, name: String(kName ? d[kName] : "").trim() || (b ? b[1] : ""), unit: String(kUnit ? d[kUnit] : "").trim() || (b ? b[2] : ""), price: price ?? "", promo: promo ?? "", from: dv(kFrom ? d[kFrom] : ""), to: dv(kTo ? d[kTo] : ""), qty: Math.max(1, Number(kQty ? d[kQty] : 1) || 1) });
-        }).filter(r => r.name || r.code);
-        close(); addRows(add, `Đã nhập ${add.length} dòng từ Excel`);
-      } catch(err){ bg.querySelector("#tg-xm").textContent = "Lỗi: " + err.message; }
-    };
+    const msg = (m) => { bg.querySelector("#tg-xm").textContent = m; };
+    const go = async (f) => { if(!f) return; if(!isExcelFile(f)) return msg("Chỉ nhận file .xlsx, .xls hoặc .csv."); msg("Đang đọc " + f.name + "…"); if(await importAndAdd(f, msg)) close(); };
+    bg.querySelector("#tg-xf").onchange = (e) => go(e.target.files[0]);
+    const dz = bg.querySelector("#tg-xdrop");
+    ["dragenter","dragover"].forEach(ev => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.style.background = "#E4EFEC"; }));
+    ["dragleave","drop"].forEach(ev => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.style.background = "#F6FBF8"; }));
+    dz.addEventListener("drop", (e) => go(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]));
   });
 }
 function saveSetPrompt(){
@@ -14517,6 +14540,11 @@ function onDocClick(e){ if(!e.target.closest || !e.target.closest(".srch")){ con
 return {
   mount(el){
     ensureStyle(); ROOT = el; render();
+    // Kéo thả file Excel thẳng vào tab Tem giá
+    const onOver = (e) => { if(e.dataTransfer && [...(e.dataTransfer.types||[])].includes("Files")){ e.preventDefault(); el.style.outline = "3px dashed #0D5C4F"; el.style.outlineOffset = "-6px"; } };
+    const onLeave = (e) => { if(!el.contains(e.relatedTarget)) el.style.outline = ""; };
+    const onDrop = (e) => { el.style.outline = ""; const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]; if(!f) return; e.preventDefault(); if(!isExcelFile(f)) return toast("Chỉ nhận file .xlsx, .xls hoặc .csv"); importAndAdd(f); };
+    el.addEventListener("dragover", onOver); el.addEventListener("dragleave", onLeave); el.addEventListener("drop", onDrop);
     if(!S.book) loadBook(); else loadSets().then(render);
     document.addEventListener("click", onDocClick);
     return { unmount(){ document.removeEventListener("click", onDocClick); ROOT = null; } };
