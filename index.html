@@ -7450,12 +7450,18 @@ function slideText(x){
 }
 function BenhHocBox({ bh, lms }){
   const h = React.createElement;
+  const [open, setOpen] = useState(false); // 30/9/2026 (Phương): mặc định THU GỌN
   if(!bh && !(lms||[]).length) return null;
+  if(!open) return h("div", { onClick:()=>setOpen(true), style:{ marginTop:10, borderLeft:"4px solid #0a6bb4", background:"#F4F8FD", borderRadius:10, padding:"8px 12px", display:"flex", justifyContent:"space-between", alignItems:"center", cursor:"pointer", gap:8 } },
+    h("div", { style:{ fontWeight:800, fontSize:13 } }, "📚 Kiến thức bệnh học (tóm tắt từ slide LMS)"),
+    h("span", { style:{ fontSize:12, fontWeight:700, color:"#0a6bb4", whiteSpace:"nowrap" } }, "Mở ▼"));
   const row = (label, body) => body && h("div", { style:{ marginTop:4 } }, h("b", null, label + ": "), body);
   const list = (label, items) => (items||[]).length>0 && h("div", { style:{ marginTop:4 } }, h("b", null, label + ":"),
     h("ul", { style:{ margin:"2px 0 0", paddingLeft:18 } }, items.map((x,i) => h("li", { key:i }, x))));
   return h("div", { style:{ marginTop:10, borderLeft:"4px solid #0a6bb4", background:"#F4F8FD", borderRadius:10, padding:"9px 12px", fontSize:12.5, lineHeight:1.55 } },
-    h("div", { style:{ fontWeight:800, fontSize:13 } }, "📚 Kiến thức bệnh học (tóm tắt từ slide LMS)"),
+    h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8, cursor:"pointer" }, onClick:()=>setOpen(false) },
+      h("div", { style:{ fontWeight:800, fontSize:13 } }, "📚 Kiến thức bệnh học (tóm tắt từ slide LMS)"),
+      h("span", { style:{ fontSize:12, fontWeight:700, color:"#0a6bb4", whiteSpace:"nowrap" } }, "Thu gọn ▲")),
     (lms||[]).length>0 && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, "Bài: ", lms.map((l,i) => h("span", { key:i }, i>0 && " · ", h("a", { href:l.url, target:"_blank", rel:"noopener", style:{ color:"#0a6bb4", fontWeight:700 } }, l.name + " ↗")))),
     bh ? h("div", null,
       row("Nhận biết", bh.nhanBiet),
@@ -7470,6 +7476,44 @@ function BenhHocBox({ bh, lms }){
       list("Lưu ý", bh.luuY))
     : h("div", { style:{ color:"var(--inkSoft)", marginTop:4 } }, "Chưa tóm tắt được nội dung slide (slide ít chữ hoặc chưa đọc được)."));
 }
+// 30/9/2026 (Phương): 3 COMBO HOÀN CHỈNH theo 3 mức giá (giá lẻ lấy từ TỒN KHO), hàng thay thế cùng hoạt chất gom 1 dòng.
+function fmtMoney360(n){ return n==null ? "—" : Math.round(n).toLocaleString("vi-VN") + "đ"; }
+function DosingComboCards({ c, open, setOpen }){
+  const h = React.createElement;
+  const [showAlt, setShowAlt] = useState(false);
+  const tones = [{ b:"#16A34A", bg:"#F6FCF8", icon:"①" }, { b:"#0a6bb4", bg:"#F4F8FD", icon:"②" }, { b:"#B4720A", bg:"#FFFCF1", icon:"③" }];
+  const used = new Set(); c.combos.forEach(k => k.items.forEach(it => used.add(it.pid || it.ten)));
+  const alts = (c.combo||[]).map(g => ({ vaiTro:g.vaiTro, sp:(g.sanPham||[]).filter(sp => !used.has(sp.pid || sp.ten)) })).filter(g => g.sp.length);
+  const tag = (t, st, title) => h("span", { title, style:{ fontSize:10, fontWeight:800, borderRadius:4, padding:"0 4px", marginLeft:3, whiteSpace:"nowrap", ...st } }, t);
+  return h("div", { style:{ marginTop:10 } },
+    h("div", { style:{ fontWeight:800, fontSize:13, color:"var(--pine)" } }, "3. Combo gợi ý" + (c.thoiGian ? ` · ${String(c.thoiGian).replace(/^\s*📚\s*/, "")}` : "")),
+    h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, "Mỗi combo đã hoàn chỉnh, không trùng hoạt chất — chọn 1 combo theo khách. Giá lẻ lấy từ tồn kho các nhà thuốc" + (c.giaCapNhat ? ` (cập nhật ${new Date(c.giaCapNhat).toLocaleDateString("vi-VN")})` : "") + "."),
+    h("div", { style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(250px,1fr))", gap:10, marginTop:6 } },
+      c.combos.map((k, i) => { const t = tones[i] || tones[0]; return h("div", { key:i, style:{ border:"1.5px solid " + t.b, background:t.bg, borderRadius:12, padding:"10px 12px" } },
+        h("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:8 } },
+          h("b", { style:{ fontSize:14 } }, t.icon + " " + k.ten),
+          h("span", { style:{ fontSize:18, fontWeight:900, color:t.b, whiteSpace:"nowrap" } }, k.tongTien ? "~" + fmtMoney360(k.tongTien) : "—")),
+        k.doiTuong && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", margin:"2px 0 6px" } }, k.doiTuong),
+        k.thieuGia>0 && h("div", { style:{ fontSize:11, color:CL360.warn } }, `${k.thieuGia} món chưa có giá tồn kho — tổng tiền chưa đủ.`),
+        h("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5 } }, h("tbody", null, k.items.map((it, j) => h("tr", { key:j },
+          h("td", { style:{ padding:"5px 3px", borderTop:"1px dashed var(--line)", verticalAlign:"top" } },
+            it.pid ? h("a", { href:"#", onClick:(ev)=>{ ev.preventDefault(); setOpen(open===it.pid ? null : it.pid); }, style:{ color:"var(--ink)", fontWeight:700 } }, it.ten) : h("b", null, it.ten),
+            it.hhs1 && tag("★HHS1", { color:"#b4720a" }, "Hàng hệ số 1"),
+            it.rx && tag("℞ KÊ ĐƠN", { color:CL360.bad, border:"1px solid "+CL360.bad }, "Chỉ bán khi khách có đơn bác sĩ"),
+            it.tuSlide && tag("📚 slide", { color:"#0a6bb4", background:"#EAF2FB" }, "Theo slide bệnh học LMS"),
+            it.tonKho!=null && it.tonKho<=0 && tag("HẾT HÀNG", { color:"#fff", background:CL360.bad }, "Toàn chuỗi đang hết hàng"),
+            h("div", { style:{ fontSize:11, color:"var(--inkSoft)" } }, [it.vaiTro, String(it.cachDung||"").replace(/^\s*📚\s*/, "")].filter(Boolean).join(" · ")),
+            it.pid===open && h(DoseOfficialInline, { pid:it.pid })),
+          h("td", { style:{ padding:"5px 3px", borderTop:"1px dashed var(--line)", verticalAlign:"top", textAlign:"right", whiteSpace:"nowrap", fontSize:12 } },
+            `${it.soLuong||1} ${it.donViGia || it.donVi || ""}`, h("br"), h("b", null, it.thanhTien ? fmtMoney360(it.thanhTien) : "chưa có giá")))))),
+        k.cauNoi && h("div", { style:{ marginTop:6, fontSize:12, background:"#fff", borderRadius:8, padding:"6px 8px", border:"1px solid #eee" } }, "💬 “" + k.cauNoi.replace(/^[“"]|[”"]$/g, "") + "”"),
+        k.items.some(it => it.rx) && h("div", { style:{ fontSize:11.5, color:CL360.bad, fontWeight:700, marginTop:4 } }, "⚠ Thuốc ℞ chỉ bán khi khách xuất trình đơn bác sĩ còn hiệu lực."));
+      })),
+    alts.length>0 && h("div", { style:{ marginTop:8, fontSize:12, color:"var(--inkSoft)" } },
+      h("a", { href:"#", onClick:(ev)=>{ ev.preventDefault(); setShowAlt(!showAlt); }, style:{ color:"var(--pine)", fontWeight:700 } }, (showAlt ? "▾" : "▸") + " Hết hàng thì thay cùng hoạt chất"),
+      showAlt && h("ul", { style:{ margin:"4px 0 0", paddingLeft:18 } }, alts.map((g, i) => h("li", { key:i }, h("b", null, g.vaiTro + ": "), g.sp.map(sp => sp.ten).join(" · "))))),
+    h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:4 } }, "Bấm tên sản phẩm để xem bảng liều chính thức theo tuổi/cân nặng."));
+}
 function DosingProtocolCard({ p }){
   const h = React.createElement;
   const [open, setOpen] = useState(null);
@@ -7483,7 +7527,8 @@ function DosingProtocolCard({ p }){
     h(BenhHocBox, { bh:p.benhHoc, lms:p.lms }),
     Sec("1. Hỏi trước khi cắt (bắt buộc)", c.cauHoiBatBuoc),
     Sec("2. Không cắt liều — khuyên đi khám khi", c.khuyenDiKham, CL360.bad),
-    (c.combo||[]).length>0 && h("div", { style:{ marginTop:10 } },
+    (c.combos||[]).length>0 && h(DosingComboCards, { c, open, setOpen }),
+    !(c.combos||[]).length && (c.combo||[]).length>0 && h("div", { style:{ marginTop:10 } },
       h("div", { style:{ fontWeight:800, fontSize:13, color:"var(--pine)" } }, "3. Combo gợi ý" + (c.thoiGian ? ` · ${c.thoiGian}` : "")),
       c.combo.map((g,i) => h("div", { key:i, style:{ marginTop:6, fontSize:13, lineHeight:1.5 } },
         h("b", null, g.vaiTro || "—"), ": ",
@@ -7515,7 +7560,8 @@ function DosingProtocolEditor({ p, onClose, onSaved }){
   const [f, setF] = useState({ title:p.title||"", doiTuong:p.doiTuong||"Người lớn", tomTat:c.tomTat||"", thoiGian:c.thoiGian||"",
     cauHoiBatBuoc:toLines(c.cauHoiBatBuoc), khuyenDiKham:toLines(c.khuyenDiKham), danKhach:toLines(c.danKhach), loiHayGap:toLines(c.loiHayGap),
     combo:(c.combo||[]).map(g => `${g.vaiTro} | ${(g.sanPham||[]).map(s => s.ten + (s.hhs1?" *":"")).join("; ")} | ${g.cachDung||""}`).join("\n"),
-    benhNen:(c.benhNen||[]).map(b => `${b.tinhTrang} | ${b.tranh||""} | ${b.thayThe||""}`).join("\n") });
+    benhNen:(c.benhNen||[]).map(b => `${b.tinhTrang} | ${b.tranh||""} | ${b.thayThe||""}`).join("\n"),
+    combos:(c.combos||[]).map(k => [`## ${k.ten} | ${k.doiTuong||""}`, ...k.items.map(it => `${it.ten} | ${it.soLuong||1} | ${it.donViGia||it.donVi||""} | ${it.vaiTro||""} | ${it.cachDung||""}`), k.cauNoi ? `> ${k.cauNoi}` : ""].filter(Boolean).join("\n")).join("\n\n") });
   const [saving, setSaving] = useState(false);
   const lines = t => String(t||"").split("\n").map(x=>x.trim()).filter(Boolean);
   async function save(status){
@@ -7523,8 +7569,18 @@ function DosingProtocolEditor({ p, onClose, onSaved }){
     const oldSp = {}; (c.combo||[]).forEach(g => (g.sanPham||[]).forEach(s => { oldSp[s.ten.trim()] = s; }));
     const combo = lines(f.combo).map(l => { const [vt, sps, cd] = l.split("|").map(x => (x||"").trim());
       return { vaiTro:vt, cachDung:cd||"", sanPham:(sps||"").split(";").map(x=>x.trim()).filter(Boolean).map(t => { const hhs1 = /\*$/.test(t); const ten = t.replace(/\s*\*$/,""); const o = oldSp[ten]; return { pid:o?o.pid:"", ten, hhs1: hhs1 || !!(o&&o.hhs1), rx: !!(o&&o.rx), tuSlide: !!(o&&o.tuSlide) }; }) }; });
+    const oldIt = {}; (c.combos||[]).forEach(k => k.items.forEach(it => { const t = it.ten.trim(); oldIt[t] = { ...(oldIt[t]||{}), ...it, tuSlide: !!(it.tuSlide || (oldIt[t]&&oldIt[t].tuSlide)), hhs1: !!(it.hhs1 || (oldIt[t]&&oldIt[t].hhs1)) }; }));
+    const combos = []; let cur = null;
+    lines(f.combos).forEach(l => {
+      if(/^##/.test(l)){ const [t, dt] = l.replace(/^##\s*/, "").split("|").map(x => (x||"").trim()); cur = { ten:t||"Combo", doiTuong:dt||"", items:[], cauNoi:"" }; combos.push(cur); return; }
+      if(!cur){ cur = { ten:"Combo cơ bản", doiTuong:"", items:[], cauNoi:"" }; combos.push(cur); }
+      if(/^>/.test(l)){ cur.cauNoi = l.replace(/^>\s*/, ""); return; }
+      const [ten, sl, dv, vt, cd] = l.split("|").map(x => (x||"").trim()); if(!ten) return;
+      const o = oldIt[ten] || oldSp[ten];
+      cur.items.push({ pid:o?o.pid:"", ten, soLuong:Number(sl)||1, donVi:dv||"", vaiTro:vt||"", cachDung:cd||"", hhs1:!!(o&&o.hhs1), rx:!!(o&&o.rx), tuSlide:!!(o&&o.tuSlide) });
+    });
     try{
-      await pdCall("protocolSave", { id:p.id, title:f.title, doiTuong:f.doiTuong, status, content:{ tomTat:f.tomTat, thoiGian:f.thoiGian, cauHoiBatBuoc:lines(f.cauHoiBatBuoc), khuyenDiKham:lines(f.khuyenDiKham), danKhach:lines(f.danKhach), loiHayGap:lines(f.loiHayGap), combo,
+      await pdCall("protocolSave", { id:p.id, title:f.title, doiTuong:f.doiTuong, status, content:{ combos, tomTat:f.tomTat, thoiGian:f.thoiGian, cauHoiBatBuoc:lines(f.cauHoiBatBuoc), khuyenDiKham:lines(f.khuyenDiKham), danKhach:lines(f.danKhach), loiHayGap:lines(f.loiHayGap), combo,
         benhNen: lines(f.benhNen).map(l => { const [a,b,c2] = l.split("|").map(x => (x||"").trim()); return { tinhTrang:a, tranh:b||"", thayThe:c2||"" }; }).filter(x => x.tinhTrang) } }, 30000);
       onSaved();
     } catch(e){ window.alert("Chưa lưu được: " + (e.message||e)); }
@@ -7541,7 +7597,8 @@ function DosingProtocolEditor({ p, onClose, onSaved }){
       ta("tomTat", "Tóm tắt", 2),
       ta("cauHoiBatBuoc", "1. Hỏi trước khi cắt — mỗi dòng 1 câu"),
       ta("khuyenDiKham", "2. Khuyên đi khám khi — mỗi dòng 1 ý"),
-      ta("combo", "3. Combo — mỗi dòng: Vai trò | SP 1; SP 2 (thêm * sau tên nếu là hàng hệ số 1) | Cách dùng", 5),
+      ta("combos", "3. Ba combo theo 3 mức giá (tiết kiệm / tiêu chuẩn / đầy đủ) — dòng \"## Tên combo | Khách phù hợp\", mỗi món 1 dòng: Tên SP | Số lượng | Đơn vị | Vai trò | Cách dùng; dòng \"> câu nói với khách\". Giá tự lấy theo tồn kho.", 8),
+      ta("combo", "3b. Hàng thay thế theo vai trò — mỗi dòng: Vai trò | SP 1; SP 2 (thêm * sau tên nếu là hàng hệ số 1) | Cách dùng", 4),
       h("div", { className:"field", style:{ marginBottom:10 } }, h("label", null, "Thời gian dùng / khi nào tái khám"), h("input", { value:f.thoiGian, onChange:e=>setF({ ...f, thoiGian:e.target.value }) })),
       ta("danKhach", "4. Dặn khách — mỗi dòng 1 ý", 3),
       ta("loiHayGap", "5. Lỗi hay gặp — mỗi dòng 1 ý", 3),
