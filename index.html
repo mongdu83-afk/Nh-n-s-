@@ -7635,6 +7635,7 @@ function LmsBenhHocPanel({ busy, onCreated, onRegen }){
     setWork("");
   }
   async function create(r){
+    if(r.slide && r.slide.code!=="ok" && !window.confirm(`Bài này CHƯA có nội dung slide (${r.slide.label}). AI chỉ dựa vào tên/mô tả ngắn nên phác đồ sẽ giống kiến thức chung, vẫn tốn phí AI.\n\nNên đồng bộ lại web đào tạo trước. Vẫn tạo?`)) return;
     const title = window.prompt("Tên tình huống cho phác đồ mới (để trống = lấy theo tên bệnh trong slide):", "");
     if(title===null) return;
     setWork(r.courseId);
@@ -7679,7 +7680,7 @@ function LmsBenhHocPanel({ busy, onCreated, onRegen }){
                 h("a", { href:"#", onClick:(ev)=>{ ev.preventDefault(); map(r, r.suggested); }, style:{ color:"var(--pine)", fontWeight:700 } }, "Ghép")))),
             td(work===r.courseId ? h("span", { style:{ fontSize:12, color:"var(--inkSoft)" } }, "Đang xử lý…")
               : r.ignored ? null
-              : r.mapped ? h("button", { className:"btn", disabled:busy, style:{ fontSize:11.5, padding:"4px 9px", whiteSpace:"nowrap" }, onClick:()=>{ if(window.confirm(`AI soạn lại phác đồ "${sitTitle(r.mapped)}" theo slide bài này? Nội dung đã sửa tay sẽ bị thay.`)) onRegen(r.mapped, sitTitle(r.mapped)); } }, "AI soạn lại theo slide")
+              : r.mapped ? h("button", { className:"btn", disabled:busy, style:{ fontSize:11.5, padding:"4px 9px", whiteSpace:"nowrap" }, onClick:()=>{ if(window.confirm((r.slide && r.slide.code!=="ok" ? `⚠ Bài này CHƯA có nội dung slide (${r.slide.label}) — AI chỉ dựa vào mô tả.\n\n` : "") + `AI soạn lại phác đồ "${sitTitle(r.mapped)}" theo bài này? Nội dung đã sửa tay sẽ bị thay.`)) onRegen(r.mapped, sitTitle(r.mapped)); } }, "AI soạn lại theo slide")
               : h("button", { className:"btn btnPrimary", disabled:busy || r.slide.code==="private", style:{ fontSize:11.5, padding:"4px 9px", whiteSpace:"nowrap" }, onClick:()=>create(r) }, "+ Tạo phác đồ"), { textAlign:"right" })))))),
       d && d.syncedAt && h("div", { style:{ fontSize:11, color:"var(--inkSoft)", marginTop:6 } }, "Đồng bộ web đào tạo lần cuối: " + new Date(d.syncedAt).toLocaleString("vi-VN") + ". Bài có \"Slide không công khai\": mở chia sẻ Google Slides (ai có link đều xem được) rồi đồng bộ lại.")));
 }
