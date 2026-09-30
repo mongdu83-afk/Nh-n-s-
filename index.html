@@ -7617,6 +7617,7 @@ function DosingProtocolView({ isAdmin }){
   if(err) return wrap(h(EmptyState, { kind: emptyKindFromError(err), detail: err.message }), h("button", { className:"btn", onClick:load }, "Thử lại"));
   if(!data) return h("div", { className:"emptyState" }, "Đang tải phác đồ…");
   const list = data.protocols || [];
+  const canEdit = isAdmin || !!data.canEdit; const canDelete = isAdmin || !!data.canDelete;
   const cur = list.find(p => p.id===sel) || list[0] || null;
   const missing = (data.situations||[]).filter(s => !list.some(p => p.id===s.id));
   const approved = list.filter(p => p.status==="approved").length;
@@ -7624,24 +7625,24 @@ function DosingProtocolView({ isAdmin }){
     h("div", { style:{ fontSize:12, color:"var(--inkSoft)", lineHeight:1.55, marginBottom:10, maxWidth:760 } },
       "Phác đồ cắt liều chuẩn cho các tình huống hay gặp: câu hỏi bắt buộc, khi nào phải khuyên đi khám, combo gợi ý (ưu tiên hàng hệ số 1), lỗi hay gặp. ",
       "Liều từng thuốc xem ở bảng liều chính thức của danh mục. Buddy dùng phác đồ để đào tạo và kiểm tra liều thực tập sinh cắt.",
-      isAdmin && h("div", { style:{ marginTop:4, color:CL360.warn } }, `Nội dung AI soạn là BẢN NHÁP — dược sĩ/quản lý kiểm tra, sửa rồi bấm "Duyệt" thì nhân viên mới thấy (${approved}/${list.length} đã duyệt).`)),
-    isAdmin && h("div", { className:"btnRow", style:{ gap:6, marginBottom:10, flexWrap:"wrap" } },
+      canEdit && h("div", { style:{ marginTop:4, color:CL360.warn } }, `Nội dung AI soạn là BẢN NHÁP — dược sĩ/quản lý kiểm tra, sửa rồi bấm "Duyệt" thì nhân viên mới thấy (${approved}/${list.length} đã duyệt).`)),
+    canEdit && h("div", { className:"btnRow", style:{ gap:6, marginBottom:10, flexWrap:"wrap" } },
       missing.length>0 && h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:()=>gen({}) }, busy ? "AI đang soạn…" : `AI soạn nháp ${missing.length} tình huống còn thiếu`),
       h("button", { className:"btn", disabled:!!busy, onClick:addCustom }, "＋ Thêm tình huống")),
     msg && h("div", { className:"card", style:{ fontSize:12.5, padding:"8px 12px", marginBottom:10 } }, msg),
-    !list.length ? h("div", { className:"card", style:{ fontSize:13 } }, isAdmin ? "Chưa có phác đồ nào — bấm \"AI soạn nháp\" để bắt đầu." : "Chưa có phác đồ nào được duyệt.")
+    !list.length ? h("div", { className:"card", style:{ fontSize:13 } }, canEdit ? "Chưa có phác đồ nào — bấm \"AI soạn nháp\" để bắt đầu." : "Chưa có phác đồ nào được duyệt.")
     : h("div", null,
       h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:10 } }, list.map(p => h("button", { key:p.id, onClick:()=>setSel(p.id),
         style:{ fontSize:12, fontWeight:700, padding:"5px 12px", borderRadius:16, cursor:"pointer", border:"1px solid var(--line)",
           background: cur && cur.id===p.id ? "var(--pine)" : "#fff", color: cur && cur.id===p.id ? "#fff" : "var(--ink)" } },
-        p.title, p.doiTuong==="Trẻ em" ? " 👶" : "", isAdmin && p.status!=="approved" ? " •" : ""))),
+        p.title, p.doiTuong==="Trẻ em" ? " 👶" : "", canEdit && p.status!=="approved" ? " •" : ""))),
       cur && h("div", { className:"card", style:{ margin:0, padding:"14px 16px", maxWidth:820 } },
         h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8, alignItems:"flex-start", flexWrap:"wrap" } },
           h("div", { style:{ fontWeight:800, fontSize:16 } }, `${cur.title} — ${(cur.doiTuong||"").toLowerCase()}`),
           h(Pill360, { text: cur.status==="approved" ? "Đã duyệt" : "Bản nháp AI · chờ duyệt", color: cur.status==="approved" ? CL360.good : CL360.warn })),
         h(DosingProtocolCard, { p:cur }),
-        isAdmin && h("div", { className:"btnRow", style:{ gap:6, marginTop:12, justifyContent:"flex-end", flexWrap:"wrap" } },
-          h("button", { className:"btn btnGhost", onClick:()=>del(cur) }, "Xoá"),
+        canEdit && h("div", { className:"btnRow", style:{ gap:6, marginTop:12, justifyContent:"flex-end", flexWrap:"wrap" } },
+          canDelete && h("button", { className:"btn btnGhost", onClick:()=>del(cur) }, "Xoá"),
           cur.source!=="manual" && h("button", { className:"btn btnGhost", disabled:!!busy, onClick:()=>{ if(window.confirm("AI soạn lại từ đầu (mất nội dung đã sửa)? Mất khoảng 30–60 giây.")) gen({ ids:[cur.id] }, `AI đang soạn lại "${cur.title}"…`); } }, busy ? "AI đang soạn…" : "AI soạn lại"),
           h("button", { className:"btn", onClick:()=>setEdit(cur) }, "Sửa"),
           cur.status==="approved" ? h("button", { className:"btn", onClick:()=>setStatus(cur, "draft") }, "Bỏ duyệt")
@@ -12580,6 +12581,32 @@ function pdTrend(it){
   return Math.round((it.rev30 - it.revPrev30) / it.revPrev30 * 100);
 }
 
+
+// 30/9/2026: QUẢN LÝ CHỌN NGƯỜI DUYỆT NỘI DUNG ĐÀO TẠO (thẻ từ điển + phác đồ cắt liều) — VD dược sĩ phụ trách.
+function DictReviewerPicker({ settings, onSaved }){
+  const h = React.createElement;
+  const [staff, setStaff] = useState([]);
+  const [pick, setPick] = useState("");
+  const [saving, setSaving] = useState(false);
+  useEffect(()=>{ const u = subscribeCol("staff", setStaff); return u; }, []);
+  const ids = (settings && settings.reviewers) || [];
+  async function save(next){
+    setSaving(true);
+    try{ await pdCall("settings", { set:{ reviewers:next } }, 30000); await onSaved(); } catch(e){ window.alert("Chưa lưu được: " + (e.message||e)); }
+    setSaving(false);
+  }
+  const nameOf = id => { const s = staff.find(x => x.id===id); return s ? `${s.name} · ${shopLabel(s.shop)}` : id; };
+  const active = staff.filter(s => !(s.ngayNghiViec && s.ngayNghiViec <= todayISO())).sort((a,b) => String(a.name).localeCompare(String(b.name), "vi"));
+  return h("div", { className:"card", style:{ fontSize:12.5, padding:"8px 12px", marginBottom:10, display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" } },
+    h("b", null, "🩺 Người duyệt nội dung đào tạo:"),
+    ids.length===0 && h("span", { style:{ color:"var(--inkSoft)" } }, "chưa có — chỉ quản lý duyệt được"),
+    ids.map(id => h("span", { key:id, style:{ display:"inline-flex", gap:6, alignItems:"center", border:"1px solid var(--line)", borderRadius:14, padding:"2px 4px 2px 10px", background:"#EEF6F3", fontWeight:700 } },
+      nameOf(id), h("button", { type:"button", disabled:saving, title:"Bỏ quyền duyệt", onClick:()=>{ if(window.confirm("Bỏ quyền duyệt nội dung của " + nameOf(id) + "?")) save(ids.filter(x => x!==id)); }, style:{ border:"none", background:"transparent", cursor:"pointer", color:CL360.bad, fontWeight:800 } }, "✕"))),
+    h("select", { value:pick, onChange:e=>setPick(e.target.value), style:{ padding:"4px 8px", borderRadius:8, border:"1px solid var(--line)", maxWidth:260 } },
+      h("option", { value:"" }, "＋ Chọn nhân viên…"), active.filter(s => !ids.includes(s.id)).map(s => h("option", { key:s.id, value:s.id }, `${s.name} · ${shopLabel(s.shop)} · ${s.role||""}`))),
+    h("button", { className:"btn", disabled:!pick || saving, onClick:()=>{ save([...ids, pick]); setPick(""); } }, saving ? "Đang lưu…" : "Cấp quyền"),
+    h("span", { style:{ color:"var(--inkSoft)", fontSize:11.5, flexBasis:"100%" } }, "Được: xem bản nháp, sửa, AI soạn và DUYỆT thẻ từ điển + phác đồ cắt liều. Không được: cài đặt, web đào tạo, xếp hạng, xoá phác đồ. Tên người duyệt ghi trên thẻ/phác đồ đã duyệt."));
+}
 function ProductDictionaryView({ isAdmin }){
   const h = React.createElement;
   const [data, setData] = useState(null);
@@ -12642,6 +12669,7 @@ function ProductDictionaryView({ isAdmin }){
   if(!data) return h("div", { className:"emptyState" }, "Đang tải từ điển… (lần đầu mở cần xếp hạng bán chạy, mất khoảng 1 phút)");
 
   const rk = data.ranking || { items:[] };
+  const canEdit = isAdmin || !!data.canReview; // 30/9/2026: người duyệt nội dung đào tạo được sửa & duyệt thẻ
   const dict = data.dict || {};
   // Mã ngoài top đã được soạn thêm thẻ → nối vào cuối danh sách
   const inRank = new Set(rk.items.map(x => x.pid));
@@ -12701,7 +12729,7 @@ function ProductDictionaryView({ isAdmin }){
         !isAdmin && myTopSet.has(it.pid) && h("span", { title: isRead(it.pid) ? "Bạn đã học thẻ này" : "Chưa học — top bán chạy shop bạn", style:{ flex:"none", fontSize:10, fontWeight:700, borderRadius:6, padding:"1px 6px", color: isRead(it.pid) ? CL360.good : CL360.warn, background: isRead(it.pid) ? "#E6F4EA" : "#FDF1DE" } }, isRead(it.pid) ? "📖 Đã học" : "Chưa học"),
         it.outside && h("span", { style:{ flex:"none", fontSize:10, fontWeight:700, color:"var(--inkSoft)", border:"1px solid var(--line)", borderRadius:6, padding:"1px 6px" } }, "Ngoài top")),
       e ? h("div", { style:{ fontSize:12.5, lineHeight:1.5, color:"var(--ink)", display:"-webkit-box", WebkitLineClamp:3, WebkitBoxOrient:"vertical", overflow:"hidden" } }, e.tinhThan)
-        : h("div", { style:{ fontSize:12, color:"var(--inkSoft)", fontStyle:"italic" } }, isAdmin ? "Chưa có thẻ từ điển — bấm để soạn." : "Chưa có thẻ — bấm để xem thông tin danh mục."),
+        : h("div", { style:{ fontSize:12, color:"var(--inkSoft)", fontStyle:"italic" } }, canEdit ? "Chưa có thẻ từ điển — bấm để soạn." : "Chưa có thẻ — bấm để xem thông tin danh mục."),
       h("div", { style:{ display:"flex", gap:5, flexWrap:"wrap", alignItems:"center", marginTop:"auto" } },
         e && e.loai && h(Pill360, { text:e.loai, color:pdLoaiColor(e.loai) }),
         e && e.nhomThuoc && h(Pill360, { text:e.nhomThuoc, color:CL360.gray }),
@@ -12749,6 +12777,10 @@ function ProductDictionaryView({ isAdmin }){
         missingTop>0 && h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:()=>generate(null) }, busy==="gen" ? "AI đang soạn…" : `Soạn thẻ cho ${Math.min(12, missingTop)} mã tiếp theo`),
         h("button", { className:"btn", disabled:!!busy, onClick:()=>setShowElearn(true) }, "🎓 Web đào tạo"),
         h("button", { className:"btn btnGhost", disabled:!!busy, onClick:rerank }, busy==="rank" ? "Đang xếp hạng…" : "Cập nhật xếp hạng"))),
+    !isAdmin && canEdit && h("div", { className:"card", style:{ fontSize:12.5, padding:"8px 12px", marginBottom:10, display:"flex", gap:10, alignItems:"center", flexWrap:"wrap", background:"#EEF6F3" } },
+      h("b", null, "🩺 Bạn là người duyệt nội dung đào tạo"), h("span", { style:{ color:"var(--inkSoft)" } }, "— xem cả thẻ AI chưa duyệt (lọc \"Chưa duyệt\"), sửa và bấm Duyệt; soạn thêm thẻ còn thiếu."),
+      missingTop>0 && h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:()=>generate(null) }, busy==="gen" ? "AI đang soạn…" : `Soạn thẻ cho ${Math.min(12, missingTop)} mã tiếp theo`)),
+    isAdmin && h(DictReviewerPicker, { settings:data.settings, onSaved:load }),
     msg && h("div", { className:"card", style:{ fontSize:12.5, padding:"8px 12px", marginBottom:10 } }, msg),
     !isAdmin ? h("div", { className:"metrics" },
       h("div", { className:"metric" }, h("div", { className:"label" }, "Mã bán chạy khu vực"), h("div", { className:"value" }, fmtNum(rk.items.length))),
@@ -12769,13 +12801,13 @@ function ProductDictionaryView({ isAdmin }){
     h("div", { style:{ display:"flex", gap:4, flexWrap:"wrap", marginBottom:6 } },
       !isAdmin && myTop.length>0 && chip("myshop", `Top shop mình (${myReadCount}/${myTop.length})`, flt, setFlt),
       chip("all", "Tất cả", flt, setFlt), chip("heso", "Hàng hệ số", flt, setFlt), chip("rx", "Thuốc kê đơn", flt, setFlt),
-      isAdmin && chip("missing", "Chưa có thẻ", flt, setFlt), isAdmin && chip("unreviewed", "Chưa duyệt", flt, setFlt)),
+      canEdit && chip("missing", "Chưa có thẻ", flt, setFlt), canEdit && chip("unreviewed", "Chưa duyệt", flt, setFlt)),
     h("div", { style:{ display:"flex", gap:4, flexWrap:"wrap", marginBottom:12 } },
       chip("all", `Mọi ngành hàng (${all.length})`, type, setType),
       Object.keys(types).sort((a,b)=>types[b]-types[a]).map(t => chip(t, `${t} (${types[t]})`, type, setType))),
     body,
     openItem && h(ProductDictionaryModal, {
-      isAdmin, item:openItem, pos:Math.max(0, openIdx), total:navList.length, busy,
+      isAdmin: canEdit, item:openItem, pos:Math.max(0, openIdx), total:navList.length, busy,
       onPrev: openIdx>0 ? ()=>setOpenPid(navList[openIdx-1].pid) : null,
       onNext: openIdx>=0 && openIdx<navList.length-1 ? ()=>setOpenPid(navList[openIdx+1].pid) : null,
       onClose:()=>setOpenPid(null),
