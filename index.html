@@ -12244,7 +12244,7 @@ function PromoOrderView({ isAdmin }){
           h("td", { style:td }, bt[t].orders), h("td", { style:td }, t==="combo" ? "trong giá" : fm(bt[t].cost)), h("td", { style:td }, t==="combo" ? "—" : pcs(pc(bt[t].cost, c.cost))),
           h("td", { style:td }, fm(bt[t].r)), h("td", { style:td }, t==="combo" ? "—" : chip(pc(bt[t].cost, bt[t].r), 5.5, 10))))))),
     h("div", { className:"card", style:{ marginTop:12, overflowX:"auto" } },
-      h("b", null, "Theo nhà thuốc"), h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginLeft:6 } }, "mỗi ô: chi phí · doanh thu các đơn dùng nhóm đó · số đơn · CP/DT"),
+      h("b", null, "Theo nhà thuốc"), h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginLeft:6 } }, "mỗi ô: chi phí · doanh thu (trước KM) các đơn dùng nhóm đó · số đơn · CP/DT"),
       h("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5, marginTop:6 } }, h("tbody", null,
         h("tr", null, ["Nhà thuốc", ...shopFams.map(f=>PO_FAM_SHORT[f.key]||f.label), "Tổng chi phí", "Doanh thu", "CP / DT", "% đơn có KM", "TB bill KM / thường"].map((x,i)=>h("th", { key:x, style:{ ...th, textAlign:i?"right":"left" } }, x))),
         shopRows.map(([s, x]) => { const tot = Object.values(x.cost||{}).reduce((a,v)=>a+v,0); const nn = x.n - x.pn;
@@ -12299,7 +12299,7 @@ function PromoOrderView({ isAdmin }){
               h("span", { key:s, style:{ fontSize:11.5, border:"1px solid var(--line)", borderRadius:8, padding:"3px 8px", background:"#fff" } }, h("b", null, shopName(s)), ` · ${b.o} đơn · CP ${fm(b.c)} · DT ${fm(b.r)} · `, chip(pc(b.c, b.r), 5.5, 10))))))]; }))),
       progs.length>40 && h("div", { style:{ marginTop:6 } }, h("button", { className:"btn btnGhost", onClick:()=>setShowAll(!showAll), style:{ fontSize:12 } }, showAll ? "Thu gọn" : `Xem tất cả ${progs.length} chương trình`))),
     listF && h(PromoOrderList, { od, listF, shopF, q, setQ, lim, setLim, onClose:()=>setListF(null), fm, shopName }),
-    h("div", { style:{ fontSize:11, color:"var(--inkSoft)", marginTop:8, lineHeight:1.5 } }, "Cách tính: voucher = dòng mã VOUCHER (tiền âm); giảm giá = dòng KM02, gắn chương trình theo mã CTKM ghi trên hoá đơn; quà tặng = dòng 0đ có mã CTKM × giá bán lẻ; đổi điểm = dòng DDTL; combo = mã hàng tên Combo. CP / DT đơn = chi phí ÷ doanh thu cả các hoá đơn dùng chương trình (chưa phải doanh thu tăng thêm). Giảm / DT SP = tiền giảm ÷ doanh thu đúng các sản phẩm khai báo trong chương trình."));
+    h("div", { style:{ fontSize:11, color:"var(--inkSoft)", marginTop:8, lineHeight:1.5 } }, "Cách tính: voucher = dòng mã VOUCHER (tiền âm); giảm giá = dòng KM02, gắn chương trình theo mã CTKM ghi trên hoá đơn; quà tặng = dòng 0đ có mã CTKM × giá bán lẻ; đổi điểm = dòng DDTL; combo = mã hàng tên Combo. Doanh thu = doanh thu TRƯỚC khuyến mại (tiền khách trả + voucher, giảm giá, đổi điểm đã trừ trên hoá đơn) — vd coupon 5% thì CP/DT đúng 5%. CP / DT đơn = chi phí ÷ doanh thu cả các hoá đơn dùng chương trình (chưa phải doanh thu tăng thêm). Giảm / DT SP = tiền giảm ÷ doanh thu đúng các sản phẩm khai báo trong chương trình."));
 }
 // 1/10/2026 (Phương): bảng hiệu quả khuyến mại theo từng nhân viên bán (admin + CHT)
 function PromoStaffTable({ rows, shopF, fm, pc, chip, pcs, shopName, th, td, L, onList, showShop=true, title }){
@@ -12376,6 +12376,14 @@ function PromoMyView({ myStaff }){
           h("tr", null, ["Nhóm","Hoá đơn","SL","Chi phí","DT cả đơn","CP / DT"].map((x,i)=>h("th", { key:x, style:{ ...th, textAlign:i?"right":"left" } }, x))),
           d.families.map(f => h("tr", { key:f.key, style:{ cursor:"pointer" }, onClick:()=>{ setListF({ fam:f.key, label:f.label }); setLim(100); setQ(""); } },
             h("td", { style:{ ...L, fontWeight:700 } }, f.label), h("td", { style:td }, f.o), h("td", { style:td }, f.q), h("td", { style:{ ...td, fontWeight:700 } }, f.c ? fm(f.c) : "trong giá"), h("td", { style:td }, fm(f.r)), h("td", { style:td }, f.c ? chip(pc(f.c, f.r), 5.5, 10) : "—")))))),
+      (d.programs||[]).length>0 && h("div", { className:"card", style:{ marginTop:12, overflowX:"auto" } }, h("b", null, `Các chương trình khuyến mại của ${shopName(shop)}`), h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginLeft:6 } }, `${d.programs.length} chương trình · bấm "đơn" để xem danh sách đơn`),
+        h("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5, marginTop:6 } }, h("tbody", null,
+          h("tr", null, ["Chương trình","Nhóm","Hoá đơn","SL","Chi phí","DT cả đơn","CP / DT",""].map((x,i)=>h("th", { key:i, style:{ ...th, textAlign:i<2?"left":"right" } }, x))),
+          d.programs.map(p => h("tr", { key:p.type+"|"+p.name },
+            h("td", { style:{ ...L, maxWidth:380 } }, p.name.replace(/^\[CTKM T\d+[^\]]*\]\s*/,""), p.time && p.time[0] && h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)" } }, `${p.time[0].slice(8,10)}/${p.time[0].slice(5,7)} – ${(p.time[1]||"").slice(8,10)}/${(p.time[1]||"").slice(5,7)}`)),
+            h("td", { style:{ ...L, fontSize:11.5 } }, PO_FAM_SHORT[p.family]||"Khác"), h("td", { style:td }, p.o), h("td", { style:td }, (p.q||0).toLocaleString("vi-VN")),
+            h("td", { style:{ ...td, fontWeight:700 } }, p.c ? fm(p.c) : "trong giá"), h("td", { style:td }, fm(p.r)), h("td", { style:td }, p.c ? chip(pc(p.c, p.r), 5.5, 10) : "—"),
+            h("td", { style:td }, h("button", { className:"btn btnGhost", style:{ fontSize:11, padding:"1px 7px" }, onClick:()=>{ setListF({ gk:p.type+"|"+p.name, label:p.name }); setLim(100); setQ(""); } }, `📄 ${p.o} đơn`))))))),
       h(PromoStaffTable, { rows:d.staff||[], shopF:"all", fm, pc, chip, pcs, shopName, th, td, L, showShop:false, title:"Theo nhân viên trong nhà thuốc", onList:(x)=>{ setListF({ nv:nvN(x.nv), label:x.nv }); setLim(100); setQ(""); } })),
     listF && h(PromoOrderList, { od:{ ...d, key:`${d.key}-${shop}` }, listF, shopF:"all", q, setQ, lim, setLim, onClose:()=>setListF(null), fm, shopName }));
 }
