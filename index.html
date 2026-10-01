@@ -835,13 +835,47 @@ async function deleteDoc(name, id){ return db.collection(name).doc(id).delete();
 // cậy cho việc xoá — đây là nguyên nhân khiến bỏ tick trước đây không có tác dụng thật sự).
 // Nếu tài liệu chưa tồn tại (lần ghi đầu tiên trong ngày/tuần), update() sẽ báo lỗi not-found,
 // lúc đó tạo mới bằng set() bình thường (không cần xoá gì vì tài liệu mới toanh).
-async function mergeDotFields(collectionName, docId, dotFields, createExtras){
+// 1/10/2026: nếu Firestore trả permission-denied (thường do token cũ / thiếu claim staffId sau khi chuyển sang custom claims)
+// thì làm mới claims từ server rồi thử ghi lại đúng 1 lần trước khi báo lỗi cho người dùng.
+async function withClaimRetry(fn){
+  try{ return await fn(); }
+  catch(err){
+    if(err && err.code === "permission-denied"){
+      await syncMyClaims();
+      return await fn();
+    }
+    throw err;
+  }
+}
+async function mergeDotFieldsOnce(collectionName, docId, dotFields, createExtras){
   const ref = db.collection(collectionName).doc(docId);
   try{ await ref.update(dotFields); }
   catch(err){
     if(err && err.code && err.code !== "not-found") throw err; // permission-denied, unavailable... báo đúng lỗi
     await ref.set({ ...(createExtras||{}), ...dotFields }, { merge:true });
   }
+}
+function mergeDotFields(collectionName, docId, dotFields, createExtras){
+  return withClaimRetry(() => mergeDotFieldsOnce(collectionName, docId, dotFields, createExtras));
+}
+// Ghi (set merge) 1 báo cáo ngày, có tự thử lại sau khi làm mới claims.
+function setDailyReport(docId, data){
+  return withClaimRetry(() => db.collection("dailyReports").doc(docId).set(data, { merge:true }));
+}
+// Thông báo lỗi lưu cho nhân viên, kèm thông tin chẩn đoán claims để quản trị dễ tra nguyên nhân.
+async function alertSaveError(err, staffIdInProfile){
+  let tokStaff = "?";
+  try{ const tr = await auth.currentUser.getIdTokenResult(); tokStaff = tr.claims.staffId || "THIẾU"; }catch(e){}
+  const code = err && err.code ? err.code : "lỗi không rõ";
+  window.alert("Không thể lưu thay đổi (" + code + (code==="unavailable" ? " — kiểm tra kết nối mạng" : " — liên hệ quản trị") + ")." +
+    (code==="permission-denied" ? "\n[staffId token: " + tokStaff + " | hồ sơ: " + (staffIdInProfile || "?") + "]\nHãy đăng xuất, đăng nhập lại rồi thử lại." : ""));
+}
+// Bọc 1 hàm ghi: lỗi nào cũng được báo cho người dùng (trước đây nhiều hàm nuốt lỗi → mất dữ liệu mà không biết).
+function guardSave(fn, getStaffId){
+  return async (...args) => {
+    try{ return await fn(...args); }
+    catch(err){ console.error("guardSave lỗi:", err); await alertSaveError(err, getStaffId && getStaffId()); }
+  };
 }
 // Định dạng 1 sheet Excel cho dễ đọc: tự giãn độ rộng cột theo nội dung dài nhất, tô đậm +
 // đổ màu dòng tiêu đề, kẻ viền toàn bảng, căn giữa tiêu đề, số căn phải/chữ căn trái, so le
@@ -1669,10 +1703,10 @@ function DailyChecklistView({ isAdmin, myStaff }){
       console.error("toggleTask lỗi:", err);
       // Ghi lỗi — khôi phục lại trạng thái tick trước đó và báo cho người dùng.
       setPendingDone(prev => { const n = { ...prev }; delete n[taskId]; return n; });
-      window.alert("Không thể lưu thay đổi (" + (err && err.code ? err.code : "lỗi không rõ") + (err && err.code==="unavailable" ? " — kiểm tra kết nối mạng" : " — liên hệ quản trị") + ").");
+      await alertSaveError(err, selfStaff && selfStaff.id);
     }
   }
-  async function saveTaskHours(taskId, soGio){
+  async function _saveTaskHours(taskId, soGio){
     if(!selfStaff) return;
     await mergeDotFields("dailyReports", selfReportId, {
       staffId:selfStaff.id, staffName:selfStaff.name, shop:selfStaff.shop, role:selfStaff.role, ngay:today,
@@ -1700,7 +1734,7 @@ function DailyChecklistView({ isAdmin, myStaff }){
       setAddingTask(false);
     }
   }
-  async function removeCustomTask(taskId){
+  async function _removeCustomTask(taskId){
     if(!selfStaff) return;
     if(!window.confirm("Xoá đầu việc tự thêm này khỏi báo cáo hôm nay?")) return;
     await mergeDotFields("dailyReports", selfReportId, {
@@ -1710,7 +1744,7 @@ function DailyChecklistView({ isAdmin, myStaff }){
     });
     setPendingDone(prev => { if(!(taskId in prev)) return prev; const n = { ...prev }; delete n[taskId]; return n; });
   }
-  async function saveTaskResult(taskId, text){
+  async function _saveTaskResult(taskId, text){
     if(!selfStaff) return;
     await mergeDotFields("dailyReports", selfReportId, {
       staffId:selfStaff.id, staffName:selfStaff.name, shop:selfStaff.shop, role:selfStaff.role, ngay:today,
@@ -1718,32 +1752,32 @@ function DailyChecklistView({ isAdmin, myStaff }){
       updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
     });
   }
-  async function saveNote(){
+  async function _saveNote(){
     if(!selfStaff) return;
     // Không gửi lại toàn bộ doneIds ở đây — việc tick/bỏ tick đã được ghi
     // trực tiếp qua toggleTask theo từng mục; gửi lại cả object dễ gây xung đột
     // (merge lồng nhau không xoá được các mục vừa bỏ tick nếu dữ liệu cục bộ chưa kịp cập nhật).
-    await db.collection("dailyReports").doc(selfReportId).set({
+    await setDailyReport(selfReportId, {
       staffId:selfStaff.id, staffName:selfStaff.name, shop:selfStaff.shop, role:selfStaff.role,
       ngay:today, ghiChu:note, trangThai: selfReport ? (selfReport.trangThai || "Nháp") : "Nháp",
       updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
-    }, { merge:true });
+    });
   }
-  async function submitDaily(){
+  async function _submitDaily(){
     if(!selfStaff) return;
-    await db.collection("dailyReports").doc(selfReportId).set({
+    await setDailyReport(selfReportId, {
       staffId:selfStaff.id, staffName:selfStaff.name, shop:selfStaff.shop, role:selfStaff.role,
       ngay:today, ghiChu:note, doneIds:effectiveDoneMap, trangThai:"Đã nộp", ngayNop:today,
       updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
-    }, { merge:true });
+    });
   }
-  async function saveTaskLink(taskId, text){
+  async function _saveTaskLink(taskId, text){
     if(!selfStaff) return;
-    await db.collection("dailyReports").doc(selfReportId).set({
+    await setDailyReport(selfReportId, {
       staffId:selfStaff.id, staffName:selfStaff.name, shop:selfStaff.shop, role:selfStaff.role, ngay:today,
       [`taskDetails.${taskId}.link`]: text,
       updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
-    }, { merge:true });
+    });
   }
   async function uploadTaskFiles(taskId, files){
     if(!selfStaff) return;
@@ -1752,11 +1786,11 @@ function DailyChecklistView({ isAdmin, myStaff }){
       for(const file of files){
         const path = `dailyChecklist/${selfStaff.shop}/${selfStaff.id}/${today}/${taskId}/${Date.now()}_${file.name}`;
         const meta = await uploadTaskAttachmentFile(file, path, pct=>setUploadingTask(prev => ({ ...prev, [taskId]:pct })));
-        await db.collection("dailyReports").doc(selfReportId).set({
+        await setDailyReport(selfReportId, {
           staffId:selfStaff.id, staffName:selfStaff.name, shop:selfStaff.shop, role:selfStaff.role, ngay:today,
           [`taskDetails.${taskId}.files`]: firebase.firestore.FieldValue.arrayUnion(meta),
           updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
-        }, { merge:true });
+        });
       }
     } catch(err){
       console.error("uploadTaskFiles lỗi:", err);
@@ -1765,12 +1799,19 @@ function DailyChecklistView({ isAdmin, myStaff }){
       setUploadingTask(prev => { const n = { ...prev }; delete n[taskId]; return n; });
     }
   }
-  async function removeTaskFile(taskId, fileMeta){
+  async function _removeTaskFile(taskId, fileMeta){
     if(!selfStaff) return;
-    await db.collection("dailyReports").doc(selfReportId).set({
+    await setDailyReport(selfReportId, {
       [`taskDetails.${taskId}.files`]: firebase.firestore.FieldValue.arrayRemove(fileMeta),
-    }, { merge:true });
+    });
   }
+  const saveTaskHours = guardSave(_saveTaskHours, ()=>selfStaff && selfStaff.id);
+  const removeCustomTask = guardSave(_removeCustomTask, ()=>selfStaff && selfStaff.id);
+  const saveTaskResult = guardSave(_saveTaskResult, ()=>selfStaff && selfStaff.id);
+  const saveNote = guardSave(_saveNote, ()=>selfStaff && selfStaff.id);
+  const submitDaily = guardSave(_submitDaily, ()=>selfStaff && selfStaff.id);
+  const saveTaskLink = guardSave(_saveTaskLink, ()=>selfStaff && selfStaff.id);
+  const removeTaskFile = guardSave(_removeTaskFile, ()=>selfStaff && selfStaff.id);
   async function saveTemplate(role, items){
     const next = { ...templates, [role]:items };
     await saveConfigDoc("dailyChecklist", { byRole:next });
@@ -13629,11 +13670,7 @@ function PosSyncBox(){
     h("div", null, h("b", null, "🧾 Bệnh mẫu & đơn mẫu POS"),
       h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, m ? `${m.saved||m.count||0} bệnh mẫu · đồng bộ lúc ${String(m.at||"").slice(0,16).replace("T"," ")} (tự động 2h30 sáng mỗi ngày)` : "Chưa đồng bộ lần nào"),
       msg && h("div", { style:{ fontSize:11.5, marginTop:2 } }, msg)),
-    h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap" } },
-      h("button", { className:"btn", disabled:busy, style:{ fontSize:12, padding:"4px 10px" }, title:"Mỗi bệnh mẫu chưa có phác đồ cùng tên → tạo phác đồ NHÁP ở tab Phác đồ cắt liều", onClick:async ()=>{ setBusy(true); setMsg("Đang chuyển bệnh mẫu POS sang phác đồ…");
-        try{ const r = await pdCall("posToProtocols", {}, 300000); setMsg(`Đã tạo ${r.taoMoi} phác đồ nháp từ ${r.tong} bệnh mẫu` + ((r.daCo||[]).length ? ` · ${r.daCo.length} bệnh đã có phác đồ cùng tên` : "") + " — xem & duyệt ở tab Phác đồ cắt liều"); }
-        catch(e){ setMsg("Lỗi: " + (e.message||String(e))); } setBusy(false); } }, "📋 Chuyển sang phác đồ"),
-      h("button", { className:"btn btnPrimary", disabled:busy, style:{ fontSize:12, padding:"4px 10px" }, onClick:run }, busy ? "Đang đồng bộ…" : "🔄 Đồng bộ ngay")));
+    h("button", { className:"btn btnPrimary", disabled:busy, style:{ fontSize:12, padding:"4px 10px" }, onClick:run }, busy ? "Đang đồng bộ…" : "🔄 Đồng bộ ngay"));
 }
 function OfficialFillBox(){
   const h = React.createElement;
