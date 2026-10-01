@@ -20,17 +20,37 @@
 (function(){
   var JOBS = new Set(["syncWorkRegistrationsNow", "syncProductCatalogFromApiNow", "syncProductPackagingUnitsNow", "cleanupLegacyCatalogFieldsNow", "syncInventoryNow", "syncSalesOrdersNow", "syncSalesOrdersHeadersOnlyNow", "analyzeWeeklyReportNow", "analyzeManagerWeekNow", "analyzeCustomerOrderTrendsNow", "analyzeComprehensiveNow", "analyzeCommandCenterNow", "analyzeKpiNow", "notifyOverdueTasksNow", "remindDailyChecklistNow", "remindPhotoReportNow", "syncEmployeePlanNow", "syncPointSalesProductsNow", "syncShopPlanNow", "syncInventoryExpiryNow", "syncCustomerLevelUpgradesNow", "notifyDailyKpiPaceNow", "sendTestPushNow", "syncCustomerPurchaseHistoryNow", "backfillCustomerEventsNow", "computeBehaviorAnalyticsNow", "computeRevenueAnalyticsNow", "debugSalesOrderFieldsNow", "debugRevenueRangeNow", "debugChainDetectFieldNow", "debugReadStoredChainRevenueNow", "computePromoSkuActualsNow", "detectPromoDocUsageNow", "trackPromoByDocumentIdNow", "refreshPromoAutoTrackedSkuActualsNow", "resetCrmActionEngineNow", "computeCrmCampaignStatsNow", "computeCrmStaffEffectivenessNow", "computeCrmActionCenterNow", "syncCrmFollowUpTasksNow", "notifyCrmFollowUpDigestNow", "computeCustomerSegmentsNow", "syncCrmCustomersNow", "autoAssignCrmCustomersNow", "clearDefaultCrmAssignmentsNow", "clearAllCrmAssignmentsNow", "migrateIssueActionsStatusNow", "syncCrmBirthdaysNow", "fillMissingCustomerProfilesNow", "checkCategoryConcentrationNow", "computeInventoryConsumptionNow", "computeShopHealthNow", "syncTransferSuggestionsNow", "computeDailyResultsNow", "computeWorkforceMetricsNow", "explainWorkforceNow", "computeTaskIntelligenceNow", "backfillTaskLifecycleNow", "analyzeTasksNow", "computeCareOutcomesNow", "runRiskEngineNow", "runAiReportNow", "computeReplenishmentNow", "replenishmentList", "replenishmentContact", "replenishmentClaim", "buildOpsDaySnapshotNow", "autoMatchPromoCampaignsNow", "functionCostMonthNow", "computeOrderFulfillmentNow", "promoEffectNow", "dataHygieneNow"]);
   var BASE = "https://asia-southeast1-upharma-176d5.cloudfunctions.net/";
+  // 1/10/2026: việc NHẸ chạy ở runJobLight (nhiều yêu cầu/1 máy, ít khởi động lạnh); việc nặng ở runJobNow.
+  var LIGHT = new Set(["syncWorkRegistrationsNow", "cleanupLegacyCatalogFieldsNow", "syncInventoryNow", "syncSalesOrdersNow", "syncSalesOrdersHeadersOnlyNow", "notifyOverdueTasksNow", "remindDailyChecklistNow", "remindPhotoReportNow", "syncEmployeePlanNow", "syncPointSalesProductsNow", "syncShopPlanNow", "syncInventoryExpiryNow", "notifyDailyKpiPaceNow", "sendTestPushNow", "debugSalesOrderFieldsNow", "debugRevenueRangeNow", "debugChainDetectFieldNow", "debugReadStoredChainRevenueNow", "computePromoSkuActualsNow", "detectPromoDocUsageNow", "computeCrmActionCenterNow", "syncCrmFollowUpTasksNow", "notifyCrmFollowUpDigestNow", "autoAssignCrmCustomersNow", "clearDefaultCrmAssignmentsNow", "clearAllCrmAssignmentsNow", "migrateIssueActionsStatusNow", "computeShopHealthNow", "computeTaskIntelligenceNow", "replenishmentList", "replenishmentContact", "replenishmentClaim", "buildOpsDaySnapshotNow", "functionCostMonthNow"]);
   function rewrite(u){
     if(typeof u !== "string" || u.indexOf(BASE) !== 0) return u;
-    var rest = u.slice(BASE.length); var m = rest.match(/^([A-Za-z0-9_]+)(\?(.*))?$/s); if(!m || !JOBS.has(m[1])) return u;
-    return BASE + "runJobNow?job=" + m[1] + (m[3] ? "&" + m[3] : "");
+    var rest = u.slice(BASE.length);
+    var r = rest.match(/^runJobNow\?job=([A-Za-z0-9_]+)(.*)$/s); // chỗ đã gọi thẳng runJobNow?job=…
+    if(r) return LIGHT.has(r[1]) ? BASE + "runJobLight?job=" + r[1] + r[2] : u;
+    var m = rest.match(/^([A-Za-z0-9_]+)(\?(.*))?$/s); if(!m || !JOBS.has(m[1])) return u;
+    return BASE + (LIGHT.has(m[1]) ? "runJobLight" : "runJobNow") + "?job=" + m[1] + (m[3] ? "&" + m[3] : "");
   }
   window.__cfRewrite = rewrite;
   var of = window.fetch.bind(window);
   window.fetch = function(input, init){
-    if(typeof input === "string") input = rewrite(input);
-    else if(input && input.url && typeof Request !== "undefined" && input instanceof Request){ var nu = rewrite(input.url); if(nu !== input.url) input = new Request(nu, input); }
-    return of(input, init);
+    var isReq = input && input.url && typeof Request !== "undefined" && input instanceof Request;
+    var u0 = typeof input === "string" ? input : (isReq ? input.url : null);
+    var u1 = u0 ? rewrite(u0) : u0;
+    if(u1 && u1 !== u0) input = isReq ? new Request(u1, input) : u1;
+    var p = of(input, init);
+    if(!u1 || u1.indexOf(BASE + "runJobLight?") !== 0) return p;
+    // Chưa deploy runJobLight / việc được xếp lại thành nặng → tự gọi lại runJobNow
+    return p.then(function(res){
+      if(res.status === 404 || res.status === 409 || res.status === 403){
+        return res.clone().text().then(function(t){
+          if(res.status === 409 || /Page not found|not found|Forbidden/i.test(t) && !/Không có việc/.test(t)){
+            var u2 = u1.replace("runJobLight?", "runJobNow?"); return of(isReq ? new Request(u2, input) : u2, init);
+          }
+          return res;
+        });
+      }
+      return res;
+    }, function(err){ var u2 = u1.replace("runJobLight?", "runJobNow?"); return of(isReq ? new Request(u2, input) : u2, init); }); // lỗi mạng/CORS khi runJobLight chưa có
   };
 })();
 </script>
@@ -533,11 +553,14 @@ async function syncMyClaims(){
 }
 async function resolveIsAdmin(user){
   if(!user) return false;
+  // 1/10/2026: chỉ tin custom claims (khớp luật bảo mật Firestore). Email trong ADMIN_EMAILS mà chưa có claims
+  // (lần đăng nhập đầu) → nhờ server cấp claims rồi đọc lại token, KHÔNG tự coi là admin.
   try{
-    const tr = await user.getIdTokenResult();
+    let tr = await user.getIdTokenResult();
     if(tr.claims && tr.claims.admin === true) return true;
+    if(ADMIN_EMAILS.includes(user.email || "")){ await syncMyClaims(); tr = await user.getIdTokenResult(true); return !!(tr.claims && tr.claims.admin === true); }
   } catch(e){}
-  return ADMIN_EMAILS.includes(user.email || "");
+  return false;
 }
 // Đồng bộ với KPI_FORMULA_VERSION trên Cloud Functions (P0 27/9/2026).
 const KPI_FORMULA_VERSION_UI = "2026.09.27-pace85-off4";
@@ -10113,7 +10136,8 @@ function WeeklyPlanManagerView(){
   useEffect(()=>{
     // 28/9/2026: sắp xếp GIẢM theo documentId cần chỉ mục riêng (__name__ desc) → Firestore báo "The query requires an index".
     // Đổi sang thứ tự mặc định (tăng dần, không cần chỉ mục) rồi đảo ngược ở trình duyệt; thêm callback lỗi để không còn "Uncaught".
-    const unsub = db.collection("weeklyPlans").onSnapshot(snap => {
+    // 1/10/2026: chỉ lấy 60 tuần gần nhất (id = ngày đầu tuần, sắp tăng dần) thay vì cả collection
+    const unsub = db.collection("weeklyPlans").orderBy(firebase.firestore.FieldPath.documentId()).limitToLast(60).onSnapshot(snap => {
       setAllPlanIds(snap.docs.map(d=>d.id).sort().reverse());
     }, err => logSystemError("weeklyPlans", err));
     return unsub;
@@ -14428,12 +14452,15 @@ function useUnreadTabs(myStaff){
 
   useEffect(()=>{
     if(!myStaff) return undefined;
-    const unsub = db.collection("tasks").onSnapshot(snap => {
-      const mine = snap.docs.map(d=>({id:d.id, ...d.data()}))
-        .filter(t => t.assignType==="staff" ? t.staffId===myStaff.id : t.shop===myStaff.shop);
-      updateItems("tasks", mine.map(t=>`${t.id}:${t.trangThai}:${t.nhanXetQuanLy||""}`));
-    }, err => console.error("useUnreadTabs (tasks) lỗi:", err));
-    return unsub;
+    // 1/10/2026: không nghe CẢ collection tasks nữa (nhân viên bị luật bảo mật chặn, admin tải toàn bộ) —
+    // chỉ nghe việc giao cho mình + việc giao cho nhà thuốc mình, rồi gộp.
+    const parts = { me:[], shop:[] };
+    const emit = () => { const m = {}; [...parts.me, ...parts.shop].forEach(t => { m[t.id] = t; });
+      const mine = Object.values(m).filter(t => t.assignType==="staff" ? t.staffId===myStaff.id : t.shop===myStaff.shop);
+      updateItems("tasks", mine.map(t=>`${t.id}:${t.trangThai}:${t.nhanXetQuanLy||""}`)); };
+    const u1 = db.collection("tasks").where("staffId","==",myStaff.id).onSnapshot(snap => { parts.me = snap.docs.map(d=>({id:d.id, ...d.data()})); emit(); }, err => console.error("useUnreadTabs (tasks/me) lỗi:", err));
+    const u2 = myStaff.shop ? db.collection("tasks").where("shop","==",myStaff.shop).onSnapshot(snap => { parts.shop = snap.docs.map(d=>({id:d.id, ...d.data()})); emit(); }, err => console.error("useUnreadTabs (tasks/shop) lỗi:", err)) : null;
+    return () => { u1(); if(u2) u2(); };
   }, [myStaff && myStaff.id]);
 
   useEffect(()=>{
@@ -14534,30 +14561,9 @@ function TaskLiveNotifier({ myStaff, isAdmin }){
     if(!myStaff) return undefined;
     seenIds.current = new Set();
     isFirstSnap.current = true;
-    const unsub = db.collection("tasks").onSnapshot(snap => {
-      if(isFirstSnap.current){
-        // Lần tải đầu tiên: chỉ ghi nhớ các việc đã có sẵn từ trước, không báo cho việc cũ.
-        snap.docs.forEach(d => { seenIds.current.add(d.id); prevTaskFeedback.current[d.id] = d.data().nhanXetQuanLy || ""; });
-        isFirstSnap.current = false;
-        return;
-      }
-      snap.docChanges().forEach(change => {
-        const t = { id:change.doc.id, ...change.doc.data() };
-        const isMine = (t.assignType==="staff" && t.staffId===myStaff.id) || (t.assignType==="shop" && t.shop===myStaff.shop);
-        if(!isMine) return;
-        if(change.type==="added" && !seenIds.current.has(t.id)){
-          seenIds.current.add(t.id);
-          // Không bắn thông báo cục bộ ở đây nữa — hàm onTaskCreated bên server đã gửi push thật
-          // cho việc mới giao, tránh bị nhận trùng 2 tin cho cùng 1 việc.
-        }
-        if(change.type==="modified"){
-          // Không bắn thông báo cục bộ ở đây nữa — Cloud Function "notifyTaskFeedback" đã lo phần
-          // gửi push thật (hoạt động cả khi tắt app), tránh bị nhận trùng 2 tin cho cùng 1 việc.
-          prevTaskFeedback.current[t.id] = t.nhanXetQuanLy || "";
-        }
-        if(change.type!=="removed") seenIds.current.add(t.id);      });
-    }, err => console.error("TaskLiveNotifier (tasks) lỗi:", err));
-    return unsub;
+    // 1/10/2026: bỏ nghe CẢ collection tasks — listener này không còn bắn thông báo (push thật do Cloud Function gửi),
+    // chỉ tốn lượt đọc. Giữ hook để không đổi cấu trúc.
+    return undefined;
   }, [myStaff && myStaff.id]);
 
   // Được tặng sao
@@ -14565,22 +14571,8 @@ function TaskLiveNotifier({ myStaff, isAdmin }){
     if(!myStaff) return undefined;
     seenKudos.current = new Set();
     isFirstKudos.current = true;
-    const unsub = db.collection("kudos").onSnapshot(snap => {
-      if(isFirstKudos.current){
-        snap.docs.forEach(d => seenKudos.current.add(d.id));
-        isFirstKudos.current = false;
-        return;
-      }
-      snap.docChanges().forEach(change => {
-        if(change.type!=="added") return;
-        const k = { id:change.doc.id, ...change.doc.data() };
-        if(seenKudos.current.has(k.id)) return;
-        seenKudos.current.add(k.id);
-        // Không bắn thông báo cục bộ ở đây nữa — Cloud Function "notifyKudosGiven" đã lo phần
-        // gửi push thật cho toàn bộ nhân viên, tránh người được tặng sao nhận trùng 2 tin.
-      });
-    }, err => console.error("TaskLiveNotifier (kudos) lỗi:", err));
-    return unsub;
+    // 1/10/2026: bỏ nghe CẢ collection kudos — không còn bắn thông báo cục bộ (notifyKudosGiven gửi push thật).
+    return undefined;
   }, [myStaff && myStaff.id]);
 
   // Quản lý chấm checklist ngày
