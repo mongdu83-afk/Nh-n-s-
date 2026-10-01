@@ -13629,7 +13629,11 @@ function PosSyncBox(){
     h("div", null, h("b", null, "🧾 Bệnh mẫu & đơn mẫu POS"),
       h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, m ? `${m.saved||m.count||0} bệnh mẫu · đồng bộ lúc ${String(m.at||"").slice(0,16).replace("T"," ")} (tự động 2h30 sáng mỗi ngày)` : "Chưa đồng bộ lần nào"),
       msg && h("div", { style:{ fontSize:11.5, marginTop:2 } }, msg)),
-    h("button", { className:"btn btnPrimary", disabled:busy, style:{ fontSize:12, padding:"4px 10px" }, onClick:run }, busy ? "Đang đồng bộ…" : "🔄 Đồng bộ ngay"));
+    h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap" } },
+      h("button", { className:"btn", disabled:busy, style:{ fontSize:12, padding:"4px 10px" }, title:"Mỗi bệnh mẫu chưa có phác đồ cùng tên → tạo phác đồ NHÁP ở tab Phác đồ cắt liều", onClick:async ()=>{ setBusy(true); setMsg("Đang chuyển bệnh mẫu POS sang phác đồ…");
+        try{ const r = await pdCall("posToProtocols", {}, 300000); setMsg(`Đã tạo ${r.taoMoi} phác đồ nháp từ ${r.tong} bệnh mẫu` + ((r.daCo||[]).length ? ` · ${r.daCo.length} bệnh đã có phác đồ cùng tên` : "") + " — xem & duyệt ở tab Phác đồ cắt liều"); }
+        catch(e){ setMsg("Lỗi: " + (e.message||String(e))); } setBusy(false); } }, "📋 Chuyển sang phác đồ"),
+      h("button", { className:"btn btnPrimary", disabled:busy, style:{ fontSize:12, padding:"4px 10px" }, onClick:run }, busy ? "Đang đồng bộ…" : "🔄 Đồng bộ ngay")));
 }
 function OfficialFillBox(){
   const h = React.createElement;
