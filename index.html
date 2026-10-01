@@ -13728,13 +13728,14 @@ function SymptomConsultView({ isAdmin, myStaff }){
   }
   function answer(key, val){ const next = { ...answers }; if(next[key]===val) delete next[key]; else next[key] = val; setAnswers(next); suggest(next); }
   // 1/10/2026: đổi tuổi / trẻ em / giới / mức độ sau khi đã chọn bệnh → tự lấy lại combo cho đúng khách
-  const profKey = `${kh.age}|${kh.child}|${kh.sex}|${severity}`;
+  const [gop, setGop] = useState([]); // 1/10/2026: các bệnh gộp thêm (khách mắc nhiều bệnh) — ráp 1 combo chung không trùng hoạt chất
+  const profKey = `${kh.age}|${kh.child}|${kh.sex}|${severity}|${gop.join(",")}|${sym.join(",")}`;
   const profRef = useRef(profKey);
   useEffect(()=>{ if(profRef.current===profKey) return; profRef.current = profKey; if(!selId) return; const t = setTimeout(()=>pick(selId), 600); return ()=>clearTimeout(t); }, [profKey]);
   async function pick(id, r, shopOverride){
     setSelId(id); setDrugs(null); setDBusy(true); setLogged("");
     // 1/10/2026: gửi kèm tuổi/trẻ em/giới/mức độ → máy chủ chỉ giữ đơn mẫu đúng nhóm tuổi, đưa combo hợp mức độ lên đầu
-    try{ setDrugs(await pdCall("symptomDrugs", { id, shop:shopOverride || shop, tranh:((r||res)||{}).tranh || [], age:kh.age, child:!!kh.child, sex:kh.sex || "", weight:kh.weight || "", severity }, 90000)); }
+    try{ setDrugs(await pdCall("symptomDrugs", { id, shop:shopOverride || shop, tranh:((r||res)||{}).tranh || [], age:kh.age, child:!!kh.child, sex:kh.sex || "", weight:kh.weight || "", severity, symptoms:sym, ids:gop.filter(x => x!==id) }, 90000)); }
     catch(e){ setDrugs({ error:e.message||String(e) }); }
     setDBusy(false);
   }
@@ -13782,7 +13783,7 @@ function SymptomConsultView({ isAdmin, myStaff }){
           ["", "Nhẹ", "Vừa", "Nặng"].map(x => h("option", { key:x, value:x }, x || "— mức độ —")))),
       h("div", { style:{ marginTop:12, display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" } },
         h("button", { className:"btn btnPrimary", disabled:busy, onClick:()=>suggest() }, busy ? "Đang đối chiếu…" : "🔎 Gợi ý bệnh & thuốc"),
-        (sym.length>0 || res) && h("button", { className:"btn btnGhost", onClick:()=>{ setAnswers({}); setSym([]); setRes(null); setDrugs(null); setSelId(null); setConds({}); setKh({ age:"", sex:"", child:false, weight:"", otherDrugs:"", allergies:"" }); setDuration(""); setSeverity(""); } }, "Khách mới"))));
+        (sym.length>0 || res) && h("button", { className:"btn btnGhost", onClick:()=>{ setAnswers({}); setSym([]); setRes(null); setDrugs(null); setSelId(null); setConds({}); setGop([]); setKh({ age:"", sex:"", child:false, weight:"", otherDrugs:"", allergies:"" }); setDuration(""); setSeverity(""); } }, "Khách mới"))));
 
   const drugsBox = selId && h("div", { className:"card", style:{ margin:0 } },
     h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap", alignItems:"center" } },
@@ -13814,6 +13815,10 @@ function SymptomConsultView({ isAdmin, myStaff }){
             return h("div", { key:i, style:{ border:"1.5px solid " + t.b, background:t.bg, borderRadius:10, padding:"8px 10px", fontSize:12 } },
               h("div", { style:{ display:"flex", justifyContent:"space-between", gap:6 } }, h("b", { style:{ fontSize:13 } }, t.icon + " " + k.ten), h("b", { style:{ fontSize:15, color:t.b } }, k.tongTien ? "~" + fmtMoney360(k.tongTien) : "—")),
               h("div", { style:{ fontSize:11.5, fontWeight:800, color: k.soNgay ? t.b : CL360.warn } }, "⏱ " + (k.soNgay ? `Liệu trình ${k.soNgay} ngày` : "Chưa chốt số ngày theo liều — hỏi CHT/dược sĩ")),
+              k.theoTrieuChung && (k.gopBenh||[]).length>0 && h("div", { style:{ fontSize:10.5, color:"#0a6bb4", fontWeight:700 } }, "Gộp thêm bệnh: " + k.gopBenh.join(", ")),
+              k.theoTrieuChung && (k.chuaCo||[]).length>0 && h("div", { style:{ fontSize:10.5, color:CL360.warn, fontWeight:700 } }, "Chưa có thuốc trong phác đồ cho: " + k.chuaCo.join(", ")),
+              k.theoTrieuChung && (k.boTrung||[]).length>0 && h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)" } }, "Đã bỏ vì trùng hoạt chất: " + k.boTrung.join(", ")),
+              (k.daLoc||[]).length>0 && h("div", { style:{ fontSize:10.5, color:"#0a6bb4", background:"#EAF2FB", borderRadius:6, padding:"3px 6px", margin:"2px 0" } }, "Đã lọc theo khách: " + k.daLoc.join(" · ")),
               k.hopMucDo && h("div", { style:{ fontSize:11, fontWeight:800, color:"#fff", background:t.b, borderRadius:6, padding:"1px 7px", display:"inline-block", margin:"2px 0" } }, `✓ Hợp mức độ ${k.hopMucDo}`),
               k.doiTuong && h("div", { style:{ fontSize:11, color:"var(--inkSoft)" } }, k.doiTuong),
               (k.trungHoatChat||[]).length>0 && h("div", { style:{ fontSize:11, color:CL360.bad, fontWeight:700 } }, "⚠ Trùng hoạt chất: " + k.trungHoatChat.join(" · ")),
@@ -13824,9 +13829,10 @@ function SymptomConsultView({ isAdmin, myStaff }){
                 " · " + comboQtyText(it), it.cachDung ? h("div", { style:{ fontSize:11.5, color:"#b4570a", fontWeight:700 } }, "Cách dùng (đơn mẫu): " + it.cachDung) : null, it.thanhTien ? h("span", { style:{ color:"var(--inkSoft)" } }, ` · ${fmtMoney360(it.thanhTien)}${it.nguonGia==="pos" ? " (giá POS)" : ""}`) : null,
                 it.hhs1 && tag("★HHS1", { color:"#b4720a" }, "Hàng hệ số 1", "h"), it.rx && tag("℞ KÊ ĐƠN", { color:CL360.bad, border:"1px solid "+CL360.bad }, "Chỉ bán khi có đơn", "r"),
                 stockTag(it.tonShop),
-                it.tranh && h("div", { style:{ fontSize:11, color:CL360.bad, fontWeight:700 } }, "⛔ Tránh: " + it.tranh),
-                it.tonShop===0 && h("div", { style:{ margin:"4px 0 0 6px", padding:"5px 8px", borderLeft:"3px solid " + ((it.thayThe||[]).length ? CL360.good : CL360.gray), background:"#fff", borderRadius:6, fontSize:11.5 } },
-                  !(it.thayThe||[]).length ? h("span", { style:{ color:"var(--inkSoft)" } }, "Nhà thuốc chưa có mã cùng hoạt chất / cùng công dụng còn tồn" + ((it.daTim||[]).length ? ` (đã tìm cả thuốc slide cùng nhóm: ${it.daTim.join(", ")})` : "") + " — mời CHT xử lý (đặt hàng).")
+                it.tranh && h("div", { style:{ fontSize:11, color:CL360.bad, fontWeight:700 } }, (k.donMau ? "⛔ Cần thay với khách này: " : "⛔ Tránh: ") + it.tranh),
+                it.lyDoThay && h("div", { style:{ fontSize:10.5, color:"#0a6bb4", fontWeight:700 } }, "↻ App đã thay (" + it.lyDoThay + ")"),
+                (it.tonShop===0 || it.tranh) && h("div", { style:{ margin:"4px 0 0 6px", padding:"5px 8px", borderLeft:"3px solid " + ((it.thayThe||[]).length ? CL360.good : CL360.gray), background:"#fff", borderRadius:6, fontSize:11.5 } },
+                  !(it.thayThe||[]).length ? h("span", { style:{ color:"var(--inkSoft)" } }, (it.tranh && it.tonShop!==0 ? "Chưa tìm được hàng thay phù hợp với khách còn tồn — hỏi dược sĩ/CHT. " : "") + "Nhà thuốc chưa có mã cùng hoạt chất / cùng công dụng còn tồn" + ((it.daTim||[]).length ? ` (đã tìm cả thuốc slide cùng nhóm: ${it.daTim.join(", ")})` : "") + " — mời CHT xử lý (đặt hàng).")
                   : ["hoatchat", "congdung"].map(lv => { const arr = it.thayThe.filter(a => a.loai===lv); if(!arr.length) return null;
                       return h("div", { key:lv },
                         h("div", { style:{ fontSize:10, fontWeight:800, color:"var(--inkSoft)", textTransform:"uppercase", marginTop:2 } }, lv==="hoatchat" ? "① Cùng hoạt chất — còn tồn tại nhà thuốc" : "② Cùng công dụng — thuốc slide khuyên cùng nhóm, còn tồn"),
@@ -13866,7 +13872,10 @@ function SymptomConsultView({ isAdmin, myStaff }){
             b.pos && h("span", { style:{ ...SLIDE_TAG_STYLE, marginLeft:6, color:"#b4570a", background:"#FFF1E0" } }, "🧾 ĐƠN MẪU POS"),
             b.lms && h("span", { style:{ ...SLIDE_TAG_STYLE, marginLeft:6 } }, "📚 LMS"),
             h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, b.kind==="lms" ? " · chưa có phác đồ" : b.kind==="pos" ? " · bệnh mẫu POS" : b.status==="approved" ? " · phác đồ đã duyệt" : " · phác đồ nháp")),
-          h("b", { style:{ color: b.phuHop>=70 ? CL360.good : b.phuHop>=40 ? CL360.warn : CL360.gray } }, b.phuHop + "%")),
+          h("span", { style:{ display:"flex", gap:6, alignItems:"center" } },
+            selId && b.id!==selId && b.kind!=="lms" && !String(selId).startsWith("lms:") && h("button", { type:"button", title:"Khách mắc thêm bệnh này — gộp vào 1 combo chung, bỏ thuốc trùng hoạt chất", onClick:(ev)=>{ ev.stopPropagation(); setGop(gop.includes(b.id) ? gop.filter(x => x!==b.id) : [...gop, b.id].slice(-3)); },
+              style:{ fontSize:10.5, fontWeight:800, border:"1px solid #0a6bb4", color: gop.includes(b.id) ? "#fff" : "#0a6bb4", background: gop.includes(b.id) ? "#0a6bb4" : "#fff", borderRadius:6, padding:"1px 6px", cursor:"pointer" } }, gop.includes(b.id) ? "✓ Đã gộp" : "＋ Gộp bệnh"),
+            h("b", { style:{ color: b.phuHop>=70 ? CL360.good : b.phuHop>=40 ? CL360.warn : CL360.gray } }, b.phuHop + "%"))),
         h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, (b.khop||[]).length ? "Khớp: " + b.khop.join(" ✓ ") + " ✓" : "", (b.thieu||[]).length ? " · chưa hỏi: " + b.thieu.join(", ") : "",
           !b.byProfile && b.kind!=="lms" && b.kind!=="pos" ? h("span", { style:{ color:CL360.warn } }, " · chưa có hồ sơ triệu chứng") : null),
         (b.loai||[]).length>0 && h("div", { style:{ fontSize:11.5, color:CL360.bad } }, "Loại trừ: " + b.loai.join(" · ")),
