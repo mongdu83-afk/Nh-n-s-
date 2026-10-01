@@ -13845,7 +13845,11 @@ function SymptomConsultView({ isAdmin, myStaff }){
           }))
         : h("div", { style:{ marginTop:8 } }, (drugs.combo||[]).map((g, i) => h("div", { key:i, style:{ fontSize:12.5, marginTop:4 } }, h("b", null, g.vaiTro + ": "),
             g.sanPham.map((sp, j) => h("span", { key:j }, j>0 && " / ", h("span", { style:{ textDecoration: sp.tranh ? "line-through" : "none" } }, sp.ten), stockTag(sp.tonShop))))),
-          h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:4 } }, "Phác đồ này chưa có 3 combo — quản lý bấm \"AI soạn lại\" ở tab Phác đồ để có combo theo mức giá.")),
+          drugs.locTuoi && (drugs.locTuoi.an||[]).length>0
+            ? h("div", { style:{ fontSize:12.5, marginTop:6, background:"#FFF8E6", border:"1px solid #F3DDA8", color:"#8a5a00", borderRadius:8, padding:"8px 10px", lineHeight:1.5 } },
+                h("b", null, `⚠ Bệnh này trên POS chỉ có đơn mẫu cho: ${drugs.locTuoi.an.join(", ")} — chưa có đơn cho khách ${drugs.locTuoi.khach}.`), h("br"),
+                "App không gợi ý đơn trẻ em cho người lớn (liều khác). Hỏi dược sĩ/CHT; nếu bệnh ít gặp ở lứa tuổi này, xem lại các bệnh khác trong danh sách. Có thể mở \"Thông tin bệnh từ POS\" ở trên để xem triệu chứng/phác đồ tham khảo.")
+            : h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:4 } }, "Phác đồ này chưa có 3 combo — quản lý bấm \"AI soạn lại\" ở tab Phác đồ để có combo theo mức giá.")),
         (drugs.protocol.danKhach||[]).length>0 && h("div", { style:{ fontSize:12, marginTop:8 } }, h("b", null, "Dặn khách: "), drugs.protocol.danKhach.map(x => String(x).replace(/^\s*📚\s*/, "")).join(" · ")),
         h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:8 } }, "Bấm tên thuốc để xem liều chính thức. Nội dung tham khảo nội bộ — ca phức tạp mời dược sĩ/CHT.",
           drugs.protocol.status!=="approved" ? " (Phác đồ còn là BẢN NHÁP — chỉ quản lý thấy.)" : "")));
