@@ -11945,8 +11945,15 @@ function promoActualRevenueOf(c){
   if(c.actualUsed!=null && c.avgOrderValue) return c.actualUsed*c.avgOrderValue;
   return null;
 }
+// 1/10/2026 (Phương: "chương trình khuyến mại không ra kết quả"): đầu tháng chưa nhập chương trình tháng mới → tự lùi về
+// THÁNG TRƯỚC 1 lần (có dòng báo), thay vì để trống. Chọn tháng khác bằng ô tháng như cũ.
+function promoPrevMonth(mk){ const y = Number(mk.slice(0,4)), m = Number(mk.slice(5,7)); return m===1 ? `${y-1}-12` : `${y}-${String(m-1).padStart(2,"0")}`; }
 function PromoCampaignReport({ isAdmin, myStaff, monthKey, setMonthKey }){
   const [campaigns, setCampaigns] = useState(null);
+  const [autoBack, setAutoBack] = useState(null); // tháng hiện tại rỗng → đã tự lùi về tháng trước
+  // Tháng ĐANG XEM riêng của báo cáo — tự lùi tháng không đổi tháng của tab "Nhập dữ liệu" (tránh nhập nhầm tháng)
+  const [viewMk, setViewMk] = useState(monthKey);
+  useEffect(()=>{ setViewMk(monthKey); }, [monthKey]);
   const [expanded, setExpanded] = useState(null);
   const [refreshingId, setRefreshingId] = useState(null);
   async function refreshOneNow(c){
@@ -11963,7 +11970,7 @@ function PromoCampaignReport({ isAdmin, myStaff, monthKey, setMonthKey }){
     } finally { setRefreshingId(null); }
   }
   useEffect(()=>{
-    const unsub = db.collection("promoCampaigns").where("monthKey","==",monthKey).onSnapshot(snap=>{
+    const unsub = db.collection("promoCampaigns").where("monthKey","==",viewMk).onSnapshot(snap=>{
       const list = []; snap.forEach(d=>list.push({ id:d.id, ...d.data() }));
       // Hiệu quả DOANH THU là quan trọng nhất (theo yêu cầu 22/9/2026): chương trình nào ước tính
       // được doanh thu thực tế (có actualUsed + avgOrderValue) xếp lên trước, theo % đạt so với kế
@@ -11978,14 +11985,16 @@ function PromoCampaignReport({ isAdmin, myStaff, monthKey, setMonthKey }){
         if(pctB!=null) return 1;
         return a.name.localeCompare(b.name,"vi");
       });
+      if(!list.length && !autoBack && viewMk===todayISO().slice(0,7)){ setAutoBack(viewMk); setViewMk(promoPrevMonth(viewMk)); return; }
       setCampaigns(list);
     });
     return unsub;
-  }, [monthKey]);
+  }, [viewMk]);
   return React.createElement("div", {}, [
     React.createElement("div", { key:"row", className:"btnRow", style:{ marginBottom:12, alignItems:"center" } }, [
-      React.createElement("input", { key:"m", type:"month", value:monthKey, onChange:e=>setMonthKey(e.target.value), style:{ padding:"7px 9px", border:"1px solid var(--line)", borderRadius:8, fontSize:13 } }),
+      React.createElement("input", { key:"m", type:"month", value:viewMk, onChange:e=>{ setViewMk(e.target.value); setMonthKey(e.target.value); }, style:{ padding:"7px 9px", border:"1px solid var(--line)", borderRadius:8, fontSize:13 } }),
     ]),
+    autoBack && viewMk!==autoBack && React.createElement("div", { key:"autoback", style:{ fontSize:12, color:"#b4720a", background:"#FFF8E6", border:"1px solid #F3DDA8", borderRadius:8, padding:"6px 10px", marginBottom:10 } }, `Tháng ${autoBack.slice(5,7)}/${autoBack.slice(0,4)} chưa có chương trình nào — đang xem tháng ${viewMk.slice(5,7)}/${viewMk.slice(0,4)}. Nhập chương trình tháng mới ở tab "Nhập dữ liệu".`),
     campaigns && campaigns.length>0 && React.createElement("div", { key:"sortnote", style:{ fontSize:11, color:"var(--inkSoft)", marginBottom:10 } }, "Xếp theo % doanh thu thực tế đạt được so với kế hoạch (cao → thấp); chương trình chưa nhập \"Giá trị đơn TB\" nên chưa tính được doanh thu thực tế xếp ở cuối."),
     !campaigns ? React.createElement(EmptyState, { key:"l", kind:"loading" })
     : campaigns.length===0 ? React.createElement("div", { key:"e", className:"emptyState" }, isAdmin ? "Chưa có dữ liệu tháng này — vào tab \"Nhập dữ liệu\" để tải file lên." : "Chưa có dữ liệu tháng này.")
@@ -12058,6 +12067,7 @@ const PE_VERDICT = {
 function PromoEffectView(){
   const h = React.createElement;
   const [month, setMonth] = useState(todayISO().slice(0,7));
+  const [autoBack, setAutoBack] = useState(null);
   const [data, setData] = useState(null);
   const [margin, setMargin] = useState("");
   const [busy, setBusy] = useState("");
@@ -12069,6 +12079,7 @@ function PromoEffectView(){
       const body = { month, compute: !!compute };
       if(compute && margin!=="") body.marginPct = Number(margin);
       const d = await callCf(PE_API, { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify(body) }, compute ? 540000 : 60000);
+      if(!compute && !autoBack && month===todayISO().slice(0,7) && !((d && d.campaigns) || []).length){ setAutoBack(month); setMonth(promoPrevMonth(month)); setBusy(""); return; }
       setData(d); if(margin==="") setMargin(String(d.marginPct));
     } catch(e){ setErr(e.message||String(e)); }
     setBusy("");
@@ -12092,6 +12103,7 @@ function PromoEffectView(){
       h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:()=>load(true) }, busy==="compute" ? "Đang tính (1–3 phút)…" : "Tính lại"),
       data && withFx[0] && withFx[0].effect.computedAt && h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, `Tính lúc ${new Date(withFx[0].effect.computedAt).toLocaleString("vi-VN")} · tự tính 07:20 mỗi sáng`)),
     err && h("div", { style:{ color:"var(--clay)", fontSize:12.5, marginBottom:8 } }, err),
+    autoBack && month!==autoBack && h("div", { style:{ fontSize:12, color:"#b4720a", background:"#FFF8E6", border:"1px solid #F3DDA8", borderRadius:8, padding:"6px 10px", marginBottom:10 } }, `Tháng ${autoBack.slice(5,7)}/${autoBack.slice(0,4)} chưa có chương trình nào — đang xem tháng ${month.slice(5,7)}/${month.slice(0,4)}.`),
     !data ? h("div", { className:"emptyState" }, busy ? "Đang tải…" : "—")
     : !rows.length ? h("div", { className:"card", style:{ fontSize:13 } }, "Tháng này chưa có chương trình nào (nhập ở mục \"Nhập dữ liệu\" hoặc theo dõi theo DocumentID).")
     : h("div", null,
@@ -12130,16 +12142,201 @@ function PromoEffectView(){
         }))))));
 }
 
+// 1/10/2026 (Phương): HIỆU QUẢ KHUYẾN MẠI THEO ĐƠN HÀNG — đọc opsConfig-like doc promoOrderAnalytics/{tháng} (backend runPromoOrderAnalytics)
+const PO_TYPES = { voucher:{ t:"Voucher", icon:"🎟" }, giamgia:{ t:"Giảm giá", icon:"🏷" }, quatang:{ t:"Quà tặng", icon:"🎁" }, doidiem:{ t:"Đổi điểm", icon:"⭐" }, combo:{ t:"Combo", icon:"📦" } };
+const PO_FAMS = [["sinhnhat","Voucher sinh nhật","Sinh nhật"],["hangthe","Voucher hạng thẻ","Hạng thẻ"],["voucherhd","Voucher theo giá trị hoá đơn","Voucher HĐ"],["coupon","Coupon khách hàng VIP","Coupon VIP"],["combo","Combo 2 sản phẩm","Combo"],["quahd","Quà tặng theo giá trị hoá đơn","Quà HĐ"],["giamgiasp","Giảm giá sản phẩm theo đợt","Giảm giá SP"],["candate","Giảm giá hàng cận date","Cận date"],["doidiem","Đổi điểm tích luỹ","Đổi điểm"],["khac","Chương trình khác (kẹo trẻ em, bán trước cửa, vỏ thuốc, web…)","Khác"]];
+const PO_FAMS_ORDER = PO_FAMS.map(x=>x[0]); const PO_FAM_LABEL = Object.fromEntries(PO_FAMS.map(x=>[x[0],x[1]])); const PO_FAM_SHORT = Object.fromEntries(PO_FAMS.map(x=>[x[0],x[2]]));
+function PromoOrderView({ isAdmin }){
+  const h = React.createElement;
+  const [key, setKey] = useState(null);
+  const [idx, setIdx] = useState(undefined);
+  const [d, setD] = useState(undefined);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [type, setType] = useState("all");
+  const [shopF, setShopF] = useState("all");
+  const [open, setOpen] = useState(null);
+  const [showAll, setShowAll] = useState(false);
+  const [famF, setFamF] = useState("all");
+  const [listF, setListF] = useState(null); // { fam } | { gk, label }
+  const [od, setOd] = useState(null);
+  const [q, setQ] = useState("");
+  const [lim, setLim] = useState(100);
+  // Danh sách chiến dịch (đợt) — promoOrderAnalytics/_index
+  useEffect(()=> db.collection("promoOrderAnalytics").doc("_index").onSnapshot(s => setIdx(s.exists ? s.data() : null), () => setIdx(null)), []);
+  const camps = (idx && idx.campaigns) || [];
+  useEffect(()=>{ if(key || !camps.length) return; const r = camps.find(c => c.kind==="campaign" && c.running) || camps.find(c => c.kind==="campaign") || camps[0]; setKey(r.key); }, [idx]);
+  useEffect(()=>{ setOd(null); setListF(null); setFamF("all"); setShopF("all"); setOpen(null); }, [key]);
+  async function openList(f){ setListF(f); setLim(100); setQ(""); if(!od){ try{ const s = await db.collection("promoOrderAnalytics").doc(key + "_orders").get(); setOd(s.exists ? s.data() : { orders:[] }); }catch(e){ setOd({ orders:[], error:e.message }); } } }
+  useEffect(()=>{ if(!key){ setD(idx===undefined ? undefined : null); return; } setD(undefined); return db.collection("promoOrderAnalytics").doc(key).onSnapshot(s => setD(s.exists ? s.data() : null), () => setD(null)); }, [key, idx===undefined]);
+  async function compute(){
+    setBusy(true); setMsg("Đang tính từ hoá đơn và tra tên chương trình trên POS (1–5 phút)…");
+    try{ const r = await callCf(`https://asia-southeast1-upharma-176d5.cloudfunctions.net/runJobNow?job=promoOrderAnalyticsNow`, {}, 560000);
+      setMsg(`Đã tính ${r.campaigns||0} đợt` + (r.unnamed > 0 ? ` · còn ${r.unnamed} mã chưa tra được tên, bấm Tính lại để tra tiếp` : "")); }
+    catch(e){ setMsg("Lỗi: " + (e.message||String(e))); }
+    setBusy(false);
+  }
+  const fm = (v) => v==null ? "—" : Math.abs(v)>=1e9 ? (v/1e9).toLocaleString("vi-VN",{maximumFractionDigits:2})+" tỷ" : Math.abs(v)>=1e6 ? (v/1e6).toLocaleString("vi-VN",{maximumFractionDigits:1})+" tr" : Math.abs(v)>=1e3 ? Math.round(v/1e3).toLocaleString("vi-VN")+"k" : String(Math.round(v));
+  const pc = (a,b) => b ? Math.round(a/b*1000)/10 : null;
+  const pcs = (x) => x==null ? "—" : String(x).replace(".",",")+"%";
+  const chip = (x, lo, hi) => { if(x==null) return h("span", { style:{ color:"var(--inkSoft)" } }, "—"); const c = x>hi ? CL360.bad : x>lo ? CL360.warn : CL360.good;
+    return h("span", { style:{ display:"inline-block", padding:"0 7px", borderRadius:10, fontWeight:800, fontSize:11.5, color:c, background:c+"18" } }, pcs(x)); };
+  const shopName = (s) => String(s||"").replace("SHOP0","NT");
+  const th = { textAlign:"right", fontSize:10.5, color:"var(--inkSoft)", fontWeight:700, padding:"6px 8px", borderBottom:"1px solid var(--line)", whiteSpace:"nowrap", textTransform:"uppercase" };
+  const td = { textAlign:"right", padding:"6px 8px", borderBottom:"1px solid #f0eee6", whiteSpace:"nowrap", fontVariantNumeric:"tabular-nums" };
+  const L = { ...td, textAlign:"left", whiteSpace:"normal" };
+  const dm = (x) => x ? x.slice(8,10)+"/"+x.slice(5,7) : "…";
+  const campBtn = (x) => { const on = x.key===key;
+    return h("button", { key:x.key, onClick:()=>setKey(x.key), style:{ textAlign:"left", padding:"6px 10px", borderRadius:10, cursor:"pointer", border:"1px solid " + (on ? "var(--pine)" : "var(--line)"), background: on ? "var(--pineSoft)" : "#fff", minWidth:150 } },
+      h("div", { style:{ fontWeight:800, fontSize:12.5 } }, x.label, x.running && h("span", { style:{ marginLeft:6, fontSize:10, fontWeight:800, color:CL360.good } }, "● đang chạy")),
+      h("div", { style:{ fontSize:11, color:"var(--inkSoft)" } }, `${dm(x.from)} – ${dm(x.to)} · CP ${fm(x.cost)} · ${pcs(pc(x.cost, x.rev))}`)); };
+  const head = h("div", { style:{ marginBottom:10 } },
+    h("div", { style:{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:8 } },
+      camps.filter(x=>x.kind==="campaign").map(campBtn),
+      camps.some(x=>x.kind!=="campaign") && h("span", { style:{ alignSelf:"center", fontSize:11, color:"var(--inkSoft)", padding:"0 4px" } }, "Thường xuyên:"),
+      camps.filter(x=>x.kind!=="campaign").map(campBtn)),
+    h("div", { style:{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" } },
+      isAdmin && h("button", { className:"btn btnPrimary", disabled:busy, onClick:compute }, busy ? "Đang tính…" : "↻ Tính lại"),
+      d && h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, `Tính lúc ${new Date(d.computedAt).toLocaleString("vi-VN")} · tự tính 0h50 mỗi đêm · dữ liệu bán hàng từ ${dm((idx||{}).dataFrom)}`),
+      msg && h("span", { style:{ fontSize:12 } }, msg)));
+  const warnBox = (t) => h("div", { style:{ fontSize:12, color:"#b4720a", background:"#FFF8E6", border:"1px solid #F3DDA8", borderRadius:8, padding:"6px 10px", marginBottom:10 } }, t);
+  const back = d && (d.partial || d.running) && warnBox(
+    d.partial ? `Đợt ${dm(d.from)} – ${dm(d.to)} bắt đầu trước khi có dữ liệu bán hàng — chỉ tính phần ${dm(d.dataFrom)} – ${dm(d.dataTo)} (${d.days} ngày). So sánh với đợt khác bằng cột "/ngày".`
+      : `Đợt đang chạy: mới có số liệu ${dm(d.dataFrom)} – ${dm(d.dataTo)} (${d.days} ngày), đợt kết thúc ${dm(d.to)}.`);
+  const cmpC = camps.filter(x=>x.kind==="campaign");
+  const cmp = cmpC.length>1 && h("div", { className:"card", style:{ marginTop:12, overflowX:"auto" } },
+    h("b", null, "So sánh các đợt"), h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginLeft:6 } }, "/ngày = chi phí ÷ số ngày có dữ liệu · CP/DT = chi phí ÷ doanh thu các đơn dùng nhóm"),
+    h("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5, marginTop:6 } }, h("tbody", null,
+      h("tr", null, h("th", { style:{ ...th, textAlign:"left" } }, "Nhóm"), cmpC.flatMap(x => [h("th", { key:x.key+"a", style:th }, x.label.replace("Chiến dịch ","")+" · CP"), h("th", { key:x.key+"b", style:th }, "/ngày"), h("th", { key:x.key+"c", style:th }, "CP/DT")])),
+      PO_FAMS_ORDER.filter(k => cmpC.some(x => (x.fam||{})[k])).map(k => h("tr", { key:k },
+        h("td", { style:{ ...L, fontWeight:700 } }, PO_FAM_LABEL[k] || k),
+        cmpC.flatMap(x => { const f = (x.fam||{})[k]; return [h("td", { key:x.key+"a", style:td }, f ? (f.c ? fm(f.c) : "trong giá") : "—"), h("td", { key:x.key+"b", style:td }, f && f.c ? fm(f.c/(x.days||1)) : "—"), h("td", { key:x.key+"c", style:td }, f && f.c ? chip(pc(f.c, f.r), 5.5, 10) : "—")]; }))),
+      h("tr", null, h("td", { style:{ ...L, fontWeight:800 } }, "Tổng"), cmpC.flatMap(x => [h("td", { key:x.key+"a", style:{ ...td, fontWeight:800 } }, fm(x.cost)), h("td", { key:x.key+"b", style:{ ...td, fontWeight:800 } }, fm(x.cost/(x.days||1))), h("td", { key:x.key+"c", style:td }, chip(pc(x.cost, x.rev), 2, 3))])),
+      h("tr", null, h("td", { style:{ ...L, color:"var(--inkSoft)" } }, "Số ngày có dữ liệu"), cmpC.map(x => h("td", { key:x.key, colSpan:3, style:{ ...td, color:"var(--inkSoft)" } }, `${x.days} ngày${x.partial ? " (thiếu đầu đợt)" : ""}${x.running ? " (đang chạy)" : ""}`))))));
+  if(idx===undefined || d===undefined) return h("div", null, head, h(EmptyState, { kind:"loading" }));
+  if(!d) return h("div", null, head, h("div", { className:"card", style:{ fontSize:13 } }, isAdmin ? "Chưa có số liệu theo đợt — bấm \"↻ Tính lại\"." : "Chưa có số liệu."));
+  const c = d.chain || {}; const bt = c.byType || {};
+  const kpi = (l, v, s) => h("div", { className:"metric" }, h("div", { className:"label" }, l), h("div", { className:"value" }, v), s && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, s));
+  const nonN = (c.orders||0) - (c.promoOrders||0);
+  // Theo nhà thuốc
+  const shopRows = Object.entries(d.shops||{}).filter(([s])=>s).sort((a,b)=>{ const ca = Object.values(a[1].cost||{}).reduce((x,y)=>x+y,0), cb = Object.values(b[1].cost||{}).reduce((x,y)=>x+y,0); return cb-ca; });
+  const types = Object.keys(PO_TYPES);
+  const shopFams = (d.families||[]).filter(f => f.c > 0);
+  // Theo chương trình
+  let progs = (d.programs||[]).filter(p => (type==="all" || p.type===type) && (famF==="all" || (p.family||"khac")===famF));
+  const fams = d.families || [];
+  if(shopF!=="all") progs = progs.filter(p => p.byShop && p.byShop[shopF]).map(p => ({ ...p, o:p.byShop[shopF].o, q:p.byShop[shopF].q, c:p.byShop[shopF].c, r:p.byShop[shopF].r, sku:null })).sort((a,b)=>b.c-a.c);
+  const shown = showAll ? progs : progs.slice(0, 40);
+  const shopsList = Object.keys(d.shops||{}).filter(Boolean).sort();
+  return h("div", null, head, back,
+    h("div", { className:"metrics" },
+      kpi("Tổng chi phí khuyến mại", fm(c.cost), `${dm(d.dataFrom)} – ${dm(d.dataTo)} · ${fm(c.cost/(d.days||1))}/ngày`),
+      kpi("Chi phí / doanh thu", pcs(pc(c.cost, c.rev)), `doanh thu ${fm(c.rev)} · ${(c.orders||0).toLocaleString("vi-VN")} đơn`),
+      kpi("Đơn có khuyến mại", (c.promoOrders||0).toLocaleString("vi-VN"), `${pcs(pc(c.promoOrders, c.orders))} số đơn · ${pcs(pc(c.promoRev, c.rev))} doanh thu`),
+      kpi("TB bill có KM / không KM", `${fm(c.promoOrders ? c.promoRev/c.promoOrders : 0)} / ${fm(nonN ? (c.rev-c.promoRev)/nonN : 0)}`, null)),
+    cmp,
+    h("div", { className:"card", style:{ marginTop:12, overflowX:"auto" } },
+      h("b", null, "Theo loại"),
+      h("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5, marginTop:6 } }, h("tbody", null,
+        h("tr", null, ["Loại","Số CT","Số lượng","Hoá đơn","Chi phí","% chi phí","DT cả đơn","CP / DT đơn"].map((x,i)=>h("th", { key:x, style:{ ...th, textAlign:i?"right":"left" } }, x))),
+        types.filter(t=>bt[t]).map(t => h("tr", { key:t },
+          h("td", { style:L }, PO_TYPES[t].icon + " " + PO_TYPES[t].t), h("td", { style:td }, bt[t].progs), h("td", { style:td }, (bt[t].qty||0).toLocaleString("vi-VN")),
+          h("td", { style:td }, bt[t].orders), h("td", { style:td }, t==="combo" ? "trong giá" : fm(bt[t].cost)), h("td", { style:td }, t==="combo" ? "—" : pcs(pc(bt[t].cost, c.cost))),
+          h("td", { style:td }, fm(bt[t].r)), h("td", { style:td }, t==="combo" ? "—" : chip(pc(bt[t].cost, bt[t].r), 5.5, 10))))))),
+    h("div", { className:"card", style:{ marginTop:12, overflowX:"auto" } },
+      h("b", null, "Theo nhà thuốc"),
+      h("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5, marginTop:6 } }, h("tbody", null,
+        h("tr", null, ["Nhà thuốc", ...shopFams.map(f=>PO_FAM_SHORT[f.key]||f.label), "Tổng chi phí", "Doanh thu", "CP / DT", "% đơn có KM", "TB bill KM / thường"].map((x,i)=>h("th", { key:x, style:{ ...th, textAlign:i?"right":"left" } }, x))),
+        shopRows.map(([s, x]) => { const tot = Object.values(x.cost||{}).reduce((a,v)=>a+v,0); const nn = x.n - x.pn;
+          return h("tr", { key:s, style:{ cursor:"pointer", background: shopF===s ? "var(--pineSoft)" : "transparent" }, onClick:()=>setShopF(shopF===s ? "all" : s), title:"Bấm để lọc chương trình theo nhà thuốc này" },
+            h("td", { style:{ ...L, fontWeight:700 } }, shopName(s)), ...shopFams.map(f=>h("td", { key:f.key, style:td }, fm((x.cost||{})[f.key]||0))),
+            h("td", { style:{ ...td, fontWeight:800 } }, fm(tot)), h("td", { style:td }, fm(x.rev)), h("td", { style:td }, chip(pc(tot, x.rev), 2, 3)),
+            h("td", { style:td }, chip(pc(x.pn, x.n)==null ? null : pc(x.pn, x.n), 100, 100)), h("td", { style:td }, `${fm(x.pn ? x.prev/x.pn : 0)} / ${fm(nn ? (x.rev-x.prev)/nn : 0)}`)); })))),
+    fams.length>0 && h("div", { className:"card", style:{ marginTop:12, overflowX:"auto" } },
+      h("b", null, "Theo nhóm chương trình"), h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginLeft:6 } }, "gộp mọi vùng miền · bấm 1 nhóm để xem theo nhà thuốc và các chương trình trong nhóm"),
+      h("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5, marginTop:6 } }, h("tbody", null,
+        h("tr", null, ["Nhóm chương trình","Số CT","Hoá đơn","SL","Chi phí","% chi phí","DT SP trong CT","DT cả đơn","TB bill","CP / DT đơn"].map((x,i)=>h("th", { key:x, style:{ ...th, textAlign:i?"right":"left" } }, x))),
+        fams.flatMap(f => { const isO = famF===f.key; const row = h("tr", { key:f.key, style:{ cursor:"pointer", background: isO ? "var(--pineSoft)" : "transparent" }, onClick:()=>{ setFamF(isO ? "all" : f.key); setType("all"); } },
+            h("td", { style:{ ...L, fontWeight:700 } }, f.label), h("td", { style:td }, f.progs), h("td", { style:td }, f.o.toLocaleString("vi-VN")), h("td", { style:td }, (f.q||0).toLocaleString("vi-VN")),
+            h("td", { style:{ ...td, fontWeight:700 } }, f.c ? fm(f.c) : "trong giá"), h("td", { style:td }, pcs(pc(f.c, c.cost))), h("td", { style:td }, f.sku ? fm(f.sku) : "—"),
+            h("td", { style:td }, fm(f.r)), h("td", { style:td }, fm(f.o ? f.r/f.o : 0)), h("td", { style:td }, f.c ? chip(pc(f.c, f.r), 5.5, 10) : "—"));
+          if(!isO) return [row];
+          return [row, h("tr", { key:f.key+"_s" }, h("td", { colSpan:10, style:{ background:"var(--paper)", padding:"6px 10px" } },
+            h("button", { className:"btn btnGhost", style:{ fontSize:11.5, padding:"2px 8px", marginBottom:6 }, onClick:(e)=>{ e.stopPropagation(); openList({ fam:f.key, label:f.label }); } }, `📄 Danh sách ${f.o} đơn`),
+            h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap" } }, Object.entries(f.byShop||{}).sort((a,b)=>b[1].o-a[1].o).map(([sh,b]) =>
+              h("span", { key:sh, style:{ fontSize:11.5, border:"1px solid var(--line)", borderRadius:8, padding:"3px 8px", background:"#fff" } }, h("b", null, shopName(sh)), ` · ${b.o} đơn · CP ${fm(b.c)} · DT ${fm(b.r)} · `, chip(pc(b.c, b.r), 5.5, 10))))))]; })))),
+    h("div", { className:"card", style:{ marginTop:12, overflowX:"auto" } },
+      h("div", { style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" } }, h("b", null, famF==="all" ? "Chi tiết từng chương trình" : "Chi tiết: " + ((fams.find(f=>f.key===famF)||{}).label||"")),
+        famF!=="all" && h("button", { className:"btn btnGhost", style:{ fontSize:11.5, padding:"2px 8px" }, onClick:()=>setFamF("all") }, "× bỏ lọc nhóm"),
+        h("select", { value:type, onChange:e=>setType(e.target.value), style:{ fontSize:12, padding:"3px 6px", border:"1px solid var(--line)", borderRadius:6 } }, h("option", { value:"all" }, "Tất cả loại"), types.map(t=>h("option", { key:t, value:t }, PO_TYPES[t].t))),
+        h("select", { value:shopF, onChange:e=>setShopF(e.target.value), style:{ fontSize:12, padding:"3px 6px", border:"1px solid var(--line)", borderRadius:6 } }, h("option", { value:"all" }, "Toàn chuỗi"), shopsList.map(s=>h("option", { key:s, value:s }, shopName(s)))),
+        h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, `${progs.length} chương trình · bấm 1 dòng để xem theo nhà thuốc`)),
+      h("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5, marginTop:6 } }, h("tbody", null,
+        h("tr", null, ["Chương trình","Loại","Hoá đơn","SL","Chi phí","DT SP trong CT","Giảm / DT SP","DT cả đơn","TB bill","CP / DT đơn"].map((x,i)=>h("th", { key:x, style:{ ...th, textAlign:i<2?"left":"right" } }, x))),
+        shown.flatMap((p, i) => { const k = p.type+"|"+p.name; const isO = open===k;
+          const row = h("tr", { key:k, style:{ cursor:"pointer" }, onClick:()=>setOpen(isO?null:k) },
+            h("td", { style:{ ...L, maxWidth:380 } }, p.name.replace(/^\[CTKM T\d+[^\]]*\]\s*/,""), !p.named && h("span", { style:{ fontSize:10.5, color:"var(--inkSoft)" } }, " (chưa tra được tên)"), p.ids>1 && h("span", { style:{ fontSize:10.5, color:"var(--inkSoft)" } }, ` · ${p.ids} mã`), p.time && p.time[0] && h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)" } }, `${p.time[0].slice(8,10)}/${p.time[0].slice(5,7)} – ${(p.time[1]||"").slice(8,10)}/${(p.time[1]||"").slice(5,7)}`)),
+            h("td", { style:L }, (PO_TYPES[p.type]||{}).t), h("td", { style:td }, p.o), h("td", { style:td }, (p.q||0).toLocaleString("vi-VN")),
+            h("td", { style:{ ...td, fontWeight:700 } }, p.type==="combo" ? "trong giá" : fm(p.c)), h("td", { style:td }, p.sku ? fm(p.sku) : "—"),
+            h("td", { style:td }, p.sku && p.type!=="combo" ? chip(pc(p.c, p.sku), 10, 20) : "—"), h("td", { style:td }, fm(p.r)), h("td", { style:td }, fm(p.o ? p.r/p.o : 0)),
+            h("td", { style:td }, p.type==="combo" ? "—" : chip(pc(p.c, p.r), 5.5, 10)));
+          if(!isO || !p.byShop) return [row];
+          return [row, h("tr", { key:k+"_d" }, h("td", { colSpan:10, style:{ background:"var(--paper)", padding:"6px 10px" } },
+            !p.other && h("button", { className:"btn btnGhost", style:{ fontSize:11.5, padding:"2px 8px", marginBottom:6 }, onClick:(e)=>{ e.stopPropagation(); openList({ gk:k, label:p.name }); } }, `📄 Danh sách ${p.o} đơn`),
+            h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap" } }, Object.entries(p.byShop).sort((a,b)=>b[1].o-a[1].o).map(([s,b]) =>
+              h("span", { key:s, style:{ fontSize:11.5, border:"1px solid var(--line)", borderRadius:8, padding:"3px 8px", background:"#fff" } }, h("b", null, shopName(s)), ` · ${b.o} đơn · CP ${fm(b.c)} · DT ${fm(b.r)} · `, chip(pc(b.c, b.r), 5.5, 10))))))]; }))),
+      progs.length>40 && h("div", { style:{ marginTop:6 } }, h("button", { className:"btn btnGhost", onClick:()=>setShowAll(!showAll), style:{ fontSize:12 } }, showAll ? "Thu gọn" : `Xem tất cả ${progs.length} chương trình`))),
+    listF && h(PromoOrderList, { od, listF, shopF, q, setQ, lim, setLim, onClose:()=>setListF(null), fm, shopName }),
+    h("div", { style:{ fontSize:11, color:"var(--inkSoft)", marginTop:8, lineHeight:1.5 } }, "Cách tính: voucher = dòng mã VOUCHER (tiền âm); giảm giá = dòng KM02, gắn chương trình theo mã CTKM ghi trên hoá đơn; quà tặng = dòng 0đ có mã CTKM × giá bán lẻ; đổi điểm = dòng DDTL; combo = mã hàng tên Combo. CP / DT đơn = chi phí ÷ doanh thu cả các hoá đơn dùng chương trình (chưa phải doanh thu tăng thêm). Giảm / DT SP = tiền giảm ÷ doanh thu đúng các sản phẩm khai báo trong chương trình."));
+}
+// Danh sách đơn có khuyến mại (chi tiết) — doc promoOrderAnalytics/{tháng}_orders
+function PromoOrderList({ od, listF, shopF, q, setQ, lim, setLim, onClose, fm, shopName }){
+  const h = React.createElement;
+  if(!od) return h("div", { className:"card", style:{ marginTop:12 } }, "Đang tải danh sách đơn…");
+  if(od.error) return h("div", { className:"card", style:{ marginTop:12, color:CL360.bad } }, "Lỗi: " + od.error);
+  const names = od.progNames || [], fams = od.famOf || [];
+  const short = (gk) => String(gk||"").split("|").slice(1).join("|").replace(/^\[CTKM T\d+[^\]]*\]\s*/,"");
+  const want = (i) => listF.fam ? fams[i]===listF.fam : names[i]===listF.gk;
+  const qq = pdStrip(q||"").trim();
+  const rows = (od.orders||[]).map(x => { try{ return JSON.parse(x); }catch(e){ return null; } }).filter(Boolean)
+    .filter(r => (r[5]||[]).some(([i]) => want(i)) && (shopF==="all" || r[2]===shopF) && (!qq || pdStrip(r[1]+" "+r[3]).includes(qq)));
+  const kmOf = (r) => (r[5]||[]).filter(([i]) => want(i)).reduce((s,[,c])=>s+c,0);
+  const tot = rows.reduce((s,r)=>s+r[4],0), totKm = rows.reduce((s,r)=>s+kmOf(r),0);
+  function csv(){
+    const lines = [["Ngày","Số HĐ","Nhà thuốc","NV bán","Tổng đơn","Tiền KM (nhóm/CT đang xem)","Tất cả chương trình trong đơn"].join(",")]
+      .concat(rows.map(r => [r[0], r[1], shopName(r[2]), '"'+String(r[3]).replace(/"/g,'""')+'"', r[4], kmOf(r), '"'+(r[5]||[]).map(([i,c])=>short(names[i])+" ("+c+")").join("; ").replace(/"/g,'""')+'"'].join(",")));
+    const blob = new Blob(["\ufeff"+lines.join("\n")], { type:"text/csv;charset=utf-8" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `don-khuyen-mai-${od.key||od.month||""}.csv`; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+  }
+  const th = { textAlign:"left", fontSize:10.5, color:"var(--inkSoft)", fontWeight:700, padding:"5px 6px", borderBottom:"1px solid var(--line)", whiteSpace:"nowrap" };
+  const td = { padding:"5px 6px", borderBottom:"1px solid #f0eee6", fontSize:12, verticalAlign:"top" };
+  return h("div", { className:"card", style:{ marginTop:12, overflowX:"auto" } },
+    h("div", { style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" } },
+      h("b", null, "📄 Danh sách đơn — " + short("x|"+listF.label)), shopF!=="all" && h("span", { style:{ fontSize:12 } }, "· " + shopName(shopF)),
+      h("span", { style:{ fontSize:12, color:"var(--inkSoft)" } }, `${rows.length} đơn · tổng đơn ${fm(tot)} · tiền KM ${fm(totKm)}`),
+      h("input", { value:q, onChange:e=>setQ(e.target.value), placeholder:"Tìm số HĐ / NV bán", style:{ fontSize:12, padding:"3px 8px", border:"1px solid var(--line)", borderRadius:6 } }),
+      h("button", { className:"btn btnGhost", style:{ fontSize:11.5, padding:"2px 8px" }, onClick:csv }, "⬇ Tải CSV"),
+      h("button", { className:"btn btnGhost", style:{ fontSize:11.5, padding:"2px 8px", marginLeft:"auto" }, onClick:onClose }, "× Đóng")),
+    h("table", { style:{ width:"100%", borderCollapse:"collapse", marginTop:6 } }, h("tbody", null,
+      h("tr", null, ["Ngày giờ","Số HĐ","NT","NV bán","Tổng đơn","Tiền KM","Chương trình trong đơn"].map(x=>h("th", { key:x, style:{ ...th, textAlign: x==="Tổng đơn"||x==="Tiền KM" ? "right" : "left" } }, x))),
+      rows.slice(0, lim).map((r, i) => h("tr", { key:i },
+        h("td", { style:{ ...td, whiteSpace:"nowrap" } }, r[0].slice(8,10)+"/"+r[0].slice(5,7)+" "+r[0].slice(11,16)), h("td", { style:{ ...td, whiteSpace:"nowrap", fontFamily:"monospace" } }, r[1]),
+        h("td", { style:td }, shopName(r[2])), h("td", { style:td }, r[3]), h("td", { style:{ ...td, textAlign:"right", whiteSpace:"nowrap" } }, fmtVND(r[4])),
+        h("td", { style:{ ...td, textAlign:"right", whiteSpace:"nowrap", fontWeight:700 } }, fmtVND(kmOf(r))),
+        h("td", { style:{ ...td, fontSize:11.5 } }, (r[5]||[]).map(([j,c],k) => h("div", { key:k, style:{ color: want(j) ? "var(--ink)" : "var(--inkSoft)" } }, short(names[j]) + (c ? ` · ${fmtVND(c)}` : "")))))))),
+    rows.length>lim && h("button", { className:"btn btnGhost", style:{ fontSize:12, marginTop:6 }, onClick:()=>setLim(lim+200) }, `Xem thêm (${rows.length-lim} đơn)`));
+}
 function PromoAnalyticsView({ isAdmin, myStaff }){
   const [subTab, setSubTab] = useState("report");
   const [monthKey, setMonthKey] = useState(todayISO().slice(0,7));
-  const subTabs = [ { id:"report", label:"Báo cáo hiệu quả" }, ...(isAdmin ? [{ id:"effect", label:"Hiệu quả thật (tăng thêm & lãi)" }, { id:"import", label:"Nhập dữ liệu" }] : []) ];
+  const subTabs = [ { id:"report", label:"Báo cáo hiệu quả" }, { id:"orders", label:"📊 Theo đơn hàng" }, ...(isAdmin ? [{ id:"effect", label:"Hiệu quả thật (tăng thêm & lãi)" }, { id:"import", label:"Nhập dữ liệu" }] : []) ];
   return React.createElement("div", { style:{ maxWidth:1100, margin:"0 auto", padding:16 } }, [
     React.createElement(PageTitle, { key:"title" }, "Khuyến Mại"),
     React.createElement("div", { key:"src", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8, padding:"6px 10px", background:"var(--paper)", borderRadius:8, border:"1px solid var(--line)" } },
       "Nguồn sự thật CTKM: PromoDocID trên đơn bán (đã đồng bộ) khớp DocumentID chương trình. Không dùng số Doanh thu tab kia để đối chiếu ROI."),
     React.createElement(SubTabBar, { key:"bar", tabs:subTabs, active:subTab, onChange:setSubTab }),
     subTab==="report" && React.createElement(PromoCampaignReport, { key:"r", isAdmin, myStaff, monthKey, setMonthKey }),
+    subTab==="orders" && React.createElement(PromoOrderView, { key:"po", isAdmin }),
     subTab==="effect" && isAdmin && React.createElement(PromoEffectView, { key:"fx" }),
     subTab==="import" && isAdmin && React.createElement(PromoDocDetectSection, { key:"detect", myStaff, monthKey, onTracked:()=>setSubTab("report") }),
     subTab==="import" && isAdmin && React.createElement(PromoAutoTrackForm, { key:"auto2", myStaff, onSaved:()=>setSubTab("report") }),
