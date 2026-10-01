@@ -12244,12 +12244,14 @@ function PromoOrderView({ isAdmin }){
           h("td", { style:td }, bt[t].orders), h("td", { style:td }, t==="combo" ? "trong giá" : fm(bt[t].cost)), h("td", { style:td }, t==="combo" ? "—" : pcs(pc(bt[t].cost, c.cost))),
           h("td", { style:td }, fm(bt[t].r)), h("td", { style:td }, t==="combo" ? "—" : chip(pc(bt[t].cost, bt[t].r), 5.5, 10))))))),
     h("div", { className:"card", style:{ marginTop:12, overflowX:"auto" } },
-      h("b", null, "Theo nhà thuốc"),
+      h("b", null, "Theo nhà thuốc"), h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginLeft:6 } }, "mỗi ô: chi phí · doanh thu các đơn dùng nhóm đó · số đơn · CP/DT"),
       h("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5, marginTop:6 } }, h("tbody", null,
         h("tr", null, ["Nhà thuốc", ...shopFams.map(f=>PO_FAM_SHORT[f.key]||f.label), "Tổng chi phí", "Doanh thu", "CP / DT", "% đơn có KM", "TB bill KM / thường"].map((x,i)=>h("th", { key:x, style:{ ...th, textAlign:i?"right":"left" } }, x))),
         shopRows.map(([s, x]) => { const tot = Object.values(x.cost||{}).reduce((a,v)=>a+v,0); const nn = x.n - x.pn;
           return h("tr", { key:s, style:{ cursor:"pointer", background: shopF===s ? "var(--pineSoft)" : "transparent" }, onClick:()=>setShopF(shopF===s ? "all" : s), title:"Bấm để lọc chương trình theo nhà thuốc này" },
-            h("td", { style:{ ...L, fontWeight:700 } }, shopName(s)), ...shopFams.map(f=>h("td", { key:f.key, style:td }, fm((x.cost||{})[f.key]||0))),
+            h("td", { style:{ ...L, fontWeight:700 } }, shopName(s)), ...shopFams.map(f=>{ const b = (f.byShop||{})[s]; const cst = (x.cost||{})[f.key]||0;
+              return h("td", { key:f.key, style:{ ...td, verticalAlign:"top" }, title: b ? `${f.label}: ${b.o} đơn · chi phí ${fm(cst)} · doanh thu các đơn ${fm(b.r)}` : "" }, h("div", { style:{ fontWeight:600 } }, cst ? fm(cst) : "0"),
+                b && b.r ? h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)", lineHeight:1.3 } }, `DT ${fm(b.r)}`, h("br"), `${b.o} đơn · `, h("span", { style:{ fontWeight:700, color: pc(cst, b.r)>10 ? CL360.bad : pc(cst, b.r)>5.5 ? CL360.warn : CL360.good } }, pcs(pc(cst, b.r)))) : null); }),
             h("td", { style:{ ...td, fontWeight:800 } }, fm(tot)), h("td", { style:td }, fm(x.rev)), h("td", { style:td }, chip(pc(tot, x.rev), 2, 3)),
             h("td", { style:td }, chip(pc(x.pn, x.n)==null ? null : pc(x.pn, x.n), 100, 100)), h("td", { style:td }, `${fm(x.pn ? x.prev/x.pn : 0)} / ${fm(nn ? (x.rev-x.prev)/nn : 0)}`)); })))),
     fams.length>0 && h("div", { className:"card", style:{ marginTop:12, overflowX:"auto" } },
@@ -12264,7 +12266,17 @@ function PromoOrderView({ isAdmin }){
           return [row, h("tr", { key:f.key+"_s" }, h("td", { colSpan:10, style:{ background:"var(--paper)", padding:"6px 10px" } },
             h("button", { className:"btn btnGhost", style:{ fontSize:11.5, padding:"2px 8px", marginBottom:6 }, onClick:(e)=>{ e.stopPropagation(); openList({ fam:f.key, label:f.label }); } }, `📄 Danh sách ${f.o} đơn`),
             h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap" } }, Object.entries(f.byShop||{}).sort((a,b)=>b[1].o-a[1].o).map(([sh,b]) =>
-              h("span", { key:sh, style:{ fontSize:11.5, border:"1px solid var(--line)", borderRadius:8, padding:"3px 8px", background:"#fff" } }, h("b", null, shopName(sh)), ` · ${b.o} đơn · CP ${fm(b.c)} · DT ${fm(b.r)} · `, chip(pc(b.c, b.r), 5.5, 10))))))]; })))),
+              h("span", { key:sh, style:{ fontSize:11.5, border:"1px solid var(--line)", borderRadius:8, padding:"3px 8px", background:"#fff" } }, h("b", null, shopName(sh)), ` · ${b.o} đơn · CP ${fm(b.c)} · DT ${fm(b.r)} · `, chip(pc(b.c, b.r), 5.5, 10)))),
+            // Liệt kê TỪNG chương trình trong nhóm + nút xem danh sách đơn của từng chương trình
+            h("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12, marginTop:8, background:"#fff" } }, h("tbody", null,
+              h("tr", null, ["Chương trình trong nhóm","Thời gian","Hoá đơn","SL","Chi phí","DT cả đơn","CP / DT",""].map((x,i)=>h("th", { key:i, style:{ ...th, textAlign:i<2?"left":"right" } }, x))),
+              (d.programs||[]).filter(p => (p.family||"khac")===f.key).map(p => h("tr", { key:p.type+"|"+p.name },
+                h("td", { style:{ ...L, maxWidth:420 } }, p.name.replace(/^\[CTKM T\d+[^\]]*\]\s*/,""), p.ids>1 && h("span", { style:{ fontSize:10.5, color:"var(--inkSoft)" } }, ` · ${p.ids} mã`)),
+                h("td", { style:{ ...L, whiteSpace:"nowrap", fontSize:11 } }, p.time && p.time[0] ? `${p.time[0].slice(8,10)}/${p.time[0].slice(5,7)} – ${(p.time[1]||"").slice(8,10)}/${(p.time[1]||"").slice(5,7)}` : "thường xuyên"),
+                h("td", { style:td }, p.o), h("td", { style:td }, (p.q||0).toLocaleString("vi-VN")), h("td", { style:{ ...td, fontWeight:700 } }, p.c ? fm(p.c) : "trong giá"),
+                h("td", { style:td }, fm(p.r)), h("td", { style:td }, p.c ? chip(pc(p.c, p.r), 5.5, 10) : "—"),
+                h("td", { style:td }, !p.other && h("button", { className:"btn btnGhost", style:{ fontSize:11, padding:"1px 7px" }, onClick:(e)=>{ e.stopPropagation(); openList({ gk:p.type+"|"+p.name, label:p.name }); } }, `📄 ${p.o} đơn`))))))))]; })))),
+    (d.staff||[]).length>0 && h(PromoStaffTable, { rows:(d.staff||[]).filter(x => shopF==="all" || x.s===shopF), shopF, fm, pc, chip, pcs, shopName, th, td, L, onList:(x)=>openList({ nv:x.nv, label:x.nv }) }),
     h("div", { className:"card", style:{ marginTop:12, overflowX:"auto" } },
       h("div", { style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" } }, h("b", null, famF==="all" ? "Chi tiết từng chương trình" : "Chi tiết: " + ((fams.find(f=>f.key===famF)||{}).label||"")),
         famF!=="all" && h("button", { className:"btn btnGhost", style:{ fontSize:11.5, padding:"2px 8px" }, onClick:()=>setFamF("all") }, "× bỏ lọc nhóm"),
@@ -12289,6 +12301,84 @@ function PromoOrderView({ isAdmin }){
     listF && h(PromoOrderList, { od, listF, shopF, q, setQ, lim, setLim, onClose:()=>setListF(null), fm, shopName }),
     h("div", { style:{ fontSize:11, color:"var(--inkSoft)", marginTop:8, lineHeight:1.5 } }, "Cách tính: voucher = dòng mã VOUCHER (tiền âm); giảm giá = dòng KM02, gắn chương trình theo mã CTKM ghi trên hoá đơn; quà tặng = dòng 0đ có mã CTKM × giá bán lẻ; đổi điểm = dòng DDTL; combo = mã hàng tên Combo. CP / DT đơn = chi phí ÷ doanh thu cả các hoá đơn dùng chương trình (chưa phải doanh thu tăng thêm). Giảm / DT SP = tiền giảm ÷ doanh thu đúng các sản phẩm khai báo trong chương trình."));
 }
+// 1/10/2026 (Phương): bảng hiệu quả khuyến mại theo từng nhân viên bán (admin + CHT)
+function PromoStaffTable({ rows, shopF, fm, pc, chip, pcs, shopName, th, td, L, onList, showShop=true, title }){
+  const h = React.createElement;
+  const [all, setAll] = useState(false);
+  const r = rows.slice().sort((a,b)=>b.pn-a.pn || b.c-a.c); const shown = all ? r : r.slice(0, 30);
+  const topFam = (x) => { const e = Object.entries(x.fam||{}).sort((a,b)=>b[1][0]-a[1][0])[0]; return e ? `${PO_FAM_SHORT[e[0]]||e[0]} (${e[1][0]})` : "—"; };
+  return h("div", { className:"card", style:{ marginTop:12, overflowX:"auto" } },
+    h("b", null, title || "Theo nhân viên"), h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginLeft:6 } }, `${r.length} nhân viên${shopF && shopF!=="all" ? " · " + shopName(shopF) : ""} · bấm 1 dòng để xem danh sách đơn`),
+    h("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5, marginTop:6 } }, h("tbody", null,
+      h("tr", null, ["Nhân viên", ...(showShop ? ["NT"] : []), "Tổng đơn", "Đơn có KM", "% đơn KM", "Chi phí KM", "DT đơn KM", "CP / DT", "Nhóm dùng nhiều nhất"].map((x,i)=>h("th", { key:x, style:{ ...th, textAlign:i===0||x==="NT"||x==="Nhóm dùng nhiều nhất"?"left":"right" } }, x))),
+      shown.map(x => h("tr", { key:x.s+"|"+x.nv, style:{ cursor:"pointer" }, onClick:()=>onList && onList(x) },
+        h("td", { style:{ ...L, fontWeight:700 } }, x.nv), showShop && h("td", { style:L }, shopName(x.s)),
+        h("td", { style:td }, x.n.toLocaleString("vi-VN")), h("td", { style:td }, x.pn.toLocaleString("vi-VN")), h("td", { style:td }, pcs(pc(x.pn, x.n))),
+        h("td", { style:{ ...td, fontWeight:700 } }, fm(x.c)), h("td", { style:td }, fm(x.prev)), h("td", { style:td }, x.c ? chip(pc(x.c, x.prev), 5.5, 10) : "—"),
+        h("td", { style:{ ...L, fontSize:11.5 } }, topFam(x)))))),
+    r.length>30 && h("button", { className:"btn btnGhost", style:{ fontSize:12, marginTop:6 }, onClick:()=>setAll(!all) }, all ? "Thu gọn" : `Xem tất cả ${r.length} nhân viên`));
+}
+// Tài khoản nhân viên / CHT: chỉ số khuyến mại của chính mình và nhà thuốc mình — doc promoOrderAnalytics/{đợt}_shop_{SHOP}
+function PromoMyView({ myStaff }){
+  const h = React.createElement;
+  const shop = (myStaff && myStaff.shop) || ""; const isCHT = myStaff && myStaff.role==="Cửa hàng trưởng";
+  const nvN = (x) => String(x||"").replace(/\s+/g," ").trim(); const myName = nvN(myStaff && myStaff.name);
+  const [idx, setIdx] = useState(undefined); const [key, setKey] = useState(null); const [d, setD] = useState(undefined);
+  const [listF, setListF] = useState(null); const [q, setQ] = useState(""); const [lim, setLim] = useState(100);
+  useEffect(()=> db.collection("promoOrderAnalytics").doc("_index").onSnapshot(s => setIdx(s.exists ? s.data() : null), () => setIdx(null)), []);
+  const camps = (idx && idx.campaigns) || [];
+  useEffect(()=>{ if(key || !camps.length) return; const r = camps.find(c => c.kind==="campaign" && c.running) || camps.find(c => c.kind==="campaign") || camps[0]; setKey(r.key); }, [idx]);
+  useEffect(()=>{ setListF(null); if(!key || !shop){ setD(idx===undefined ? undefined : null); return; } setD(undefined);
+    return db.collection("promoOrderAnalytics").doc(`${key}_shop_${shop}`).onSnapshot(s => setD(s.exists ? s.data() : null), () => setD(null)); }, [key, shop, idx===undefined]);
+  const fm = (v) => v==null ? "—" : Math.abs(v)>=1e6 ? (v/1e6).toLocaleString("vi-VN",{maximumFractionDigits:1})+" tr" : Math.abs(v)>=1e3 ? Math.round(v/1e3).toLocaleString("vi-VN")+"k" : String(Math.round(v));
+  const pc = (a,b) => b ? Math.round(a/b*1000)/10 : null;
+  const pcs = (x) => x==null ? "—" : String(x).replace(".",",")+"%";
+  const chip = (x, lo, hi) => { if(x==null) return h("span", { style:{ color:"var(--inkSoft)" } }, "—"); const c = x>hi ? CL360.bad : x>lo ? CL360.warn : CL360.good;
+    return h("span", { style:{ display:"inline-block", padding:"0 7px", borderRadius:10, fontWeight:800, fontSize:11.5, color:c, background:c+"18" } }, pcs(x)); };
+  const shopName = (s) => String(s||"").replace("SHOP0","NT");
+  const dm = (x) => x ? x.slice(8,10)+"/"+x.slice(5,7) : "…";
+  const th = { textAlign:"right", fontSize:10.5, color:"var(--inkSoft)", fontWeight:700, padding:"6px 8px", borderBottom:"1px solid var(--line)", whiteSpace:"nowrap", textTransform:"uppercase" };
+  const td = { textAlign:"right", padding:"6px 8px", borderBottom:"1px solid #f0eee6", whiteSpace:"nowrap", fontVariantNumeric:"tabular-nums" };
+  const L = { ...td, textAlign:"left", whiteSpace:"normal" };
+  const head = h("div", { style:{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:10 } }, camps.map(x => { const on = x.key===key;
+    return h("button", { key:x.key, onClick:()=>setKey(x.key), style:{ textAlign:"left", padding:"6px 10px", borderRadius:10, cursor:"pointer", border:"1px solid " + (on ? "var(--pine)" : "var(--line)"), background: on ? "var(--pineSoft)" : "#fff", minWidth:150 } },
+      h("div", { style:{ fontWeight:800, fontSize:12.5 } }, x.label, x.running && h("span", { style:{ marginLeft:6, fontSize:10, fontWeight:800, color:CL360.good } }, "● đang chạy")),
+      h("div", { style:{ fontSize:11, color:"var(--inkSoft)" } }, `${dm(x.from)} – ${dm(x.to)}`)); }));
+  if(!shop) return h("div", { className:"card" }, "Tài khoản chưa gắn nhà thuốc — liên hệ quản lý.");
+  if(idx===undefined || d===undefined) return h("div", null, head, h(EmptyState, { kind:"loading" }));
+  if(!d) return h("div", null, head, h("div", { className:"card", style:{ fontSize:13 } }, "Chưa có số liệu khuyến mại của nhà thuốc trong đợt này."));
+  const me = (d.staff||[]).find(x => nvN(x.nv).toLowerCase()===myName.toLowerCase());
+  const sh = d.shop || {}; const shCost = Object.values(sh.cost||{}).reduce((a,v)=>a+v,0);
+  const kpi = (l, v, s) => h("div", { className:"metric" }, h("div", { className:"label" }, l), h("div", { className:"value" }, v), s && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, s));
+  const note = (d.partial || d.running) && h("div", { style:{ fontSize:12, color:"#b4720a", background:"#FFF8E6", border:"1px solid #F3DDA8", borderRadius:8, padding:"6px 10px", marginBottom:10 } },
+    d.partial ? `Đợt bắt đầu trước khi có dữ liệu — chỉ tính ${dm(d.dataFrom)} – ${dm(d.dataTo)}.` : `Đợt đang chạy: số liệu ${dm(d.dataFrom)} – ${dm(d.dataTo)}, kết thúc ${dm(d.to)}.`);
+  const famRows = (fam) => PO_FAMS_ORDER.filter(k => fam[k]).map(k => h("span", { key:k, style:{ fontSize:12, border:"1px solid var(--line)", borderRadius:8, padding:"3px 8px", background:"#fff" } }, h("b", null, PO_FAM_SHORT[k]), ` · ${fam[k][0]} đơn · ${fm(fam[k][1])}`));
+  return h("div", null, head, note,
+    h("div", { style:{ fontWeight:800, fontSize:14, margin:"4px 0 8px" } }, `Khuyến mại của tôi — ${myStaff.name} · ${shopName(shop)}`),
+    me ? h("div", null,
+      h("div", { className:"metrics" },
+        kpi("Đơn có khuyến mại", `${me.pn.toLocaleString("vi-VN")} / ${me.n.toLocaleString("vi-VN")} đơn`, `${pcs(pc(me.pn, me.n))} số đơn · nhà thuốc ${pcs(pc(sh.pn, sh.n))}`),
+        kpi("Chi phí khuyến mại", fm(me.c), null),
+        kpi("Doanh thu đơn có KM", fm(me.prev), `TB bill KM ${fm(me.pn ? me.prev/me.pn : 0)} · nhà thuốc ${fm(sh.pn ? sh.prev/sh.pn : 0)}`),
+        kpi("CP / DT đơn KM", pcs(pc(me.c, me.prev)), `nhà thuốc ${pcs(pc(shCost, sh.prev))}`)),
+      h("div", { className:"card", style:{ marginTop:12 } }, h("b", null, "Theo nhóm chương trình"),
+        h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", marginTop:6 } }, famRows(me.fam||{})),
+        me.pn>0 && h("button", { className:"btn btnGhost", style:{ fontSize:12, marginTop:8 }, onClick:()=>{ setListF({ nv:nvN(me.nv), label:"Đơn của tôi" }); setLim(100); setQ(""); } }, `📄 Danh sách ${me.pn} đơn của tôi`)))
+      : h("div", { className:"card", style:{ fontSize:13 } }, `Chưa thấy hoá đơn nào mang tên "${myStaff.name}" trong đợt này (tên người bán trên POS phải trùng tên trong app).`),
+    h("div", null, // 1/10/2026 (Phương): mọi nhân viên đều thấy khuyến mại của cả nhà thuốc mình
+      h("div", { style:{ fontWeight:800, fontSize:14, margin:"16px 0 8px" } }, `Khuyến mại cả nhà thuốc ${shopName(shop)}`),
+      h("div", { className:"metrics" },
+        kpi("Chi phí khuyến mại", fm(shCost), `${fm(shCost/(d.days||1))}/ngày`),
+        kpi("CP / doanh thu", pcs(pc(shCost, sh.rev)), `doanh thu ${fm(sh.rev)} · ${(sh.n||0).toLocaleString("vi-VN")} đơn`),
+        kpi("Đơn có khuyến mại", (sh.pn||0).toLocaleString("vi-VN"), `${pcs(pc(sh.pn, sh.n))} số đơn`)),
+      (d.families||[]).length>0 && h("div", { className:"card", style:{ marginTop:12, overflowX:"auto" } }, h("b", null, "Theo nhóm chương trình"),
+        h("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5, marginTop:6 } }, h("tbody", null,
+          h("tr", null, ["Nhóm","Hoá đơn","SL","Chi phí","DT cả đơn","CP / DT"].map((x,i)=>h("th", { key:x, style:{ ...th, textAlign:i?"right":"left" } }, x))),
+          d.families.map(f => h("tr", { key:f.key, style:{ cursor:"pointer" }, onClick:()=>{ setListF({ fam:f.key, label:f.label }); setLim(100); setQ(""); } },
+            h("td", { style:{ ...L, fontWeight:700 } }, f.label), h("td", { style:td }, f.o), h("td", { style:td }, f.q), h("td", { style:{ ...td, fontWeight:700 } }, f.c ? fm(f.c) : "trong giá"), h("td", { style:td }, fm(f.r)), h("td", { style:td }, f.c ? chip(pc(f.c, f.r), 5.5, 10) : "—")))))),
+      h(PromoStaffTable, { rows:d.staff||[], shopF:"all", fm, pc, chip, pcs, shopName, th, td, L, showShop:false, title:"Theo nhân viên trong nhà thuốc", onList:(x)=>{ setListF({ nv:nvN(x.nv), label:x.nv }); setLim(100); setQ(""); } })),
+    listF && h(PromoOrderList, { od:{ ...d, key:`${d.key}-${shop}` }, listF, shopF:"all", q, setQ, lim, setLim, onClose:()=>setListF(null), fm, shopName }));
+}
 // Danh sách đơn có khuyến mại (chi tiết) — doc promoOrderAnalytics/{tháng}_orders
 function PromoOrderList({ od, listF, shopF, q, setQ, lim, setLim, onClose, fm, shopName }){
   const h = React.createElement;
@@ -12296,10 +12386,11 @@ function PromoOrderList({ od, listF, shopF, q, setQ, lim, setLim, onClose, fm, s
   if(od.error) return h("div", { className:"card", style:{ marginTop:12, color:CL360.bad } }, "Lỗi: " + od.error);
   const names = od.progNames || [], fams = od.famOf || [];
   const short = (gk) => String(gk||"").split("|").slice(1).join("|").replace(/^\[CTKM T\d+[^\]]*\]\s*/,"");
-  const want = (i) => listF.fam ? fams[i]===listF.fam : names[i]===listF.gk;
+  const nvN = (x) => String(x||"").replace(/\s+/g," ").trim();
+  const want = (i) => listF.nv ? true : listF.fam ? fams[i]===listF.fam : names[i]===listF.gk;
   const qq = pdStrip(q||"").trim();
   const rows = (od.orders||[]).map(x => { try{ return JSON.parse(x); }catch(e){ return null; } }).filter(Boolean)
-    .filter(r => (r[5]||[]).some(([i]) => want(i)) && (shopF==="all" || r[2]===shopF) && (!qq || pdStrip(r[1]+" "+r[3]).includes(qq)));
+    .filter(r => (listF.nv ? nvN(r[3])===listF.nv : (r[5]||[]).some(([i]) => want(i))) && (shopF==="all" || r[2]===shopF) && (!qq || pdStrip(r[1]+" "+r[3]).includes(qq)));
   const kmOf = (r) => (r[5]||[]).filter(([i]) => want(i)).reduce((s,[,c])=>s+c,0);
   const tot = rows.reduce((s,r)=>s+r[4],0), totKm = rows.reduce((s,r)=>s+kmOf(r),0);
   function csv(){
@@ -12333,7 +12424,7 @@ function PromoAnalyticsView({ isAdmin, myStaff }){
     React.createElement(PageTitle, { key:"title" }, "Khuyến Mại"),
     React.createElement("div", { key:"src", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8, padding:"6px 10px", background:"var(--paper)", borderRadius:8, border:"1px solid var(--line)" } },
       "Hiệu quả từng đợt chiến dịch, tính tự động từ hoá đơn bán trên POS (voucher, giảm giá, quà tặng, đổi điểm, combo) — tên chương trình lấy từ POS, không cần nhập tay."),
-    React.createElement(PromoOrderView, { key:"po", isAdmin }),
+    isAdmin ? React.createElement(PromoOrderView, { key:"po", isAdmin }) : React.createElement(PromoMyView, { key:"my", myStaff }),
   ]);
 }
 // ===== Làm lại giao diện phần "Ước tính tự động theo tên hàng" giống mẫu app Dashboard
