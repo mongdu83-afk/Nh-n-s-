@@ -12327,22 +12327,13 @@ function PromoOrderList({ od, listF, shopF, q, setQ, lim, setLim, onClose, fm, s
     rows.length>lim && h("button", { className:"btn btnGhost", style:{ fontSize:12, marginTop:6 }, onClick:()=>setLim(lim+200) }, `Xem thêm (${rows.length-lim} đơn)`));
 }
 function PromoAnalyticsView({ isAdmin, myStaff }){
-  const [subTab, setSubTab] = useState("report");
-  const [monthKey, setMonthKey] = useState(todayISO().slice(0,7));
-  const subTabs = [ { id:"report", label:"Báo cáo hiệu quả" }, { id:"orders", label:"📊 Theo đơn hàng" }, ...(isAdmin ? [{ id:"effect", label:"Hiệu quả thật (tăng thêm & lãi)" }, { id:"import", label:"Nhập dữ liệu" }] : []) ];
+  // 1/10/2026 (Phương): bỏ "Báo cáo hiệu quả", "Hiệu quả thật" và "Nhập dữ liệu" (theo dõi CTKM thủ công theo tháng) —
+  // thay hẳn bằng phân tích tự động từ hoá đơn POS theo từng đợt chiến dịch (PromoOrderView).
   return React.createElement("div", { style:{ maxWidth:1100, margin:"0 auto", padding:16 } }, [
     React.createElement(PageTitle, { key:"title" }, "Khuyến Mại"),
     React.createElement("div", { key:"src", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8, padding:"6px 10px", background:"var(--paper)", borderRadius:8, border:"1px solid var(--line)" } },
-      "Nguồn sự thật CTKM: PromoDocID trên đơn bán (đã đồng bộ) khớp DocumentID chương trình. Không dùng số Doanh thu tab kia để đối chiếu ROI."),
-    React.createElement(SubTabBar, { key:"bar", tabs:subTabs, active:subTab, onChange:setSubTab }),
-    subTab==="report" && React.createElement(PromoCampaignReport, { key:"r", isAdmin, myStaff, monthKey, setMonthKey }),
-    subTab==="orders" && React.createElement(PromoOrderView, { key:"po", isAdmin }),
-    subTab==="effect" && isAdmin && React.createElement(PromoEffectView, { key:"fx" }),
-    subTab==="import" && isAdmin && React.createElement(PromoDocDetectSection, { key:"detect", myStaff, monthKey, onTracked:()=>setSubTab("report") }),
-    subTab==="import" && isAdmin && React.createElement(PromoAutoTrackForm, { key:"auto2", myStaff, onSaved:()=>setSubTab("report") }),
-    subTab==="import" && isAdmin && React.createElement(PromoImportPanel, { key:"i", myStaff, monthKey, setMonthKey, onSaved:()=>setSubTab("report") }),
-    subTab==="import" && isAdmin && React.createElement(PromoManualEntryForm, { key:"manual", myStaff, monthKey }),
-    subTab==="report" && React.createElement(PromoAutoDetectSection, { key:"auto", isAdmin, myStaff }),
+      "Hiệu quả từng đợt chiến dịch, tính tự động từ hoá đơn bán trên POS (voucher, giảm giá, quà tặng, đổi điểm, combo) — tên chương trình lấy từ POS, không cần nhập tay."),
+    React.createElement(PromoOrderView, { key:"po", isAdmin }),
   ]);
 }
 // ===== Làm lại giao diện phần "Ước tính tự động theo tên hàng" giống mẫu app Dashboard
