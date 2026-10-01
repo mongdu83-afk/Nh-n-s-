@@ -13727,9 +13727,14 @@ function SymptomConsultView({ isAdmin, myStaff }){
     setBusy(false);
   }
   function answer(key, val){ const next = { ...answers }; if(next[key]===val) delete next[key]; else next[key] = val; setAnswers(next); suggest(next); }
+  // 1/10/2026: đổi tuổi / trẻ em / giới / mức độ sau khi đã chọn bệnh → tự lấy lại combo cho đúng khách
+  const profKey = `${kh.age}|${kh.child}|${kh.sex}|${severity}`;
+  const profRef = useRef(profKey);
+  useEffect(()=>{ if(profRef.current===profKey) return; profRef.current = profKey; if(!selId) return; const t = setTimeout(()=>pick(selId), 600); return ()=>clearTimeout(t); }, [profKey]);
   async function pick(id, r, shopOverride){
     setSelId(id); setDrugs(null); setDBusy(true); setLogged("");
-    try{ setDrugs(await pdCall("symptomDrugs", { id, shop:shopOverride || shop, tranh:((r||res)||{}).tranh || [] }, 90000)); }
+    // 1/10/2026: gửi kèm tuổi/trẻ em/giới/mức độ → máy chủ chỉ giữ đơn mẫu đúng nhóm tuổi, đưa combo hợp mức độ lên đầu
+    try{ setDrugs(await pdCall("symptomDrugs", { id, shop:shopOverride || shop, tranh:((r||res)||{}).tranh || [], age:kh.age, child:!!kh.child, sex:kh.sex || "", weight:kh.weight || "", severity }, 90000)); }
     catch(e){ setDrugs({ error:e.message||String(e) }); }
     setDBusy(false);
   }
@@ -13794,6 +13799,9 @@ function SymptomConsultView({ isAdmin, myStaff }){
         h(BenhHocBox, { bh:drugs.benhHoc, lms:sel && sel.lms ? [sel.lms] : [] }))
     : h("div", null,
         drugs.pos && h(PosDiseaseBox, { pos:drugs.pos, compact:true }),
+        drugs.canhBaoTuoi && h("div", { style:{ fontSize:12, marginTop:6, background:"#FBE3E1", color:CL360.bad, fontWeight:700, borderRadius:8, padding:"6px 10px" } }, "⚠ " + drugs.canhBaoTuoi),
+        drugs.locTuoi && (drugs.locTuoi.an||[]).length>0 && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:6 } }, `Khách ${drugs.locTuoi.khach}: đã ẩn ${drugs.locTuoi.an.length} đơn mẫu không đúng tuổi (${drugs.locTuoi.an.join(", ")}).`),
+        !kh.age && !kh.child && !kh.sex && h("div", { style:{ fontSize:11.5, color:CL360.warn, marginTop:6 } }, "💡 Nhập tuổi (hoặc chọn Nữ/Nam/Trẻ em) để app chỉ hiện đơn mẫu đúng lứa tuổi."),
         (drugs.protocol.khuyenDiKham||[]).length>0 && h("div", { style:{ fontSize:12, color:CL360.bad, marginTop:6 } }, h("b", null, "Không cắt liều — khuyên đi khám khi: "), drugs.protocol.khuyenDiKham.map(x => String(x).replace(/^\s*📚\s*/, "")).join(" · ")),
         (res.tranh||[]).length>0 && h("div", { style:{ fontSize:12, marginTop:6, background:"#FBE3E1", borderRadius:8, padding:"6px 10px" } }, "⛔ Với khách này TRÁNH: ", res.tranh.map((t,i) => h("span", { key:i }, i>0 && " · ", h("b", null, t.hoatChat), " (" + t.lyDo + ")"))),
         (drugs.combos||[]).length>0 ? h("div", { style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))", gap:8, marginTop:8 } },
@@ -13806,6 +13814,7 @@ function SymptomConsultView({ isAdmin, myStaff }){
             return h("div", { key:i, style:{ border:"1.5px solid " + t.b, background:t.bg, borderRadius:10, padding:"8px 10px", fontSize:12 } },
               h("div", { style:{ display:"flex", justifyContent:"space-between", gap:6 } }, h("b", { style:{ fontSize:13 } }, t.icon + " " + k.ten), h("b", { style:{ fontSize:15, color:t.b } }, k.tongTien ? "~" + fmtMoney360(k.tongTien) : "—")),
               h("div", { style:{ fontSize:11.5, fontWeight:800, color: k.soNgay ? t.b : CL360.warn } }, "⏱ " + (k.soNgay ? `Liệu trình ${k.soNgay} ngày` : "Chưa chốt số ngày theo liều — hỏi CHT/dược sĩ")),
+              k.hopMucDo && h("div", { style:{ fontSize:11, fontWeight:800, color:"#fff", background:t.b, borderRadius:6, padding:"1px 7px", display:"inline-block", margin:"2px 0" } }, `✓ Hợp mức độ ${k.hopMucDo}`),
               k.doiTuong && h("div", { style:{ fontSize:11, color:"var(--inkSoft)" } }, k.doiTuong),
               (k.trungHoatChat||[]).length>0 && h("div", { style:{ fontSize:11, color:CL360.bad, fontWeight:700 } }, "⚠ Trùng hoạt chất: " + k.trungHoatChat.join(" · ")),
               (out>0 || bad>0) && h("div", { style:{ fontSize:11, fontWeight:700, color:CL360.warn } }, [out>0 ? `${out} món hết tại nhà thuốc` : "", bad>0 ? `${bad} món cần tránh với khách này` : ""].filter(Boolean).join(" · ")),
