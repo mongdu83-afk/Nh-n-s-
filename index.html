@@ -14514,7 +14514,7 @@ function buildInventoryHtml(userName, userShop){
     "          .then(function(headers){\n" +
     "            return fetch('https://asia-southeast1-upharma-176d5.cloudfunctions.net/getShopInventoryNow?shop=' + encodeURIComponent(K.state.shop), { headers: headers || {} });\n" +
     "          })\n" +
-    "          .then(function(r){ return r.json(); })\n" +
+    "          .then(function(r){ return r.text().then(function(t){ var j = null; try{ j = JSON.parse(t); }catch(e){} if(!j) throw new Error('HTTP ' + r.status + (r.status===401||r.status===403 ? ' (phiên đăng nhập hết hạn — đăng xuất rồi đăng nhập lại)' : r.status===504||r.status===408 ? ' (quá thời gian chờ hệ thống POS)' : '')); return j; }); })\n" +
     "          .then(function(j){\n" +
     "            if(!j || !j.ok) throw new Error((j && j.error) || 'Lỗi không rõ');\n" +
     "            if(!j.items || !j.items.length){ K.toast('Hệ thống chưa có dữ liệu tồn kho cho nhà thuốc này'); return; }\n" +
@@ -14528,7 +14528,10 @@ function buildInventoryHtml(userName, userShop){
     "          })\n" +
     "          .catch(function(err){\n" +
     "            console.error(err);\n" +
-    "            if(!silent) K.toast('Lấy tồn kho từ hệ thống thất bại — thử lại hoặc dùng file Excel.');\n" +
+    "            var why = (err && err.message) ? String(err.message).slice(0, 160) : '';\n" +
+    "            statusEl.classList.remove('hide');\n" +
+    "            statusEl.textContent = '✗ Lấy tồn kho thất bại' + (why ? (': ' + why) : '') + ' — chụp màn hình gửi quản trị nếu lặp lại.';\n" +
+    "            if(!silent) K.toast('Lấy tồn kho thất bại' + (why ? (': ' + why) : '') );\n" +
     "          });\n" +
     "      }\n" +
     "      window.__kiemkeAutoFetchStock = function(){ return fetchStockFromApi(true); };\n" +
