@@ -847,12 +847,39 @@ async function withClaimRetry(fn){
     throw err;
   }
 }
+// 2/10/2026: SỬA LỖI nhân viên tick checklist bị permission-denied. Luật bảo mật mới (1/10) kiểm tra
+// resource.data.staffId khi update → nếu tài liệu CHƯA tồn tại (lần tick đầu tiên trong ngày) Firestore trả
+// permission-denied chứ KHÔNG phải not-found, nên trước đây không bao giờ rơi vào nhánh tạo mới.
+// Ngoài ra set() coi "a.b.c" là tên field nguyên văn (không lồng) → phải đổi dot-path thành object lồng khi tạo mới.
+function dotFieldsToNested(dotFields){
+  const out = {};
+  const del = firebase.firestore.FieldValue.delete();
+  Object.keys(dotFields).forEach(k => {
+    const v = dotFields[k];
+    if(v && typeof v.isEqual === "function" && v.isEqual(del)) return; // tạo mới thì không có gì để xoá
+    const parts = k.split(".");
+    let cur = out;
+    for(let i=0;i<parts.length-1;i++){
+      if(!cur[parts[i]] || typeof cur[parts[i]] !== "object") cur[parts[i]] = {};
+      cur = cur[parts[i]];
+    }
+    cur[parts[parts.length-1]] = v;
+  });
+  return out;
+}
 async function mergeDotFieldsOnce(collectionName, docId, dotFields, createExtras){
   const ref = db.collection(collectionName).doc(docId);
   try{ await ref.update(dotFields); }
   catch(err){
-    if(err && err.code && err.code !== "not-found") throw err; // permission-denied, unavailable... báo đúng lỗi
-    await ref.set({ ...(createExtras||{}), ...dotFields }, { merge:true });
+    const code = err && err.code;
+    if(code && code !== "not-found" && code !== "permission-denied") throw err; // unavailable... báo đúng lỗi
+    if(code === "permission-denied"){
+      // Chỉ chuyển sang tạo mới khi tài liệu thật sự chưa có; có rồi mà vẫn bị chặn thì báo lỗi thật.
+      let exists = true;
+      try{ exists = (await ref.get()).exists; } catch(_){}
+      if(exists) throw err;
+    }
+    await ref.set(dotFieldsToNested({ ...(createExtras||{}), ...dotFields }), { merge:true });
   }
 }
 function mergeDotFields(collectionName, docId, dotFields, createExtras){
@@ -1773,7 +1800,7 @@ function DailyChecklistView({ isAdmin, myStaff }){
   }
   async function _saveTaskLink(taskId, text){
     if(!selfStaff) return;
-    await setDailyReport(selfReportId, {
+    await mergeDotFields("dailyReports", selfReportId, {
       staffId:selfStaff.id, staffName:selfStaff.name, shop:selfStaff.shop, role:selfStaff.role, ngay:today,
       [`taskDetails.${taskId}.link`]: text,
       updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
@@ -1786,7 +1813,7 @@ function DailyChecklistView({ isAdmin, myStaff }){
       for(const file of files){
         const path = `dailyChecklist/${selfStaff.shop}/${selfStaff.id}/${today}/${taskId}/${Date.now()}_${file.name}`;
         const meta = await uploadTaskAttachmentFile(file, path, pct=>setUploadingTask(prev => ({ ...prev, [taskId]:pct })));
-        await setDailyReport(selfReportId, {
+        await mergeDotFields("dailyReports", selfReportId, {
           staffId:selfStaff.id, staffName:selfStaff.name, shop:selfStaff.shop, role:selfStaff.role, ngay:today,
           [`taskDetails.${taskId}.files`]: firebase.firestore.FieldValue.arrayUnion(meta),
           updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
@@ -1801,7 +1828,7 @@ function DailyChecklistView({ isAdmin, myStaff }){
   }
   async function _removeTaskFile(taskId, fileMeta){
     if(!selfStaff) return;
-    await setDailyReport(selfReportId, {
+    await mergeDotFields("dailyReports", selfReportId, {
       [`taskDetails.${taskId}.files`]: firebase.firestore.FieldValue.arrayRemove(fileMeta),
     });
   }
