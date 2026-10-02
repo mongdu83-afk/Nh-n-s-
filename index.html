@@ -5009,13 +5009,21 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
   // 1 lần (.get()) + nút "Làm mới" thủ công — admin vẫn xem đủ mọi nhà thuốc, chỉ là không còn bị
   // giật mỗi khi có dữ liệu đổi ở đâu đó trong lúc đang xem. Nhân viên thường (không phải admin)
   // vẫn giữ real-time vì dữ liệu đã lọc theo đúng 1 nhà thuốc, nhỏ, không tốn kém.
-  async function loadCustomersOnce(){
+  // 2/10/2026 (Phương: "chạy khách hàng chậm quá"): tải bản RÚT GỌN qua máy chủ (~10.000 khách, bỏ phần "intelligence"
+  // nặng ~70% dữ liệu) thay vì đọc nguyên collection (~20MB, ~20 giây). Chi tiết khách đầy đủ tải riêng khi bấm vào khách.
+  async function loadCustomersOnce(refresh){
     setCustomersLoading(true);
     try{
-      const snap = await db.collection("crmCustomers").get();
-      setCustomers(snap.docs.map(d => ({ id:d.id, ...d.data() })));
-      setCustomersLoadedAt(new Date());
-    } catch(err){ logSystemError("crmCustomers", err); }
+      const d = await pdCall("crmCustomersLite", { refresh: refresh===true }, 120000);
+      setCustomers((d.rows||[]).map(c => ({ ...c, _lite:true })));
+      setCustomersLoadedAt(d.at ? new Date(d.at) : new Date());
+    } catch(err){
+      try{ // dự phòng: functions chưa deploy bản mới → đọc trực tiếp như cũ
+        const snap = await db.collection("crmCustomers").get();
+        setCustomers(snap.docs.map(d => ({ id:d.id, ...d.data() })));
+        setCustomersLoadedAt(new Date());
+      } catch(err2){ logSystemError("crmCustomers", err2); }
+    }
     setCustomersLoading(false);
   }
   useEffect(()=>{
@@ -5555,7 +5563,7 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
     try{
       const d = await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/clearAllCrmAssignmentsNow", {}, 120000);
       setAutoAssignMsg(`Đã xoá người phụ trách của ${d.cleared ?? 0} khách — tất cả về "Chưa phân công".`);
-      if(isAdmin) loadCustomersOnce();
+      if(isAdmin) loadCustomersOnce(true);
     } catch(err){ setAutoAssignMsg(`${cfErrorLabel(err)}: ${err && err.message ? err.message : err}`); }
     setClearingAssign(false);
   }
@@ -5564,7 +5572,7 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
     try{
       const d = await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/autoAssignCrmCustomersNow", {}, 120000);
       setAutoAssignMsg(`Đã gán ${d.assigned ?? 0} khách (${d.assignedViaCHT ?? 0} theo Cửa hàng trưởng, ${d.assignedViaFallback ?? 0} theo nhân viên tạm thời ở shop chưa có CHT)${d.skippedNoStaffAtAll ? ` — ${d.skippedNoStaffAtAll} khách thuộc shop chưa có NHÂN VIÊN nào trong hệ thống, chưa gán được` : ""}.`);
-      if(isAdmin) loadCustomersOnce(); // tải lại để thấy ngay kết quả (không còn real-time nữa)
+      if(isAdmin) loadCustomersOnce(true); // tải lại để thấy ngay kết quả (không còn real-time nữa)
     } catch(err){ setAutoAssignMsg(`${cfErrorLabel(err)}: ${err && err.message ? err.message : err}`); }
     setAutoAssigning(false);
   }
@@ -5639,7 +5647,16 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
     XLSX.writeFile(wb, `Danh_sach_khach_hang_${todayISO()}.xlsx`);
   }
 
-  const selected = customers.find(c=>c.phone===selectedPhone);
+  const selectedLite = customers.find(c=>c.phone===selectedPhone);
+  // Danh sách quản lý là bản rút gọn → tải đầy đủ đúng 1 khách đang xem (intelligence, sản phẩm hay mua…)
+  const [selFull, setSelFull] = useState(null);
+  useEffect(()=>{
+    setSelFull(null);
+    if(!selectedPhone || !(selectedLite && selectedLite._lite)) return undefined;
+    const u = db.collection("crmCustomers").doc(selectedPhone).onSnapshot(d => setSelFull(d.exists ? { id:d.id, ...d.data() } : null), err => logSystemError("crmCustomers", err));
+    return u;
+  }, [selectedPhone, !!(selectedLite && selectedLite._lite)]);
+  const selected = selectedLite ? (selFull && selFull.phone===selectedPhone ? { ...selectedLite, ...selFull, _lite:false } : selectedLite) : null;
   // "interactions" giờ đã được query đúng theo selectedPhone rồi (xem useEffect ở trên) —
   // .filter() ở đây chỉ còn là lớp an toàn, không tốn kém vì mảng này giờ rất nhỏ.
   const selectedInteractions = interactions.filter(i=>i.phone===selectedPhone).sort((a,b)=> (b.createdAtTs||"").localeCompare(a.createdAtTs||""));
@@ -5890,7 +5907,7 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
     React.createElement("div", { key:"title", style:{ fontWeight:700, fontSize:18, marginBottom:4, display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" } }, [
       React.createElement("span", { key:"t" }, "CRM khách hàng"),
       isAdmin && React.createElement("button", {
-        key:"refresh", className:"btn btnGhost", disabled:customersLoading, onClick:loadCustomersOnce,
+        key:"refresh", className:"btn btnGhost", disabled:customersLoading, onClick:()=>loadCustomersOnce(true),
         style:{ fontSize:12, padding:"4px 10px" },
       }, customersLoading ? "Đang tải..." : "↻ Làm mới"),
       false && React.createElement("button", { // 27/9/2026: bỏ nút gán tự động
@@ -14239,7 +14256,17 @@ function ProductDictionaryModal({ isAdmin, item, pos, total, busy, onPrev, onNex
   const ul = (arr) => h("ul", { style:{ margin:0, paddingLeft:18, fontSize:13, lineHeight:1.6 } }, (arr||[]).map((x,i) => h("li", { key:i }, x)));
   const p = (t) => h("div", { style:{ fontSize:13, lineHeight:1.6 } }, t || "—");
 
-  const o = d && d.official;
+  // 2/10/2026: danh sách chỉ có "official" rút gọn (_lite) → mở thẻ thì tải bản đầy đủ của đúng mã này
+  const [fullOff, setFullOff] = useState({ key:null, pid:null, o:null });
+  const offKey = item.pid + "|" + ((d && d.official && d.official.fetchedAt) || "");
+  useEffect(()=>{
+    const o0 = d && d.official;
+    if(!o0 || !o0._lite || fullOff.key===offKey) return undefined;
+    let alive = true;
+    pdCall("dictOne", { productId:item.pid }, 30000).then(r => alive && setFullOff({ key:offKey, pid:item.pid, o:r.official || null })).catch(()=>{});
+    return ()=>{ alive=false; };
+  }, [offKey]);
+  const o = (fullOff.pid===item.pid && fullOff.o) ? fullOff.o : (d && d.official);
   const [refreshing, setRefreshing] = useState(false);
   const [autoTried, setAutoTried] = useState({});
   async function refreshOfficial(){
