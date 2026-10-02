@@ -6574,7 +6574,8 @@ function KpiView({ isAdmin, myStaff }){
         if(actual!=="" && actual!=null && Number(myActuals[itemId])!==Number(actual)) saveActual(myStaff, itemId, actual);
       });
     }
-    if(myInvExpiry){
+    // 2/10/2026: chỉ tự điền % cận date (số tồn kho HÔM NAY) cho THÁNG HIỆN TẠI — trước đây mở KPI tháng cũ bị ghi đè bằng số hôm nay
+    if(myInvExpiry && thang===todayISO().slice(0,7)){
       if(Number(myActuals["hh_candate__6th"])!==Number(myInvExpiry.pct6)) saveActual(myStaff, "hh_candate__6th", myInvExpiry.pct6);
       if(Number(myActuals["hh_candate__12th"])!==Number(myInvExpiry.pct12)) saveActual(myStaff, "hh_candate__12th", myInvExpiry.pct12);
     }
@@ -6708,7 +6709,7 @@ function KpiView({ isAdmin, myStaff }){
   // NHÀ THUỐC, không phải theo cá nhân — mọi nhân viên cùng nhà thuốc dùng chung 1 số liệu).
   const pickedInvExpiry = pickedStaff ? inventoryExpiry[pickedStaff.shop] : null;
   useEffect(()=>{
-    if(!pickedStaff || !pickedInvExpiry) return;
+    if(!pickedStaff || !pickedInvExpiry || thang!==todayISO().slice(0,7)) return; // 2/10/2026: không ghi đè tháng cũ
     if(Number(pickedActuals["hh_candate__6th"])!==Number(pickedInvExpiry.pct6)) saveActual(pickedStaff, "hh_candate__6th", pickedInvExpiry.pct6);
     if(Number(pickedActuals["hh_candate__12th"])!==Number(pickedInvExpiry.pct12)) saveActual(pickedStaff, "hh_candate__12th", pickedInvExpiry.pct12);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -7976,6 +7977,49 @@ function LmsBenhHocPanel({ busy, onCreated, onRegen }){
     } catch(e){ window.alert("Lỗi: " + (e.message||e)); }
     setWork("");
   }
+  // 2/10/2026: tự ghép bài LMS với phác đồ chưa có slide theo TÊN BỆNH (xem lmsAutoAttach phía Cloud Functions)
+  const [auto, setAuto] = useState(null); // { pairs, noMatch, msg }
+  async function autoPreview(){
+    setWork("__auto");
+    try{ const x = await pdCall("lmsAutoAttach", { apply:false }, 120000); setAuto({ pairs:x.pairs||[], noMatch:x.noMatch||[], msg:"" }); }
+    catch(e){ window.alert("Lỗi: " + (e.message||e) + (/không rõ thao tác|unknown/i.test(e.message||"") ? " — functions chưa deploy bản mới." : "")); }
+    setWork("");
+  }
+  async function autoApply(){
+    if(!auto || !auto.pairs.length) return;
+    setWork("__auto");
+    let left = auto.pairs.length, n = 0, nSlide = 0, fails = [], rounds = 0;
+    const ids = auto.pairs.map(x => x.id);
+    try{
+      while(left > 0 && rounds < 6){ // mỗi lượt máy chủ chạy tối đa ~7 phút (AI tóm tắt slide), còn thì chạy tiếp
+        rounds++;
+        setAuto(a => ({ ...a, msg:`Đang ghép & tóm tắt slide… (lượt ${rounds})` }));
+        const x = await pdCall("lmsAutoAttach", { apply:true, ids }, 540000);
+        n += (x.done||[]).length; nSlide += (x.done||[]).filter(y => y.slide).length; fails = fails.concat(x.fail||[]);
+        if(!(x.done||[]).length) break;
+        left = x.remaining || 0;
+      }
+      setAuto(a => ({ ...a, pairs:[], msg:`Đã ghép ${n} phác đồ với bài LMS · ${nSlide} phác đồ đã có tóm tắt kiến thức từ slide` + (n-nSlide>0 ? ` · ${n-nSlide} bài chưa đọc được slide (đồng bộ web đào tạo rồi bấm "Tóm tắt lại" trong phác đồ)` : "") + (fails.length ? ` · lỗi ${fails.length}: ${fails.map(f=>f.title).join(", ")}` : "") }));
+      await load(); onCreated && onCreated(null);
+    } catch(e){ setAuto(a => ({ ...a, msg:"Lỗi: " + (e.message||e) })); }
+    setWork("");
+  }
+  const autoBox = h("div", { style:{ margin:"0 0 10px", padding:"8px 10px", border:"1px solid #C9DDF2", background:"#F4F8FD", borderRadius:8, fontSize:12.5 } },
+    h("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, flexWrap:"wrap" } },
+      h("div", null, h("b", null, "🔗 Phác đồ chưa có slide bài học"), h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, "App tìm bài Bệnh học CÙNG TÊN BỆNH cho các phác đồ chưa ghép bài nào (VD phác đồ tạo từ bệnh mẫu POS), xem trước rồi mới ghép.")),
+      h("button", { className:"btn", disabled:busy || !!work, style:{ fontSize:12, padding:"4px 10px" }, onClick:autoPreview }, work==="__auto" && !(auto && auto.pairs.length) ? "Đang tìm…" : "Tìm bài cùng tên")),
+    auto && auto.pairs.length>0 && h("div", { style:{ marginTop:6 } },
+      h("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12 } }, h("tbody", null, auto.pairs.map(x => h("tr", { key:x.id },
+        h("td", { style:{ padding:"3px 6px", borderBottom:"1px solid #e3ecf6", fontWeight:700, whiteSpace:"nowrap" } }, x.title),
+        h("td", { style:{ padding:"3px 6px", borderBottom:"1px solid #e3ecf6" } }, x.courses.map((c,i) => h("div", { key:i }, "← " + c.name, h("span", { style:{ color: c.slideOk ? CL360.good : CL360.gray, fontSize:11 } }, " · " + c.slide)))),
+        h("td", { style:{ padding:"3px 6px", borderBottom:"1px solid #e3ecf6", textAlign:"right" } },
+          h("a", { href:"#", onClick:(ev)=>{ ev.preventDefault(); setAuto(a => ({ ...a, pairs:a.pairs.filter(y => y.id!==x.id) })); }, style:{ color:CL360.bad, fontSize:11.5 } }, "Bỏ")))))),
+      h("div", { style:{ display:"flex", gap:8, alignItems:"center", marginTop:6, flexWrap:"wrap" } },
+        h("button", { className:"btn btnPrimary", disabled:!!work, style:{ fontSize:12, padding:"4px 10px" }, onClick:()=>{ if(window.confirm(`Ghép ${auto.pairs.length} phác đồ với bài LMS cùng tên và tóm tắt kiến thức từ slide (dùng AI, vài phút)? Combo/liều đã soạn KHÔNG bị thay.`)) autoApply(); } }, `Ghép ${auto.pairs.length} phác đồ`),
+        h("span", { style:{ fontSize:11, color:"var(--inkSoft)" } }, "Bấm \"Bỏ\" ở dòng ghép sai trước khi ghép. Chỉ các dòng còn lại trong bảng được ghép."))),
+    auto && auto.msg && h("div", { style:{ marginTop:6, fontWeight:700, color:"#0a6bb4" } }, auto.msg),
+    auto && !auto.pairs.length && !auto.msg && h("div", { style:{ marginTop:6, color:"var(--inkSoft)" } }, "Không còn phác đồ nào tìm được bài cùng tên."),
+    auto && (auto.noMatch||[]).length>0 && h("div", { style:{ marginTop:6, fontSize:11.5, color:CL360.warn } }, `Chưa có bài LMS cùng tên (cần tạo bài trên web đào tạo hoặc ghép tay): ${auto.noMatch.join(", ")}`));
   const rows = (d && d.rows) || [];
   const sits = (d && d.situations) || [];
   const sitTitle = (id) => { const s = sits.find(x => x.id===id); return s ? s.title : id; };
@@ -7991,6 +8035,7 @@ function LmsBenhHocPanel({ busy, onCreated, onRegen }){
       h("div", { style:{ fontSize:12, color:"var(--inkSoft)", lineHeight:1.55, marginBottom:8 } },
         "App đọc các khoá loại ", h("b", null, "Bệnh học"), " trên elearning.upharma.vn (cả chữ trong hình slide), rút ra kiến thức và dùng làm NGUỒN CHÍNH khi AI soạn phác đồ. ",
         "Ghép bài với tình huống có sẵn rồi bấm \"AI soạn lại theo slide\", hoặc bấm \"+ Tạo phác đồ\" cho bệnh chưa có tình huống."),
+      autoBox,
       err ? h("div", { style:{ color:CL360.bad, fontSize:12.5 } }, "Lỗi: " + (err.message||err) + (/không rõ thao tác|unknown/i.test(err.message||"") ? " — functions chưa deploy bản mới." : ""))
       : !d ? h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)" } }, "Đang tải danh sách bài bệnh học…")
       : !rows.length ? h("div", { style:{ fontSize:12.5, background:"#FFF8E6", border:"1px solid #F3DDA8", borderRadius:8, padding:"8px 10px", lineHeight:1.55 } },
@@ -13661,6 +13706,24 @@ const SYMPTOM_CONDS = ["Có thai", "Cho con bú", "Tăng huyết áp", "Tiểu �
 // 30/9/2026 (Phương): lấy HOẠT CHẤT + HÀM LƯỢNG + LIỀU từ API danh mục cho hàng đang tồn → tìm được hàng thay thế cùng
 // hoạt chất / cùng nhóm slide dù tên hàng là tên thương mại, và quy liều slide (mg) ra số viên.
 // 30/9/2026 (Phương): bệnh mẫu POS — triệu chứng, phác đồ, đơn mẫu theo đối tượng (đồng bộ từ SampleDisease trên POS)
+// 2/10/2026 (Phương): 3 mức gợi ý hàng thay thế khi HẾT HÀNG theo bộ tiêu chí 7 lớp (xem equivCheck phía Cloud Functions).
+const ALT_LEVELS = [
+  { id:"tuongduong", title:"🟢 Tương đương — có thể thay (cùng hoạt chất, hàm lượng, dạng bào chế, đường dùng, giải phóng)", color:"#16A34A", canUse:true },
+  { id:"quydoi", title:"🟡 Có thể thay sau khi quy đổi — cùng hoạt chất, khác hàm lượng: tính lại số viên/ml, kiểm tra HDSD", color:"#b4720a", canUse:true },
+  { id:"khongtudong", title:"🔴 Không tự động thay — cần dược sĩ/bác sĩ xác nhận", color:"#C2410C", canUse:false },
+  // mức cũ — dùng khi thuốc phải thay vì CHỐNG CHỈ ĐỊNH với khách (không phải hết hàng)
+  { id:"hoatchat", title:"① Cùng hoạt chất — còn tồn tại nhà thuốc", color:"#16A34A", canUse:true },
+  { id:"congdung", title:"② Khác hoạt chất nhưng CÙNG NHÓM & CƠ CHẾ — còn tồn, đã loại hàng chống chỉ định với khách", color:"#16A34A", canUse:true },
+];
+const ALT_CRIT_NAMES = { 1:"Hoạt chất", 2:"Hàm lượng", 3:"Dạng bào chế", 4:"Đường dùng", 5:"Giải phóng", 6:"Chỉ định/đối tượng", 7:"Liều quy đổi", 8:"Kê đơn" };
+function AltCriteria({ list }){
+  const h = React.createElement;
+  const [open, setOpen] = useState(false);
+  return h("div", { style:{ fontSize:10.5 } },
+    h("a", { href:"#", onClick:(ev)=>{ ev.preventDefault(); setOpen(!open); }, style:{ color:"var(--inkSoft)" } }, (open ? "▾" : "▸") + " 7 tiêu chí"),
+    open && h("div", { style:{ margin:"2px 0 2px 8px" } }, list.map(c => h("div", { key:c.lop, style:{ color: c.ok===false ? CL360.bad : c.ok===null ? "#8a5a00" : "var(--ink)" } },
+      (c.ok===true ? "✓ " : c.ok===false ? "✗ " : "? ") + (ALT_CRIT_NAMES[c.lop]||"") + ": " + c.text))));
+}
 function PosDiseaseBox({ pos, compact }){
   const h = React.createElement;
   const [open, setOpen] = useState(!compact);
@@ -13876,7 +13939,7 @@ function SymptomConsultView({ isAdmin, myStaff }){
         (drugs.combos||[]).length>0 ? h("div", { style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))", gap:8, marginTop:8 } },
           drugs.combos.map((k0, i) => {
             const items = k0.items.map((it, j) => { const a = swaps[i+"_"+j]; if(!a) return it;
-              return { ...it, pid:a.pid, ten:a.ten, tonShop:a.ton, donViGia:a.donVi || it.donViGia, thanhTien: a.donGia ? Math.round(a.donGia * (it.soLuong||1)) : null, nguonGia:a.nguonGia, swappedFrom:it.ten, thayThe:[], tuSlide:false, hhs1:false, tranh:null }; });
+              return { ...it, pid:a.pid, ten:a.ten, tonShop:a.ton, donViGia:a.donVi || it.donViGia, thanhTien: a.donGia && a.loai!=="quydoi" ? Math.round(a.donGia * (it.soLuong||1)) : null, nguonGia:a.nguonGia, swappedFrom:it.ten, quyDoiThay: a.loai==="quydoi" ? (a.quyDoi||"khác hàm lượng") : "", thayThe:[], tuSlide:false, hhs1:false, tranh:null }; });
             const delta = k0.items.reduce((d, it, j) => swaps[i+"_"+j] ? d - (it.thanhTien || 0) + (items[j].thanhTien || 0) : d, 0);
             const nDM = drugs.combos.filter(x => x.donMau).length;
             const k = { ...k0, items, tongTien: (k0.tongTien || 0) + delta || null }; const t = k0.donMau ? { b:"#b4570a", bg:"#FFFAF3", icon:"🧾" } : (tones[i - nDM] || tones[0]); const out = k.items.filter(it => it.tonShop===0).length; const bad = k.items.filter(it => it.tranh).length;
@@ -13892,6 +13955,7 @@ function SymptomConsultView({ isAdmin, myStaff }){
               (k.trungHoatChat||[]).length>0 && h("div", { style:{ fontSize:11, color:CL360.bad, fontWeight:700 } }, "⚠ Trùng hoạt chất: " + k.trungHoatChat.join(" · ")),
               (out>0 || bad>0) && h("div", { style:{ fontSize:11, fontWeight:700, color:CL360.warn } }, [out>0 ? `${out} món hết tại nhà thuốc` : "", bad>0 ? `${bad} món cần tránh với khách này` : ""].filter(Boolean).join(" · ")),
               k.items.map((it, j) => h("div", { key:j, style:{ borderTop:"1px dashed var(--line)", padding:"4px 0", opacity: it.tranh ? .6 : 1 } },
+                it.quyDoiThay && h("div", { style:{ fontSize:11, color:"#8a5a00", fontWeight:700 } }, "🟡 Đã thay hàng KHÁC HÀM LƯỢNG — " + it.quyDoiThay + ". Liều/số lượng bên dưới là của thuốc cũ: tính lại số viên/ml và giá trước khi bán."),
                 it.swappedFrom && h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)" } }, "Thay cho: ", h("s", null, it.swappedFrom), " ", h("a", { href:"#", onClick:(ev)=>{ ev.preventDefault(); const n = { ...swaps }; delete n[i+"_"+j]; setSwaps(n); }, style:{ color:"var(--pine)" } }, "↺ bỏ thay")),
                 it.pid ? h("a", { href:"#", onClick:(ev)=>{ ev.preventDefault(); setOpenPid(openPid===it.pid ? null : it.pid); }, style:{ color:"var(--ink)", fontWeight:700, textDecoration: it.tranh ? "line-through" : "none" } }, it.ten) : h("b", null, it.ten),
                 " · " + comboQtyText(it), it.cachDung ? h("div", { style:{ fontSize:11.5, color:"#b4570a", fontWeight:700 } }, "Cách dùng (đơn mẫu): " + it.cachDung) : null, it.thanhTien ? h("span", { style:{ color:"var(--inkSoft)" } }, ` · ${fmtMoney360(it.thanhTien)}${it.nguonGia==="pos" ? " (giá POS)" : ""}`) : null,
@@ -13900,13 +13964,19 @@ function SymptomConsultView({ isAdmin, myStaff }){
                 it.tranh && h("div", { style:{ fontSize:11, color:CL360.bad, fontWeight:700 } }, (k.donMau ? "⛔ Cần thay với khách này: " : "⛔ Tránh: ") + it.tranh),
                 it.lyDoThay && h("div", { style:{ fontSize:10.5, color:"#0a6bb4", fontWeight:700 } }, "↻ App đã thay (" + it.lyDoThay + ")"),
                 (it.tonShop===0 || it.tranh) && h("div", { style:{ margin:"4px 0 0 6px", padding:"5px 8px", borderLeft:"3px solid " + ((it.thayThe||[]).length ? CL360.good : CL360.gray), background:"#fff", borderRadius:6, fontSize:11.5 } },
-                  !(it.thayThe||[]).length ? h("span", { style:{ color:"var(--inkSoft)" } }, (it.tranh && it.tonShop!==0 ? "Chưa tìm được hàng thay phù hợp với khách còn tồn — hỏi dược sĩ/CHT. " : "") + "Nhà thuốc chưa có mã cùng hoạt chất / cùng nhóm-cơ chế phù hợp với khách còn tồn" + ((it.daTim||[]).length ? ` (đã tìm cả thuốc slide cùng nhóm: ${it.daTim.join(", ")})` : "") + " — mời CHT xử lý (đặt hàng).")
-                  : ["hoatchat", "congdung"].map(lv => { const arr = it.thayThe.filter(a => a.loai===lv); if(!arr.length) return null;
-                      return h("div", { key:lv },
-                        h("div", { style:{ fontSize:10, fontWeight:800, color:"var(--inkSoft)", textTransform:"uppercase", marginTop:2 } }, lv==="hoatchat" ? "① Cùng hoạt chất — còn tồn tại nhà thuốc" : "② Khác hoạt chất nhưng CÙNG NHÓM & CƠ CHẾ — còn tồn, đã loại hàng chống chỉ định với khách"),
-                        arr.map(a => h("div", { key:a.pid, style:{ display:"flex", justifyContent:"space-between", gap:6, alignItems:"center" } },
-                          h("span", null, a.ten, lv==="congdung" && a.nhom ? h("span", { style:{ fontSize:10, fontWeight:800, color:"#0a6bb4", background:"#EAF2FB", borderRadius:4, padding:"0 4px", marginLeft:4 } }, "📚 " + a.nhom) : null, h("span", { style:{ color:CL360.good, fontWeight:700 } }, ` · tồn ${a.ton}`), a.donGia ? h("span", { style:{ color:"var(--inkSoft)" } }, ` · ${fmtMoney360(a.donGia)}/${a.donVi||""}`) : null),
-                          h("button", { type:"button", onClick:()=>setSwaps({ ...swaps, [i+"_"+j]:a }), style:{ fontSize:10.5, fontWeight:800, border:"1px solid "+CL360.good, color:CL360.good, background:"#fff", borderRadius:6, padding:"1px 6px", cursor:"pointer", whiteSpace:"nowrap" } }, "Dùng mã này")))); })),
+                  !(it.thayThe||[]).length ? h("span", { style:{ color:"var(--inkSoft)" } }, (it.tranh && it.tonShop!==0 ? "Chưa tìm được hàng thay phù hợp với khách còn tồn — hỏi dược sĩ/CHT. " : "") + (it.tranh ? "Nhà thuốc chưa có mã cùng hoạt chất / cùng nhóm-cơ chế phù hợp với khách còn tồn" + ((it.daTim||[]).length ? ` (đã tìm cả thuốc slide cùng nhóm: ${it.daTim.join(", ")})` : "") : "Nhà thuốc không còn mã nào CÙNG HOẠT CHẤT còn tồn (hết hàng chỉ thay cùng hoạt chất)") + " — mời CHT xử lý (đặt hàng).")
+                  : ALT_LEVELS.map(lv => { const arr = it.thayThe.filter(a => a.loai===lv.id); if(!arr.length) return null;
+                      return h("div", { key:lv.id, style:{ marginTop:3 } },
+                        h("div", { style:{ fontSize:10, fontWeight:800, color:lv.color, textTransform:"uppercase", marginTop:2 } }, lv.title),
+                        arr.map(a => h("div", { key:a.pid, style:{ padding:"2px 0" } },
+                          h("div", { style:{ display:"flex", justifyContent:"space-between", gap:6, alignItems:"center" } },
+                            h("span", null, a.ten, a.rx ? h("span", { style:{ fontSize:10, fontWeight:800, color:CL360.bad, marginLeft:4 } }, "℞") : null,
+                              lv.id==="congdung" && a.nhom ? h("span", { style:{ fontSize:10, fontWeight:800, color:"#0a6bb4", background:"#EAF2FB", borderRadius:4, padding:"0 4px", marginLeft:4 } }, "📚 " + a.nhom) : null,
+                              h("span", { style:{ color:CL360.good, fontWeight:700 } }, ` · tồn ${a.ton}`), a.donGia ? h("span", { style:{ color:"var(--inkSoft)" } }, ` · ${fmtMoney360(a.donGia)}/${a.donVi||""}`) : null),
+                            lv.canUse && h("button", { type:"button", onClick:()=>setSwaps({ ...swaps, [i+"_"+j]:a }), style:{ fontSize:10.5, fontWeight:800, border:"1px solid "+lv.color, color:lv.color, background:"#fff", borderRadius:6, padding:"1px 6px", cursor:"pointer", whiteSpace:"nowrap" } }, "Dùng mã này")),
+                          a.quyDoi && h("div", { style:{ fontSize:11, color:"#8a5a00", fontWeight:700 } }, "↹ Quy đổi: " + a.quyDoi + (lv.id==="quydoi" ? " — kiểm tra HDSD trước khi bán" : "")),
+                          (a.lyDo||[]).length>0 && h("div", { style:{ fontSize:10.5, color:CL360.bad } }, "Lý do: " + a.lyDo.join(" · ")),
+                          (a.tieuChi||[]).length>0 && h(AltCriteria, { list:a.tieuChi })))); })),
                 it.pid===openPid && h(DoseOfficialInline, { pid:it.pid }))),
               h(ComboModeToggle, { k }),
               h("div", { style:{ marginTop:6 } }, h("button", { className:"btn", style:{ fontSize:11.5, padding:"4px 9px" }, onClick:()=>logCase(k) }, logged===k.ten ? "✓ Đã ghi nhận" : "📝 Khách chọn combo này")));
@@ -14277,7 +14347,12 @@ function ElearnConnectModal({ onClose, onChanged }){
           h("li", null, "Chép giá trị UserName và Token vào 2 ô trên."))),
       h("div", { className:"field", style:{ marginBottom:10 } }, h("label", null, "Mã lộ trình cần lấy (cách nhau dấu phẩy)"),
         h("input", { value:routes, onChange:e=>setRoutes(e.target.value), placeholder:"LT112503587", style:inp }),
-        h("div", { style:{ fontSize:11, color:"var(--inkSoft)", marginTop:3 } }, "Mã nằm cuối địa chỉ trang lộ trình, VD elearning.upharma.vn/lo-trinh/LT112503587. Thêm các lộ trình có khoá Sản phẩm hệ số / Nhóm thuốc / Bệnh học.")),
+        h("div", { style:{ fontSize:11, color:"var(--inkSoft)", marginTop:3 } }, "Mã nằm cuối địa chỉ trang lộ trình, VD elearning.upharma.vn/lo-trinh/LT112503587. Thêm các lộ trình có khoá Sản phẩm hệ số / Nhóm thuốc / Bệnh học."),
+        // 2/10/2026: cảnh báo khi cấu hình THIẾU lộ trình đã từng đồng bộ (đã xảy ra: còn 1/7 lộ trình → phần lớn khoá không được cập nhật)
+        st && (st.missingRoutes||[]).length>0 && h("div", { style:{ marginTop:6, fontSize:12, background:"#FFF4E5", border:"1px solid #F4D19B", borderRadius:8, padding:"6px 8px", color:"#8a5a00" } },
+          h("b", null, `⚠ ${st.missingRoutes.length} lộ trình đã từng đồng bộ đang KHÔNG có trong danh sách: `),
+          st.missingRoutes.map(r => `${r.id} (${r.courseCount} khoá)`).join(", "), " — các khoá này sẽ không được cập nhật. ",
+          h("a", { href:"#", onClick:(ev)=>{ ev.preventDefault(); setRoutes([...routes.split(/[\s,;]+/).filter(Boolean), ...st.missingRoutes.map(r => r.id)].join(", ")); }, style:{ color:"var(--pine)", fontWeight:700 } }, "Thêm lại vào ô"), " rồi bấm \"Lưu & kiểm tra\".")),
       msg && h("div", { style:{ fontSize:12.5, marginBottom:8, color: msg.bad ? CL360.bad : CL360.good, fontWeight:600 } }, msg.text),
       h("div", { className:"btnRow", style:{ justifyContent:"flex-end", gap:6, flexWrap:"wrap" } },
         h("button", { className:"btn btnGhost", onClick:onClose }, "Đóng"),
