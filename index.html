@@ -22219,12 +22219,15 @@ function ReplenishView({ isAdmin, myStaff, onNavigate }){
     return null;
   }
 
+  // 2/10/2026: mở lại tab trong cùng phiên → hiện NGAY dữ liệu lần trước, tải bản mới ở nền rồi thay.
   async function load(){
-    setLoading(true); setErr(null);
+    const cached = window.__replListCache;
+    if(cached){ setData(cached); setLoading(false); } else setLoading(true);
+    setErr(null);
     try{
       const d = await callCf(`${REPL_FN}replenishmentList?shop=all`, {}, 120000);
-      setData(d);
-    } catch(e){ setErr(e.message || String(e)); }
+      window.__replListCache = d; setData(d);
+    } catch(e){ if(!cached) setErr(e.message || String(e)); }
     setLoading(false);
   }
   useEffect(()=>{ load(); }, []);
