@@ -14183,7 +14183,7 @@ function SymptomConsultView({ isAdmin, myStaff }){
         h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8 } },
           h("div", null, h("b", null, b.title), b.doiTuong ? h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, " · " + b.doiTuong) : null,
             b.pos && h("span", { style:{ ...SLIDE_TAG_STYLE, marginLeft:6, color:"#b4570a", background:"#FFF1E0" } }, "🧾 ĐƠN MẪU POS"),
-            b.lms && h("span", { style:{ ...SLIDE_TAG_STYLE, marginLeft:6 } }, "📚 LMS"),
+            b.lms && !b.pos && h("span", { style:{ ...SLIDE_TAG_STYLE, marginLeft:6 } }, "📚 LMS"),
             h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, b.kind==="lms" ? " · chưa có phác đồ" : b.kind==="pos" ? " · bệnh mẫu POS" : b.status==="approved" ? " · phác đồ đã duyệt" : " · phác đồ nháp")),
           h("span", { style:{ display:"flex", gap:6, alignItems:"center" } },
             selId && b.id!==selId && b.kind!=="lms" && !String(selId).startsWith("lms:") && h("button", { type:"button", title:"Khách mắc thêm bệnh này — gộp vào 1 combo chung, bỏ thuốc trùng hoạt chất", onClick:(ev)=>{ ev.stopPropagation(); setGop(gop.includes(b.id) ? gop.filter(x => x!==b.id) : [...gop, b.id].slice(-3)); },
@@ -14589,7 +14589,8 @@ function ProductTrainingSection({ item }){
           .filter(r => r[1] && r[1].length).map((r,i) => h("div", { key:i, style:{ marginTop:4 } },
             h("div", { style:{ fontWeight:700, fontSize:12 } }, r[0]),
             h("ul", { style:{ margin:"2px 0 0", paddingLeft:18 } }, r[1].map((x,j) => h("li", { key:j, style: r[0].startsWith("💬") ? { fontStyle:"italic" } : null }, x)))))),
-      c.slideText && h("details", { style:{ marginTop:6, background:"#fff", border:"1px solid var(--line)", borderRadius:8, padding:"6px 10px" } },
+      // 3/10/2026: ẩn "chữ slide" lỗi (AI chỉ thấy trang bìa và trả lời xin thêm trang) — không phải nội dung đào tạo
+      c.slideText && !/(Tôi xin lỗi|vui lòng cung cấp|cần bạn cung cấp|chỉ nhìn thấy (một|trang)|Để chép lại|Vui lòng chia sẻ)/i.test(String(c.slideText).slice(0, 1500)) && h("details", { style:{ marginTop:6, background:"#fff", border:"1px solid var(--line)", borderRadius:8, padding:"6px 10px" } },
         h("summary", { style:{ cursor:"pointer", fontWeight:700, fontSize:12 } }, c.summary ? "📑 Xem toàn văn slide" : "📑 Xem nội dung slide đào tạo"),
         h("div", { style:{ fontSize:12.5, lineHeight:1.6, whiteSpace:"pre-line", marginTop:6, maxHeight:420, overflowY:"auto" } }, c.slideText)))));
 }
