@@ -620,6 +620,15 @@ async function compressImage(file, maxDim, quality){
     return file;
   }
 }
+// 3/10/2026: báo lỗi tải ảnh rõ ràng cho nhân viên (trước đây lỗi chỉ âm thầm ghi vào nhật ký, người dùng không biết ảnh không lên)
+function alertUploadError(err){
+  const code = (err && err.code) || "";
+  const msg = code==="storage/unauthorized" ? "Không tải được ảnh: hệ thống chưa cho phép lưu ảnh (lỗi phân quyền). Vui lòng báo quản lý."
+    : code==="storage/canceled" ? "Đã huỷ tải ảnh."
+    : "Không tải được ảnh: " + ((err && err.message) || err) + "\nKiểm tra mạng rồi thử lại.";
+  try{ logSystemError("uploadImage", err); } catch(_){}
+  window.alert(msg);
+}
 async function uploadImageFile(file, path, onProgress){
   const toUpload = (file.type && file.type.startsWith("image/")) ? await compressImage(file) : file;
   const ref = storage.ref().child(path);
@@ -724,6 +733,8 @@ function fmtVNDCompact(n){
 // Các lỗi vô hại/đã biết, không đáng để làm phiền Quản lý bằng thông báo — chỉ log ra console
 // để debug khi cần, không ghi vào systemErrors.
 const IGNORED_ERROR_PATTERNS = [
+  "zaloJSV2", // 3/10/2026: script của trình duyệt trong Zalo tự chèn — không phải lỗi app
+  "Connection to Indexed Database server lost", // trình duyệt đóng bộ nhớ đệm khi chạy nền — tự kết nối lại
   "Attempt to get records from database without an in-progress transaction", // Firestore mở nhiều tab cùng lúc
   "internal error was encountered in the Indexed Database server", // Lỗi IndexedDB nội bộ trình duyệt (Chrome) — vô hại, tự hết
   "Missing or insufficient permissions", // Firestore rules từ chối — thường do mở file://, rule chưa cover collection, hoặc token hết hạn; không spam nhật ký
@@ -2112,7 +2123,7 @@ function ImageReportView({ isAdmin, myStaff }){
         [field]: [...current, ...urls],
         updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
       }, { merge:true });
-    } finally { setUploading(false); }
+    } catch(err){ alertUploadError(err); } finally { setUploading(false); }
   }
   async function removePhoto(field, idx){
     if(!selfShop || !thisReport) return;
@@ -2336,7 +2347,7 @@ function CustomerOrderView({ isAdmin, myStaff }){
         i++;
       }
       setForm(f => ({ ...f, anhSanPham:[...f.anhSanPham, ...urls] }));
-    } finally { setUploadingPhoto(false); }
+    } catch(err){ alertUploadError(err); } finally { setUploadingPhoto(false); }
   }
   function removeOrderPhoto(idx){
     setForm(f => { const next = [...f.anhSanPham]; next.splice(idx,1); return { ...f, anhSanPham:next }; });
@@ -6538,10 +6549,12 @@ function KpiView({ isAdmin, myStaff }){
   async function addEvidencePhoto(staffMember, files, current){
     const id = kpiAssignmentId(staffMember.id, thang);
     const urls = [];
-    for(const file of files){
-      const path = `kpiEvidence/${staffMember.id}/${thang}/${Date.now()}_${file.name}`;
-      urls.push(await uploadImageFile(file, path, ()=>{}));
-    }
+    try{
+      for(const file of files){
+        const path = `kpiEvidence/${staffMember.id}/${thang}/${Date.now()}_${file.name}`;
+        urls.push(await uploadImageFile(file, path, ()=>{}));
+      }
+    } catch(err){ alertUploadError(err); if(!urls.length) return; }
     await mergeDotFields("kpiAssignments", id, {
       staffId:staffMember.id, staffName:staffMember.name, shop:staffMember.shop, role:staffMember.role, thang,
       anhKetQua: [...(current||[]), ...urls],
@@ -8200,7 +8213,7 @@ function DosingProtocolView({ isAdmin }){
   if(!data) return h("div", { className:"emptyState" }, "Đang tải phác đồ…");
   const list = data.protocols || [];
   const canEdit = isAdmin || !!data.canEdit; const canDelete = isAdmin || !!data.canDelete;
-  const cur = list.find(p => p.id===sel) || list[0] || null;
+  const cur = list.find(p => p.id===sel) || null; // 3/10/2026: bảng tổng hợp chỉ hiện danh sách — chi tiết mở cửa sổ khi bấm 1 dòng
   const missing = (data.situations||[]).filter(s => !list.some(p => p.id===s.id));
   const approved = list.filter(p => p.status==="approved").length;
   return wrap(
@@ -8218,11 +8231,14 @@ function DosingProtocolView({ isAdmin }){
     canEdit && h(LmsBenhHocPanel, { busy:!!busy, onCreated:async (id)=>{ await load(); if(id) setSel(id); }, onRegen:(sitId, title)=>gen({ ids:[sitId] }, `AI đang soạn lại "${title}" theo slide LMS…`) }),
     !list.length ? h("div", { className:"card", style:{ fontSize:13 } }, canEdit ? "Chưa có phác đồ nào — bấm \"AI soạn nháp\" để bắt đầu." : "Chưa có phác đồ nào được duyệt.")
     : h("div", null,
-      h(ProtocolPicker, { list, cur, canEdit, onPick:(id)=>{ setSel(id); setTimeout(()=>{ const el = document.getElementById("protocolDetail"); if(el) el.scrollIntoView({ behavior:"smooth", block:"start" }); }, 60); } }),
-      cur && h("div", { id:"protocolDetail", className:"card", style:{ margin:0, padding:"14px 16px", maxWidth:820, scrollMarginTop:70 } },
-        h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8, alignItems:"flex-start", flexWrap:"wrap" } },
-          h("div", { style:{ fontWeight:800, fontSize:16 } }, `${cur.title} — ${(cur.doiTuong||"").toLowerCase()}`),
-          h(Pill360, { text: cur.status==="approved" ? "Đã duyệt" : "Bản nháp AI · chờ duyệt", color: cur.status==="approved" ? CL360.good : CL360.warn })),
+      h(ProtocolPicker, { list, cur, canEdit, onPick:(id)=>setSel(id) }),
+      cur && !edit && h("div", { className:"modalOverlay", onClick:()=>setSel(null) },
+       h("div", { id:"protocolDetail", className:"modal", onClick:e=>e.stopPropagation(), style:{ maxWidth:860, width:"100%", maxHeight:"90vh", overflowY:"auto", padding:"14px 16px" } },
+        h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8, alignItems:"flex-start", flexWrap:"wrap", position:"sticky", top:-14, background:"#fff", padding:"4px 0 8px", zIndex:2, borderBottom:"1px solid var(--line)", marginBottom:8 } },
+          h("div", { style:{ fontWeight:800, fontSize:16, flex:"1 1 300px" } }, `${cur.title} — ${(cur.doiTuong||"").toLowerCase()}`),
+          h("div", { style:{ display:"flex", gap:6, alignItems:"center" } },
+            h(Pill360, { text: cur.status==="approved" ? "Đã duyệt" : "Bản nháp AI · chờ duyệt", color: cur.status==="approved" ? CL360.good : CL360.warn }),
+            h("button", { className:"btn btnGhost", style:{ fontSize:13, padding:"3px 10px" }, onClick:()=>setSel(null), title:"Đóng" }, "✕ Đóng"))),
         h(DosingProtocolCard, { p:cur, canEdit, onChanged:load }),
         canEdit && h("div", { className:"btnRow", style:{ gap:6, marginTop:12, justifyContent:"flex-end", flexWrap:"wrap" } },
           canDelete && h("button", { className:"btn btnGhost", onClick:()=>del(cur) }, "Xoá"),
@@ -8230,7 +8246,7 @@ function DosingProtocolView({ isAdmin }){
           h("button", { className:"btn btnGhost", disabled:!!busy, onClick:async ()=>{ setBusy("prof"); try{ const r = await pdCall("profileGenerate", { ids:[cur.id] }, 180000); const x = (r.results||[])[0]; if(x && x.error) window.alert(x.error); await load(); } catch(e){ window.alert(e.message||String(e)); } setBusy(""); } }, busy==="prof" ? "Đang soạn…" : "AI soạn lại hồ sơ triệu chứng"),
           h("button", { className:"btn", onClick:()=>setEdit(cur) }, "Sửa"),
           cur.status==="approved" ? h("button", { className:"btn", onClick:()=>setStatus(cur, "draft") }, "Bỏ duyệt")
-            : h("button", { className:"btn btnPrimary", onClick:()=>setStatus(cur, "approved") }, "Duyệt")))),
+            : h("button", { className:"btn btnPrimary", onClick:()=>setStatus(cur, "approved") }, "Duyệt"))))),
     edit && h(DosingProtocolEditor, { p:edit, onClose:()=>setEdit(null), onSaved:()=>{ setEdit(null); load(); } }));
 }
 
@@ -21767,10 +21783,9 @@ function Customer360View({ isAdmin, myStaff, navParam, onNavigate }){
   useEffect(()=>{
     if(!phone) return;
     let cancelled = false;
-    Promise.all([
-      db.collection("tasks").where("crmCustomerId", "==", phone).get(),
-      db.collection("tasks").where("customerId", "==", phone).get(),
-    ]).then(([a, b]) => {
+    // 3/10/2026: nhân viên chỉ được đọc việc của nhà thuốc mình (luật Firestore) → thêm điều kiện shop, tránh lỗi phân quyền
+    const tq = (f) => { let q = db.collection("tasks").where(f, "==", phone); if(!isAdmin && myStaff && myStaff.shop) q = q.where("shop", "==", myStaff.shop); return q.get(); };
+    Promise.all([ tq("crmCustomerId"), tq("customerId") ]).then(([a, b]) => {
       if(cancelled) return;
       const m = new Map(); [...a.docs, ...b.docs].forEach(d => m.set(d.id, { id:d.id, ...d.data() }));
       const allT = Array.from(m.values()).filter(t => t.trangThai!=="Đã huỷ");
