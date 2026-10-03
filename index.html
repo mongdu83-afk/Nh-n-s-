@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261003-6";
+window.__APP_BUILD = "20261003-7";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -13182,14 +13182,16 @@ function PromoOrderView({ isAdmin }){
     h("div", { className:"card", style:{ marginTop:12, overflowX:"auto" } },
       h("b", null, "Theo nhà thuốc"), h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginLeft:6 } }, "mỗi ô: chi phí · doanh thu (trước KM) các đơn dùng nhóm đó · số đơn · CP/DT"),
       h("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5, marginTop:6 } }, h("tbody", null,
-        h("tr", null, ["Nhà thuốc", ...shopFams.map(f=>PO_FAM_SHORT[f.key]||f.label), "Tổng chi phí", "Doanh thu", "CP / DT", "% đơn có KM", "TB bill KM / thường"].map((x,i)=>h("th", { key:x, style:{ ...th, textAlign:i?"right":"left" } }, x))),
+        h("tr", null, ["Nhà thuốc", ...shopFams.map(f=>PO_FAM_SHORT[f.key]||f.label), "Tổng chi phí", "Doanh thu", "CP / DT", "% đơn có KM"].map((x,i)=>h("th", { key:x, style:{ ...th, textAlign:i?"right":"left", whiteSpace:"normal", ...(i===0 ? { position:"sticky", left:0, background:"#fff", zIndex:1 } : {}) } }, x))),
         shopRows.map(([s, x]) => { const tot = Object.values(x.cost||{}).reduce((a,v)=>a+v,0); const nn = x.n - x.pn;
           return h("tr", { key:s, style:{ cursor:"pointer", background: shopF===s ? "var(--pineSoft)" : "transparent" }, onClick:()=>setShopF(shopF===s ? "all" : s), title:"Bấm để lọc chương trình theo nhà thuốc này" },
-            h("td", { style:{ ...L, fontWeight:700 } }, shopName(s)), ...shopFams.map(f=>{ const b = (f.byShop||{})[s]; const cst = (x.cost||{})[f.key]||0;
+            // 3/10/2026: bỏ cột cuối "TB bill KM / thường" (bị tràn khỏi khung, phải cuộn ngang mới thấy) → ghi ngay dưới tên nhà thuốc.
+            h("td", { style:{ ...L, fontWeight:700, position:"sticky", left:0, background: shopF===s ? "var(--pineSoft)" : "#fff", zIndex:1, minWidth:92 } }, shopName(s),
+              h("div", { style:{ fontSize:10.5, fontWeight:500, color:"var(--inkSoft)", lineHeight:1.35, marginTop:2 } }, `TB bill KM ${fm(x.pn ? x.prev/x.pn : 0)}`, h("br"), `bill thường ${fm(nn ? (x.rev-x.prev)/nn : 0)}`)), ...shopFams.map(f=>{ const b = (f.byShop||{})[s]; const cst = (x.cost||{})[f.key]||0;
               return h("td", { key:f.key, style:{ ...td, verticalAlign:"top" }, title: b ? `${f.label}: ${b.o} đơn · chi phí ${fm(cst)} · doanh thu các đơn ${fm(b.r)}` : "" }, h("div", { style:{ fontWeight:600 } }, cst ? fm(cst) : "0"),
                 b && b.r ? h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)", lineHeight:1.3 } }, `DT ${fm(b.r)}`, h("br"), `${b.o} đơn · `, h("span", { style:{ fontWeight:700, color: pc(cst, b.r)>10 ? CL360.bad : pc(cst, b.r)>5.5 ? CL360.warn : CL360.good } }, pcs(pc(cst, b.r)))) : null); }),
             h("td", { style:{ ...td, fontWeight:800 } }, fm(tot)), h("td", { style:td }, fm(x.rev)), h("td", { style:td }, chip(pc(tot, x.rev), 2, 3)),
-            h("td", { style:td }, chip(pc(x.pn, x.n)==null ? null : pc(x.pn, x.n), 100, 100)), h("td", { style:td }, `${fm(x.pn ? x.prev/x.pn : 0)} / ${fm(nn ? (x.rev-x.prev)/nn : 0)}`)); })))),
+            h("td", { style:td }, chip(pc(x.pn, x.n)==null ? null : pc(x.pn, x.n), 100, 100))); })))),
     fams.length>0 && h("div", { className:"card", style:{ marginTop:12, overflowX:"auto" } },
       h("b", null, "Theo nhóm chương trình"), h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginLeft:6 } }, "gộp mọi vùng miền · bấm 1 nhóm để xem theo nhà thuốc và các chương trình trong nhóm"),
       h("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5, marginTop:6 } }, h("tbody", null,
@@ -14419,7 +14421,7 @@ function AiRoutingPanel(){
       models.length>0 && h("div", { style:{ color:"var(--inkSoft)" } }, `Mô hình Gemini khoá này dùng được (${models.length}): ` + models.filter(m => /flash/.test(m)).slice(0,14).join(", ") + " … (gõ vào ô mô hình để chọn)"),
       test.deepseek && h("div", null, "DeepSeek: ", test.deepseek.ok ? h("b", { style:{ color:CL360.good } }, `✅ ${test.deepseek.model}`) : h("b", { style:{ color:CL360.bad } }, "❌ " + (test.deepseek.error||"lỗi")))),
     h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:8, lineHeight:1.5 } },
-      "• Lấy khoá Gemini: Google AI Studio → Get API key, chọn đúng dự án Google Cloud của Firebase (upharma-176d5) và BẬT THANH TOÁN cho dự án — gói miễn phí có thể bị Google dùng dữ liệu để cải thiện sản phẩm. ",
+      "• Khoá Gemini lấy ở Google AI Studio → API keys, tạo trong dự án ĐÃ NẠP TIỀN (trả trước) — gói miễn phí có thể bị Google dùng dữ liệu để cải thiện sản phẩm. Theo dõi số dư ở AI Studio → Facturation. ",
       "• Khoá chỉ lưu ở máy chủ (Cloud Functions), giao diện không đọc lại được. ",
       "• Gợi ý: việc an toàn thuốc (thẻ từ điển, phác đồ, tư vấn kết hợp, hồ sơ triệu chứng) dùng Gemini mạnh; còn lại Gemini thường."));
 }
