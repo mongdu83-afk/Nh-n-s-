@@ -8135,8 +8135,11 @@ function ProtocolPicker({ list, cur, canEdit, onPick }){
   const [src, setSrc] = useState("all");
   const [age, setAge] = useState("all");
   const [st, setSt] = useState("all");
+  const [showDup, setShowDup] = useState(false);
   const qs = pdStrip(q.trim());
-  const rows = list.map(p => ({ p, g:protocolGroupOf(p), src:protocolSource(p), ages:protocolAges(p) }));
+  // 3/10/2026 (Phương): bệnh đã có phác đồ POS → ẩn phác đồ AI trùng bệnh (trungPos); quản lý bật xem lại khi cần
+  const nDup = list.filter(p => p.trungPos).length;
+  const rows = list.filter(p => showDup || !p.trungPos).map(p => ({ p, g:protocolGroupOf(p), src:protocolSource(p), ages:protocolAges(p) }));
   const base = rows.filter(r => {
     if(src!=="all" && r.src!==src) return false;
     if(age==="tre" && !r.ages.tre) return false;
@@ -8159,7 +8162,9 @@ function ProtocolPicker({ list, cur, canEdit, onPick }){
       h("input", { value:q, onChange:e=>setQ(e.target.value), placeholder:"🔎 Tìm bệnh, triệu chứng, bài học…", style:{ flex:"1 1 220px", maxWidth:340, padding:"7px 10px", border:"1px solid var(--line)", borderRadius:8 } }),
       h("div", { className:"btnRow", style:{ gap:4 } }, chip("all", `Mọi nguồn (${rows.length})`, src, setSrc), chip("pos", `📋 Bệnh mẫu POS (${nPos})`, src, setSrc), chip("ai", `🤖 AI soạn từ LMS (${rows.length-nPos})`, src, setSrc)),
       h("div", { className:"btnRow", style:{ gap:4 } }, chip("all","Mọi đối tượng",age,setAge), chip("tre","👶 Có cho trẻ em",age,setAge), chip("nl","Người lớn",age,setAge)),
-      canEdit && h("div", { className:"btnRow", style:{ gap:4 } }, chip("all","Mọi trạng thái",st,setSt), chip("approved","Đã duyệt",st,setSt), chip("draft","Chờ duyệt",st,setSt))),
+      canEdit && h("div", { className:"btnRow", style:{ gap:4 } }, chip("all","Mọi trạng thái",st,setSt), chip("approved","Đã duyệt",st,setSt), chip("draft","Chờ duyệt",st,setSt)),
+      canEdit && nDup>0 && h("label", { style:{ fontSize:11.5, color:"var(--inkSoft)", display:"flex", gap:4, alignItems:"center", cursor:"pointer" } },
+        h("input", { type:"checkbox", checked:showDup, onChange:e=>setShowDup(e.target.checked) }), `Hiện cả ${nDup} phác đồ AI trùng bệnh POS (đang ẩn)`)),
     h("div", { style:{ display:"flex", gap:4, flexWrap:"wrap", marginBottom:10 } },
       chip("all", `Tất cả nhóm bệnh (${base.length})`, grp, setGrp),
       PROTOCOL_GROUPS.filter(g => cnt[g]).map(g => chip(g, `${g} (${cnt[g]})`, grp, setGrp))),
@@ -8173,7 +8178,8 @@ function ProtocolPicker({ list, cur, canEdit, onPick }){
             const donMau = (p.pos && p.pos.donMau || []).length;
             return h("tr", { key:p.id, onClick:()=>onPick(p.id), style:{ cursor:"pointer", background: on ? "#E3F0EA" : undefined } },
               td(h("div", null, h("div", { style:{ fontWeight:700 } }, p.title), (p.benhHoc && p.benhHoc.nhanBiet) ? h("div", { style:{ fontSize:11, color:"var(--inkSoft)", marginTop:2, display:"-webkit-box", WebkitLineClamp:1, WebkitBoxOrient:"vertical", overflow:"hidden" } }, p.benhHoc.nhanBiet) : null)),
-              td(r.src==="pos" ? badge("📋 POS", "#E8EEF9", "#2B4C8C") : badge("🤖 AI · LMS", "#F3ECFA", "#6B3FA0")),
+              td(h("div", null, r.src==="pos" ? badge("📋 POS", "#E8EEF9", "#2B4C8C") : badge("🤖 AI · LMS", "#F3ECFA", "#6B3FA0"),
+                p.trungPos ? h("div", { style:{ fontSize:10.5, color:CL360.warn, marginTop:2 } }, `Trùng POS: ${p.trungPosTitle || p.trungPos} — nhân viên không thấy`) : null)),
               td(h("div", { style:{ display:"flex", gap:3, flexWrap:"wrap" } }, r.ages.tre && badge("👶 Trẻ em", "#FDF1DE", "#9A5B00"), r.ages.nl && badge("Người lớn", "#F0EEE2", "#5A5748"))),
               td(h("span", { style:{ fontSize:11.5 } }, [donMau ? `${donMau} đơn mẫu POS` : "", cs.length ? `${cs.length} combo theo tuổi` : ""].filter(Boolean).join(" · ") || "Chuyển khám / theo đơn")),
               td((p.lms||[]).length ? badge("📚 Có", "#E6F4EA", "#1F7A3A") : h("span", { style:{ fontSize:11, color:"var(--inkSoft)" } }, "—")),
@@ -13622,7 +13628,12 @@ function ProductDictionaryView({ isAdmin }){
   const [shopInfo, setShopInfo] = useState({ shops:[], myShop:null });
   const [shopRows, setShopRows] = useState(null);
   const [shopLoading, setShopLoading] = useState(false);
-  useEffect(()=>{ pdCall("shopProducts", {}, 30000).then(d => setShopInfo({ shops:d.shops||[], myShop:d.myShop||null })).catch(()=>{}); }, []);
+  const [shopTouched, setShopTouched] = useState(false);
+  useEffect(()=>{ pdCall("shopProducts", {}, 30000).then(d => {
+    setShopInfo({ shops:d.shops||[], myShop:d.myShop||null });
+    // 3/10/2026 (Phương): nhân viên mở Tra cứu → mặc định danh sách 150 mã bán tốt của nhà thuốc mình
+    if(!isAdmin && d.myShop) setShopF(f => f || d.myShop);
+  }).catch(()=>{}); }, []);
   useEffect(()=>{
     if(!shopF){ setShopRows(null); return; }
     let alive = true; setShopLoading(true); setShopRows(null);
@@ -13690,7 +13701,15 @@ function ProductDictionaryView({ isAdmin }){
   const all0 = [...rk.items, ...myExtra, ...extra].map(it => ({ ...it, d: dict[it.pid] || null }));
   // Lọc theo nhà thuốc: danh sách gốc = các mã còn tồn / có bán tại nhà thuốc đó (kể cả mã ngoài top khu vực)
   const allMap = {}; all0.forEach(it => { allMap[it.pid] = it; });
-  const all = shopF && shopRows ? shopRows.map(r => ({ ...(allMap[r[0]] || { pid:r[0], name:r[1], rank:null, type:"", extra:true }), d: dict[r[0]] || null, tonShop:r[2], banShop:r[3], donViShop:r[4] })) : all0;
+  // 3/10/2026 (Phương): chọn nhà thuốc → 150 mã bán tốt (30 ngày) của nhà thuốc đó; nhà thuốc mới mở < 1 tháng
+  // (hoặc chưa có dữ liệu bán) → dùng top bán chạy khu vực. Tồn kho tại nhà thuốc gắn kèm từng mã.
+  const stockMap = {}; (shopRows||[]).forEach(r => { stockMap[r[0]] = r; });
+  const shopTopList = shopF ? ((rk.byShopTop||{})[shopF] || []) : [];
+  const shopIsNew = !!(shopF && ((rk.shopNew||{})[shopF] || !shopTopList.length));
+  const withStock = (it) => { const r = stockMap[it.pid]; return shopRows ? { ...it, tonShop: r ? r[2] : 0, donViShop: r ? r[4] : "" } : it; };
+  const all = !shopF ? all0
+    : shopIsNew ? rk.items.map(it => withStock({ ...it, d: dict[it.pid] || null }))
+    : shopTopList.map((x, i) => withStock({ ...(allMap[x.pid] || { pid:x.pid, name:x.name, group:x.group, type:"", extra:true }), name:(allMap[x.pid] && allMap[x.pid].name) || x.name, rankShop:i+1, d: dict[x.pid] || null }));
   const isRead = (pid) => !!views[String(pid||"").trim().replace(/\//g,"_")];
   const myReadCount = myTop.filter(x => isRead(x.pid)).length;
   const types = {};
@@ -13732,7 +13751,7 @@ function ProductDictionaryView({ isAdmin }){
     const idx = navList.indexOf(it);
     return h("div", { key:it.pid, className:"card", onClick:()=>setOpenPid(it.pid), style:{ margin:0, cursor:"pointer", display:"flex", flexDirection:"column", gap:6, padding:"12px 14px" } },
       h("div", { style:{ display:"flex", gap:8, alignItems:"flex-start" } },
-        it.rank && h("span", { style:{ flex:"none", minWidth:28, height:22, padding:"0 6px", borderRadius:6, background: it.rank<=10 ? "var(--pine)" : "#F0EEE2", color: it.rank<=10 ? "#fff" : "#5A5748", fontSize:11.5, fontWeight:800, display:"flex", alignItems:"center", justifyContent:"center" } }, "#"+it.rank),
+        (it.rankShop || it.rank) && (()=>{ const rr = it.rankShop || it.rank; return h("span", { title: it.rankShop ? "Hạng bán chạy tại nhà thuốc" : "Hạng bán chạy khu vực", style:{ flex:"none", minWidth:28, height:22, padding:"0 6px", borderRadius:6, background: rr<=10 ? "var(--pine)" : "#F0EEE2", color: rr<=10 ? "#fff" : "#5A5748", fontSize:11.5, fontWeight:800, display:"flex", alignItems:"center", justifyContent:"center" } }, "#"+rr); })(),
         h("div", { style:{ flex:1, minWidth:0 } },
           h("div", { style:{ fontWeight:700, fontSize:13.5, lineHeight:1.3 } }, it.name),
           h("div", { style:{ fontSize:11, color:"var(--inkSoft)", marginTop:2 } }, e && e.hoatChat ? e.hoatChat : (it.type || it.pid))),
@@ -13814,10 +13833,13 @@ function ProductDictionaryView({ isAdmin }){
       h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:4 } }, "Mở từng thẻ để đọc — app tự ghi nhận. Thực tập sinh cần học ≥ 90% trước khi buddy phỏng vấn.")),
     h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", marginBottom:6 } },
       h("span", { style:{ fontSize:12, fontWeight:700 } }, "🏪 Nhà thuốc:"),
-      h("select", { value:shopF, onChange:e=>setShopF(e.target.value), style:{ padding:"5px 8px", border:"1px solid var(--line)", borderRadius:8, fontSize:12.5 } },
-        h("option", { value:"" }, "Tất cả nhà thuốc (top khu vực)"),
-        (shopInfo.shops||[]).map(sc => h("option", { key:sc, value:sc }, shopLabel(sc) + (sc===shopInfo.myShop ? " — nhà thuốc của bạn" : "")))),
-      shopF && h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, shopLoading ? "Đang tải hàng của nhà thuốc…" : `${(shopRows||[]).length} mã đang còn tồn / có bán tại ${shopLabel(shopF)} — xếp theo bán chạy tại nhà thuốc`)),
+      h("select", { value:shopF, onChange:e=>{ setShopTouched(true); setShopF(e.target.value); }, style:{ padding:"5px 8px", border:"1px solid var(--line)", borderRadius:8, fontSize:12.5 } },
+        h("option", { value:"" }, "Toàn khu vực (top bán chạy khu vực)"),
+        [...new Set([...(shopInfo.shops||[]), ...Object.keys(rk.byShopTop||{}), ...(shopInfo.myShop ? [shopInfo.myShop] : [])])].sort()
+          .map(sc => h("option", { key:sc, value:sc }, shopLabel(sc) + (sc===shopInfo.myShop ? " — nhà thuốc của bạn" : "") + ((rk.shopNew||{})[sc] ? " (mới mở)" : "")))),
+      shopF && h("span", { style:{ fontSize:11.5, color: shopIsNew ? CL360.warn : "var(--inkSoft)" } },
+        shopIsNew ? `${shopLabel(shopF)} mới mở chưa đủ 1 tháng dữ liệu bán — đang hiện ${rk.items.length} mã bán tốt của KHU VỰC`
+          : `${shopTopList.length} mã bán tốt nhất 30 ngày tại ${shopLabel(shopF)}${shopLoading ? " · đang tải tồn kho…" : ""}`)),
     h("div", { style:{ display:"flex", gap:4, flexWrap:"wrap", marginBottom:6 } },
       !isAdmin && myTop.length>0 && !shopF && chip("myshop", `Top shop mình (${myReadCount}/${myTop.length})`, flt, setFlt),
       chip("all", "Tất cả", flt, setFlt), chip("heso", "Hàng hệ số", flt, setFlt), chip("rx", "Thuốc kê đơn", flt, setFlt),
@@ -14108,20 +14130,9 @@ function SymptomConsultView({ isAdmin, myStaff }){
                 stockTag(it.tonShop),
                 it.tranh && h("div", { style:{ fontSize:11, color:CL360.bad, fontWeight:700 } }, (k.donMau ? "⛔ Cần thay với khách này: " : "⛔ Tránh: ") + it.tranh),
                 it.lyDoThay && h("div", { style:{ fontSize:10.5, color:"#0a6bb4", fontWeight:700 } }, "↻ App đã thay (" + it.lyDoThay + ")"),
-                (it.tonShop===0 || it.tranh) && h("div", { style:{ margin:"4px 0 0 6px", padding:"5px 8px", borderLeft:"3px solid " + ((it.thayThe||[]).length ? CL360.good : CL360.gray), background:"#fff", borderRadius:6, fontSize:11.5 } },
-                  !(it.thayThe||[]).length ? h("span", { style:{ color:"var(--inkSoft)" } }, (it.tranh && it.tonShop!==0 ? "Chưa tìm được hàng thay phù hợp với khách còn tồn — hỏi dược sĩ/CHT. " : "") + (it.tranh ? "Nhà thuốc chưa có mã cùng hoạt chất / cùng nhóm-cơ chế phù hợp với khách còn tồn" + ((it.daTim||[]).length ? ` (đã tìm cả thuốc slide cùng nhóm: ${it.daTim.join(", ")})` : "") : "Nhà thuốc không còn mã nào CÙNG HOẠT CHẤT còn tồn (hết hàng chỉ thay cùng hoạt chất)") + " — mời CHT xử lý (đặt hàng).")
-                  : ALT_LEVELS.map(lv => { const arr = it.thayThe.filter(a => a.loai===lv.id); if(!arr.length) return null;
-                      return h("div", { key:lv.id, style:{ marginTop:3 } },
-                        h("div", { style:{ fontSize:10, fontWeight:800, color:lv.color, textTransform:"uppercase", marginTop:2 } }, lv.title),
-                        arr.map(a => h("div", { key:a.pid, style:{ padding:"2px 0" } },
-                          h("div", { style:{ display:"flex", justifyContent:"space-between", gap:6, alignItems:"center" } },
-                            h("span", null, a.ten, a.rx ? h("span", { style:{ fontSize:10, fontWeight:800, color:CL360.bad, marginLeft:4 } }, "℞") : null,
-                              lv.id==="congdung" && a.nhom ? h("span", { style:{ fontSize:10, fontWeight:800, color:"#0a6bb4", background:"#EAF2FB", borderRadius:4, padding:"0 4px", marginLeft:4 } }, "📚 " + a.nhom) : null,
-                              h("span", { style:{ color:CL360.good, fontWeight:700 } }, ` · tồn ${a.ton}`), a.donGia ? h("span", { style:{ color:"var(--inkSoft)" } }, ` · ${fmtMoney360(a.donGia)}/${a.donVi||""}`) : null),
-                            lv.canUse && h("button", { type:"button", onClick:()=>setSwaps({ ...swaps, [i+"_"+j]:a }), style:{ fontSize:10.5, fontWeight:800, border:"1px solid "+lv.color, color:lv.color, background:"#fff", borderRadius:6, padding:"1px 6px", cursor:"pointer", whiteSpace:"nowrap" } }, "Dùng mã này")),
-                          a.quyDoi && h("div", { style:{ fontSize:11, color:"#8a5a00", fontWeight:700 } }, "↹ Quy đổi: " + a.quyDoi + (lv.id==="quydoi" ? " — kiểm tra HDSD trước khi bán" : "")),
-                          (a.lyDo||[]).length>0 && h("div", { style:{ fontSize:10.5, color:CL360.bad } }, "Lý do: " + a.lyDo.join(" · ")),
-                          (a.tieuChi||[]).length>0 && h(AltCriteria, { list:a.tieuChi })))); })),
+                // 3/10/2026 (Phương): bỏ gợi ý hàng thay cùng hoạt chất (tính quy đổi chưa chính xác) — chỉ báo để hỏi dược sĩ/CHT
+                (it.tonShop===0 || it.tranh) && h("div", { style:{ margin:"4px 0 0 6px", padding:"4px 8px", borderLeft:"3px solid " + CL360.warn, background:"#FFF8E6", borderRadius:6, fontSize:11.5, color:"#8a5a00" } },
+                  it.tranh ? "Cần đổi thuốc khác với khách này — hỏi dược sĩ/CHT chọn thuốc thay." : "Hết hàng tại nhà thuốc — hỏi dược sĩ/CHT chọn hàng thay hoặc điều chuyển."),
                 it.pid===openPid && h(DoseOfficialInline, { pid:it.pid }))),
               h(ComboModeToggle, { k }),
               h("div", { style:{ marginTop:6 } }, h("button", { className:"btn", style:{ fontSize:11.5, padding:"4px 9px" }, onClick:()=>logCase(k) }, logged===k.ten ? "✓ Đã ghi nhận" : "📝 Khách chọn combo này")));
