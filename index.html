@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261003-3";
+window.__APP_BUILD = "20261003-4";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -7476,7 +7476,11 @@ function KpiView({ isAdmin, myStaff }){
   return React.createElement(React.Fragment, null, [
     React.createElement("p", { key:"s", className:"pagesub" }, isAdmin ? "Giao chỉ tiêu KPI cho từng nhân viên theo tháng, theo dõi kết quả toàn khu vực." : "Chỉ tiêu KPI được quản lý giao cho bạn — tự cập nhật kết quả thực tế đạt được."),
     kpiSyncBanner,
-    isAdmin ? React.createElement(React.Fragment, null, [ kpiSyncHealthCard, adminAssignSection, comprehensiveSection, adminSummarySection, upgradeDetailSection, adminPersonalSection, adminQlkvCtahSection ]) : React.createElement(React.Fragment, null, [ staffSection, upgradeDetailSection, chtReviewSection ]),
+    isAdmin ? React.createElement(React.Fragment, null, [ kpiSyncHealthCard, adminAssignSection,
+      // 3/10/2026 (Phương: gộp AI trùng): "Phân tích tổng hợp" bằng AI chuyển về 1 chỗ — Tổng quan điều hành (Nhận định + Hỏi AI)
+      React.createElement("div", { key:"aimoved", style:{ fontSize:12, color:"var(--inkSoft)", margin:"0 0 14px", padding:"8px 12px", border:"1px dashed var(--line)", borderRadius:8 } },
+        "🤖 Phân tích KPI bằng AI đã gộp về tab Tổng quan điều hành → \"Hỏi AI\" (VD: \"Nhân viên nào KPI dự kiến dưới 85% tháng này và vì sao?\")."),
+      adminSummarySection, upgradeDetailSection, adminPersonalSection, adminQlkvCtahSection ]) : React.createElement(React.Fragment, null, [ staffSection, upgradeDetailSection, chtReviewSection ]),
   ]);
 }
 
@@ -13820,6 +13824,188 @@ function LearnProgressPanel({ isAdmin, shops }){
           h("td", { style:{ fontSize:11.5, color:"var(--inkSoft)", maxWidth:280 } }, (r.unread||[]).join(", ") || "✓")))))),
       h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:6 } }, "Thẻ được tính là \"đã học\" khi nhân viên mở thẻ trong tab Tra cứu sản phẩm và đọc ít nhất 30 giây. Thực tập sinh cần ≥ 90% top 50 trước khi buddy phỏng vấn.")));
 }
+// ===== 3/10/2026 (Phương): CẤU HÌNH AI (chuyển Claude ↔ Gemini theo chức năng) + SO SÁNH MÔ HÌNH =====
+// Quản lý: dán khoá, chọn mô hình, xem chi phí 30 ngày từng chức năng, bật/tắt từng chức năng. Quản lý & người duyệt (dược sĩ)
+// chấm kết quả so sánh. So sánh KHÔNG ghi đè thẻ/tóm tắt thật.
+const AICMP_FIELDS = [
+  ["tinhThan","Tinh thần sản phẩm"],["tomTat","Tóm tắt"],["hoatChat","Hoạt chất"],["loai","Loại"],["nhomThuoc","Nhóm"],["congDung","Công dụng"],
+  ["diemNhan","Điểm nhấn"],["khiNaoKhachMua","Khi nào khách mua"],["khachPhuHop","Khách phù hợp"],["khachDienHinh","Khách điển hình"],
+  ["cauHoiKhach","Câu nên hỏi khách"],["cauTuVan","Câu tư vấn mẫu"],["cachDung","Cách dùng"],["luuY","Lưu ý"],["banKem","Bán kèm"],
+  ["gocKinhDoanh","Góc kinh doanh"],["thayThe","Thay thế"],["doTinCay","Độ tin cậy"],["ghiChuDoTinCay","Ghi chú độ tin cậy"],
+];
+const AICMP_COLORS = { base:"#2563eb", gLight:"#0d9488", gStrong:"#7c3aed", ds:"#c2410c" };
+function aiCmpVal(v){
+  if(v==null || v==="") return null;
+  if(Array.isArray(v)) return v.filter(Boolean).map(x => typeof x==="object" ? [x.sanPham||x.ten||x.term||"", x.lyDo||x.giaiThich||x.nghia||""].filter(Boolean).join(" — ") : String(x));
+  if(typeof v==="object") return [Object.values(v).join(" — ")];
+  return String(v);
+}
+function AiCmpColumn({ title, color, obj, raw, error, sub }){
+  const h = React.createElement;
+  return h("div", { style:{ flex:"1 1 300px", minWidth:0, border:"1px solid var(--line)", borderTop:`3px solid ${color}`, borderRadius:8, padding:"8px 10px", background:"#fff" } },
+    h("div", { style:{ fontWeight:800, fontSize:12.5, color } }, title),
+    sub && h("div", { style:{ fontSize:11, color:"var(--inkSoft)", marginBottom:6 } }, sub),
+    !obj ? h("div", { style:{ fontSize:12, color:CL360.bad } }, error || "Không có nội dung", raw ? h("pre", { style:{ whiteSpace:"pre-wrap", fontSize:11, color:"var(--inkSoft)", maxHeight:200, overflow:"auto" } }, raw) : null)
+    : AICMP_FIELDS.map(([k, label]) => { const v = aiCmpVal(obj[k]); if(v==null || (Array.isArray(v) && !v.length)) return null;
+        return h("div", { key:k, style:{ fontSize:12.5, lineHeight:1.5, marginBottom:5 } }, h("b", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, label + ": "),
+          Array.isArray(v) ? h("ul", { style:{ margin:"1px 0 0", paddingLeft:16 } }, v.map((x,i) => h("li", { key:i }, x))) : v); }));
+}
+function AiRoutingPanel(){
+  const h = React.createElement;
+  const [st, setSt] = useState(null);
+  const [err, setErr] = useState(null);
+  const [f, setF] = useState({ provider:"claude", geminiKey:"", lightModel:"", strongModel:"", strongFeatures:[], featureOverride:{}, deepseekKey:"", deepseekProvider:"deepseek", deepseekModel:"" });
+  const [busy, setBusy] = useState("");
+  const [msg, setMsg] = useState("");
+  const [test, setTest] = useState(null);
+  async function load(){ try{ const d = await pdCall("aiRouteStatus", {}, 60000); setSt(d); const r = d.routing;
+    setF(x => ({ ...x, provider:r.provider, lightModel:r.lightModel, strongModel:r.strongModel, strongFeatures:r.strongFeatures||[], featureOverride:r.featureOverride||{}, deepseekProvider:r.deepseekProvider||"deepseek", deepseekModel:r.deepseekModel||"", geminiKey:"", deepseekKey:"" })); }
+    catch(e){ setErr(e); } }
+  useEffect(()=>{ load(); }, []);
+  async function save(extra){
+    setBusy("save"); setMsg("");
+    try{ await pdCall("aiRouteSave", { ...f, geminiKey:f.geminiKey||undefined, deepseekKey:f.deepseekKey||undefined, ...(extra||{}) }, 60000); setMsg("✅ Đã lưu. Máy chủ áp dụng trong khoảng 1 phút."); await load(); }
+    catch(e){ setMsg("Lỗi: " + (e.message||e) + (/không rõ thao tác/i.test(e.message||"") ? " — functions chưa deploy bản mới." : "")); }
+    setBusy("");
+  }
+  async function runTest(){ setBusy("test"); setTest(null); try{ setTest(await pdCall("aiRouteTest", {}, 120000)); } catch(e){ setMsg("Lỗi: " + (e.message||e)); } setBusy(""); }
+  if(err) return h("div", { style:{ color:CL360.bad, fontSize:12.5 } }, "Lỗi: " + (err.message||err) + (/không rõ thao tác|chỉ dành/i.test(err.message||"") ? " — functions chưa deploy bản mới." : ""));
+  if(!st) return h("div", { className:"emptyState" }, "Đang tải cấu hình AI…");
+  const r = st.routing; const selSt = { padding:"6px 9px", border:"1px solid var(--line)", borderRadius:8, fontSize:12.5 };
+  const feats = Object.keys(st.labels);
+  const usd = v => `$${Number(v||0).toFixed(2)}`;
+  const totalCost = Object.values(st.usage||{}).reduce((a,u)=>a+(u.costUsd||0),0);
+  const tierOf = k => f.featureOverride[k] || (f.provider==="gemini" ? (f.strongFeatures.includes(k) ? "strong" : "light") : "claude");
+  const setTier = (k, v) => { const def = f.provider==="gemini" ? (f.strongFeatures.includes(k) ? "strong" : "light") : "claude"; const fo = { ...f.featureOverride }; if(v===def) delete fo[k]; else fo[k] = v; setF({ ...f, featureOverride:fo }); };
+  const models = (test && test.models) || [];
+  return h("div", null,
+    h("datalist", { id:"gemModels" }, models.map(m => h("option", { key:m, value:m }))),
+    h("div", { style:{ display:"flex", gap:16, flexWrap:"wrap", alignItems:"center", marginBottom:8 } },
+      h("label", { style:{ fontSize:13, fontWeight:700, display:"flex", gap:6, alignItems:"center" } }, h("input", { type:"radio", checked:f.provider==="claude", onChange:()=>setF({ ...f, provider:"claude" }) }), "Claude (như hiện nay)"),
+      h("label", { style:{ fontSize:13, fontWeight:700, display:"flex", gap:6, alignItems:"center" } }, h("input", { type:"radio", checked:f.provider==="gemini", onChange:()=>setF({ ...f, provider:"gemini" }) }), "Gemini (đề xuất — rẻ hơn ~5 lần)"),
+      h("span", { style:{ fontSize:12, color:"var(--inkSoft)" } }, `Đang chạy: ${r.provider==="gemini" ? "Gemini" : "Claude"} · chi phí AI 30 ngày: ${usd(totalCost)}`)),
+    h("div", { style:{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center", marginBottom:6 } },
+      h("input", { type:"password", autoComplete:"off", value:f.geminiKey, onChange:e=>setF({ ...f, geminiKey:e.target.value }), placeholder: r.hasGemini ? `Khoá Gemini đã lưu ${r.geminiKeyHint} — dán khoá mới để thay` : "Dán khoá API Gemini (AIza…)", style:{ ...selSt, flex:"1 1 280px" } }),
+      h("input", { list:"gemModels", value:f.lightModel, onChange:e=>setF({ ...f, lightModel:e.target.value }), placeholder:"Mô hình thường", title:"Mô hình cho việc thường (tóm tắt, báo cáo)", style:{ ...selSt, width:210 } }),
+      h("input", { list:"gemModels", value:f.strongModel, onChange:e=>setF({ ...f, strongModel:e.target.value }), placeholder:"Mô hình mạnh", title:"Mô hình cho việc an toàn thuốc", style:{ ...selSt, width:210 } })),
+    h("details", { style:{ fontSize:12.5, margin:"4px 0 8px" } }, h("summary", { style:{ cursor:"pointer", color:"var(--inkSoft)" } }, "DeepSeek (tuỳ chọn — chỉ dùng để so sánh)"),
+      h("div", { style:{ display:"flex", gap:8, flexWrap:"wrap", marginTop:6 } },
+        h("select", { value:f.deepseekProvider, onChange:e=>setF({ ...f, deepseekProvider:e.target.value }), style:selSt }, h("option", { value:"deepseek" }, "API chính hãng"), h("option", { value:"openrouter" }, "Qua OpenRouter")),
+        h("input", { type:"password", autoComplete:"off", value:f.deepseekKey, onChange:e=>setF({ ...f, deepseekKey:e.target.value }), placeholder: r.hasDeepseek ? `Khoá đã lưu ${r.deepseekKeyHint}` : "Khoá DeepSeek / OpenRouter", style:{ ...selSt, flex:"1 1 240px" } }),
+        h("input", { value:f.deepseekModel, onChange:e=>setF({ ...f, deepseekModel:e.target.value }), placeholder:"Mã mô hình (để trống = mặc định)", style:{ ...selSt, width:230 } }),
+        r.hasDeepseek && h("button", { className:"btn btnGhost", onClick:()=>save({ clearDeepseek:true }) }, "Xoá khoá DeepSeek"))),
+    h("div", { style:{ overflowX:"auto", maxHeight:330, overflowY:"auto", border:"1px solid var(--line)", borderRadius:8, marginBottom:8 } }, h("table", { className:"tblCompact", style:{ width:"100%" } },
+      h("thead", null, h("tr", null, ["Chức năng AI","Lượt 30 ngày","Lỗi","Chi phí 30 ngày","Chạy bằng"].map((x,i) => h("th", { key:i, style:{ textAlign:i?"right":"left", position:"sticky", top:0, background:"#FAF9F4" } }, x)))),
+      h("tbody", null, feats.map(k => { const u = (st.usage||{})[k] || {}; const t = tierOf(k);
+        return h("tr", { key:k },
+          h("td", null, st.labels[k]),
+          h("td", { style:{ textAlign:"right" } }, fmtNum(u.calls||0)),
+          h("td", { style:{ textAlign:"right", color: u.errors ? CL360.bad : undefined } }, fmtNum(u.errors||0)),
+          h("td", { style:{ textAlign:"right" } }, usd(u.costUsd)),
+          h("td", { style:{ textAlign:"right" } }, h("select", { value:t, onChange:e=>setTier(k, e.target.value), style:{ ...selSt, padding:"3px 6px", fontSize:12 } },
+            h("option", { value:"claude" }, "Claude"), h("option", { value:"light" }, "Gemini thường"), h("option", { value:"strong" }, "Gemini mạnh"), h("option", { value:"off" }, "Tắt AI")))); })))),
+    h("div", { style:{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" } },
+      h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:()=>save() }, busy==="save" ? "Đang lưu…" : "Lưu cấu hình"),
+      h("button", { className:"btn", disabled:!!busy || !(r.hasGemini || r.hasDeepseek), onClick:runTest }, busy==="test" ? "Đang thử…" : "Thử kết nối & lấy danh sách mô hình"),
+      msg && h("span", { style:{ fontSize:12.5, fontWeight:600 } }, msg)),
+    test && h("div", { style:{ fontSize:12, marginTop:8, background:"var(--paper)", borderRadius:8, padding:"8px 10px", lineHeight:1.6 } },
+      test.gemini && (test.gemini.ok ? [["light","Thường"],["strong","Mạnh"]].map(([k,l]) => { const x = test.gemini[k] || {}; return h("div", { key:k }, `Gemini ${l} (${x.model}): `, x.ok ? h("b", { style:{ color:CL360.good } }, `✅ chạy được · ${Math.round((x.latencyMs||0)/100)/10} giây`) : h("b", { style:{ color:CL360.bad } }, "❌ " + (x.error || x.sample || "lỗi"))); })
+        : h("div", { style:{ color:CL360.bad } }, "Gemini: ❌ " + test.gemini.error)),
+      models.length>0 && h("div", { style:{ color:"var(--inkSoft)" } }, `Mô hình Gemini khoá này dùng được (${models.length}): ` + models.filter(m => /flash/.test(m)).slice(0,14).join(", ") + " … (gõ vào ô mô hình để chọn)"),
+      test.deepseek && h("div", null, "DeepSeek: ", test.deepseek.ok ? h("b", { style:{ color:CL360.good } }, `✅ ${test.deepseek.model}`) : h("b", { style:{ color:CL360.bad } }, "❌ " + (test.deepseek.error||"lỗi")))),
+    h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:8, lineHeight:1.5 } },
+      "• Lấy khoá Gemini: Google AI Studio → Get API key, chọn đúng dự án Google Cloud của Firebase (upharma-176d5) và BẬT THANH TOÁN cho dự án — gói miễn phí có thể bị Google dùng dữ liệu để cải thiện sản phẩm. ",
+      "• Khoá chỉ lưu ở máy chủ (Cloud Functions), giao diện không đọc lại được. ",
+      "• Gợi ý: việc an toàn thuốc (thẻ từ điển, phác đồ, tư vấn kết hợp, hồ sơ triệu chứng) dùng Gemini mạnh; còn lại Gemini thường."));
+}
+function AiCompareModal({ isAdmin, myStaff, onClose }){
+  const h = React.createElement;
+  const [tab, setTab] = useState(isAdmin ? "cfg" : "cmp");
+  const [st, setSt] = useState(null);
+  const [err, setErr] = useState(null);
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState("");
+  const [runId, setRunId] = useState("");
+  const [items, setItems] = useState(null);
+  const [kindF, setKindF] = useState("all");
+  const [idx, setIdx] = useState(0);
+  const me = (isAdmin ? "" : ((myStaff && myStaff.name) || "")) || "Quản lý";
+  async function loadStatus(){ try{ const d = await pdCall("aiCmpStatus", {}, 60000); setSt(d); if(d.runs && d.runs[0]) setRunId(id => id || d.runs[0].id); } catch(e){ setErr(e); } }
+  useEffect(()=>{ if(tab==="cmp") loadStatus(); }, [tab]);
+  useEffect(()=>{ if(!runId) return; setItems(null); pdCall("aiCmpList", { runId }, 60000).then(d => { setItems(d.items||[]); setIdx(0); }).catch(e => setErr(e)); }, [runId]);
+  async function run(){
+    if(!window.confirm("Chạy so sánh 20 thẻ từ điển + 10 tóm tắt khoá học với các mô hình đã có khoá (khoảng 3–6 phút)?")) return;
+    setBusy("run"); setMsg("Đang soạn… (giữ cửa sổ này mở)");
+    try{ const d = await pdCall("aiCmpRun", { nDict:20, nCourse:10 }, 540000); setMsg(`Xong ${d.totals.items} nội dung trong ${d.totals.tookSec} giây.`); await loadStatus(); setRunId(d.runId); }
+    catch(e){ setMsg("Lỗi: " + (e.message||e)); }
+    setBusy("");
+  }
+  async function vote(it, v){
+    const note = (v==="allBad" || v==="base") ? (window.prompt("Ghi chú ngắn (sai ở đâu / vì sao) — có thể để trống:", "") || "") : "";
+    try{ await pdCall("aiCmpVote", { id:it.id, vote:v, note }, 30000);
+      const who = me.replace(/[.#$/\[\]]/g, "_");
+      setItems(arr => arr.map(x => x.id!==it.id ? x : { ...x, votes:{ ...(x.votes||{}), [who]:{ v, note } } })); }
+    catch(e){ window.alert("Chưa lưu được: " + (e.message||e)); }
+  }
+  const run0 = st && st.runs ? st.runs.find(r => r.id===runId) : null;
+  const list = (items||[]).filter(x => kindF==="all" || x.kind===kindF);
+  const cur = list[Math.min(idx, Math.max(0, list.length-1))];
+  const tally = {}; let voted = 0;
+  (items||[]).forEach(x => { const vs = Object.values(x.votes||{}); if(vs.length) voted++; vs.forEach(o => { tally[o.v] = (tally[o.v]||0) + 1; }); });
+  const cons = (run0 && run0.contenders) || [];
+  const nameOf = id => id==="base" ? "Hiện tại (Claude)" : id==="tie" ? "Ngang nhau" : id==="allBad" ? "Tất cả có lỗi" : ((cons.find(c=>c.id===id)||{}).label || id);
+  const usd = v => v==null ? "—" : `$${Number(v).toFixed(v < 0.1 ? 4 : 2)}`;
+  const selSt = { padding:"6px 9px", border:"1px solid var(--line)", borderRadius:8, fontSize:12.5 };
+  const voteOpts = [["base"], ...cons.map(c => [c.id]), ["tie"], ["allBad"]];
+  return h("div", { className:"modalOverlay", onClick:onClose },
+    h("div", { className:"modal", onClick:e=>e.stopPropagation(), style:{ maxWidth:1200, width:"100%", maxHeight:"92vh", overflowY:"auto" } },
+      h("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, marginBottom:8 } },
+        h("div", { style:{ fontWeight:800, fontSize:17 } }, "🤖 AI của app: cấu hình & so sánh mô hình"),
+        h("button", { className:"btn btnGhost", onClick:onClose }, "✕ Đóng")),
+      isAdmin && h(SubTabBar, { tabs:[{ id:"cfg", label:"⚙️ Cấu hình AI" }, { id:"cmp", label:"⚖️ So sánh & chấm điểm" }], active:tab, onChange:setTab }),
+      tab==="cfg" && isAdmin ? h(AiRoutingPanel, null)
+      : h("div", null,
+        h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10, lineHeight:1.5 } },
+          "Các mô hình nhận ĐÚNG lời nhắc và dữ liệu app dùng để soạn thẻ từ điển / tóm tắt khoá học (không có thông tin khách). Kết quả chỉ để so sánh — KHÔNG ghi đè thẻ thật. Dược sĩ chọn bản tốt nhất cho từng nội dung."),
+        err && h("div", { style:{ color:CL360.bad, fontSize:12.5, marginBottom:8 } }, "Lỗi: " + (err.message||err) + (/không rõ thao tác|chỉ dành/i.test(err.message||"") ? " — functions chưa deploy bản mới." : "")),
+        isAdmin && st && h("div", { style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", marginBottom:8 } },
+          h("button", { className:"btn btnPrimary", disabled:!!busy || !(st.contenders||[]).length, onClick:run }, busy==="run" ? "Đang chạy…" : `▶ Chạy so sánh (20 thẻ + 10 khoá) · ${(st.contenders||[]).map(c=>c.label).join(" / ") || "chưa có khoá"}`),
+          msg && h("span", { style:{ fontSize:12.5, fontWeight:600 } }, msg)),
+        st && (st.runs||[]).length>0 && h("div", { style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", marginBottom:8 } },
+          h("span", { style:{ fontSize:12.5, fontWeight:700 } }, "Lượt chạy:"),
+          h("select", { value:runId, onChange:e=>setRunId(e.target.value), style:selSt }, st.runs.map(r => h("option", { key:r.id, value:r.id }, `${new Date(r.createdAt).toLocaleString("vi-VN")} · ${(r.contenders||[]).map(c=>c.label).join(" / ")} · ${r.status==="done" ? "xong" : "đang chạy"}`))),
+          h("select", { value:kindF, onChange:e=>{ setKindF(e.target.value); setIdx(0); }, style:selSt }, h("option", { value:"all" }, "Tất cả"), h("option", { value:"dict" }, "Thẻ từ điển"), h("option", { value:"course" }, "Tóm tắt khoá học"))),
+        run0 && run0.totals && h("div", { style:{ overflowX:"auto", marginBottom:10 } }, h("table", { className:"tblCompact", style:{ width:"100%" } },
+          h("thead", null, h("tr", null, ["Mô hình","Đọc được","Chi phí lượt này","Nếu dùng Claude","Rẻ hơn","TB / nội dung","Được chọn tốt nhất"].map((x,i) => h("th", { key:i, style:{ textAlign:i?"right":"left" } }, x)))),
+          h("tbody", null,
+            h("tr", { key:"base" }, h("td", null, h("b", { style:{ color:AICMP_COLORS.base } }, "Hiện tại (Claude)")), h("td", { style:{ textAlign:"right" } }, "—"), h("td", { style:{ textAlign:"right" } }, "—"), h("td", { style:{ textAlign:"right" } }, "—"), h("td", { style:{ textAlign:"right" } }, "—"), h("td", { style:{ textAlign:"right" } }, "—"), h("td", { style:{ textAlign:"right", fontWeight:700 } }, fmtNum(tally.base||0))),
+            Object.entries(run0.totals.byContender||{}).map(([id, b]) => h("tr", { key:id },
+              h("td", null, h("b", { style:{ color:AICMP_COLORS[id]||"#333" } }, b.label)),
+              h("td", { style:{ textAlign:"right" } }, `${b.ok}/${b.ok+b.failed}`), h("td", { style:{ textAlign:"right" } }, usd(b.costUsd)), h("td", { style:{ textAlign:"right" } }, usd(b.estClaudeUsd)),
+              h("td", { style:{ textAlign:"right" } }, b.costUsd ? `${Math.round(b.estClaudeUsd/b.costUsd)} lần` : "—"), h("td", { style:{ textAlign:"right" } }, b.avgLatencyMs ? `${Math.round(b.avgLatencyMs/1000)} giây` : "—"),
+              h("td", { style:{ textAlign:"right", fontWeight:700 } }, fmtNum(tally[id]||0)))),
+            h("tr", { key:"t" }, h("td", { colSpan:6, style:{ color:"var(--inkSoft)" } }, `Đã chấm ${voted}/${(items||[]).length} nội dung · Ngang nhau: ${tally.tie||0} · Tất cả có lỗi: ${tally.allBad||0}`), h("td", null))))),
+        !st ? h("div", { className:"emptyState" }, "Đang tải…")
+        : !(st.runs||[]).length ? h("div", { className:"emptyState" }, isAdmin ? "Chưa có lượt so sánh — dán khoá ở tab Cấu hình AI rồi bấm \"Chạy so sánh\"." : "Quản lý chưa chạy so sánh.")
+        : !items ? h("div", { className:"emptyState" }, "Đang tải kết quả…")
+        : !cur ? h("div", { className:"emptyState" }, "Không có nội dung.")
+        : h("div", null,
+          h("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, flexWrap:"wrap", marginBottom:8 } },
+            h("b", { style:{ fontSize:14 } }, `${Math.min(idx, list.length-1)+1}/${list.length}. ${cur.name} · ${cur.kind==="dict" ? "Thẻ từ điển" : "Tóm tắt khoá học"}`),
+            h("div", { style:{ display:"flex", gap:6 } },
+              h("button", { className:"btn btnGhost", disabled:idx<=0, onClick:()=>setIdx(i=>Math.max(0,i-1)) }, "‹ Trước"),
+              h("button", { className:"btn btnGhost", disabled:idx>=list.length-1, onClick:()=>setIdx(i=>Math.min(list.length-1,i+1)) }, "Sau ›"))),
+          h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", marginBottom:8 } },
+            h("span", { style:{ fontSize:12.5, fontWeight:700 } }, "Bản tốt nhất:"),
+            voteOpts.map(([v]) => { const mine = (cur.votes||{})[me.replace(/[.#$/\[\]]/g, "_")]; const on = mine && mine.v===v; const c = AICMP_COLORS[v] || (v==="allBad" ? CL360.bad : "#15803d");
+              return h("button", { key:v, type:"button", onClick:()=>vote(cur, v), style:{ padding:"5px 11px", borderRadius:16, fontSize:12, fontWeight:700, cursor:"pointer", border:`1px solid ${c}`, background: on ? c : "#fff", color: on ? "#fff" : c } }, nameOf(v)); }),
+            Object.entries(cur.votes||{}).length>0 && h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, "· " + Object.entries(cur.votes).map(([k,o]) => `${k}: ${nameOf(o.v)}${o.note ? " ("+o.note+")" : ""}`).join(" · "))),
+          h("div", { style:{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"flex-start" } },
+            h(AiCmpColumn, { key:"base", title:"Hiện tại (Claude)", sub:`${cur.baseBy || ""}${cur.baseStatus==="reviewed" ? " · đã duyệt" : ""}`, color:AICMP_COLORS.base, obj:cur.base }),
+            ...Object.entries(cur.alts||{}).map(([id, a]) => h(AiCmpColumn, { key:id, title:a.label, color:AICMP_COLORS[id]||"#333", obj:a.parsed, raw:a.raw, error:a.error,
+              sub:`${a.latencyMs ? Math.round(a.latencyMs/1000)+" giây · " : ""}${usd(a.costUsd)}${a.finish && /MAX|length/i.test(a.finish) ? " · ⚠ bị cắt do giới hạn độ dài" : ""}` }))),
+          h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:8 } }, "Gợi ý chấm: đúng thành phần / công dụng / chống chỉ định so với danh mục; không bịa liều; câu tư vấn tự nhiên, đúng tiếng Việt; luận điểm bán hàng khớp tài liệu đào tạo.")))));
+}
 function ProductDictionaryView({ isAdmin, myStaff }){
   const h = React.createElement;
   const [data, setData] = useState(null);
@@ -13834,6 +14020,7 @@ function ProductDictionaryView({ isAdmin, myStaff }){
   const [openPid, setOpenPid] = useState(null); // 29/9/2026: theo mã (không theo vị trí) — danh sách có thể đổi sau khi soạn/lấy danh mục
   const [showAdd, setShowAdd] = useState(false);
   const [showElearn, setShowElearn] = useState(false);
+  const [showCmp, setShowCmp] = useState(false);
   // 2/10/2026 (Phương): lọc theo NHÀ THUỐC — chỉ mã đang còn tồn / có bán tại nhà thuốc chọn
   const [shopF, setShopF] = useState("");
   const [shopInfo, setShopInfo] = useState({ shops:[], myShop:null });
@@ -14049,6 +14236,8 @@ function ProductDictionaryView({ isAdmin, myStaff }){
       h("b", null, "🩺 Bạn là người duyệt nội dung đào tạo"), h("span", { style:{ color:"var(--inkSoft)" } }, "— xem cả thẻ AI chưa duyệt (lọc \"Chưa duyệt\"), sửa và bấm Duyệt; soạn thêm thẻ còn thiếu."),
       missingTop>0 && h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:()=>generate(null) }, busy==="gen" ? "AI đang soạn…" : `Soạn thẻ cho ${Math.min(12, missingTop)} mã tiếp theo`)),
     isAdmin && h(DictReviewerPicker, { settings:data.settings, onSaved:load }),
+    canEdit && h("div", { style:{ marginBottom:10 } }, h("button", { className:"btn", onClick:()=>setShowCmp(true) }, isAdmin ? "🤖 AI của app: cấu hình & so sánh" : "⚖️ Chấm so sánh AI")),
+    showCmp && h(AiCompareModal, { isAdmin, myStaff, onClose:()=>setShowCmp(false) }),
     (isAdmin || canEdit || (myStaff && myStaff.role==="Cửa hàng trưởng")) && h(LearnProgressPanel, { isAdmin, shops:[...new Set([...(shopInfo.shops||[]), ...Object.keys(rk.byShopTop||{})])].sort() }),
     msg && h("div", { className:"card", style:{ fontSize:12.5, padding:"8px 12px", marginBottom:10 } }, msg),
     !isAdmin ? h("div", { className:"metrics" },
@@ -22041,7 +22230,7 @@ function CareOutcomesSummary360(){
     rc(Head360, { key:"h", title:"Hiệu quả chăm sóc khách (trước / sau)", right: rc("button", { type:"button", className:"btn", style:{ fontSize:12, padding:"6px 12px" }, disabled:busy, onClick:recompute }, busy ? "Đang tính..." : "↻ Tính lại") }),
     !ov ? rc("div", { key:"e", className:"emptyState" }, "Chưa có số liệu — tự động tính 06:40 mỗi sáng hoặc bấm \"Tính lại\".") : rc(React.Fragment, { key:"b" }, [
       rc("div", { key:"s", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:10, marginBottom:10 } }, [
-        rc(MiniStat360, { key:"t", label:`Việc chăm sóc đã xong (${o.lookbackDays} ngày)`, value:fmtNum(ov.tasks), sub:`${fmtNum(ov.matured)} đủ ${o.windowDays} ngày theo dõi · ${fmtNum(ov.pending)} đang chờ` }),
+        rc(MiniStat360, { key:"t", label:`Việc chăm sóc đã xong (${o.lookbackDays} ngày)`, value:fmtNum(ov.tasks), sub:`${fmtNum(ov.matured)} đủ ${o.windowDays} ngày theo dõi · ${fmtNum(ov.pending)} đang chờ${ov.convertedEarly ? ` (${fmtNum(ov.convertedEarly)} đã mua sớm)` : ""}` }),
         rc(MiniStat360, { key:"c", label:`Khách mua lại trong ${o.windowDays} ngày`, value:pct360(ov.conversionRate), valueColor:ratioColor360(ov.conversionRate), sub:`${fmtNum(ov.converted)}/${fmtNum(ov.matured)} · TB ${ov.avgDaysToPurchase ?? "—"} ngày` }),
         rc(MiniStat360, { key:"r", label:"Doanh số trước → sau", value:`${fmtVNDCompact(ov.revenueBefore)} → ${fmtVNDCompact(ov.revenueAfter)}`, valueColor: ov.revenueUpliftPct!=null ? (ov.revenueUpliftPct>=0 ? CL360.good : CL360.bad) : undefined, sub: ov.revenueUpliftPct!=null ? `${ov.revenueUpliftPct>=0?"+":""}${ov.revenueUpliftPct}% · ${fmtNum(ov.ordersBefore)} → ${fmtNum(ov.ordersAfter)} đơn` : "—" }),
       ]),
@@ -23463,24 +23652,34 @@ function GlobalSearch360({ onClose, onNavigate }){
 // AI phân tích tổng hợp KPI (trong tab Nhân sự → KPI). Trang này chỉ là lối tắt + giải thích cơ chế
 // "Dạy AI" (2 lớp: yêu cầu chung + sửa từng nhận xét) đã có sẵn ngay trong 2 tab đó.
 function AiHubView({ onNavigate }){
-  const [sub, setSub] = useState("reports");
+  // 3/10/2026 (Phương): thêm "Cấu hình AI & chi phí" (chuyển Claude ↔ Gemini theo từng chức năng) + so sánh mô hình.
+  // Gộp: "Phân tích KPI" + "Phân tích tổng hợp" (tab KPI) đã bỏ — dùng Nhận định điều hành / Hỏi AI ở Tổng quan và Báo cáo tự động ở đây.
+  const [sub, setSub] = useState("cfg");
+  const [showCmp, setShowCmp] = useState(false);
   const card = (icon, title, desc, btnLabel, tab) => React.createElement("div", { key:tab, className:"card", style:{ marginBottom:14, padding:18 } }, [
     React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:17.5, marginBottom:6 } }, `${icon} ${title}`),
     React.createElement("div", { key:"d", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12, lineHeight:1.5 } }, desc),
     React.createElement("button", { key:"b", type:"button", className:"btn btnPrimary", onClick:()=>onNavigate && onNavigate(tab) }, btnLabel),
   ]);
-  // 26/9/2026 (AI Commander): thêm "Báo cáo tự động" và "Giám sát & quản trị AI".
-  if(sub!=="features") return React.createElement("div", { style:{ maxWidth:1160, margin:"0 auto", padding:16 } }, [
+  const tabs = [{ id:"cfg", label:"⚙️ Cấu hình AI & chi phí" }, { id:"reports", label:"Báo cáo tự động" }, { id:"gov", label:"Giám sát & quản trị AI" }, { id:"features", label:"Tính năng AI" }];
+  return React.createElement("div", { style:{ maxWidth:1160, margin:"0 auto", padding:16 } }, [
     React.createElement(PageTitle, { key:"title" }, "AI"),
-    React.createElement(SubTabBar, { key:"tabs", tabs:[{ id:"reports", label:"Báo cáo tự động" }, { id:"gov", label:"Giám sát & quản trị AI" }, { id:"features", label:"Tính năng AI" }], active:sub, onChange:setSub }),
-    sub==="reports" ? React.createElement(AiReportsPanel, { key:"r" }) : React.createElement(AiGovernancePanel, { key:"g" }),
-  ]);
-  return React.createElement("div", { style:{ maxWidth:900, margin:"0 auto", padding:16 } }, [
-    React.createElement(PageTitle, { key:"title" }, "AI"),
-    React.createElement(SubTabBar, { key:"tabs", tabs:[{ id:"reports", label:"Báo cáo tự động" }, { id:"gov", label:"Giám sát & quản trị AI" }, { id:"features", label:"Tính năng AI" }], active:sub, onChange:setSub }),
-    card("💬", "Trợ lý thông minh — Hỏi đáp tự do", "Gõ câu hỏi tự do (VD: \"Tại sao doanh thu giảm?\") ngay dưới AI Briefing ở tab Tổng quan điều hành — trợ lý trả lời theo đúng số liệu đang xem, theo mẫu Bất thường → Vì sao → Nguyên nhân → Nên làm gì.", "Đi tới Tổng quan →", "command"),
-    card("📅", "AI phân tích Báo cáo tuần", "Sau khi 1 nhà thuốc nộp báo cáo tuần, AI tự đọc và viết nhận xét/gắn cờ. Vào tab Báo cáo tuần để xem nhận xét từng nhà thuốc và dạy AI.", "Đi tới Báo cáo tuần →", "baocaotuan"),
-    card("🎯", "AI phân tích tổng hợp KPI", "Bấm \"Phân tích tổng hợp\" trong tab KPI để AI đọc toàn bộ số liệu 1 nhà thuốc/nhân viên/toàn chuỗi theo tháng và đưa ra nhận định. Vào tab KPI để chạy và dạy AI.", "Đi tới KPI →", "kpi"),
+    React.createElement(SubTabBar, { key:"tabs", tabs, active:sub, onChange:setSub }),
+    sub==="cfg" && React.createElement("div", { key:"cfg", className:"card" }, [
+      React.createElement("div", { key:"b", style:{ display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap", alignItems:"center", marginBottom:10 } }, [
+        React.createElement("div", { key:"t", style:{ fontWeight:800, fontSize:15 } }, "Mô hình AI cho từng chức năng"),
+        React.createElement("button", { key:"c", type:"button", className:"btn", onClick:()=>setShowCmp(true) }, "⚖️ So sánh & chấm điểm mô hình"),
+      ]),
+      React.createElement(AiRoutingPanel, { key:"p" }),
+    ]),
+    sub==="reports" && React.createElement(AiReportsPanel, { key:"r" }),
+    sub==="gov" && React.createElement(AiGovernancePanel, { key:"g" }),
+    sub==="features" && React.createElement("div", { key:"f", style:{ maxWidth:900 } }, [
+      card("💬", "Nhận định điều hành & Hỏi AI về số liệu", "Ở tab Tổng quan điều hành: AI tóm tắt tình hình chuỗi và trả lời câu hỏi tự do (VD \"Tại sao doanh thu NT95 giảm?\") dựa trên số liệu thật. Đây là nơi DUY NHẤT cho phân tích tổng hợp (đã gộp Phân tích KPI / Phân tích tổng hợp).", "Mở Tổng quan điều hành", "command"),
+      card("📅", "AI nhận xét Báo cáo tuần", "Quản lý mở 1 báo cáo tuần của nhà thuốc → bấm \"AI phân tích\" để AI đọc và gắn cờ điểm cần chú ý.", "Mở Báo cáo tuần", "baocaotuan"),
+      card("📚", "Thẻ từ điển, phác đồ, tóm tắt khoá học", "AI soạn nháp từ danh mục công ty + slide đào tạo; dược sĩ duyệt trước khi nhân viên thấy.", "Mở Tra cứu sản phẩm", "tudien"),
+    ]),
+    showCmp && React.createElement(AiCompareModal, { key:"cmpm", isAdmin:true, myStaff:null, onClose:()=>setShowCmp(false) }),
   ]);
 }
 // ===== Hệ thống (hub) — 20/9/2026: nhóm "Hệ thống" trong sidebar theo mẫu mockup. Gộp lại các công
