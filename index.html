@@ -15,13 +15,38 @@
 <link rel="preconnect" href="https://asia-southeast1-upharma-176d5.cloudfunctions.net" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=Fraunces:wght@600;700&display=swap" rel="stylesheet">
 <script>
+// 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
+// nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
+// so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
+window.__APP_BUILD = "20261003-3";
+(function(){
+  var busy = false;
+  function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
+  function banner(){
+    if(document.getElementById("__newBuild")) return;
+    var d = document.createElement("div"); d.id = "__newBuild";
+    d.style.cssText = "position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:99999;background:#0f6b5c;color:#fff;padding:10px 16px;border-radius:22px;font:600 13.5px system-ui;box-shadow:0 6px 20px rgba(0,0,0,.25);cursor:pointer";
+    d.textContent = "Có bản app mới — bấm để cập nhật";
+    d.onclick = function(){ location.reload(); };
+    document.body && document.body.appendChild(d);
+  }
+  function check(fromResume){
+    if(busy) return; busy = true;
+    fetch(location.pathname + "?_v=" + Date.now(), { cache:"no-store" }).then(function(r){ return r.ok ? r.text() : ""; }).then(function(t){
+      var m = /window\.__APP_BUILD = "([^"]+)"/.exec(t || "");
+      if(m && m[1] !== window.__APP_BUILD){ if(fromResume && !typing()) location.reload(); else banner(); }
+    }).catch(function(){}).then(function(){ busy = false; });
+  }
+  document.addEventListener("visibilitychange", function(){ if(document.visibilityState === "visible") check(true); });
+  setInterval(function(){ check(false); }, 10 * 60 * 1000);
+})();
 // 1/10/2026: các function "chạy ngay"/quản trị đã gom vào 1 function runJobNow?job=<tên> — tự đổi địa chỉ gọi ở đây
 // (mọi chỗ trong app vẫn gọi tên cũ, không phải sửa từng nút).
 (function(){
-  var JOBS = new Set(["syncWorkRegistrationsNow", "syncProductCatalogFromApiNow", "syncProductPackagingUnitsNow", "cleanupLegacyCatalogFieldsNow", "syncInventoryNow", "syncSalesOrdersNow", "syncSalesOrdersHeadersOnlyNow", "analyzeWeeklyReportNow", "analyzeManagerWeekNow", "analyzeCustomerOrderTrendsNow", "analyzeComprehensiveNow", "analyzeCommandCenterNow", "analyzeKpiNow", "notifyOverdueTasksNow", "remindDailyChecklistNow", "remindPhotoReportNow", "syncEmployeePlanNow", "syncPointSalesProductsNow", "syncShopPlanNow", "syncInventoryExpiryNow", "syncCustomerLevelUpgradesNow", "notifyDailyKpiPaceNow", "sendTestPushNow", "syncCustomerPurchaseHistoryNow", "backfillCustomerEventsNow", "computeBehaviorAnalyticsNow", "computeRevenueAnalyticsNow", "debugSalesOrderFieldsNow", "debugRevenueRangeNow", "debugChainDetectFieldNow", "debugReadStoredChainRevenueNow", "computePromoSkuActualsNow", "detectPromoDocUsageNow", "trackPromoByDocumentIdNow", "refreshPromoAutoTrackedSkuActualsNow", "resetCrmActionEngineNow", "computeCrmCampaignStatsNow", "computeCrmStaffEffectivenessNow", "computeCrmActionCenterNow", "syncCrmFollowUpTasksNow", "notifyCrmFollowUpDigestNow", "computeCustomerSegmentsNow", "syncCrmCustomersNow", "autoAssignCrmCustomersNow", "clearDefaultCrmAssignmentsNow", "clearAllCrmAssignmentsNow", "migrateIssueActionsStatusNow", "syncCrmBirthdaysNow", "fillMissingCustomerProfilesNow", "checkCategoryConcentrationNow", "computeInventoryConsumptionNow", "computeShopHealthNow", "syncTransferSuggestionsNow", "computeDailyResultsNow", "computeWorkforceMetricsNow", "explainWorkforceNow", "computeTaskIntelligenceNow", "backfillTaskLifecycleNow", "analyzeTasksNow", "computeCareOutcomesNow", "runRiskEngineNow", "runAiReportNow", "computeReplenishmentNow", "replenishmentList", "replenishmentContact", "replenishmentClaim", "buildOpsDaySnapshotNow", "autoMatchPromoCampaignsNow", "functionCostMonthNow", "computeOrderFulfillmentNow", "promoEffectNow", "dataHygieneNow"]);
+  var JOBS = new Set(["syncWorkRegistrationsNow", "syncProductCatalogFromApiNow", "syncProductPackagingUnitsNow", "cleanupLegacyCatalogFieldsNow", "syncInventoryNow", "syncSalesOrdersNow", "syncSalesOrdersHeadersOnlyNow", "analyzeWeeklyReportNow", "analyzeManagerWeekNow", "analyzeCustomerOrderTrendsNow", "analyzeComprehensiveNow", "analyzeCommandCenterNow", "analyzeKpiNow", "notifyOverdueTasksNow", "remindDailyChecklistNow", "remindPhotoReportNow", "syncEmployeePlanNow", "syncPointSalesProductsNow", "syncShopPlanNow", "syncInventoryExpiryNow", "syncCustomerLevelUpgradesNow", "notifyDailyKpiPaceNow", "sendTestPushNow", "syncCustomerPurchaseHistoryNow", "backfillCustomerEventsNow", "computeBehaviorAnalyticsNow", "computeRevenueAnalyticsNow", "debugSalesOrderFieldsNow", "debugRevenueRangeNow", "debugChainDetectFieldNow", "debugReadStoredChainRevenueNow", "computePromoSkuActualsNow", "detectPromoDocUsageNow", "trackPromoByDocumentIdNow", "refreshPromoAutoTrackedSkuActualsNow", "resetCrmActionEngineNow", "computeCrmCampaignStatsNow", "computeCrmStaffEffectivenessNow", "computeCrmActionCenterNow", "syncCrmFollowUpTasksNow", "notifyCrmFollowUpDigestNow", "computeCustomerSegmentsNow", "syncCrmCustomersNow", "autoAssignCrmCustomersNow", "clearDefaultCrmAssignmentsNow", "clearAllCrmAssignmentsNow", "migrateIssueActionsStatusNow", "syncCrmBirthdaysNow", "fillMissingCustomerProfilesNow", "checkCategoryConcentrationNow", "computeInventoryConsumptionNow", "computeShopHealthNow", "syncTransferSuggestionsNow", "computeDailyResultsNow", "computeWorkforceMetricsNow", "explainWorkforceNow", "computeTaskIntelligenceNow", "backfillTaskLifecycleNow", "analyzeTasksNow", "computeCareOutcomesNow", "runRiskEngineNow", "runAiReportNow", "computeReplenishmentNow", "replenishmentList", "replenishmentContact", "replenishmentClaim", "replenishmentSettings", "buildOpsDaySnapshotNow", "autoMatchPromoCampaignsNow", "functionCostMonthNow", "computeOrderFulfillmentNow", "promoEffectNow", "dataHygieneNow"]);
   var BASE = "https://asia-southeast1-upharma-176d5.cloudfunctions.net/";
   // 1/10/2026: việc NHẸ chạy ở runJobLight (nhiều yêu cầu/1 máy, ít khởi động lạnh); việc nặng ở runJobNow.
-  var LIGHT = new Set(["syncWorkRegistrationsNow", "cleanupLegacyCatalogFieldsNow", "syncInventoryNow", "syncSalesOrdersNow", "syncSalesOrdersHeadersOnlyNow", "notifyOverdueTasksNow", "remindDailyChecklistNow", "remindPhotoReportNow", "syncEmployeePlanNow", "syncPointSalesProductsNow", "syncShopPlanNow", "syncInventoryExpiryNow", "notifyDailyKpiPaceNow", "sendTestPushNow", "debugSalesOrderFieldsNow", "debugRevenueRangeNow", "debugChainDetectFieldNow", "debugReadStoredChainRevenueNow", "computePromoSkuActualsNow", "detectPromoDocUsageNow", "computeCrmActionCenterNow", "syncCrmFollowUpTasksNow", "notifyCrmFollowUpDigestNow", "autoAssignCrmCustomersNow", "clearDefaultCrmAssignmentsNow", "clearAllCrmAssignmentsNow", "migrateIssueActionsStatusNow", "computeShopHealthNow", "computeTaskIntelligenceNow", "replenishmentList", "replenishmentContact", "replenishmentClaim", "buildOpsDaySnapshotNow", "functionCostMonthNow"]);
+  var LIGHT = new Set(["syncWorkRegistrationsNow", "cleanupLegacyCatalogFieldsNow", "syncInventoryNow", "syncSalesOrdersNow", "syncSalesOrdersHeadersOnlyNow", "notifyOverdueTasksNow", "remindDailyChecklistNow", "remindPhotoReportNow", "syncEmployeePlanNow", "syncPointSalesProductsNow", "syncShopPlanNow", "syncInventoryExpiryNow", "notifyDailyKpiPaceNow", "sendTestPushNow", "debugSalesOrderFieldsNow", "debugRevenueRangeNow", "debugChainDetectFieldNow", "debugReadStoredChainRevenueNow", "computePromoSkuActualsNow", "detectPromoDocUsageNow", "computeCrmActionCenterNow", "syncCrmFollowUpTasksNow", "notifyCrmFollowUpDigestNow", "autoAssignCrmCustomersNow", "clearDefaultCrmAssignmentsNow", "clearAllCrmAssignmentsNow", "migrateIssueActionsStatusNow", "computeShopHealthNow", "computeTaskIntelligenceNow", "replenishmentList", "replenishmentContact", "replenishmentClaim", "replenishmentSettings", "buildOpsDaySnapshotNow", "functionCostMonthNow"]);
   function rewrite(u){
     if(typeof u !== "string" || u.indexOf(BASE) !== 0) return u;
     var rest = u.slice(BASE.length);
@@ -905,6 +930,9 @@ async function alertSaveError(err, staffIdInProfile){
   let tokStaff = "?";
   try{ const tr = await auth.currentUser.getIdTokenResult(); tokStaff = tr.claims.staffId || "THIẾU"; }catch(e){}
   const code = err && err.code ? err.code : "lỗi không rõ";
+  // 3/10/2026: ghi lại để quản trị tra cứu (trước đây lỗi này không để lại dấu vết nào)
+  try{ db.collection("systemErrors").add({ source:"saveDenied", code, message:String((err && err.message) || "").slice(0,300), tokenStaffId:tokStaff, profileStaffId:staffIdInProfile || null,
+    userEmail:(auth.currentUser && auth.currentUser.email) || null, build:window.__APP_BUILD || null, url:location.href, createdAtTs:firebase.firestore.FieldValue.serverTimestamp() }).catch(()=>{}); }catch(_){}
   window.alert("Không thể lưu thay đổi (" + code + (code==="unavailable" ? " — kiểm tra kết nối mạng" : " — liên hệ quản trị") + ")." +
     (code==="permission-denied" ? "\n[staffId token: " + tokStaff + " | hồ sơ: " + (staffIdInProfile || "?") + "]\nHãy đăng xuất, đăng nhập lại rồi thử lại." : ""));
 }
@@ -2766,15 +2794,19 @@ function ReplenishBanner({ myStaff, onOpen }){
     let alive = true;
     (async ()=>{
       try{
-        const d = await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/replenishmentList?shop=all", {}, 120000); if(!d.ok || !alive) return;
-        let now = 0, mine = 0, unclaimed = 0, soon = 0;
-        (d.customers||[]).forEach(c => {
-          const its = (c.items||[]).filter(it => !it.contact);
-          const isNow = its.some(it => it.daysLeft>=-3 && it.daysLeft<=3);
-          if(isNow){ now++; if(c.assignedStaffId===myStaff.id) mine++; if(!c.assignedStaffId) unclaimed++; }
-          else if(its.some(it => it.daysLeft>3)) soon++;
-        });
-        setSt({ now, mine, unclaimed, soon });
+        // 3/10/2026: chỉ lấy các con số (summary=1) — không tải cả danh sách khách của nhà thuốc mỗi lần mở trang chủ
+        const d = await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/replenishmentList?shop=all&summary=1", {}, 60000); if(!d.ok || !alive) return;
+        if(d.summary) setSt({ ...d.summary, kpi:d.kpi||null });
+        else { // functions chưa deploy bản mới — tính như cũ
+          let now = 0, mine = 0, unclaimed = 0, soon = 0;
+          (d.customers||[]).forEach(c => {
+            const its = (c.items||[]).filter(it => !it.contact);
+            const isNow = its.some(it => it.daysLeft>=-3 && it.daysLeft<=3);
+            if(isNow){ now++; if(c.assignedStaffId===myStaff.id) mine++; if(!c.assignedStaffId) unclaimed++; }
+            else if(its.some(it => it.daysLeft>3)) soon++;
+          });
+          setSt({ now, mine, unclaimed, soon });
+        }
       } catch(e){ /* bỏ qua — banner phụ */ }
     })();
     return ()=>{ alive = false; };
@@ -7926,7 +7958,7 @@ function DosingCombineView({ isAdmin }){
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState(null);
   const [err, setErr] = useState(null);
-  useEffect(()=>{ pdCall("protocols", {}, 60000).then(d => setProts(d.protocols||[])).catch(e => setErr(e)); }, []);
+  useEffect(()=>{ pdCall("protocols", { lite:true }, 60000).then(d => setProts(d.protocols||[])).catch(e => setErr(e)); }, []);
   const chip = (on, label, onClick, tone) => h("button", { key:label, type:"button", onClick, style:{ fontSize:12.5, fontWeight:700, borderRadius:16, padding:"5px 11px", margin:"3px 4px 3px 0", cursor:"pointer",
     border:"1px solid " + (on ? (tone||"var(--pine)") : "var(--line)"), background: on ? (tone||"var(--pine)") : "#fff", color: on ? "#fff" : "var(--ink)" } }, label + (on ? " ✓" : ""));
   const lbl = (t) => h("div", { style:{ fontSize:11.5, fontWeight:800, color:"var(--inkSoft)", textTransform:"uppercase", letterSpacing:".04em", margin:"12px 0 4px" } }, t);
@@ -8128,7 +8160,7 @@ function protocolAges(p){
   const dt = pdStrip(p.doiTuong||"");
   return { tre: tre || posTre || /tre em|moi lua tuoi/.test(dt), nl: !/^tre em$/.test(dt) };
 }
-function ProtocolPicker({ list, cur, canEdit, onPick }){
+function ProtocolPicker({ list, cur, canEdit, onPick, onBulk, busy }){
   const h = React.createElement;
   const [q, setQ] = useState("");
   const [grp, setGrp] = useState("all");
@@ -8168,6 +8200,10 @@ function ProtocolPicker({ list, cur, canEdit, onPick }){
     h("div", { style:{ display:"flex", gap:4, flexWrap:"wrap", marginBottom:10 } },
       chip("all", `Tất cả nhóm bệnh (${base.length})`, grp, setGrp),
       PROTOCOL_GROUPS.filter(g => cnt[g]).map(g => chip(g, `${g} (${cnt[g]})`, grp, setGrp))),
+    onBulk && shown.some(r => r.p.status!=="approved" && !r.p.trungPos) && h("div", { style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", background:"#FDF6E7", border:"1px solid #F4D19B", borderRadius:8, padding:"7px 10px", marginBottom:8, fontSize:12.5 } },
+      h("span", null, `${shown.filter(r => r.p.status!=="approved" && !r.p.trungPos).length} phác đồ chờ duyệt trong danh sách đang lọc`),
+      h("button", { className:"btn btnPrimary", style:{ fontSize:12, padding:"4px 12px" }, disabled:busy, onClick:()=>onBulk(shown.filter(r => r.p.status!=="approved" && !r.p.trungPos).map(r => r.p.id), "approved") }, busy ? "Đang xử lý…" : "✓ Duyệt hàng loạt"),
+      h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, "Mẹo: lọc theo nhóm bệnh / nguồn \"📋 POS\" rồi duyệt từng nhóm.")),
     !shown.length ? h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", padding:8 } }, "Không có phác đồ nào khớp bộ lọc.")
     : h("div", { style:{ maxHeight:460, overflowY:"auto", border:"1px solid var(--line)", borderRadius:8 } },
       h("table", { style:{ width:"100%", borderCollapse:"collapse" } },
@@ -8194,8 +8230,26 @@ function DosingProtocolView({ isAdmin }){
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState("");
   const [edit, setEdit] = useState(null);
-  async function load(){ setErr(null); try{ setData(await pdCall("protocols", {}, 60000)); } catch(e){ setErr(e); } }
+  // 3/10/2026: danh sách rút gọn (nhanh) — bấm 1 phác đồ mới tải chi tiết
+  const [full, setFull] = useState({});
+  const [fullErr, setFullErr] = useState(null);
+  const [fullTick, setFullTick] = useState(0);
+  async function load(){ setErr(null); try{ const d = await pdCall("protocols", { lite:true }, 60000); setData(d); setFull({}); } catch(e){ setErr(e); } }
   useEffect(()=>{ load(); }, []);
+  useEffect(()=>{
+    if(!sel || !data || !data.lite || full[sel]) return;
+    let alive = true; setFullErr(null);
+    pdCall("protocolOne", { id:sel }, 60000).then(d => { if(alive && d.protocol) setFull(f => ({ ...f, [sel]:d.protocol })); }).catch(e => alive && setFullErr(e));
+    return ()=>{ alive = false; };
+  }, [sel, data, fullTick]);
+  async function bulkStatus(ids, status){
+    if(!ids.length) return;
+    if(!window.confirm(`${status==="approved" ? "Duyệt" : "Bỏ duyệt"} ${ids.length} phác đồ đang hiện trong danh sách?${status==="approved" ? "\n\nNhân viên sẽ thấy ngay các phác đồ này. Hãy chắc chắn dược sĩ đã xem qua nội dung." : ""}`)) return;
+    setBusy("bulk");
+    try{ const r = await pdCall("protocolBulkStatus", { ids, status }, 120000); setMsg(`Đã ${status==="approved" ? "duyệt" : "bỏ duyệt"} ${r.updated} phác đồ.`); await load(); }
+    catch(e){ window.alert("Lỗi: " + (e.message||e) + (/không rõ thao tác/i.test(e.message||"") ? " — functions chưa deploy bản mới." : "")); }
+    setBusy("");
+  }
   async function gen(payload, label){
     setBusy("gen"); setMsg(label || "AI đang soạn nháp phác đồ (khoảng 1–3 phút)…");
     try{ const r = await pdCall("protocolGenerate", payload||{}, 540000); const bad = (r.results||[]).filter(x=>x.error);
@@ -8208,6 +8262,7 @@ function DosingProtocolView({ isAdmin }){
     setBusy("");
   }
   async function setStatus(p, status){ try{ await pdCall("protocolSave", { id:p.id, status }, 30000); await load(); } catch(e){ window.alert(e.message||String(e)); } }
+  const reloadOne = async ()=>{ setFull(f => { const n = { ...f }; delete n[sel]; return n; }); await load(); };
   async function del(p){ if(!window.confirm(`Xoá phác đồ "${p.title}"?`)) return; try{ await pdCall("protocolDelete", { id:p.id }, 30000); setSel(null); await load(); } catch(e){ window.alert(e.message||String(e)); } }
   function addCustom(){
     const title = window.prompt("Tên tình huống mới (VD: Say nắng, Nhiệt miệng):"); if(!title) return;
@@ -8219,7 +8274,8 @@ function DosingProtocolView({ isAdmin }){
   if(!data) return h("div", { className:"emptyState" }, "Đang tải phác đồ…");
   const list = data.protocols || [];
   const canEdit = isAdmin || !!data.canEdit; const canDelete = isAdmin || !!data.canDelete;
-  const cur = list.find(p => p.id===sel) || null; // 3/10/2026: bảng tổng hợp chỉ hiện danh sách — chi tiết mở cửa sổ khi bấm 1 dòng
+  const curLite = list.find(p => p.id===sel) || null; // 3/10/2026: bảng tổng hợp chỉ hiện danh sách — chi tiết mở cửa sổ khi bấm 1 dòng
+  const cur = curLite && (data.lite ? (full[sel] ? { ...full[sel], status: curLite.status } : null) : curLite);
   const missing = (data.situations||[]).filter(s => !list.some(p => p.id===s.id));
   const approved = list.filter(p => p.status==="approved").length;
   return wrap(
@@ -8230,14 +8286,19 @@ function DosingProtocolView({ isAdmin }){
     canEdit && h("div", { className:"btnRow", style:{ gap:6, marginBottom:10, flexWrap:"wrap" } },
       missing.length>0 && h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:()=>gen({}) }, busy ? "AI đang soạn…" : `AI soạn nháp ${missing.length} tình huống còn thiếu`),
       h("button", { className:"btn", disabled:!!busy, onClick:addCustom }, "＋ Thêm tình huống"),
-      list.some(p => !p.symProfile) && h("button", { className:"btn", disabled:!!busy, onClick:async ()=>{ setBusy("prof"); setMsg("Đang soạn hồ sơ triệu chứng cho các phác đồ còn thiếu (khoảng 1–2 phút)…");
+      list.some(p => !(p.symProfile || p.hasProfile)) && h("button", { className:"btn", disabled:!!busy, onClick:async ()=>{ setBusy("prof"); setMsg("Đang soạn hồ sơ triệu chứng cho các phác đồ còn thiếu (khoảng 1–2 phút)…");
         try{ const r = await pdCall("profileGenerate", {}, 540000); setMsg(`Đã soạn ${r.generated} hồ sơ triệu chứng${r.remaining ? ` — còn ${r.remaining}, bấm lại để soạn tiếp` : ""}. Mở từng phác đồ → "🔎 Hồ sơ triệu chứng" để kiểm tra.`); await load(); }
-        catch(e){ setMsg("Lỗi: " + (e.message||e)); } setBusy(""); } }, `🔎 Soạn hồ sơ triệu chứng (${list.filter(p => !p.symProfile).length} phác đồ còn thiếu)`)),
+        catch(e){ setMsg("Lỗi: " + (e.message||e)); } setBusy(""); } }, `🔎 Soạn hồ sơ triệu chứng (${list.filter(p => !(p.symProfile || p.hasProfile)).length} phác đồ còn thiếu)`)),
     msg && h("div", { className:"card", style:{ fontSize:12.5, padding:"8px 12px", marginBottom:10 } }, msg),
     canEdit && h(LmsBenhHocPanel, { busy:!!busy, onCreated:async (id)=>{ await load(); if(id) setSel(id); }, onRegen:(sitId, title)=>gen({ ids:[sitId] }, `AI đang soạn lại "${title}" theo slide LMS…`) }),
     !list.length ? h("div", { className:"card", style:{ fontSize:13 } }, canEdit ? "Chưa có phác đồ nào — bấm \"AI soạn nháp\" để bắt đầu." : "Chưa có phác đồ nào được duyệt.")
     : h("div", null,
-      h(ProtocolPicker, { list, cur, canEdit, onPick:(id)=>setSel(id) }),
+      h(ProtocolPicker, { list, cur:curLite, canEdit, onPick:(id)=>setSel(id), onBulk: canEdit ? bulkStatus : null, busy:!!busy }),
+      curLite && !cur && !edit && h("div", { className:"modalOverlay", onClick:()=>setSel(null) },
+        h("div", { className:"modal", onClick:e=>e.stopPropagation(), style:{ maxWidth:420, textAlign:"center", padding:24 } },
+          h("div", { style:{ fontWeight:800, fontSize:15, marginBottom:6 } }, curLite.title),
+          fullErr ? h("div", { style:{ color:CL360.bad, fontSize:13 } }, "Lỗi tải chi tiết: " + (fullErr.message||fullErr), h("div", null, h("button", { className:"btn", style:{ marginTop:10 }, onClick:()=>{ setFullErr(null); setFullTick(t => t+1); } }, "Thử lại")))
+            : h("div", { style:{ fontSize:13, color:"var(--inkSoft)" } }, "Đang tải chi tiết phác đồ…"))),
       cur && !edit && h("div", { className:"modalOverlay", onClick:()=>setSel(null) },
        h("div", { id:"protocolDetail", className:"modal", onClick:e=>e.stopPropagation(), style:{ maxWidth:860, width:"100%", maxHeight:"90vh", overflowY:"auto", padding:"14px 16px" } },
         h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8, alignItems:"flex-start", flexWrap:"wrap", position:"sticky", top:-14, background:"#fff", padding:"4px 0 8px", zIndex:2, borderBottom:"1px solid var(--line)", marginBottom:8 } },
@@ -8245,7 +8306,7 @@ function DosingProtocolView({ isAdmin }){
           h("div", { style:{ display:"flex", gap:6, alignItems:"center" } },
             h(Pill360, { text: cur.status==="approved" ? "Đã duyệt" : "Bản nháp AI · chờ duyệt", color: cur.status==="approved" ? CL360.good : CL360.warn }),
             h("button", { className:"btn btnGhost", style:{ fontSize:13, padding:"3px 10px" }, onClick:()=>setSel(null), title:"Đóng" }, "✕ Đóng"))),
-        h(DosingProtocolCard, { p:cur, canEdit, onChanged:load }),
+        h(DosingProtocolCard, { p:cur, canEdit, onChanged:reloadOne }),
         canEdit && h("div", { className:"btnRow", style:{ gap:6, marginTop:12, justifyContent:"flex-end", flexWrap:"wrap" } },
           canDelete && h("button", { className:"btn btnGhost", onClick:()=>del(cur) }, "Xoá"),
           cur.source!=="manual" && h("button", { className:"btn btnGhost", disabled:!!busy, onClick:()=>{ if(window.confirm("AI soạn lại từ đầu (mất nội dung đã sửa)? Mất khoảng 30–60 giây.")) gen({ ids:[cur.id] }, `AI đang soạn lại "${cur.title}"…`); } }, busy ? "AI đang soạn…" : "AI soạn lại"),
@@ -8253,7 +8314,7 @@ function DosingProtocolView({ isAdmin }){
           h("button", { className:"btn", onClick:()=>setEdit(cur) }, "Sửa"),
           cur.status==="approved" ? h("button", { className:"btn", onClick:()=>setStatus(cur, "draft") }, "Bỏ duyệt")
             : h("button", { className:"btn btnPrimary", onClick:()=>setStatus(cur, "approved") }, "Duyệt"))))),
-    edit && h(DosingProtocolEditor, { p:edit, onClose:()=>setEdit(null), onSaved:()=>{ setEdit(null); load(); } }));
+    edit && h(DosingProtocolEditor, { p:edit, onClose:()=>setEdit(null), onSaved:()=>{ setEdit(null); reloadOne(); } }));
 }
 
 // ---------- Kiểm liều (buddy) ----------
@@ -8268,7 +8329,8 @@ function DoseCheckModal({ row, protocols, doseErrors, onClose, onSaved }){
   const [saving, setSaving] = useState(false);
   const [showP, setShowP] = useState(false);
   const [pDetail, setPDetail] = useState(null);
-  useEffect(()=>{ if(!showP || !sit) return; pdCall("protocols", {}, 30000).then(d => setPDetail((d.protocols||[]).find(p=>p.id===sit)||null)).catch(()=>{}); }, [showP, sit]);
+  useEffect(()=>{ if(!showP || !sit) return; pdCall("protocolOne", { id:sit }, 30000).then(d => setPDetail(d.protocol||null))
+    .catch(()=> pdCall("protocols", {}, 60000).then(d => setPDetail((d.protocols||[]).find(p=>p.id===sit)||null)).catch(()=>{})); }, [showP, sit]);
   const errKeys = Object.keys(doseErrors||{}).filter(k => errs[k]);
   async function save(){
     if(ok===null) return window.alert("Chọn Đúng hoặc Cần sửa.");
@@ -13609,7 +13671,54 @@ function DictReviewerPicker({ settings, onSaved }){
     h("button", { className:"btn", disabled:!pick || saving, onClick:()=>{ save([...ids, pick]); setPick(""); } }, saving ? "Đang lưu…" : "Cấp quyền"),
     h("span", { style:{ color:"var(--inkSoft)", fontSize:11.5, flexBasis:"100%" } }, "Được: xem bản nháp, sửa, AI soạn và DUYỆT thẻ từ điển + phác đồ cắt liều. Không được: cài đặt, web đào tạo, xếp hạng, xoá phác đồ. Tên người duyệt ghi trên thẻ/phác đồ đã duyệt."));
 }
-function ProductDictionaryView({ isAdmin }){
+// 3/10/2026 (Phương): TIẾN ĐỘ HỌC THẺ — mỗi nhân viên đã mở/đọc bao nhiêu thẻ trong top bán chạy của nhà thuốc mình.
+function LearnProgressPanel({ isAdmin, shops }){
+  const h = React.createElement;
+  const [open, setOpen] = useState(false);
+  const [shop, setShop] = useState("");
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState(null);
+  const [sortK, setSortK] = useState("low");
+  useEffect(()=>{
+    if(!open) return;
+    let alive = true; setD(null); setErr(null);
+    pdCall("learnProgress", { shop }, 60000).then(x => alive && setD(x)).catch(e => alive && setErr(e));
+    return ()=>{ alive = false; };
+  }, [open, shop]);
+  const pct = (a,b) => b ? Math.round(a*100/b) : 0;
+  const bar = (p) => h("div", { style:{ display:"flex", alignItems:"center", gap:6, minWidth:120 } },
+    h("div", { style:{ flex:1, height:7, background:"#EEF1EF", borderRadius:4, overflow:"hidden" } }, h("div", { style:{ width:p+"%", height:"100%", background: p>=90 ? CL360.good : p>=50 ? CL360.warn : CL360.bad } })),
+    h("span", { style:{ fontSize:11.5, fontWeight:700, width:34, textAlign:"right" } }, p+"%"));
+  const rows = d ? [...(d.rows||[])].sort(sortK==="low" ? (a,b)=>pct(a.read50,a.of50)-pct(b.read50,b.of50) : sortK==="high" ? (a,b)=>pct(b.read50,b.of50)-pct(a.read50,a.of50) : (a,b)=>String(a.shop).localeCompare(String(b.shop)) || String(a.name).localeCompare(String(b.name),"vi")) : [];
+  const done = rows.filter(r => r.of50 && pct(r.read50, r.of50)>=90).length;
+  return h("div", { className:"card", style:{ marginBottom:10, padding:"10px 14px" } },
+    h("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"center", cursor:"pointer", gap:8 }, onClick:()=>setOpen(!open) },
+      h("b", { style:{ fontSize:13.5 } }, "📊 Tiến độ học thẻ của nhân viên"),
+      h("span", { style:{ fontSize:12, fontWeight:700, color:"var(--pine)" } }, open ? "Thu gọn ▲" : "Xem ▼")),
+    open && h("div", { style:{ marginTop:8 } },
+      h("div", { style:{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center", marginBottom:8 } },
+        d && d.canPickShop && h("select", { value:shop, onChange:e=>setShop(e.target.value), style:{ padding:"5px 8px", border:"1px solid var(--line)", borderRadius:8, fontSize:12.5 } },
+          h("option", { value:"" }, "Tất cả nhà thuốc"), (shops||[]).map(sc => h("option", { key:sc, value:sc }, shopLabel(sc)))),
+        h("select", { value:sortK, onChange:e=>setSortK(e.target.value), style:{ padding:"5px 8px", border:"1px solid var(--line)", borderRadius:8, fontSize:12.5 } },
+          h("option", { value:"low" }, "Học ít nhất trước"), h("option", { value:"high" }, "Học nhiều nhất trước"), h("option", { value:"shop" }, "Theo nhà thuốc")),
+        d && h("span", { style:{ fontSize:12, color:"var(--inkSoft)" } }, `${done}/${rows.length} người đã học ≥ 90% top 50 của nhà thuốc mình`)),
+      err ? h("div", { style:{ color:CL360.bad, fontSize:12.5 } }, "Lỗi: " + (err.message||err) + (/không rõ thao tác|chỉ dành/i.test(err.message||"") ? " — functions chưa deploy bản mới." : ""))
+      : !d ? h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)" } }, "Đang tải…")
+      : !rows.length ? h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)" } }, "Chưa có nhân viên.")
+      : h("div", { style:{ overflowX:"auto", maxHeight:460, overflowY:"auto" } }, h("table", { className:"tblCompact", style:{ width:"100%" } },
+        h("thead", null, h("tr", null, ["Nhân viên","NT","Top 50 (bắt buộc)","","Top 150","7 ngày qua","Lần đọc gần nhất","Chưa học (top 50)"].map((x,i) => h("th", { key:i, style:{ textAlign:"left", whiteSpace:"normal" } }, x)))),
+        h("tbody", null, rows.map(r => h("tr", { key:r.id },
+          h("td", { style:{ fontWeight:600 } }, r.name, r.role ? h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)", fontWeight:400 } }, r.role) : null),
+          h("td", { className:"nw" }, shopLabel(r.shop)),
+          h("td", { className:"nw" }, `${r.read50}/${r.of50}`),
+          h("td", null, bar(pct(r.read50, r.of50))),
+          h("td", { className:"nw" }, `${r.read150}/${r.of150}`),
+          h("td", { className:"nw" }, r.week ? `${r.week} thẻ` : h("span", { style:{ color:CL360.bad } }, "0")),
+          h("td", { className:"nw" }, r.last ? r.last.split("-").reverse().join("/") : "—"),
+          h("td", { style:{ fontSize:11.5, color:"var(--inkSoft)", maxWidth:280 } }, (r.unread||[]).join(", ") || "✓")))))),
+      h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:6 } }, "Thẻ được tính là \"đã học\" khi nhân viên mở thẻ trong tab Tra cứu sản phẩm và đọc ít nhất 30 giây. Thực tập sinh cần ≥ 90% top 50 trước khi buddy phỏng vấn.")));
+}
+function ProductDictionaryView({ isAdmin, myStaff }){
   const h = React.createElement;
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
@@ -13674,6 +13783,15 @@ function ProductDictionaryView({ isAdmin }){
       setMsg(`Đã soạn ${r.generated}/${r.requested} thẻ${r.failed?` · ${r.failed} lỗi (thử lại sau)`:""}${r.skipped?` · ${r.skipped} thẻ đã duyệt nên giữ nguyên`:""}.`);
       await load();
     } catch(e){ setMsg("Lỗi: " + (e.message||e)); if(ids) window.alert("Chưa soạn được thẻ: " + (e.message||e)); }
+    setBusy("");
+  }
+  async function bulkReview(pids){
+    if(!pids.length) return;
+    const who = window.prompt(`Duyệt ${pids.length} thẻ đang hiện trong danh sách.\nNhân viên sẽ thấy ngay các thẻ này với dấu ✓.\n\nTên dược sĩ duyệt:`, (myStaff && myStaff.name) || "");
+    if(who===null) return;
+    setBusy("bulk"); setMsg("");
+    try{ const r = await pdCall("bulkReview", { productIds:pids, reviewerName:who.trim()||undefined }, 120000); setMsg(`Đã duyệt ${r.updated} thẻ${r.skipped ? ` (${r.skipped} thẻ bỏ qua vì chưa có nội dung hoặc đã duyệt)` : ""}.`); await load(); }
+    catch(e){ window.alert("Lỗi: " + (e.message||e) + (/không rõ thao tác/i.test(e.message||"") ? " — functions chưa deploy bản mới." : "")); }
     setBusy("");
   }
   async function rerank(){
@@ -13829,6 +13947,7 @@ function ProductDictionaryView({ isAdmin }){
       h("b", null, "🩺 Bạn là người duyệt nội dung đào tạo"), h("span", { style:{ color:"var(--inkSoft)" } }, "— xem cả thẻ AI chưa duyệt (lọc \"Chưa duyệt\"), sửa và bấm Duyệt; soạn thêm thẻ còn thiếu."),
       missingTop>0 && h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:()=>generate(null) }, busy==="gen" ? "AI đang soạn…" : `Soạn thẻ cho ${Math.min(12, missingTop)} mã tiếp theo`)),
     isAdmin && h(DictReviewerPicker, { settings:data.settings, onSaved:load }),
+    (isAdmin || canEdit || (myStaff && myStaff.role==="Cửa hàng trưởng")) && h(LearnProgressPanel, { isAdmin, shops:[...new Set([...(shopInfo.shops||[]), ...Object.keys(rk.byShopTop||{})])].sort() }),
     msg && h("div", { className:"card", style:{ fontSize:12.5, padding:"8px 12px", marginBottom:10 } }, msg),
     !isAdmin ? h("div", { className:"metrics" },
       h("div", { className:"metric" }, h("div", { className:"label" }, "Mã bán chạy khu vực"), h("div", { className:"value" }, fmtNum(rk.items.length + unionList.length)), unionList.length>0 && h("div", { style:{ fontSize:11, color:"var(--inkSoft)" } }, `top ${rk.items.length} chung + ${unionList.length} mã bán tốt riêng từng nhà thuốc`)),
@@ -13845,7 +13964,7 @@ function ProductDictionaryView({ isAdmin }){
     !isAdmin && myTop.length>0 && h("div", { className:"card", style:{ padding:"8px 12px", marginBottom:10, fontSize:12.5 } },
       h("b", null, `Top ${myTop.length} bán chạy của shop bạn: đã học ${myReadCount}/${myTop.length} thẻ`),
       h("div", { style:{ background:"#F0EEE2", borderRadius:5, height:7, marginTop:5 } }, h("div", { style:{ width:Math.round(myReadCount/myTop.length*100)+"%", height:7, borderRadius:5, background:"var(--pine)" } })),
-      h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:4 } }, "Mở từng thẻ để đọc — app tự ghi nhận. Thực tập sinh cần học ≥ 90% trước khi buddy phỏng vấn.")),
+      h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:4 } }, "Mở từng thẻ và đọc ít nhất 30 giây — app tự ghi nhận \"Đã học\". Thực tập sinh cần học ≥ 90% trước khi buddy phỏng vấn.")),
     h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", marginBottom:6 } },
       h("span", { style:{ fontSize:12, fontWeight:700 } }, "🏪 Nhà thuốc:"),
       h("select", { value:shopF, onChange:e=>{ setShopTouched(true); setShopF(e.target.value); }, style:{ padding:"5px 8px", border:"1px solid var(--line)", borderRadius:8, fontSize:12.5 } },
@@ -13859,6 +13978,11 @@ function ProductDictionaryView({ isAdmin }){
       !isAdmin && myTop.length>0 && !shopF && chip("myshop", `Top shop mình (${myReadCount}/${myTop.length})`, flt, setFlt),
       chip("all", "Tất cả", flt, setFlt), chip("heso", "Hàng hệ số", flt, setFlt), chip("rx", "Thuốc kê đơn", flt, setFlt),
       canEdit && chip("missing", "Chưa có thẻ", flt, setFlt), canEdit && chip("unreviewed", "Chưa duyệt", flt, setFlt)),
+    canEdit && (()=>{ const pend = list.filter(it => it.d && it.d.entry && it.d.status!=="reviewed"); const pick = pend.slice(0, 300);
+      return pend.length>0 && h("div", { style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", background:"#FDF6E7", border:"1px solid #F4D19B", borderRadius:8, padding:"7px 10px", marginBottom:8, fontSize:12.5 } },
+        h("span", null, `${pend.length} thẻ chưa duyệt trong danh sách đang lọc${pend.length>300 ? " (mỗi lần duyệt tối đa 300 thẻ đầu)" : ""}`),
+        h("button", { className:"btn btnPrimary", style:{ fontSize:12, padding:"4px 12px" }, disabled:!!busy, onClick:()=>bulkReview(pick.map(it => it.pid)) }, busy==="bulk" ? "Đang duyệt…" : `✓ Duyệt hàng loạt ${pick.length} thẻ`),
+        h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, "Mẹo: chọn 1 nhà thuốc + 1 ngành hàng rồi duyệt từng nhóm.")); })(),
     h("div", { style:{ display:"flex", gap:4, flexWrap:"wrap", marginBottom:12 } },
       chip("all", `Mọi ngành hàng (${all.length})`, type, setType),
       Object.keys(types).sort((a,b)=>types[b]-types[a]).map(t => chip(t, `${t} (${types[t]})`, type, setType))),
@@ -14282,10 +14406,10 @@ function ProductDictionaryModal({ isAdmin, item, pos, total, busy, onPrev, onNex
   const [editing, setEditing] = useState(false);
   const d = item.d; const e = d && d.entry;
   useEffect(()=>{ setEditing(false); }, [item.pid]);
-  // 30/9/2026: nhân viên mở thẻ có nội dung ≥ 8 giây → ghi "đã học" (tính tiến độ thực tập sinh)
+  // 30/9/2026: nhân viên mở thẻ có nội dung ≥ 30 giây (3/10/2026 Phương: từ 8 → 30 giây) → ghi "đã học" (tính tiến độ thực tập sinh)
   useEffect(()=>{
     if(isAdmin || !e) return undefined;
-    const t = setTimeout(()=>{ pdCall("viewed", { productId:item.pid }, 20000).then(()=>onViewed && onViewed(item.pid)).catch(()=>{}); }, 8000);
+    const t = setTimeout(()=>{ pdCall("viewed", { productId:item.pid }, 20000).then(()=>onViewed && onViewed(item.pid)).catch(()=>{}); }, 30000);
     return ()=>clearTimeout(t);
   }, [item.pid, !!e]);
   useEffect(()=>{
@@ -22223,8 +22347,12 @@ function ReplenishView({ isAdmin, myStaff, onNavigate }){
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
-  const [shop, setShop] = useState("all");
+  // 3/10/2026: quản lý mặc định xem 1 nhà thuốc (nhớ lựa chọn lần trước) — "Tất cả NT" (~13MB) chỉ tải khi chọn
+  const [shop, setShop] = useState(()=>{ if(!isAdmin) return "all"; try{ const v = localStorage.getItem("replShop"); if(v) return v; }catch(e){} return DEFAULT_SHOPS[0] || "all"; });
   const [view, setView] = useState("cust");
+  const [zaloFor, setZaloFor] = useState(null);   // khách đang soạn tin Zalo gộp
+  const [zaloTone, setZaloTone] = useState("than");
+  const [zaloText, setZaloText] = useState("");
   const [timeF, setTimeF] = useState("now");
   const [staffF, setStaffF] = useState("all");
   const [prodF, setProdF] = useState(null);
@@ -22267,17 +22395,22 @@ function ReplenishView({ isAdmin, myStaff, onNavigate }){
   }
 
   // 2/10/2026: mở lại tab trong cùng phiên → hiện NGAY dữ liệu lần trước, tải bản mới ở nền rồi thay.
+  // 3/10/2026: bộ nhớ đệm theo từng nhà thuốc (quản lý đổi nhà thuốc → tải đúng nhà thuốc đó).
+  const loadSeq = useRef(0);
   async function load(){
-    const cached = window.__replListCache;
-    if(cached){ setData(cached); setLoading(false); } else setLoading(true);
+    const key = isAdmin ? shop : "mine";
+    const store = (window.__replListCache && typeof window.__replListCache==="object" && !window.__replListCache.ok) ? window.__replListCache : (window.__replListCache = {});
+    const cached = store[key];
+    if(cached){ setData(cached); setLoading(false); } else { setData(null); setLoading(true); }
     setErr(null);
+    const my = ++loadSeq.current;
     try{
-      const d = await callCf(`${REPL_FN}replenishmentList?shop=all`, {}, 120000);
-      window.__replListCache = d; setData(d);
-    } catch(e){ if(!cached) setErr(e.message || String(e)); }
-    setLoading(false);
+      const d = await callCf(`${REPL_FN}replenishmentList?shop=${encodeURIComponent(isAdmin ? shop : "all")}`, {}, 120000);
+      store[key] = d; if(my===loadSeq.current) setData(d);
+    } catch(e){ if(!cached && my===loadSeq.current) setErr(e.message || String(e)); }
+    if(my===loadSeq.current) setLoading(false);
   }
-  useEffect(()=>{ load(); }, []);
+  useEffect(()=>{ load(); if(isAdmin){ try{ localStorage.setItem("replShop", shop); }catch(e){} } }, [shop]);
 
   async function recompute(){
     setComputing(true);
@@ -22306,6 +22439,24 @@ function ReplenishView({ isAdmin, myStaff, onNavigate }){
     const me = isAdmin ? "Upharma" : ((myStaff && myStaff.name) || "nhân viên");
     return `Dạ chào ${ten}, em là ${me} bên nhà thuốc Upharma ạ. Lần trước ${ten} lấy ${it.productName} (${fmtNum(it.lastQty)} ${it.unit||""}) ngày ${replDmy(it.lastDate)}, theo liều dùng thì ${it.daysLeft>0 ? `khoảng ${it.daysLeft} ngày nữa là hết` : "chắc đã sắp hết/hết rồi"} ạ. Nhà thuốc vẫn có sẵn hàng, ${ten} cần em giữ sẵn để ghé lấy hoặc giao tận nhà không ạ?`;
   }
+  // 3/10/2026: tin nhắn Zalo GỘP mọi sản phẩm sắp hết của 1 khách — 3 giọng văn, sửa được trước khi gửi
+  const ZALO_TONES = [["than","Thân mật"],["lichsu","Lịch sự"],["caotuoi","Khách lớn tuổi"],["ngan","Ngắn gọn"]];
+  function zaloScript(c, its, tone){
+    const ten = (c.name || "").trim();
+    const goi = tone==="caotuoi" ? (ten ? `cô/chú ${ten.split(" ").slice(-1)[0]}` : "cô/chú") : (ten || "anh/chị");
+    const me = isAdmin ? "nhà thuốc Upharma" : `${(myStaff && myStaff.name) || "nhân viên"} bên nhà thuốc Upharma${c.shop ? " " + String(c.shop).replace(/^SHOP/,"") : ""}`;
+    const list = its.map(it => `• ${it.productName}${it.daysLeft>0 ? ` (còn khoảng ${it.daysLeft} ngày)` : it.daysLeft===0 ? " (hết hôm nay)" : " (chắc đã hết rồi)"}`).join("\n");
+    const one = its.length===1;
+    if(tone==="ngan") return `Dạ ${goi} ơi, em ${me} ạ. ${one ? `${its[0].productName} ${goi} dùng chắc sắp hết` : `Mấy sản phẩm ${goi} đang dùng chắc sắp hết`}, ${goi} cần em giữ hàng hoặc giao tận nhà không ạ?`;
+    if(tone==="lichsu") return `Kính chào ${goi}, em là ${me}.\nTheo lịch sử mua, ${one ? "sản phẩm" : "các sản phẩm"} ${goi} đang dùng sắp hết:\n${list}\nĐể việc dùng không bị gián đoạn, nhà thuốc có thể giữ sẵn hàng để ${goi} ghé lấy hoặc giao tận nơi. ${goi.charAt(0).toUpperCase()+goi.slice(1)} vui lòng phản hồi giúp em ạ. Cảm ơn ${goi}!`;
+    if(tone==="caotuoi") return `Dạ con chào ${goi}, con là ${me} ạ.\nCon nhắc ${goi} ${one ? "thuốc" : "mấy loại"} ${goi} đang dùng sắp hết rồi ạ:\n${list}\n${goi.charAt(0).toUpperCase()+goi.slice(1)} nhớ dùng đều, đừng để đứt ạ. Nếu ${goi} ngại đi lại, con gửi tận nhà cho ${goi} nhé. ${goi.charAt(0).toUpperCase()+goi.slice(1)} nhắn lại hoặc gọi cho con ạ.`;
+    return `Dạ chào ${goi}, em là ${me} ạ 😊\nEm thấy ${one ? "sản phẩm" : "mấy sản phẩm"} ${goi} đang dùng sắp hết rồi nè:\n${list}\nNhà thuốc vẫn có sẵn hàng, ${goi} cần em giữ để ghé lấy hay giao tận nhà luôn ạ?`;
+  }
+  function openZalo(c, its){ setZaloFor({ c, its }); setZaloText(zaloScript(c, its, zaloTone)); }
+  async function copyText(txt, key){
+    try{ await navigator.clipboard.writeText(txt); setCopied(key); setTimeout(()=>setCopied(null), 2000); }
+    catch(e){ window.prompt("Sao chép tin nhắn:", txt); }
+  }
   async function copyScript(c, it){
     const txt = script(c, it);
     try{ await navigator.clipboard.writeText(txt); setCopied(c.phone+it.productId); setTimeout(()=>setCopied(null), 2000); }
@@ -22316,7 +22467,11 @@ function ReplenishView({ isAdmin, myStaff, onNavigate }){
   const allCustomers = (data && data.customers) || [];
   // 27/9/2026: lọc theo nhà thuốc ngay trên máy (chip có số khách từng NT theo mốc thời gian đang chọn)
   const shopCount = {};
-  allCustomers.forEach(c => { if((c.items||[]).some(it => replTimeOk(it.daysLeft, timeF))) shopCount[c.shop] = (shopCount[c.shop]||0) + 1; });
+  const mb = data && data.meta && data.meta.shopBuckets;
+  if(isAdmin && mb) Object.keys(mb).forEach(k => { shopCount[k] = mb[k][timeF] || 0; });
+  else if(isAdmin && data && data.meta && data.meta.byShop && timeF==="all") Object.assign(shopCount, data.meta.byShop);
+  allCustomers.forEach(c => { if(!mb && shop==="all" && (c.items||[]).some(it => replTimeOk(it.daysLeft, timeF))) shopCount[c.shop] = (shopCount[c.shop]||0) + 1; });
+  if(isAdmin && shop!=="all" && !mb){ shopCount[shop] = allCustomers.filter(c => (c.items||[]).some(it => replTimeOk(it.daysLeft, timeF))).length; }
   const customers = shop==="all" ? allCustomers : allCustomers.filter(c => c.shop===shop);
   const s = vnSearchNorm(q);
   const rows = customers.map(c => {
@@ -22347,6 +22502,7 @@ function ReplenishView({ isAdmin, myStaff, onNavigate }){
   });
   const eff = (data && data.effectiveness) || { contacts30:0, converted30:0, byStaff:{} };
   const meta = data && data.meta;
+  const kpi = data && data.kpi;
 
   // Nhu cầu theo sản phẩm (tính từ danh sách khách của shop đang xem + thông số chu kỳ toàn chuỗi)
   const prodAgg = {};
@@ -22428,7 +22584,23 @@ function ReplenishView({ isAdmin, myStaff, onNavigate }){
     ])),
     rc(TablePager, { key:"pg", ...prodPaged }),
   ]);
-  else if(view==="eff") body = rc("div", { key:"eff", className:"card" }, [
+  else if(view==="eff") body = rc("div", { key:"effw" }, [
+   kpi && (kpi.shops||[]).length>0 && rc("div", { key:"rank", className:"card", style:{ marginBottom:12 } }, [
+    rc("div", { key:"h", style:{ fontWeight:700, fontSize:15, marginBottom:4 } }, "🏆 Bảng xếp hạng nhà thuốc — khách quay lại mua sau khi được nhắc (30 ngày)"),
+    rc("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } }, "Xếp theo số khách đã mua lại đúng sản phẩm sau khi được nhắc, rồi tới tỉ lệ mua lại."),
+    rc("div", { key:"tw", style:{ overflowX:"auto" } }, rc("table", { className:"tblCompact", style:{ width:"100%" } }, [
+      rc("thead", { key:"h" }, rc("tr", null, ["#","Nhà thuốc","Khách đã nhắc","Lượt nhắc","Khách mua lại","Tỉ lệ mua lại"].map((x,i) => rc("th", { key:i, style:{ textAlign:i>1?"right":"left" } }, x)))),
+      rc("tbody", { key:"b" }, kpi.shops.map((r,i) => rc("tr", { key:r.shop, style:{ background: (!isAdmin && myStaff && r.shop===myStaff.shop) ? "var(--pineSoft)" : undefined } }, [
+        rc("td", { key:"r", style:{ fontWeight:800 } }, i<3 ? ["🥇","🥈","🥉"][i] : String(i+1)),
+        rc("td", { key:"n", style:{ fontWeight:600 } }, String(r.shop).replace(/^SHOP/,"Nhà thuốc ")),
+        rc("td", { key:"c", style:{ textAlign:"right" } }, fmtNum(r.customers)),
+        rc("td", { key:"l", style:{ textAlign:"right" } }, fmtNum(r.contacts)),
+        rc("td", { key:"v", style:{ textAlign:"right", fontWeight:700, color:"#15803d" } }, fmtNum(r.convertedCustomers)),
+        rc("td", { key:"p", style:{ textAlign:"right" } }, `${r.rate}%`),
+      ]))),
+    ])),
+   ]),
+   rc("div", { key:"eff", className:"card" }, [
     rc("div", { key:"h", style:{ fontWeight:700, fontSize:15, marginBottom:4 } }, "Hiệu quả nhắc tái mua theo nhân viên (30 ngày)"),
     rc("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } }, "\"Mua lại\" = sau khi được nhắc, khách đã mua lại ĐÚNG mã hàng đó (hệ thống tự đối chiếu mỗi sáng)."),
     Object.keys(eff.byStaff).length===0 ? rc("div", { key:"e", className:"emptyState" }, "Chưa có lượt liên hệ nào trong 30 ngày.") :
@@ -22440,6 +22612,7 @@ function ReplenishView({ isAdmin, myStaff, onNavigate }){
         rc("td", { key:"r", style:{ textAlign:"right" } }, v.contacts ? `${Math.round(v.converted*100/v.contacts)}%` : "—"),
       ]))),
     ]),
+   ]),
   ]);
   else body = rc("div", { key:"cust" }, [
     rows.length===0 ? rc("div", { key:"e", className:"card" }, rc("div", { className:"emptyState" }, "Không có khách nào ở mục này 🎉")) :
@@ -22462,6 +22635,7 @@ function ReplenishView({ isAdmin, myStaff, onNavigate }){
             rc("div", { key:"s" }, String(c.shop||"").replace(/^SHOP/,"NT")),
             rc("div", { key:"p", style:{ color: c.assignedStaffName ? "var(--inkSoft)" : "#b45309", fontWeight: c.assignedStaffName ? 400 : 700 } }, c.assignedStaffName ? `Phụ trách: ${c.assignedStaffName}` : "Chưa ai nhận chăm sóc"),
             claimControls(c),
+            rc("div", { key:"zl" }, rc("button", { type:"button", className:"btn btnGhost", style:{ fontSize:12, padding:"5px 10px", marginTop:5 }, onClick:()=>openZalo(c, c.its) }, c.its.length>1 ? `💬 Tin Zalo gộp ${c.its.length} SP` : "💬 Soạn tin Zalo")),
           ]),
         ]),
         ...c.its.map(it => {
@@ -22508,6 +22682,21 @@ function ReplenishView({ isAdmin, myStaff, onNavigate }){
       ]),
     ]));
 
+  const zaloPhone = zaloFor ? String(zaloFor.c.phone||"").replace(/\D/g,"") : "";
+  const zaloEl = zaloFor && rc("div", { key:"zalo", className:"modalOverlay", onClick:()=>setZaloFor(null) },
+    rc("div", { className:"modal", onClick:e=>e.stopPropagation(), style:{ maxWidth:560 } }, [
+      rc("div", { key:"t", style:{ fontWeight:700, fontSize:17, marginBottom:2 } }, `💬 Tin nhắn Zalo — ${zaloFor.c.name || zaloFor.c.phone}`),
+      rc("div", { key:"s", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:10 } }, `${zaloFor.its.length} sản phẩm sắp/đã hết · chọn giọng văn, sửa nếu cần rồi chép và dán vào Zalo của khách.`),
+      rc("div", { key:"tone", style:{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:8 } }, ZALO_TONES.map(([k,l]) => rc("button", { key:k, type:"button", onClick:()=>{ setZaloTone(k); setZaloText(zaloScript(zaloFor.c, zaloFor.its, k)); },
+        style:{ padding:"5px 11px", borderRadius:16, fontSize:12.5, fontWeight:700, cursor:"pointer", border: zaloTone===k ? "1px solid var(--pine)" : "1px solid var(--line)", background: zaloTone===k ? "var(--pine)" : "#fff", color: zaloTone===k ? "#fff" : "var(--ink)" } }, l))),
+      rc("textarea", { key:"x", rows:9, value:zaloText, onChange:e=>setZaloText(e.target.value), style:{ width:"100%", padding:"9px 11px", border:"1px solid var(--line)", borderRadius:8, fontSize:13.5, lineHeight:1.5, marginBottom:10 } }),
+      rc("div", { key:"b", className:"btnRow", style:{ flexWrap:"wrap", gap:6 } }, [
+        rc("button", { key:"c", type:"button", className:"btn btnGhost", onClick:()=>setZaloFor(null) }, "Đóng"),
+        zaloPhone && rc("a", { key:"z", className:"btn btnGhost", href:`https://zalo.me/${zaloPhone}`, target:"_blank", rel:"noopener", onClick:()=>copyText(zaloText, "zalo") }, "Chép & mở Zalo của khách"),
+        rc("button", { key:"cp", type:"button", className:"btn btnPrimary", onClick:()=>copyText(zaloText, "zalo") }, copied==="zalo" ? "✓ Đã chép" : "📋 Chép tin nhắn"),
+      ]),
+      rc("div", { key:"n", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:8 } }, "Gửi xong nhớ bấm \"Ghi kết quả liên hệ\" ở từng sản phẩm để tính vào chỉ tiêu và đo khách mua lại."),
+    ]));
   const shopChips = isAdmin && rc("div", { key:"shops", style:{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:10 } }, shopOpts.map(x => {
     const n = x==="all" ? Object.values(shopCount).reduce((a,b)=>a+b,0) : (shopCount[x]||0);
     const on = shop===x;
@@ -22529,7 +22718,7 @@ function ReplenishView({ isAdmin, myStaff, onNavigate }){
         rc("button", { key:"s", type:"button", className:"btn btnPrimary", disabled:!assignStaffId || claiming===assignFor.phone, onClick:()=>claim(assignFor, assignStaffId) }, claiming===assignFor.phone ? "Đang giao..." : "Giao & tạo việc"),
       ]),
     ]));
-  return rc("div", {}, [ head, shopChips, tiles, filters, body, modalEl, assignEl ]);
+  return rc("div", {}, [ head, shopChips, tiles, filters, body, modalEl, assignEl, zaloEl ]);
 }
 
 function StaffProgressPanel({ openTasks, doneTasks, roster, fixedShop, onPick, title }){
