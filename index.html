@@ -13697,8 +13697,23 @@ function ProductDictionaryView({ isAdmin }){
   const myTopSet = new Set(myTop.map(x => x.pid));
   const myExtra = myTop.filter(x => !inRank.has(x.pid)).map(x => ({ pid:x.pid, name:x.name, group:x.group, rank:null, type:"", extra:true }));
   const myExtraSet = new Set(myExtra.map(x => x.pid));
-  const extra = Object.values(dict).filter(d => d.productId && d.entry && !inRank.has(d.productId) && !myExtraSet.has(d.productId)).map(d => ({ pid:d.productId, name:d.name||d.productId, rank:null, type:"", extra:true }));
-  const all0 = [...rk.items, ...myExtra, ...extra].map(it => ({ ...it, d: dict[it.pid] || null }));
+  // 3/10/2026 (Phương: "toàn khu vực 375 ít hơn cả 1 shop riêng"): Toàn khu vực = top khu vực + HỢP các mã
+  // nằm trong top 150 của từng nhà thuốc (mã bán tốt ở 1 vài nhà nhưng ngoài top chung), xếp tiếp theo số nhà thuốc có mã đó.
+  const shopTopAll = rk.byShopTop || {};
+  const unionMap = {};
+  Object.values(shopTopAll).forEach(arr => (arr||[]).forEach((x, i) => {
+    if(!x || !x.pid || inRank.has(x.pid)) return;
+    const u = unionMap[x.pid] || (unionMap[x.pid] = { pid:x.pid, name:x.name, group:x.group, n:0, sumRank:0 });
+    u.n += 1; u.sumRank += i + 1;
+  }));
+  const unionList = Object.values(unionMap).sort((a,b) => b.n - a.n || a.sumRank/a.n - b.sumRank/b.n)
+    .map((u, i) => ({ pid:u.pid, name:u.name, group:u.group, rank:rk.items.length + i + 1, type:"", shopsTop:u.n, fromShops:true }));
+  const unionSet = new Set(unionList.map(x => x.pid));
+  const myExtra2 = myExtra.filter(x => !unionSet.has(x.pid));
+  const myExtra2Set = new Set(myExtra2.map(x => x.pid));
+  const extra = Object.values(dict).filter(d => d.productId && d.entry && !inRank.has(d.productId) && !unionSet.has(d.productId) && !myExtra2Set.has(d.productId)).map(d => ({ pid:d.productId, name:d.name||d.productId, rank:null, type:"", extra:true }));
+  const typeOf = (it, d) => it.type || (d && d.official && d.official.productType) || "";
+  const all0 = [...rk.items, ...unionList, ...myExtra2, ...extra].map(it => { const d = dict[it.pid] || null; return { ...it, type: typeOf(it, d), d }; });
   // Lọc theo nhà thuốc: danh sách gốc = các mã còn tồn / có bán tại nhà thuốc đó (kể cả mã ngoài top khu vực)
   const allMap = {}; all0.forEach(it => { allMap[it.pid] = it; });
   // 3/10/2026 (Phương): chọn nhà thuốc → 150 mã bán tốt (30 ngày) của nhà thuốc đó; nhà thuốc mới mở < 1 tháng
@@ -13708,8 +13723,8 @@ function ProductDictionaryView({ isAdmin }){
   const shopIsNew = !!(shopF && ((rk.shopNew||{})[shopF] || !shopTopList.length));
   const withStock = (it) => { const r = stockMap[it.pid]; return shopRows ? { ...it, tonShop: r ? r[2] : 0, donViShop: r ? r[4] : "" } : it; };
   const all = !shopF ? all0
-    : shopIsNew ? rk.items.map(it => withStock({ ...it, d: dict[it.pid] || null }))
-    : shopTopList.map((x, i) => withStock({ ...(allMap[x.pid] || { pid:x.pid, name:x.name, group:x.group, type:"", extra:true }), name:(allMap[x.pid] && allMap[x.pid].name) || x.name, rankShop:i+1, d: dict[x.pid] || null }));
+    : shopIsNew ? rk.items.map(it => withStock({ ...it, type: typeOf(it, dict[it.pid]), d: dict[it.pid] || null }))
+    : shopTopList.map((x, i) => withStock({ ...(allMap[x.pid] || { pid:x.pid, name:x.name, group:x.group, type:typeOf({}, dict[x.pid]), extra:true }), name:(allMap[x.pid] && allMap[x.pid].name) || x.name, rankShop:i+1, d: dict[x.pid] || null }));
   const isRead = (pid) => !!views[String(pid||"").trim().replace(/\//g,"_")];
   const myReadCount = myTop.filter(x => isRead(x.pid)).length;
   const types = {};
@@ -13751,7 +13766,7 @@ function ProductDictionaryView({ isAdmin }){
     const idx = navList.indexOf(it);
     return h("div", { key:it.pid, className:"card", onClick:()=>setOpenPid(it.pid), style:{ margin:0, cursor:"pointer", display:"flex", flexDirection:"column", gap:6, padding:"12px 14px" } },
       h("div", { style:{ display:"flex", gap:8, alignItems:"flex-start" } },
-        (it.rankShop || it.rank) && (()=>{ const rr = it.rankShop || it.rank; return h("span", { title: it.rankShop ? "Hạng bán chạy tại nhà thuốc" : "Hạng bán chạy khu vực", style:{ flex:"none", minWidth:28, height:22, padding:"0 6px", borderRadius:6, background: rr<=10 ? "var(--pine)" : "#F0EEE2", color: rr<=10 ? "#fff" : "#5A5748", fontSize:11.5, fontWeight:800, display:"flex", alignItems:"center", justifyContent:"center" } }, "#"+rr); })(),
+        (it.rankShop || it.rank) && (()=>{ const rr = it.rankShop || it.rank; return h("span", { title: it.rankShop ? "Hạng bán chạy tại nhà thuốc" : it.fromShops ? `Ngoài top 150 chung — nằm trong top 150 của ${it.shopsTop} nhà thuốc` : "Hạng bán chạy khu vực", style:{ flex:"none", minWidth:28, height:22, padding:"0 6px", borderRadius:6, background: rr<=10 ? "var(--pine)" : "#F0EEE2", color: rr<=10 ? "#fff" : "#5A5748", fontSize:11.5, fontWeight:800, display:"flex", alignItems:"center", justifyContent:"center" } }, "#"+rr); })(),
         h("div", { style:{ flex:1, minWidth:0 } },
           h("div", { style:{ fontWeight:700, fontSize:13.5, lineHeight:1.3 } }, it.name),
           h("div", { style:{ fontSize:11, color:"var(--inkSoft)", marginTop:2 } }, e && e.hoatChat ? e.hoatChat : (it.type || it.pid))),
@@ -13782,8 +13797,8 @@ function ProductDictionaryView({ isAdmin }){
       h("div", { style:{ fontWeight:800, fontSize:14, margin:"4px 0 8px", display:"flex", gap:8, alignItems:"baseline" } }, g,
         h("span", { style:{ fontWeight:500, fontSize:11.5, color:"var(--inkSoft)" } }, isAdmin ? `${groups[g].length} mã · ${fmtVNDCompact(groups[g].reduce((s,x)=>s+(x.rev30||0),0))}/30 ngày` : `${groups[g].length} mã`)),
       grid(groups[g]))));
-  } else body = (shopF && list.length > 300) ? h("div", null, grid(list.slice(0, 300)),
-      h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:10 } }, `Đang hiện 300/${list.length} mã bán chạy nhất tại ${shopLabel(shopF)} — gõ tên/hoạt chất hoặc chọn ngành hàng để thu hẹp.`))
+  } else body = (list.length > 300) ? h("div", null, grid(list.slice(0, 300)),
+      h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:10 } }, `Đang hiện 300/${list.length} mã bán chạy nhất ${shopF ? "tại " + shopLabel(shopF) : "toàn khu vực"} — gõ tên/hoạt chất hoặc chọn ngành hàng để thu hẹp.`))
     : grid(list);
   if(qs && (outside.length || catLoading)) body = h("div", null,
     list.length>0 && h("div", { style:{ fontWeight:800, fontSize:13, margin:"0 0 8px" } }, `Trong top bán chạy (${list.length})`),
@@ -13816,7 +13831,7 @@ function ProductDictionaryView({ isAdmin }){
     isAdmin && h(DictReviewerPicker, { settings:data.settings, onSaved:load }),
     msg && h("div", { className:"card", style:{ fontSize:12.5, padding:"8px 12px", marginBottom:10 } }, msg),
     !isAdmin ? h("div", { className:"metrics" },
-      h("div", { className:"metric" }, h("div", { className:"label" }, "Mã bán chạy khu vực"), h("div", { className:"value" }, fmtNum(rk.items.length))),
+      h("div", { className:"metric" }, h("div", { className:"label" }, "Mã bán chạy khu vực"), h("div", { className:"value" }, fmtNum(rk.items.length + unionList.length)), unionList.length>0 && h("div", { style:{ fontSize:11, color:"var(--inkSoft)" } }, `top ${rk.items.length} chung + ${unionList.length} mã bán tốt riêng từng nhà thuốc`)),
       h("div", { className:"metric good" }, h("div", { className:"label" }, "Có thẻ tra cứu"), h("div", { className:"value" }, fmtNum(have))),
       h("div", { className:"metric gold" }, h("div", { className:"label" }, "Hàng hệ số trong top"), h("div", { className:"value" }, fmtNum(rk.items.filter(x=>x.isHeSo).length))))
     : h("div", { className:"metrics" },
@@ -13834,7 +13849,7 @@ function ProductDictionaryView({ isAdmin }){
     h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", marginBottom:6 } },
       h("span", { style:{ fontSize:12, fontWeight:700 } }, "🏪 Nhà thuốc:"),
       h("select", { value:shopF, onChange:e=>{ setShopTouched(true); setShopF(e.target.value); }, style:{ padding:"5px 8px", border:"1px solid var(--line)", borderRadius:8, fontSize:12.5 } },
-        h("option", { value:"" }, "Toàn khu vực (top bán chạy khu vực)"),
+        h("option", { value:"" }, "Toàn khu vực (gộp top bán chạy mọi nhà thuốc)"),
         [...new Set([...(shopInfo.shops||[]), ...Object.keys(rk.byShopTop||{}), ...(shopInfo.myShop ? [shopInfo.myShop] : [])])].sort()
           .map(sc => h("option", { key:sc, value:sc }, shopLabel(sc) + (sc===shopInfo.myShop ? " — nhà thuốc của bạn" : "") + ((rk.shopNew||{})[sc] ? " (mới mở)" : "")))),
       shopF && h("span", { style:{ fontSize:11.5, color: shopIsNew ? CL360.warn : "var(--inkSoft)" } },
@@ -14290,7 +14305,12 @@ function ProductDictionaryModal({ isAdmin, item, pos, total, busy, onPrev, onNex
     const o0 = d && d.official;
     if(!o0 || !o0._lite || fullOff.key===offKey) return undefined;
     let alive = true;
-    pdCall("dictOne", { productId:item.pid }, 30000).then(r => alive && setFullOff({ key:offKey, pid:item.pid, o:r.official || null })).catch(()=>{});
+    // 3/10/2026: lỗi/không có bản đầy đủ → lấy lại trực tiếp từ danh mục công ty (action "official")
+    pdCall("dictOne", { productId:item.pid }, 30000)
+      .then(r => (r.official && (r.official.sections||[]).length) ? r : pdCall("official", { productId:item.pid }, 90000))
+      .catch(() => pdCall("official", { productId:item.pid }, 90000))
+      .then(r => alive && r && r.official && setFullOff({ key:offKey, pid:item.pid, o:r.official }))
+      .catch(()=>{});
     return ()=>{ alive=false; };
   }, [offKey]);
   const o = (fullOff.pid===item.pid && fullOff.o) ? fullOff.o : (d && d.official);
@@ -14324,8 +14344,8 @@ function ProductDictionaryModal({ isAdmin, item, pos, total, busy, onPrev, onNex
     (o.otherType || o.description) && h("div", { style:{ fontSize:12.5, marginTop:8, lineHeight:1.55 } }, h("b", null, "Mô tả công dụng: "), o.otherType || "",
       o.description && !(o.sections||[]).length && h("div", { style:{ color:CL360.warn, fontSize:11.5, marginTop:4 } }, "Dữ liệu mô tả chi tiết đang ở định dạng cũ — bấm “Làm mới danh mục” để hiển thị gọn theo từng mục.")),
     (o.sections||[]).length>0 && h("div", { style:{ marginTop:8, display:"grid", gap:4 } },
-      h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)" } }, "Tờ thông tin sản phẩm (bấm từng mục để xem)"),
-      o.sections.map((sec,i) => h("details", { key:i, style:{ background:"#fff", border:"1px solid var(--line)", borderRadius:8, padding:"6px 10px" } },
+      h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)" } }, "Tờ thông tin sản phẩm (giống mục Toa thuốc trên POS — bấm từng mục để mở/đóng)"),
+      o.sections.map((sec,i) => h("details", { key:i, open: /^(Chỉ định|Cách dùng|Chống chỉ định)/i.test(sec.title||""), style:{ background:"#fff", border:"1px solid var(--line)", borderRadius:8, padding:"6px 10px" } },
         h("summary", { style:{ cursor:"pointer", fontWeight:700, fontSize:12.5 } }, sec.title),
         h("div", { style:{ fontSize:12.5, lineHeight:1.6, whiteSpace:"pre-line", marginTop:6 } }, sec.text)))),
     (o.doses||[]).length>0 && h("div", { style:{ marginTop:8 } },
