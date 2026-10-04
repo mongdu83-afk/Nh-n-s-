@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261004-4";
+window.__APP_BUILD = "20261004-5";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -8650,58 +8650,207 @@ function CourseLibraryView({ isAdmin, myStaff }){
       : h("div", { className:"card", style:{ padding:0, overflow:"hidden" } }, list.length ? list.map((c,i)=>row(c,i)) : h("div", { style:{ padding:14, fontSize:12.5, color:"var(--inkSoft)" } }, "Không có khoá phù hợp.")),
     open && h(CourseReaderModal, { id:open, canEdit, readMinSec:data.readMinSec, onClose:()=>setOpen(null), onRead:(id)=>setData(d=>({ ...d, mine:{ ...(d.mine||{}), [id]:todayISO() } })) }));
 }
-// ---------- Luyện tình huống cắt liều (thực tập sinh) ----------
+// ---------- Luyện tình huống cắt liều v2 (4/10/2026): Trắc nghiệm · Khách ảo · Tự viết ----------
+const TTS_MODES = [
+  { id:"quiz", label:"① Trắc nghiệm", sub:"Nhanh, app tự chấm, không tốn phí AI" },
+  { id:"chat", label:"② Khách ảo", sub:"Hỏi đáp như ở quầy — tính điều kiện" },
+  { id:"write", label:"③ Tự viết", sub:"Viết câu hỏi, xử trí, thuốc — tính điều kiện" },
+];
 function TtsPracticeModal({ row, onClose, onChanged }){
   const h = React.createElement;
+  const [mode, setMode] = useState("chat");
   const [cur, setCur] = useState(null);
   const [info, setInfo] = useState(null);
   const [ans, setAns] = useState({ hoi:"", xuTri:"", thuoc:"", danDo:"" });
+  const [quiz, setQuiz] = useState({ cauHoi:[], xuTri:null, thuoc:[] });
+  const [msgs, setMsgs] = useState([]);
+  const [input, setInput] = useState("");
   const [res, setRes] = useState(null);
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState(null);
   const [hist, setHist] = useState(null);
-  async function loadHist(){ try{ const r = await pbCall("practiceList", { hireId:row.id }, 60000); setHist(r); } catch(e){} }
-  async function next(){ setBusy("new"); setErr(null); setRes(null); setInfo(null); setAns({ hoi:"", xuTri:"", thuoc:"", danDo:"" });
-    try{ const r = await pbCall("practiceNew", { hireId:row.id }, 120000); if(r.ok===false) throw new Error(r.error); setCur(r); } catch(e){ setErr(e.message||String(e)); } setBusy(""); }
+  const chatRef = useRef(null);
+  async function loadHist(){ try{ setHist(await pbCall("practiceList", { hireId:row.id }, 60000)); } catch(e){} }
+  async function next(m){ const md = m || mode; setBusy("new"); setErr(null); setRes(null); setInfo(null); setMsgs([]); setInput("");
+    setAns({ hoi:"", xuTri:"", thuoc:"", danDo:"" }); setQuiz({ cauHoi:[], xuTri:null, thuoc:[] });
+    try{ const r = await pbCall("practiceNew", { hireId:row.id, mode:md }, 120000); if(r.ok===false) throw new Error(r.error); setCur(r); setMsgs([{ who:"kh", t:r.scenario.loiKhach }]); } catch(e){ setErr(e.message||String(e)); setCur(null); } setBusy(""); }
   async function ask(){ setBusy("ask"); try{ const r = await pbCall("practiceAsk", { hireId:row.id, id:cur.id }, 30000); setInfo(r.thongTinAn); } catch(e){ setErr(e.message||String(e)); } setBusy(""); }
-  async function submit(){ setBusy("sub"); setErr(null);
-    try{ const r = await pbCall("practiceSubmit", { hireId:row.id, id:cur.id, answer:ans }, 180000); if(r.ok===false) throw new Error(r.error); setRes(r); onChanged && onChanged(); loadHist(); }
+  async function send(){ const t = input.trim(); if(!t || busy) return; setInput(""); setMsgs(m => [...m, { who:"nv", t }]); setBusy("chat"); setErr(null);
+    try{ const r = await pbCall("practiceChat", { hireId:row.id, id:cur.id, message:t }, 90000); if(r.ok===false) throw new Error(r.error); setMsgs(m => [...m, { who:"kh", t:r.reply }]); }
     catch(e){ setErr(e.message||String(e)); } setBusy(""); }
-  useEffect(()=>{ loadHist(); next(); }, []);
-  const ta = (k, label, ph) => h("div", { className:"field", style:{ marginBottom:8 } }, h("label", null, label), h("textarea", { rows:2, value:ans[k], placeholder:ph, disabled:!!res, onChange:e=>setAns({ ...ans, [k]:e.target.value }) }));
+  async function submit(){ setBusy("sub"); setErr(null);
+    try{ const r = await pbCall("practiceSubmit", { hireId:row.id, id:cur.id, answer:ans, quiz }, 180000); if(r.ok===false) throw new Error(r.error); setRes(r); onChanged && onChanged(); loadHist(); }
+    catch(e){ setErr(e.message||String(e)); } setBusy(""); }
+  useEffect(()=>{ loadHist(); next("chat"); }, []);
+  useEffect(()=>{ if(chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight; }, [msgs]);
   const sc = res && res.score;
+  const scColor = sc>=80 ? CL360.good : sc>=60 ? CL360.warn : CL360.bad;
+  const ta = (k, label, ph) => h("div", { className:"field", style:{ marginBottom:8 } }, h("label", null, label), h("textarea", { rows:2, value:ans[k], placeholder:ph, disabled:!!res, onChange:e=>setAns({ ...ans, [k]:e.target.value }) }));
+  const optList = (key, opts, multi) => h("div", { style:{ display:"flex", flexDirection:"column", gap:4 } }, (opts||[]).map(o => {
+    const sel = multi ? quiz[key].includes(o.i) : quiz[key]===o.i;
+    const truth = res && res.caseKey && res.caseKey.quiz ? ((res.caseKey.quiz[key]||[])[o.i]||{}).d : null;
+    const bg = res ? (truth ? "#DCFCE7" : sel ? "#FEE2E2" : "#fff") : (sel ? "#EFF6FF" : "#fff");
+    return h("label", { key:o.i, style:{ display:"flex", gap:8, alignItems:"flex-start", fontSize:13, padding:"6px 9px", borderRadius:8, border:"1px solid " + (sel ? "#93C5FD" : "var(--line)"), background:bg, cursor: res ? "default" : "pointer" } },
+      h("input", { type: multi ? "checkbox" : "radio", checked:sel, disabled:!!res, onChange:()=>{ if(multi) setQuiz(q => ({ ...q, [key]: sel ? q[key].filter(x=>x!==o.i) : [...q[key], o.i] })); else setQuiz(q => ({ ...q, [key]:o.i })); } }),
+      h("span", null, o.t, res && truth && h("b", { style:{ color:CL360.good } }, "  ✓ đúng")));
+  }));
+  const nvTurns = msgs.filter(m=>m.who==="nv").length;
   return h("div", { className:"modalOverlay", onClick:onClose },
-    h("div", { className:"modal", onClick:e=>e.stopPropagation(), style:{ maxWidth:640, maxHeight:"92vh", overflow:"auto" } },
+    h("div", { className:"modal", onClick:e=>e.stopPropagation(), style:{ maxWidth:680, maxHeight:"94vh", overflow:"auto" } },
       h("div", { style:{ fontWeight:800, fontSize:17 } }, "🎯 Luyện tình huống cắt liều"),
-      h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:8 } }, `${row.name} · ${hist ? `đã làm ${hist.rows.filter(x=>x.status==="graded").length} bài` : ""} · cần ≥ ${hist ? hist.minN : 10} bài, TB ≥ ${hist ? hist.pass : 80} điểm trước khi soạn liều thật cạnh buddy`),
+      h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:8 } }, `${row.name}${hist ? ` · thư viện ${hist.libraryN} ca đã duyệt · đã làm ${hist.rows.filter(x=>x.status==="graded" && x.mode!=="quiz").length} bài khách ảo/tự viết (cần ≥ ${hist.minN}, TB ≥ ${hist.pass})` : ""}`),
+      h("div", { style:{ display:"flex", gap:6, marginBottom:10, flexWrap:"wrap" } }, TTS_MODES.map(m => h("button", { key:m.id, disabled:!!busy, onClick:()=>{ setMode(m.id); next(m.id); }, title:m.sub, style:{
+        flex:"1 1 150px", textAlign:"left", padding:"7px 10px", borderRadius:10, cursor:"pointer", fontFamily:"inherit", border:"1.5px solid " + (mode===m.id ? "var(--pine)" : "var(--line)"), background: mode===m.id ? "var(--pineSoft)" : "#fff" } },
+        h("div", { style:{ fontWeight:800, fontSize:13 } }, m.label), h("div", { style:{ fontSize:11, color:"var(--inkSoft)" } }, m.sub)))),
       err && h("div", { style:{ color:CL360.bad, fontSize:12.5, marginBottom:8 } }, err),
-      !cur ? h("div", { className:"emptyState" }, busy==="new" ? "Đang soạn tình huống…" : "—") : h("div", null,
-        h("div", { style:{ background:"#EFF6FF", border:"1px solid #BFDBFE", borderRadius:10, padding:"10px 12px", marginBottom:10 } },
-          h("div", { style:{ fontSize:11, fontWeight:800, color:"#1D4ED8", textTransform:"uppercase", letterSpacing:".04em" } }, `Tình huống · ${cur.title}${cur.doiTuong ? " · " + cur.doiTuong : ""}`),
-          h("div", { style:{ fontSize:13.5, marginTop:4 } }, h("b", null, cur.scenario.khach)),
-          h("div", { style:{ fontSize:13.5, marginTop:4, fontStyle:"italic" } }, `"${cur.scenario.loiKhach}"`),
-          info ? h("div", { style:{ fontSize:13, marginTop:6, background:"#fff", borderRadius:8, padding:"6px 9px" } }, h("b", null, "Khách trả lời khi được hỏi: "), info)
-            : !res && h("button", { className:"btn btnGhost", style:{ fontSize:12, marginTop:6 }, disabled:busy==="ask", onClick:ask }, "💬 Hỏi thêm khách (ghi câu hỏi bên dưới trước)")),
-        ta("hoi", "1. Bạn hỏi khách những gì? (câu hỏi sàng lọc)", "VD: bé mấy tuổi, nặng bao nhiêu kg, sốt bao lâu, có co giật không…"),
-        ta("xuTri", "2. Xử trí: cắt liều hay khuyên đi khám? Vì sao?", ""),
-        ta("thuoc", "3. Thuốc & liều (mỗi dòng 1 thuốc: tên – liều – số lần/ngày – mấy ngày)", ""),
-        ta("danDo", "4. Dặn dò khách", "Cách uống, khi nào quay lại/đi khám, chăm sóc tại nhà…"),
-        !res && h("div", { className:"btnRow", style:{ justifyContent:"flex-end" } },
+      !cur ? h("div", { className:"emptyState" }, busy==="new" ? "Đang lấy tình huống…" : "—") : h("div", null,
+        h("div", { style:{ background:"#EFF6FF", border:"1px solid #BFDBFE", borderRadius:10, padding:"9px 12px", marginBottom:10 } },
+          h("div", { style:{ fontSize:11, fontWeight:800, color:"#1D4ED8", textTransform:"uppercase", letterSpacing:".04em" } }, `${cur.title}${cur.doiTuong ? " · " + cur.doiTuong : ""}${!cur.fromLibrary ? " · ca AI soạn tạm (thư viện trống)" : ""}`),
+          h("div", { style:{ fontSize:13.5, marginTop:3 } }, h("b", null, cur.scenario.khach)),
+          mode!=="chat" && h("div", { style:{ fontSize:13.5, marginTop:3, fontStyle:"italic" } }, `"${cur.scenario.loiKhach}"`),
+          mode==="write" && (info ? h("div", { style:{ fontSize:13, marginTop:6, background:"#fff", borderRadius:8, padding:"6px 9px" } }, h("b", null, "Khách trả lời khi được hỏi: "), info)
+            : !res && h("button", { className:"btn btnGhost", style:{ fontSize:12, marginTop:6 }, disabled:busy==="ask", onClick:ask }, "💬 Hỏi thêm khách"))),
+        // ---- Khách ảo ----
+        mode==="chat" && h("div", null,
+          h("div", { ref:chatRef, style:{ border:"1px solid var(--line)", borderRadius:12, padding:10, height:280, overflowY:"auto", background:"#FAFAF7", display:"flex", flexDirection:"column", gap:6 } },
+            msgs.map((m,i) => h("div", { key:i, style:{ alignSelf: m.who==="nv" ? "flex-end" : "flex-start", maxWidth:"80%", background: m.who==="nv" ? "var(--pine)" : "#fff", color: m.who==="nv" ? "#fff" : "var(--ink)", border: m.who==="nv" ? "none" : "1px solid var(--line)", borderRadius:12, padding:"7px 11px", fontSize:13.3, lineHeight:1.45 } },
+              h("div", { style:{ fontSize:10, opacity:.75, marginBottom:2 } }, m.who==="nv" ? "Bạn" : "Khách"), m.t)),
+            busy==="chat" && h("div", { style:{ alignSelf:"flex-start", fontSize:12, color:"var(--inkSoft)" } }, "Khách đang trả lời…")),
+          !res && h("div", { style:{ display:"flex", gap:6, marginTop:8 } },
+            h("input", { value:input, onChange:e=>setInput(e.target.value), onKeyDown:e=>{ if(e.key==="Enter") send(); }, placeholder:"Hỏi khách hoặc tư vấn… (Enter để gửi)", name:"tts-chat", autoComplete:"off", style:{ flex:1, padding:"8px 10px", border:"1px solid var(--line)", borderRadius:8, fontSize:13.5 } }),
+            h("button", { className:"btn", disabled:!!busy || !input.trim(), onClick:send }, "Gửi")),
+          !res && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:4 } }, `Hỏi sàng lọc trước, rồi tư vấn thuốc + liều + dặn dò như ở quầy. Xong bấm "Kết thúc & chấm". (${nvTurns}/16 lượt)`)),
+        // ---- Trắc nghiệm ----
+        mode==="quiz" && cur.quiz && h("div", { style:{ display:"flex", flexDirection:"column", gap:10 } },
+          h("div", null, h("div", { style:{ fontWeight:700, fontSize:13, marginBottom:4 } }, "1. Bạn sẽ hỏi khách những câu nào? (chọn nhiều)"), optList("cauHoi", cur.quiz.cauHoi, true)),
+          h("div", null, h("div", { style:{ fontWeight:700, fontSize:13, marginBottom:4 } }, "2. Xử trí (chọn 1)"), optList("xuTri", cur.quiz.xuTri, false)),
+          h("div", null, h("div", { style:{ fontWeight:700, fontSize:13, marginBottom:4 } }, "3. Thuốc & liều phù hợp (chọn nhiều)"), optList("thuoc", cur.quiz.thuoc, true))),
+        // ---- Tự viết ----
+        mode==="write" && h("div", null,
+          ta("hoi", "1. Bạn hỏi khách những gì?", "VD: bé mấy tuổi, nặng bao nhiêu kg, sốt bao lâu…"),
+          ta("xuTri", "2. Xử trí: cắt liều hay khuyên đi khám? Vì sao?", ""),
+          ta("thuoc", "3. Thuốc & liều (mỗi dòng: tên – liều – số lần/ngày – mấy ngày)", ""),
+          ta("danDo", "4. Dặn dò khách", "")),
+        !res && h("div", { className:"btnRow", style:{ justifyContent:"flex-end", marginTop:10 } },
           h("button", { className:"btn btnGhost", onClick:onClose }, "Đóng"),
-          h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:submit }, busy==="sub" ? "AI đang chấm…" : "Nộp bài")),
-        res && h("div", { style:{ marginTop:6 } },
-          res.graded ? h("div", { style:{ border:`2px solid ${sc>=80 ? CL360.good : sc>=60 ? CL360.warn : CL360.bad}`, borderRadius:12, padding:"10px 12px" } },
-              h("div", { style:{ display:"flex", alignItems:"baseline", gap:8 } }, h("span", { style:{ fontSize:30, fontWeight:900, color: sc>=80 ? CL360.good : sc>=60 ? CL360.warn : CL360.bad } }, sc), h("span", { style:{ fontSize:13, color:"var(--inkSoft)" } }, "/100"),
-                res.scenario && res.scenario.canDiKham && h(Pill360, { text:"Tình huống cần khuyên đi khám", color:CL360.bad })),
+          h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:submit }, busy==="sub" ? "Đang chấm…" : mode==="chat" ? "Kết thúc & chấm" : "Nộp bài")),
+        // ---- Kết quả ----
+        res && h("div", { style:{ marginTop:10 } },
+          res.graded ? h("div", { style:{ border:`2px solid ${scColor}`, borderRadius:12, padding:"10px 12px" } },
+              h("div", { style:{ display:"flex", alignItems:"baseline", gap:8, flexWrap:"wrap" } }, h("span", { style:{ fontSize:30, fontWeight:900, color:scColor } }, sc), h("span", { style:{ fontSize:13, color:"var(--inkSoft)" } }, "/100"),
+                res.caseKey && res.caseKey.canDiKham && h(Pill360, { text:"Ca này phải khuyên đi khám", color:CL360.bad }),
+                res.parts && h("span", { style:{ fontSize:12, color:"var(--inkSoft)" } }, `Câu hỏi ${res.parts.cauHoi}% · Xử trí ${res.parts.xuTri}% · Thuốc ${res.parts.thuoc}%`)),
               (res.good||[]).length>0 && h("div", { style:{ fontSize:13, marginTop:6 } }, h("b", { style:{ color:CL360.good } }, "Làm tốt: "), res.good.join(" · ")),
+              (res.missed||[]).length>0 && h("div", { style:{ marginTop:6 } }, h("b", { style:{ fontSize:13, color:"#B45309" } }, "Câu cần hỏi mà chưa hỏi:"),
+                h("ul", { style:{ margin:"3px 0 0", paddingLeft:18, fontSize:13, lineHeight:1.5 } }, res.missed.map((x,i)=>h("li", { key:i }, x)))),
               (res.fix||[]).length>0 && h("ul", { style:{ margin:"6px 0 0", paddingLeft:18, fontSize:13, lineHeight:1.55, color:"#7F1D1D" } }, res.fix.map((x,i)=>h("li", { key:i }, x))),
-              res.model && h("div", { style:{ fontSize:12.8, marginTop:8, background:"#F0FDF4", borderRadius:8, padding:"7px 10px", whiteSpace:"pre-line" } }, h("b", null, "Đáp án gợi ý: "), res.model))
-            : h("div", { style:{ fontSize:12.8, color:CL360.warn, background:"#FFF7ED", borderRadius:8, padding:"8px 10px" } }, "AI chưa chấm được lúc này — tự đối chiếu với phác đồ bên dưới, bài này không tính điểm."),
-          res.protocol && h("details", { style:{ marginTop:10 } }, h("summary", { style:{ cursor:"pointer", fontWeight:700, fontSize:13 } }, `Xem phác đồ "${res.protocol.title}"`),
+              res.model && h("div", { style:{ fontSize:12.8, marginTop:8, background:"#F0FDF4", borderRadius:8, padding:"7px 10px", whiteSpace:"pre-line" } }, h("b", null, "Đáp án: "), res.model))
+            : h("div", { style:{ fontSize:12.8, color:CL360.warn, background:"#FFF7ED", borderRadius:8, padding:"8px 10px" } }, "AI chưa chấm được lúc này — tự đối chiếu đáp án bên dưới, bài này không tính điểm."),
+          res.caseKey && h("details", { style:{ marginTop:10 }, open: !res.graded }, h("summary", { style:{ cursor:"pointer", fontWeight:700, fontSize:13 } }, "Xem hồ sơ khách & đáp án chuẩn (dược sĩ đã duyệt)"),
+            h("div", { style:{ fontSize:12.8, lineHeight:1.6, marginTop:6, border:"1px solid var(--line)", borderRadius:8, padding:"8px 10px" } },
+              (res.caseKey.thongTinAn||[]).length>0 && h("div", null, h("b", null, "Khách sẽ nói khi được hỏi: "), res.caseKey.thongTinAn.map(t => `${t.chuDe}: ${t.traLoi}`).join(" · ")),
+              res.caseKey.canhBao && h("div", { style:{ color:CL360.bad } }, h("b", null, "Dấu hiệu cảnh báo: "), res.caseKey.canhBao),
+              h("div", null, h("b", null, "Bắt buộc hỏi: "), (res.caseKey.phaiHoi||[]).join(" · ")),
+              h("div", null, h("b", null, "Xử trí: "), res.caseKey.dapAn.xuTri),
+              (res.caseKey.dapAn.thuoc||[]).length>0 && h("div", null, h("b", null, "Thuốc: "), res.caseKey.dapAn.thuoc.join(" | ")),
+              (res.caseKey.dapAn.danDo||[]).length>0 && h("div", null, h("b", null, "Dặn dò: "), res.caseKey.dapAn.danDo.join(" · ")))),
+          res.protocol && h("details", { style:{ marginTop:8 } }, h("summary", { style:{ cursor:"pointer", fontWeight:700, fontSize:13 } }, `Xem phác đồ "${res.protocol.title}"`),
             h("div", { style:{ border:"1px solid var(--line)", borderRadius:8, padding:"6px 10px", marginTop:6, maxHeight:320, overflow:"auto" } }, h(DosingProtocolCard, { p:res.protocol }))),
           h("div", { className:"btnRow", style:{ justifyContent:"flex-end", marginTop:10 } },
             h("button", { className:"btn btnGhost", onClick:onClose }, "Đóng"),
-            h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:next }, busy==="new" ? "Đang soạn…" : "Bài mới →"))))));
+            h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:()=>next() }, busy==="new" ? "Đang lấy…" : "Bài mới →"))))));
+}
+// ---------- Thư viện tình huống luyện tập (Đào tạo › Tình huống luyện tập) ----------
+function TtsCaseEditor({ c, onClose, onSaved, kinds }){
+  const h = React.createElement;
+  const [f, setF] = useState(() => JSON.parse(JSON.stringify(c)));
+  const [busy, setBusy] = useState(false);
+  const lines = (arr) => (arr||[]).join("\n");
+  const toArr = (t) => String(t||"").split("\n").map(x=>x.trim()).filter(Boolean);
+  const optsTxt = (arr) => (arr||[]).map(o => (o.d ? "[x] " : "[ ] ") + o.t).join("\n");
+  const toOpts = (t) => toArr(t).map(x => ({ d:/^\[x\]/i.test(x), t:x.replace(/^\[[x ]\]\s*/i,"") }));
+  const tia = (label, val, on, rows) => h("div", { className:"field", style:{ marginBottom:8 } }, h("label", null, label), h("textarea", { rows:rows||2, value:val, onChange:e=>on(e.target.value) }));
+  async function save(status){ setBusy(true);
+    try{ const r = await pdCall("caseSave", { id:c.id, status, case:f }, 60000); if(r.ok===false) throw new Error(r.error); onSaved(); } catch(e){ window.alert("Lỗi: " + (e.message||e)); } setBusy(false); }
+  return h("div", { className:"modalOverlay", onClick:onClose },
+    h("div", { className:"modal", onClick:e=>e.stopPropagation(), style:{ maxWidth:720, maxHeight:"94vh", overflow:"auto" } },
+      h("div", { style:{ fontWeight:800, fontSize:17, marginBottom:4 } }, `Tình huống · ${f.protocolTitle||""}`),
+      h("div", { className:"field", style:{ marginBottom:8 } }, h("label", null, "Loại ca"), h("select", { value:f.kind, onChange:e=>setF({ ...f, kind:e.target.value }) }, Object.entries(kinds||{}).map(([k,v]) => h("option", { key:k, value:k }, v)))),
+      tia("Khách là ai (tuổi, cân nặng…)", f.khach, v=>setF({ ...f, khach:v })),
+      tia("Khách nói khi tới quầy", f.loiKhach, v=>setF({ ...f, loiKhach:v })),
+      tia("Tính cách khách", f.tinhCach, v=>setF({ ...f, tinhCach:v }), 1),
+      tia("Thông tin khách chỉ nói khi được hỏi (mỗi dòng: chủ đề: trả lời)", (f.thongTinAn||[]).map(x=>`${x.chuDe}: ${x.traLoi}`).join("\n"), v=>setF({ ...f, thongTinAn: toArr(v).map(x => { const i = x.indexOf(":"); return i>0 ? { chuDe:x.slice(0,i).trim(), traLoi:x.slice(i+1).trim() } : { chuDe:x, traLoi:"" }; }) }), 4),
+      h("label", { style:{ display:"flex", gap:8, alignItems:"center", fontSize:13, margin:"4px 0 8px" } }, h("input", { type:"checkbox", checked:!!f.canDiKham, onChange:e=>setF({ ...f, canDiKham:e.target.checked }) }), "Ca này PHẢI khuyên đi khám"),
+      tia("Dấu hiệu cảnh báo khách chưa nói", f.canhBao, v=>setF({ ...f, canhBao:v }), 1),
+      tia("Câu bắt buộc phải hỏi (mỗi dòng 1 câu)", lines(f.phaiHoi), v=>setF({ ...f, phaiHoi:toArr(v) }), 3),
+      tia("Đáp án — xử trí", (f.dapAn||{}).xuTri, v=>setF({ ...f, dapAn:{ ...f.dapAn, xuTri:v } })),
+      tia("Đáp án — thuốc & liều (mỗi dòng 1 thuốc)", lines((f.dapAn||{}).thuoc), v=>setF({ ...f, dapAn:{ ...f.dapAn, thuoc:toArr(v) } }), 3),
+      tia("Đáp án — dặn dò (mỗi dòng)", lines((f.dapAn||{}).danDo), v=>setF({ ...f, dapAn:{ ...f.dapAn, danDo:toArr(v) } }), 2),
+      h("div", { style:{ fontSize:12, color:"var(--inkSoft)", margin:"6px 0" } }, "Trắc nghiệm: mỗi dòng 1 lựa chọn, đầu dòng [x] = đúng, [ ] = sai."),
+      tia("Trắc nghiệm — câu hỏi sàng lọc", optsTxt((f.quiz||{}).cauHoi), v=>setF({ ...f, quiz:{ ...f.quiz, cauHoi:toOpts(v) } }), 4),
+      tia("Trắc nghiệm — xử trí (1 đúng)", optsTxt((f.quiz||{}).xuTri), v=>setF({ ...f, quiz:{ ...f.quiz, xuTri:toOpts(v) } }), 3),
+      tia("Trắc nghiệm — thuốc & liều", optsTxt((f.quiz||{}).thuoc), v=>setF({ ...f, quiz:{ ...f.quiz, thuoc:toOpts(v) } }), 4),
+      h("div", { className:"btnRow", style:{ justifyContent:"flex-end", gap:6, flexWrap:"wrap" } },
+        h("button", { className:"btn btnGhost", onClick:onClose, disabled:busy }, "Đóng"),
+        h("button", { className:"btn", onClick:()=>save("rejected"), disabled:busy }, "Loại bỏ"),
+        h("button", { className:"btn", onClick:()=>save("draft"), disabled:busy }, "Lưu nháp"),
+        h("button", { className:"btn btnPrimary", onClick:()=>save("approved"), disabled:busy }, busy ? "Đang lưu…" : "✓ Duyệt"))));
+}
+function TtsCaseLibraryView({ isAdmin }){
+  const h = React.createElement;
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const [prot, setProt] = useState("all");
+  const [st, setSt] = useState("all");
+  const [edit, setEdit] = useState(null);
+  const [busy, setBusy] = useState("");
+  const [genProt, setGenProt] = useState("");
+  async function load(){ setErr(null); try{ setData(await pdCall("caseList", {}, 90000)); } catch(e){ setErr(e); } }
+  useEffect(()=>{ load(); }, []);
+  if(err) return h("div", null, h(EmptyState, { kind: emptyKindFromError(err), detail: err.message }), h("button", { className:"btn", onClick:load }, "Thử lại"));
+  if(!data) return h("div", { className:"emptyState" }, "Đang tải thư viện tình huống…");
+  const cases = data.cases || [], kinds = data.kinds || {};
+  const byProt = {}; cases.forEach(c => { const k = c.protocolId || "?"; const a = byProt[k] || (byProt[k] = { title:c.protocolTitle, n:0, ok:0, draft:0 }); a.n++; if(c.status==="approved") a.ok++; if(c.status==="draft") a.draft++; });
+  const approved = cases.filter(c=>c.status==="approved").length, drafts = cases.filter(c=>c.status==="draft").length;
+  if(!data.canEdit) return h("div", { className:"card" }, h("div", { style:{ fontWeight:800, fontSize:15 } }, `Thư viện có ${approved} tình huống đã duyệt`),
+    h("div", { style:{ fontSize:12.8, color:"var(--inkSoft)", marginTop:4 } }, "Thực tập sinh luyện ở Đào tạo › Thử việc → nút \"🎯 Luyện tình huống\" (Trắc nghiệm · Khách ảo · Tự viết)."));
+  let list = cases;
+  if(prot!=="all") list = list.filter(c => c.protocolId===prot);
+  if(st!=="all") list = list.filter(c => c.status===st);
+  async function gen(){ if(!genProt) return window.alert("Chọn phác đồ.");
+    setBusy("gen"); try{ const r = await pdCall("caseGenerate", { protocolId:genProt, n:5 }, 240000); if(r.ok===false) throw new Error(r.error); await load(); setProt(genProt); setSt("draft"); } catch(e){ window.alert("Lỗi: " + (e.message||e)); } setBusy(""); }
+  async function approveAll(){ const ids = list.filter(c=>c.status==="draft").map(c=>c.id); if(!ids.length) return;
+    if(!window.confirm(`Duyệt nhanh ${ids.length} tình huống nháp đang hiện? (nên mở xem từng ca trước)`)) return;
+    setBusy("ok"); try{ await pdCall("caseStatus", { ids, status:"approved" }, 60000); await load(); } catch(e){ window.alert("Lỗi: " + (e.message||e)); } setBusy(""); }
+  const pill = (s) => s==="approved" ? h(Pill360, { text:"Đã duyệt", color:CL360.good }) : s==="rejected" ? h(Pill360, { text:"Loại", color:CL360.gray }) : h(Pill360, { text:"Nháp", color:CL360.warn });
+  const protsNoCase = (data.protocols||[]).filter(p => !byProt[p.id]);
+  return h("div", null,
+    h("p", { className:"pagesub" }, "Thư viện tình huống cho thực tập sinh luyện (Trắc nghiệm · Khách ảo · Tự viết). AI soạn nháp từ phác đồ, dược sĩ mở từng ca kiểm tra đáp án rồi bấm Duyệt — chỉ ca đã duyệt mới được dùng. Ra đề từ thư viện không tốn phí AI."),
+    h("div", { className:"metrics" },
+      h("div", { className:"metric good" }, h("div", { className:"label" }, "Đã duyệt"), h("div", { className:"value" }, approved)),
+      h("div", { className:"metric warn" }, h("div", { className:"label" }, "Chờ duyệt"), h("div", { className:"value" }, drafts)),
+      h("div", { className:"metric" }, h("div", { className:"label" }, "Phác đồ có ca"), h("div", { className:"value" }, `${Object.keys(byProt).length}/${(data.protocols||[]).length}`))),
+    h("div", { className:"card", style:{ marginBottom:12, display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" } },
+      h("b", { style:{ fontSize:13 } }, "✨ AI soạn 5 tình huống cho phác đồ:"),
+      h("select", { value:genProt, onChange:e=>setGenProt(e.target.value), style:{ padding:"6px 8px", border:"1px solid var(--line)", borderRadius:8, fontSize:12.5, maxWidth:360 } },
+        h("option", { value:"" }, "— chọn phác đồ —"),
+        protsNoCase.length>0 && h("optgroup", { label:"Chưa có tình huống" }, protsNoCase.map(p => h("option", { key:p.id, value:p.id }, p.title + (p.status!=="approved" ? " (nháp)" : "")))),
+        h("optgroup", { label:"Đã có tình huống" }, (data.protocols||[]).filter(p => byProt[p.id]).map(p => h("option", { key:p.id, value:p.id }, `${p.title} (${byProt[p.id].n} ca)`)))),
+      h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:gen }, busy==="gen" ? "AI đang soạn (≈1 phút)…" : "Soạn"),
+      h("button", { className:"btn btnGhost", onClick:()=>setEdit({ protocolId:"", protocolTitle:"Tự thêm", kind:"ban", khach:"", loiKhach:"", tinhCach:"", thongTinAn:[], canDiKham:false, canhBao:"", phaiHoi:[], dapAn:{ xuTri:"", thuoc:[], danDo:[] }, quiz:{ cauHoi:[], xuTri:[], thuoc:[] } }) }, "＋ Tự thêm ca thật")),
+    h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", marginBottom:10 } },
+      h("select", { value:prot, onChange:e=>setProt(e.target.value), style:{ padding:"5px 8px", border:"1px solid var(--line)", borderRadius:8, fontSize:12.5, maxWidth:320 } }, h("option", { value:"all" }, "Mọi phác đồ"),
+        Object.entries(byProt).map(([id,a]) => h("option", { key:id, value:id }, `${a.title} (${a.ok}/${a.n})`))),
+      ["all","draft","approved","rejected"].map(x => h("button", { key:x, onClick:()=>setSt(x), style:{ padding:"5px 11px", borderRadius:16, fontSize:12, fontWeight:700, cursor:"pointer", border:"1px solid var(--line)", background: st===x ? "var(--pine)" : "#fff", color: st===x ? "#fff" : "var(--ink)" } },
+        { all:"Tất cả", draft:"Chờ duyệt", approved:"Đã duyệt", rejected:"Đã loại" }[x])),
+      list.some(c=>c.status==="draft") && h("button", { className:"btn btnGhost", style:{ marginLeft:"auto" }, disabled:!!busy, onClick:approveAll }, "Duyệt nhanh các ca nháp đang hiện")),
+    h("div", { className:"card", style:{ padding:0, overflow:"hidden" } }, list.length===0 ? h("div", { style:{ padding:14, fontSize:12.5, color:"var(--inkSoft)" } }, "Chưa có tình huống — chọn phác đồ và bấm \"Soạn\".") :
+      list.map(c => h("div", { key:c.id, onClick:()=>setEdit(c), style:{ padding:"9px 12px", borderBottom:"1px solid #EEF2F6", cursor:"pointer", display:"flex", gap:10, alignItems:"flex-start" } },
+        h("div", { style:{ flex:1, minWidth:0 } },
+          h("div", { style:{ fontSize:13.3 } }, h("b", null, c.khach), " — ", h("i", null, `"${c.loiKhach}"`)),
+          h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:2 } }, `${c.protocolTitle} · ${kinds[c.kind]||c.kind}${c.canDiKham ? " · ⚠ phải chuyển khám" : ""}${c.reviewedBy ? " · duyệt bởi " + c.reviewedBy : ""}`)),
+        pill(c.status)))),
+    edit && h(TtsCaseEditor, { c:edit, kinds, onClose:()=>setEdit(null), onSaved:()=>{ setEdit(null); load(); } }));
 }
 
 function ProbationView({ isAdmin, myStaff, trainStats, navParam }){
@@ -8792,11 +8941,12 @@ function ProbationView({ isAdmin, myStaff, trainStats, navParam }){
           r.courses && r.courses.of>0 && Bar(r.courses.n, r.courses.of, r.courses.n/r.courses.of>=R.readReady ? T.good : T.warn, "Khoá học trong lộ trình", `${r.courses.n}/${r.courses.of}`),
           r.courses && r.courses.of===0 && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:4 } }, "Chưa có lộ trình khoá học — quản lý chọn ở tab Khoá học."),
           h("div", { style:{ fontSize:12, marginTop:4 } }, `Checklist ${ts.pct!=null ? ts.pct+"%" : "—"} · buddy chấm TB ${stars(ts.star)}`)),
-        Crit(r.practice && r.practice.ready, !(r.practice && r.practice.ready), "② a. Luyện tình huống trong app (AI chấm)",
+        Crit(r.practice && r.practice.ready, !(r.practice && r.practice.ready), "② a. Luyện tình huống (trắc nghiệm → khách ảo)",
           r.practice && r.practice.n>0 ? Bar(Math.min(r.practice.n, R.practiceMinN||10), R.practiceMinN||10, r.practice.ready ? T.good : T.warn, `Đã làm ${r.practice.n} bài · TB 10 bài gần nhất`, r.practice.avg10!=null ? `${r.practice.avg10}/100` : "—")
             : h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:4 } }, `Chưa làm bài nào. Cần ≥ ${R.practiceMinN||10} bài, TB ≥ ${R.practicePass||80} điểm.`),
           r.practice && (r.practice.topErrors||[]).length>0 && h("div", { style:{ fontSize:11.5, marginTop:4 } }, "Hay sai: ", h("b", { style:{ color:T.bad } }, r.practice.topErrors.map(e=>`${e.label} (${e.n})`).join(" · "))),
-          h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:4 } }, "Đạt mới soạn liều thật cạnh buddy (buddy kiểm & xuất bill bằng tài khoản buddy).")),
+          r.practice && r.practice.quizN>0 && h("div", { style:{ fontSize:11.5, marginTop:4 } }, `Trắc nghiệm: ${r.practice.quizN} bài · TB ${r.practice.quizAvg ?? "—"} điểm (ôn tập, không tính điều kiện)`),
+          h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:4 } }, "Tính điều kiện: bài Khách ảo + Tự viết. Đạt mới soạn liều thật cạnh buddy (buddy kiểm & xuất bill bằng tài khoản buddy).")),
         Crit(r.readyDose, !r.readyDose, "② b. Soạn liều thật — buddy kiểm từng liều",
           d.ok2w!=null ? Bar(Math.round(d.ok2w*100), 100, d.ok2w>=R.doseOkRate ? T.good : d.ok2w>=0.75 ? T.warn : T.bad, "Đúng ngay lần đầu (2 tuần gần nhất)", Math.round(d.ok2w*100)+"%")
             : h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:4 } }, "Chưa có liều nào được kiểm trong 2 tuần."),
@@ -8847,7 +8997,7 @@ function ProbationView({ isAdmin, myStaff, trainStats, navParam }){
 
 function TrainingView({ isAdmin, myStaff, navParam }){
   // 4/10/2026 (Phương): mọi thứ về đào tạo ở 1 chỗ — Nhân sự › Đào tạo.
-  const TR_SUBS = ["tracuu","phacdo","trieuchung","khoahoc","checklist","thuviec"];
+  const TR_SUBS = ["tracuu","phacdo","trieuchung","tinhhuong","khoahoc","checklist","thuviec"];
   const [trSub, setTrSub] = useState((navParam && TR_SUBS.includes(navParam.sub)) ? navParam.sub : (isAdmin ? "checklist" : "tracuu"));
   useEffect(()=>{ if(navParam && TR_SUBS.includes(navParam.sub)) setTrSub(navParam.sub); }, [navParam]);
   const [hires, setHires] = useState([]);
@@ -9035,7 +9185,10 @@ function TrainingView({ isAdmin, myStaff, navParam }){
   const trainStats = {};
   hires.forEach(hh => { const st = hireStats(hh); const rs = reports.filter(r=>r.hireId===hh.id && r.danhGia); trainStats[hh.id] = { pct:st.pct, verifiedPct:st.verifiedPct, star: rs.length ? rs.reduce((a,r)=>a+Number(r.danhGia||0),0)/rs.length : null }; });
   const trTabs = [{ id:"tracuu", label:"Thẻ sản phẩm" }, { id:"phacdo", label:"Phác đồ cắt liều" }, { id:"trieuchung", label:"🩺 Tư vấn theo triệu chứng" },
-    { id:"khoahoc", label:"Khoá học" }, { id:"checklist", label:"Checklist & buddy" }, { id:"thuviec", label:"Thử việc" }];
+    { id:"tinhhuong", label:"Tình huống luyện tập" }, { id:"khoahoc", label:"Khoá học" }, { id:"checklist", label:"Checklist & buddy" }, { id:"thuviec", label:"Thử việc" }];
+  if(trSub==="tinhhuong") return React.createElement(React.Fragment, null,
+    React.createElement(SubTabBar, { key:"sub", tabs:trTabs, active:trSub, onChange:setTrSub }),
+    React.createElement(TtsCaseLibraryView, { key:"tl", isAdmin }));
   if(trSub==="tracuu" || trSub==="phacdo" || trSub==="trieuchung") return React.createElement(React.Fragment, null,
     React.createElement(SubTabBar, { key:"sub", tabs:trTabs, active:trSub, onChange:setTrSub }),
     trSub==="tracuu" && React.createElement(ProductDictionaryView, { key:"pd", isAdmin, myStaff }),
