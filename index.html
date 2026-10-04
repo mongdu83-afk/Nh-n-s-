@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261003-7";
+window.__APP_BUILD = "20261004-2";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -5579,7 +5579,7 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
       React.createElement("div", { key:"staffeff", className:"card", style:{ padding:0, overflow:"hidden" } }, [
         React.createElement("div", { key:"h", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 14px", flexWrap:"wrap", gap:8 } }, [
           React.createElement("div", { key:"t" }, [
-            React.createElement("div", { key:"tt", style:{ fontWeight:700, fontSize:13 } }, "Hiệu quả CSKH theo nhân viên"),
+            React.createElement("div", { key:"tt", style:{ fontWeight:700, fontSize:13 } }, `Hiệu quả CSKH theo nhân viên${!isAllShops ? ` · ${shopFilter}` : ""}`),
             React.createElement("div", { key:"s", style:{ fontSize:11.5, color:"var(--inkSoft)" } },
               staffEffectiveness
                 ? `% khách mua lại trong ${staffEffectiveness.returnWindowDays||30} ngày sau khi hoàn thành việc CSKH (${staffEffectiveness.lookbackDays||90} ngày gần nhất) · tính lúc ${staffEffectiveness.computedAt ? new Date(staffEffectiveness.computedAt).toLocaleString("vi-VN") : "—"}`
@@ -5599,8 +5599,9 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
             campaignStats && campaignStats.revenueByStaff && React.createElement("th", { key:"rv", style:{ textAlign:"right", padding:"8px 10px" } }, `Doanh số sau CSKH (${campaignStats.revenueWindowDays||30}n)`),
             React.createElement("th", { key:"ct", style:{ textAlign:"center", padding:"8px 10px" } }, ""),
           ])),
-          React.createElement("tbody", { key:"b" }, staffEffectiveness.byStaff.map(s => React.createElement("tr", { key:s.staffId, style:{ borderTop:"1px solid var(--line)" } }, [
-            React.createElement("td", { key:"n", style:{ padding:"8px 10px", fontWeight:600 } }, s.staffName || s.staffId),
+          // 3/10/2026: lọc theo nhà thuốc đang chọn (dùng chung bộ lọc nhà thuốc của tab) + hiện mã nhà thuốc.
+          React.createElement("tbody", { key:"b" }, staffEffectiveness.byStaff.filter(s => isAllShops || ((staffList||[]).find(z=>z.id===s.staffId)||{}).shop===shopFilter).map(s => React.createElement("tr", { key:s.staffId, style:{ borderTop:"1px solid var(--line)" } }, [
+            React.createElement("td", { key:"n", style:{ padding:"8px 10px", fontWeight:600 } }, [ s.staffName || s.staffId, React.createElement("span", { key:"sh", style:{ fontSize:11, fontWeight:500, color:"var(--inkSoft)", marginLeft:6 } }, ((staffList||[]).find(z=>z.id===s.staffId)||{}).shop || "") ]),
             React.createElement("td", { key:"asn", style:{ padding:"8px 10px", textAlign:"right", fontWeight:600 } }, s.assignedNow||0),
             React.createElement("td", { key:"t", style:{ padding:"8px 10px", textAlign:"right" } }, s.totalCompleted),
             React.createElement("td", { key:"r", style:{ padding:"8px 10px", textAlign:"right" } }, s.returned),
@@ -8490,6 +8491,198 @@ function ProbationHireEdit({ row, onClose }){
 }
 
 // ---------- Màn hình Thử việc ----------
+// ================================================================================
+// KHOÁ HỌC (4/10/2026) — thư viện khoá đào tạo (đồng bộ từ web đào tạo) + lộ trình thực tập sinh.
+// Mọi nhân viên: xem lộ trình, mở khoá để học (≥ 60 giây = đã học). Quản lý: chọn khoá vào lộ trình,
+// xem khoá nào thiếu nội dung (slide riêng tư / dạng hình / chưa tóm tắt), tóm tắt hàng loạt bằng AI.
+// ================================================================================
+function courseHealth(c){
+  if(c.hasSummary) return { k:"ok", label:"Có tóm tắt", color:CL360.good };
+  if(c.srcLen >= 150) return { k:"nosum", label:"Chưa tóm tắt (đủ nội dung)", color:CL360.warn };
+  if(c.slidePrivate>0) return { k:"private", label:"Slide riêng tư — chưa đọc được", color:CL360.bad };
+  if(c.slideImage>0) return { k:"image", label:"Slide dạng hình — chưa đọc được", color:CL360.bad };
+  if(!c.lessons) return { k:"empty", label:"Chưa tải bài học", color:CL360.bad };
+  return { k:"thin", label:"Thiếu nội dung chữ", color:CL360.bad };
+}
+function CourseReaderModal({ id, onClose, onRead, canEdit, readMinSec }){
+  const h = React.createElement;
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState(null);
+  const [sec, setSec] = useState(0);
+  const [marked, setMarked] = useState(false);
+  const [showSlide, setShowSlide] = useState(false);
+  const [busy, setBusy] = useState(false);
+  async function load(resum){ setErr(null); try{ const r = await pdCall("courseOne", { id, resummarize: !!resum }, 180000); if(r.ok===false) setErr(r.error); else setD(r.course); } catch(e){ setErr(e.message||String(e)); } }
+  useEffect(()=>{ load(false); }, [id]);
+  useEffect(()=>{ const t = setInterval(()=>{ if(document.visibilityState==="visible") setSec(s=>s+1); }, 1000); return ()=>clearInterval(t); }, []);
+  useEffect(()=>{ if(!marked && d && sec >= (readMinSec||60)){ setMarked(true); pdCall("courseRead", { id, sec }, 30000).then(()=>onRead && onRead(id)).catch(()=>{}); } }, [sec, d]);
+  const s = d && d.summary;
+  const list = (title, arr, color) => (arr||[]).length>0 && h("div", { style:{ marginTop:10 } }, h("div", { style:{ fontWeight:800, fontSize:13, color:color||"var(--ink)" } }, title),
+    h("ul", { style:{ margin:"4px 0 0", paddingLeft:18, fontSize:13, lineHeight:1.55 } }, arr.map((x,i)=>h("li", { key:i }, x))));
+  const left = Math.max(0, (readMinSec||60) - sec);
+  return h("div", { className:"modalOverlay", onClick:onClose },
+    h("div", { className:"modal", onClick:e=>e.stopPropagation(), style:{ maxWidth:760, maxHeight:"90vh", overflow:"auto" } },
+      h("div", { style:{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"flex-start" } },
+        h("div", null, h("div", { style:{ fontWeight:800, fontSize:17 } }, d ? d.name : "Đang tải…"), d && h("div", { style:{ fontSize:12, color:"var(--inkSoft)" } }, `${d.type||""}${d.form ? " · "+d.form : ""} · ${(d.lessons||[]).length} bài`)),
+        h("span", { style:{ fontSize:11.5, fontWeight:700, whiteSpace:"nowrap", padding:"3px 9px", borderRadius:12, background: marked ? "#DCFCE7" : "#F1F5F9", color: marked ? CL360.good : "var(--inkSoft)" } }, marked ? "✓ Đã học" : `Đọc thêm ${left}s để tính đã học`)),
+      err && h("div", { style:{ color:CL360.bad, marginTop:10 } }, err),
+      d && h("div", null,
+        s ? h("div", { style:{ marginTop:10, background:"#F8FAFC", border:"1px solid var(--line)", borderRadius:10, padding:"10px 12px" } },
+            h("div", { style:{ fontSize:13.5, lineHeight:1.6 } }, s.tomTat),
+            list("Điểm nhấn công ty muốn nhân viên nói", s.diemNhan, "var(--pine)"),
+            list("Khách phù hợp", s.khachPhuHop),
+            list("Câu tư vấn mẫu", s.cauTuVan, "#1D4ED8"),
+            list("Bán kèm", s.banKem, "#B45309"),
+            list("Lưu ý", s.luuY, CL360.bad),
+            h("div", { style:{ fontSize:11, color:"var(--inkSoft)", marginTop:8 } }, `Tóm tắt ${d.summaryBy ? "bởi " + d.summaryBy : "do AI soạn từ slide"} — luôn đối chiếu slide gốc.`))
+          : h("div", { style:{ marginTop:10, fontSize:12.5, color:CL360.warn, background:"#FFF7ED", borderRadius:8, padding:"8px 10px" } }, d.summaryNote || "Khoá chưa có tóm tắt."),
+        canEdit && h("button", { className:"btn btnGhost", disabled:busy, style:{ fontSize:12, marginTop:8 }, onClick:async()=>{ setBusy(true); await load(true); setBusy(false); } }, busy ? "Đang tóm tắt lại…" : "↻ Tóm tắt lại bằng AI"),
+        d.description && h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", marginTop:10, whiteSpace:"pre-line" } }, d.description.slice(0, 800)),
+        h("div", { style:{ fontWeight:800, fontSize:13, marginTop:12 } }, "Bài học"),
+        h("div", { style:{ display:"flex", flexDirection:"column", gap:4, marginTop:4 } }, (d.lessons||[]).map((l,i)=>h("div", { key:i, style:{ fontSize:12.5, border:"1px solid var(--line)", borderRadius:8, padding:"6px 10px", display:"flex", justifyContent:"space-between", gap:8, alignItems:"center" } },
+          h("div", { style:{ minWidth:0 } }, h("b", null, l.name || "Bài " + (i+1)), l.chapter && h("span", { style:{ color:"var(--inkSoft)" } }, " · " + l.chapter),
+            !l.slideTextOk && (l.linkSlide||l.linkVideo) && h("div", { style:{ fontSize:11, color:CL360.warn } }, l.slideNote==="private" ? "Slide đang để riêng tư — app chưa đọc được" : l.slideNote==="image_only" ? "Slide dạng hình — app chưa đọc được chữ" : "App chưa đọc được nội dung")),
+          h("div", { style:{ display:"flex", gap:6, flex:"none" } },
+            l.linkSlide && h("a", { href:l.linkSlide, target:"_blank", rel:"noopener", className:"btn btnGhost", style:{ fontSize:11.5, padding:"2px 8px" } }, "Slide"),
+            l.linkVideo && h("a", { href:l.linkVideo, target:"_blank", rel:"noopener", className:"btn btnGhost", style:{ fontSize:11.5, padding:"2px 8px" } }, "Video"))))),
+        d.slideText && h("div", { style:{ marginTop:10 } }, h("a", { href:"#", onClick:ev=>{ ev.preventDefault(); setShowSlide(!showSlide); }, style:{ color:"var(--pine)", fontSize:12.5, fontWeight:700 } }, showSlide ? "▾ Ẩn nội dung slide" : "▸ Xem toàn bộ chữ trên slide"),
+          showSlide && h("div", { style:{ whiteSpace:"pre-line", fontSize:12.5, lineHeight:1.55, marginTop:6, maxHeight:360, overflow:"auto", border:"1px solid var(--line)", borderRadius:8, padding:"8px 10px" } }, d.slideText)),
+        h("div", { className:"btnRow", style:{ justifyContent:"space-between", marginTop:14 } },
+          h("a", { href:d.url, target:"_blank", rel:"noopener", className:"btn btnGhost" }, "Mở trên web đào tạo ↗"),
+          h("button", { className:"btn btnPrimary", onClick:onClose }, "Đóng")))));
+}
+function CourseLibraryView({ isAdmin, myStaff }){
+  const h = React.createElement;
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const [mode, setMode] = useState("path");
+  const [typeF, setTypeF] = useState("all");
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(null);
+  const [editPath, setEditPath] = useState(false);
+  const [sel, setSel] = useState(null);
+  const [busy, setBusy] = useState("");
+  const [msg, setMsg] = useState(null);
+  async function load(rebuild){ setErr(null); try{ const r = await pdCall("courseLibrary", { rebuild: !!rebuild }, 180000); setData(r); setSel(new Set((r.path && r.path.ids)||[])); } catch(e){ setErr(e); } }
+  useEffect(()=>{ load(false); }, []);
+  if(err) return h("div", null, h(EmptyState, { kind: emptyKindFromError(err), detail: err.message }), h("button", { className:"btn", onClick:()=>load(false) }, "Thử lại"));
+  if(!data) return h("div", { className:"emptyState" }, "Đang tải danh sách khoá học…");
+  const courses = data.courses || [];
+  const byId = {}; courses.forEach(c => { byId[c.id] = c; });
+  const pathIds = ((data.path && data.path.ids) || []).filter(id => byId[id]);
+  const mine = data.mine || {};
+  const canEdit = data.canEdit, admin = data.isAdmin;
+  const types = [...new Set(courses.map(c => c.type || "Khác"))].sort((a,b)=>a.localeCompare(b,"vi"));
+  const health = {}; courses.forEach(c => { const k = courseHealth(c).k; health[k] = (health[k]||0)+1; });
+  const qn = pdStrip(q);
+  let list = mode==="path" && !editPath ? pathIds.map(id => byId[id]) : courses;
+  if(mode==="fix") list = courses.filter(c => courseHealth(c).k!=="ok");
+  if(typeF!=="all") list = list.filter(c => (c.type||"Khác")===typeF);
+  if(qn) list = list.filter(c => pdStrip(c.name).includes(qn));
+  if(mode!=="path" || editPath) list = [...list].sort((a,b)=> (a.type||"").localeCompare(b.type||"","vi") || a.name.localeCompare(b.name,"vi"));
+  const doneN = pathIds.filter(id => mine[id]).length;
+  async function savePath(){ setBusy("path"); try{ const r = await pdCall("coursePathSave", { ids:[...sel] }, 60000); if(r.ok===false) throw new Error(r.error); setMsg(`Đã lưu lộ trình: ${r.n} khoá.`); setEditPath(false); await load(false); } catch(e){ window.alert("Lỗi: " + (e.message||e)); } setBusy(""); }
+  async function sumMissing(){ if(!window.confirm("AI tóm tắt các khoá còn thiếu tóm tắt nhưng đủ nội dung (mỗi lượt tối đa ~4 phút). Tiếp tục?")) return;
+    setBusy("sum"); setMsg("Đang tóm tắt… (có thể vài phút)");
+    try{ const r = await pdCall("courseSummarizeMissing", {}, 300000); if(r.ok===false) throw new Error(r.error);
+      setMsg(`Xong: tóm tắt được ${r.done}/${r.candidates} khoá${r.failed ? `, lỗi ${r.failed}` : ""}${r.skippedTime ? `, còn ${r.skippedTime} khoá — bấm lại để làm tiếp` : ""}. ${r.noContent} khoá không đủ nội dung chữ (slide riêng tư/dạng hình).`); await load(false); }
+    catch(e){ setMsg("Lỗi: " + (e.message||e)); } setBusy(""); }
+  const chip = (txt, color) => h("span", { style:{ fontSize:10.5, fontWeight:700, padding:"1px 7px", borderRadius:10, color, background:color+"1a", whiteSpace:"nowrap" } }, txt);
+  const row = (c, idx) => { const hl = courseHealth(c); const done = !!mine[c.id]; const inPath = sel && sel.has(c.id);
+    return h("div", { key:c.id, style:{ display:"flex", alignItems:"center", gap:10, padding:"9px 12px", borderBottom:"1px solid #EEF2F6", background: done ? "#F7FEF9" : "#fff" } },
+      editPath && h("input", { type:"checkbox", checked:!!inPath, onChange:e=>{ const n = new Set(sel); e.target.checked ? n.add(c.id) : n.delete(c.id); setSel(n); } }),
+      mode==="path" && !editPath && h("div", { style:{ width:26, height:26, borderRadius:13, flex:"none", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:800, background: done ? CL360.good : "#E2E8F0", color: done ? "#fff" : "#475569" } }, done ? "✓" : idx+1),
+      h("div", { style:{ flex:1, minWidth:0, cursor:"pointer" }, onClick:()=>setOpen(c.id) },
+        h("div", { style:{ fontWeight:700, fontSize:13.3 } }, c.name),
+        h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", marginTop:3, fontSize:11.5, color:"var(--inkSoft)" } },
+          h("span", null, `${c.type||"Khác"} · ${c.lessons} bài`), chip(hl.label, hl.color), done && chip("Đã học " + (mine[c.id]||"").split("-").reverse().join("/"), CL360.good), !editPath && pathIds.includes(c.id) && mode!=="path" && chip("Lộ trình TTS", "#1D4ED8"))),
+      h("button", { className:"btn btnGhost", style:{ fontSize:12, padding:"4px 10px", flex:"none" }, onClick:()=>setOpen(c.id) }, done ? "Xem lại" : "Học"));
+  };
+  const modes = [{ id:"path", label:`Lộ trình thực tập sinh (${pathIds.length})` }, { id:"all", label:`Tất cả khoá (${courses.length})` }];
+  if(canEdit) modes.push({ id:"fix", label:`Cần xử lý nội dung (${courses.length-(health.ok||0)})` });
+  return h("div", null,
+    h("p", { className:"pagesub" }, "Khoá đào tạo đồng bộ từ web đào tạo của công ty. Mở 1 khoá và đọc ít nhất 60 giây = \"đã học\". Thực tập sinh cần học ≥ 90% khoá trong lộ trình + ≥ 90% thẻ sản phẩm top của shop trước khi buddy phỏng vấn."),
+    pathIds.length>0 && h("div", { className:"card", style:{ marginBottom:12, display:"flex", alignItems:"center", gap:14, flexWrap:"wrap" } },
+      h("div", { style:{ fontWeight:800, fontSize:15 } }, `Tiến độ lộ trình: ${doneN}/${pathIds.length} khoá`),
+      h("div", { style:{ flex:"1 1 200px", height:10, background:"#EEF2F6", borderRadius:5, overflow:"hidden" } }, h("div", { style:{ width:`${pathIds.length ? doneN/pathIds.length*100 : 0}%`, height:"100%", background:"var(--pine)" } })),
+      admin && h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, "(quản lý không tính tiến độ)")),
+    canEdit && h("div", { className:"card", style:{ marginBottom:12 } },
+      h("div", { style:{ fontWeight:800, fontSize:13.5, marginBottom:6 } }, "Tình trạng nội dung khoá học"),
+      h("div", { style:{ display:"flex", gap:8, flexWrap:"wrap", fontSize:12.5 } },
+        [["ok","Có tóm tắt",CL360.good],["nosum","Chưa tóm tắt (đủ nội dung — AI làm được)",CL360.warn],["private","Slide để riêng tư",CL360.bad],["image","Slide dạng hình",CL360.bad],["thin","Thiếu nội dung chữ",CL360.bad],["empty","Chưa tải bài học",CL360.bad]]
+          .filter(([k])=>health[k]).map(([k,l,c])=>h("span", { key:k, style:{ border:`1px solid ${c}55`, background:c+"12", borderRadius:8, padding:"4px 9px" } }, h("b", { style:{ color:c } }, health[k]), " " + l))),
+      h("div", { style:{ fontSize:11.8, color:"var(--inkSoft)", marginTop:8, lineHeight:1.55 } }, "Slide \"riêng tư\": nhờ bộ phận đào tạo mở chia sẻ Google Slides thành \"Bất kỳ ai có đường liên kết đều xem được\", rồi bấm Đồng bộ web đào tạo (tab Tra cứu sản phẩm). Slide \"dạng hình\": app dùng AI đọc ảnh khi đồng bộ lại toàn bộ."),
+      h("div", { className:"btnRow", style:{ marginTop:8, gap:6, flexWrap:"wrap" } },
+        h("button", { className:"btn btnPrimary", disabled:!!busy || !health.nosum, onClick:sumMissing }, busy==="sum" ? "Đang tóm tắt…" : `✨ AI tóm tắt ${health.nosum||0} khoá còn thiếu`),
+        h("button", { className:"btn btnGhost", disabled:!!busy, onClick:async()=>{ setBusy("rb"); await load(true); setBusy(""); } }, busy==="rb" ? "Đang làm mới…" : "↻ Làm mới danh sách")),
+      msg && h("div", { style:{ fontSize:12.5, marginTop:6, fontWeight:600 } }, msg)),
+    h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", marginBottom:10 } },
+      modes.map(m => h("button", { key:m.id, onClick:()=>{ setMode(m.id); setEditPath(false); }, style:{ padding:"6px 13px", borderRadius:18, fontSize:12.5, fontWeight:700, cursor:"pointer", background: mode===m.id ? "var(--pine)" : "#fff", color: mode===m.id ? "#fff" : "var(--ink)", border:"1px solid var(--line)" } }, m.label)),
+      h("select", { value:typeF, onChange:e=>setTypeF(e.target.value), style:{ padding:"5px 8px", fontSize:12.5, border:"1px solid var(--line)", borderRadius:8 } }, h("option", { value:"all" }, "Mọi loại khoá"), types.map(t => h("option", { key:t, value:t }, t))),
+      h("input", { value:q, onChange:e=>setQ(e.target.value), placeholder:"Tìm khoá…", name:"course-search", autoComplete:"off", style:{ padding:"5px 9px", fontSize:12.5, border:"1px solid var(--line)", borderRadius:8, minWidth:160 } }),
+      admin && mode==="path" && (editPath
+        ? h(React.Fragment, null, h("button", { className:"btn btnPrimary", disabled:busy==="path", onClick:savePath }, busy==="path" ? "Đang lưu…" : `Lưu lộ trình (${sel.size} khoá)`), h("button", { className:"btn btnGhost", onClick:()=>{ setEditPath(false); setSel(new Set(pathIds)); } }, "Huỷ"),
+            typeF!=="all" && h("button", { className:"btn btnGhost", onClick:()=>{ const n = new Set(sel); list.forEach(c=>n.add(c.id)); setSel(n); } }, `Chọn cả ${list.length} khoá đang lọc`))
+        : h("button", { className:"btn", style:{ marginLeft:"auto" }, onClick:()=>setEditPath(true) }, "✎ Chọn khoá cho lộ trình"))),
+    mode==="path" && !editPath && pathIds.length===0
+      ? h("div", { className:"card", style:{ fontSize:13, color:"var(--inkSoft)" } }, admin ? "Chưa có lộ trình — bấm \"✎ Chọn khoá cho lộ trình\", lọc theo loại khoá (VD Bệnh học, Nhóm thuốc, Sản phẩm hệ số) rồi tích chọn." : "Quản lý chưa chọn khoá cho lộ trình — xem \"Tất cả khoá\".")
+      : h("div", { className:"card", style:{ padding:0, overflow:"hidden" } }, list.length ? list.map((c,i)=>row(c,i)) : h("div", { style:{ padding:14, fontSize:12.5, color:"var(--inkSoft)" } }, "Không có khoá phù hợp.")),
+    open && h(CourseReaderModal, { id:open, canEdit, readMinSec:data.readMinSec, onClose:()=>setOpen(null), onRead:(id)=>setData(d=>({ ...d, mine:{ ...(d.mine||{}), [id]:todayISO() } })) }));
+}
+// ---------- Luyện tình huống cắt liều (thực tập sinh) ----------
+function TtsPracticeModal({ row, onClose, onChanged }){
+  const h = React.createElement;
+  const [cur, setCur] = useState(null);
+  const [info, setInfo] = useState(null);
+  const [ans, setAns] = useState({ hoi:"", xuTri:"", thuoc:"", danDo:"" });
+  const [res, setRes] = useState(null);
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState(null);
+  const [hist, setHist] = useState(null);
+  async function loadHist(){ try{ const r = await pbCall("practiceList", { hireId:row.id }, 60000); setHist(r); } catch(e){} }
+  async function next(){ setBusy("new"); setErr(null); setRes(null); setInfo(null); setAns({ hoi:"", xuTri:"", thuoc:"", danDo:"" });
+    try{ const r = await pbCall("practiceNew", { hireId:row.id }, 120000); if(r.ok===false) throw new Error(r.error); setCur(r); } catch(e){ setErr(e.message||String(e)); } setBusy(""); }
+  async function ask(){ setBusy("ask"); try{ const r = await pbCall("practiceAsk", { hireId:row.id, id:cur.id }, 30000); setInfo(r.thongTinAn); } catch(e){ setErr(e.message||String(e)); } setBusy(""); }
+  async function submit(){ setBusy("sub"); setErr(null);
+    try{ const r = await pbCall("practiceSubmit", { hireId:row.id, id:cur.id, answer:ans }, 180000); if(r.ok===false) throw new Error(r.error); setRes(r); onChanged && onChanged(); loadHist(); }
+    catch(e){ setErr(e.message||String(e)); } setBusy(""); }
+  useEffect(()=>{ loadHist(); next(); }, []);
+  const ta = (k, label, ph) => h("div", { className:"field", style:{ marginBottom:8 } }, h("label", null, label), h("textarea", { rows:2, value:ans[k], placeholder:ph, disabled:!!res, onChange:e=>setAns({ ...ans, [k]:e.target.value }) }));
+  const sc = res && res.score;
+  return h("div", { className:"modalOverlay", onClick:onClose },
+    h("div", { className:"modal", onClick:e=>e.stopPropagation(), style:{ maxWidth:640, maxHeight:"92vh", overflow:"auto" } },
+      h("div", { style:{ fontWeight:800, fontSize:17 } }, "🎯 Luyện tình huống cắt liều"),
+      h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:8 } }, `${row.name} · ${hist ? `đã làm ${hist.rows.filter(x=>x.status==="graded").length} bài` : ""} · cần ≥ ${hist ? hist.minN : 10} bài, TB ≥ ${hist ? hist.pass : 80} điểm trước khi soạn liều thật cạnh buddy`),
+      err && h("div", { style:{ color:CL360.bad, fontSize:12.5, marginBottom:8 } }, err),
+      !cur ? h("div", { className:"emptyState" }, busy==="new" ? "Đang soạn tình huống…" : "—") : h("div", null,
+        h("div", { style:{ background:"#EFF6FF", border:"1px solid #BFDBFE", borderRadius:10, padding:"10px 12px", marginBottom:10 } },
+          h("div", { style:{ fontSize:11, fontWeight:800, color:"#1D4ED8", textTransform:"uppercase", letterSpacing:".04em" } }, `Tình huống · ${cur.title}${cur.doiTuong ? " · " + cur.doiTuong : ""}`),
+          h("div", { style:{ fontSize:13.5, marginTop:4 } }, h("b", null, cur.scenario.khach)),
+          h("div", { style:{ fontSize:13.5, marginTop:4, fontStyle:"italic" } }, `"${cur.scenario.loiKhach}"`),
+          info ? h("div", { style:{ fontSize:13, marginTop:6, background:"#fff", borderRadius:8, padding:"6px 9px" } }, h("b", null, "Khách trả lời khi được hỏi: "), info)
+            : !res && h("button", { className:"btn btnGhost", style:{ fontSize:12, marginTop:6 }, disabled:busy==="ask", onClick:ask }, "💬 Hỏi thêm khách (ghi câu hỏi bên dưới trước)")),
+        ta("hoi", "1. Bạn hỏi khách những gì? (câu hỏi sàng lọc)", "VD: bé mấy tuổi, nặng bao nhiêu kg, sốt bao lâu, có co giật không…"),
+        ta("xuTri", "2. Xử trí: cắt liều hay khuyên đi khám? Vì sao?", ""),
+        ta("thuoc", "3. Thuốc & liều (mỗi dòng 1 thuốc: tên – liều – số lần/ngày – mấy ngày)", ""),
+        ta("danDo", "4. Dặn dò khách", "Cách uống, khi nào quay lại/đi khám, chăm sóc tại nhà…"),
+        !res && h("div", { className:"btnRow", style:{ justifyContent:"flex-end" } },
+          h("button", { className:"btn btnGhost", onClick:onClose }, "Đóng"),
+          h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:submit }, busy==="sub" ? "AI đang chấm…" : "Nộp bài")),
+        res && h("div", { style:{ marginTop:6 } },
+          res.graded ? h("div", { style:{ border:`2px solid ${sc>=80 ? CL360.good : sc>=60 ? CL360.warn : CL360.bad}`, borderRadius:12, padding:"10px 12px" } },
+              h("div", { style:{ display:"flex", alignItems:"baseline", gap:8 } }, h("span", { style:{ fontSize:30, fontWeight:900, color: sc>=80 ? CL360.good : sc>=60 ? CL360.warn : CL360.bad } }, sc), h("span", { style:{ fontSize:13, color:"var(--inkSoft)" } }, "/100"),
+                res.scenario && res.scenario.canDiKham && h(Pill360, { text:"Tình huống cần khuyên đi khám", color:CL360.bad })),
+              (res.good||[]).length>0 && h("div", { style:{ fontSize:13, marginTop:6 } }, h("b", { style:{ color:CL360.good } }, "Làm tốt: "), res.good.join(" · ")),
+              (res.fix||[]).length>0 && h("ul", { style:{ margin:"6px 0 0", paddingLeft:18, fontSize:13, lineHeight:1.55, color:"#7F1D1D" } }, res.fix.map((x,i)=>h("li", { key:i }, x))),
+              res.model && h("div", { style:{ fontSize:12.8, marginTop:8, background:"#F0FDF4", borderRadius:8, padding:"7px 10px", whiteSpace:"pre-line" } }, h("b", null, "Đáp án gợi ý: "), res.model))
+            : h("div", { style:{ fontSize:12.8, color:CL360.warn, background:"#FFF7ED", borderRadius:8, padding:"8px 10px" } }, "AI chưa chấm được lúc này — tự đối chiếu với phác đồ bên dưới, bài này không tính điểm."),
+          res.protocol && h("details", { style:{ marginTop:10 } }, h("summary", { style:{ cursor:"pointer", fontWeight:700, fontSize:13 } }, `Xem phác đồ "${res.protocol.title}"`),
+            h("div", { style:{ border:"1px solid var(--line)", borderRadius:8, padding:"6px 10px", marginTop:6, maxHeight:320, overflow:"auto" } }, h(DosingProtocolCard, { p:res.protocol }))),
+          h("div", { className:"btnRow", style:{ justifyContent:"flex-end", marginTop:10 } },
+            h("button", { className:"btn btnGhost", onClick:onClose }, "Đóng"),
+            h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:next }, busy==="new" ? "Đang soạn…" : "Bài mới →"))))));
+}
+
 function ProbationView({ isAdmin, myStaff, trainStats, navParam }){
   const h = React.createElement;
   const [data, setData] = useState(null);
@@ -8498,6 +8691,7 @@ function ProbationView({ isAdmin, myStaff, trainStats, navParam }){
   const [busy, setBusy] = useState(false);
   const [dose, setDose] = useState(null);
   const [iv, setIv] = useState(null);
+  const [practice, setPractice] = useState(null);
   const [edit, setEdit] = useState(null);
   const [compose, setCompose] = useState(null);
   async function load(){ setErr(null); try{ setData(await pbCall("list", {}, 180000)); } catch(e){ setErr(e); } }
@@ -8524,13 +8718,15 @@ function ProbationView({ isAdmin, myStaff, trainStats, navParam }){
   const head = (r) => [
     h("div", { key:"a", style:{ display:"flex", justifyContent:"space-between", gap:8, alignItems:"flex-start" } },
       h("div", null, h("div", { style:{ fontWeight:800, fontSize:14.5 } }, r.name),
-        h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, `${r.loai==="tts" ? "Thực tập sinh" : "Nhân viên thử việc"} · ${shopLabel(r.shop)} · buddy ${r.buddyName||"—"}`),
+        h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, `${r.loai==="tts" ? "Thực tập sinh" : "Nhân viên thử việc"} · ${shopLabel(r.shop)} · buddy ${r.buddyName||"—"}`,
+          r.auto && h("span", { style:{ marginLeft:6, fontSize:10.5, fontWeight:700, color:"#B45309", background:"#FEF3C7", borderRadius:8, padding:"1px 6px" } }, r.noJoinDate ? "tự thêm · thiếu ngày vào làm" : "tự thêm · chưa gán buddy")),
         h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, `${r.loai==="nvtv" && r.start!==r.joinDate ? "Bắt đầu thử việc" : "Vào"} ${pbDate(r.start)} · ngày thứ ${Math.min(r.day, 60)}/60 · kết thúc ${pbDate(r.end)}`)),
       h(Pill360, { text:r.status[0], color:T[r.status[1]]||T.gray })),
     h("div", { key:"b", style:{ background:"#F0EEE2", borderRadius:5, height:6 } }, h("div", { style:{ width:Math.min(100, r.day/60*100)+"%", height:6, borderRadius:5, background:"var(--pine)" } }))];
   const note = (t) => h("div", { style:{ fontSize:12, background:"var(--paper)", borderRadius:8, padding:"6px 10px" } }, "💡 ", t);
   const actions = (r) => h("div", { className:"btnRow", style:{ gap:6, justifyContent:"flex-end", flexWrap:"wrap" } },
-    isAdmin && h("button", { className:"btn btnGhost", onClick:()=>setEdit(r) }, "Sửa loại / ngày"),
+    isAdmin && !r.auto && h("button", { className:"btn btnGhost", onClick:()=>setEdit(r) }, "Sửa loại / ngày"),
+    r.loai==="tts" && (canAct(r) || (me && r.staffId===me)) && h("button", { className:"btn"+(r.practice && !r.practice.ready ? " btnPrimary" : ""), onClick:()=>setPractice(r) }, "🎯 Luyện tình huống"),
     r.loai==="tts" && canAct(r) && h("button", { className:"btn", onClick:()=>setDose(r) }, "💊 Kiểm liều"),
     r.loai==="tts" && canAct(r) && h("button", { className:"btn"+(r.status[0]==="Sẵn sàng phỏng vấn" || r.status[0]==="Phỏng vấn chưa đạt" ? " btnPrimary" : ""), onClick:()=>setIv(r) }, r.iv ? "Phỏng vấn lại" : "Phỏng vấn"),
     isAdmin && h("button", { className:"btn", onClick:()=>setCompose({ title:`Kèm cặp ${r.name} (${r.loai==="tts"?"thực tập sinh":"thử việc"})`, mota:r.note, module:"HR", shop:r.shop, staffId:r.buddyId||"" }) }, "Giao việc kèm cặp"));
@@ -8572,8 +8768,15 @@ function ProbationView({ isAdmin, myStaff, trainStats, navParam }){
           r.read && r.read.of ? Bar(r.read.n, r.read.of, rp>=R.readReady ? T.good : T.warn, `Thẻ từ điển đã học (top ${r.read.of} của shop)`, `${r.read.n}/${r.read.of}`) : h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:4 } }, "Chưa có xếp hạng top theo shop — bấm \"Cập nhật xếp hạng\" ở Từ điển."),
           (r.readGroups||[]).length>0 && h("div", { style:{ fontSize:11.5, marginTop:6, display:"flex", flexWrap:"wrap", gap:"2px 10px", color:"var(--inkSoft)" } },
             r.readGroups.map((g,i) => h("span", { key:i }, g.g + " ", h("b", { style:{ color: g.n>=g.of ? T.good : T.warn } }, `${g.n}/${g.of}`)))),
+          r.courses && r.courses.of>0 && Bar(r.courses.n, r.courses.of, r.courses.n/r.courses.of>=R.readReady ? T.good : T.warn, "Khoá học trong lộ trình", `${r.courses.n}/${r.courses.of}`),
+          r.courses && r.courses.of===0 && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:4 } }, "Chưa có lộ trình khoá học — quản lý chọn ở tab Khoá học."),
           h("div", { style:{ fontSize:12, marginTop:4 } }, `Checklist ${ts.pct!=null ? ts.pct+"%" : "—"} · buddy chấm TB ${stars(ts.star)}`)),
-        Crit(r.readyDose, !r.readyDose, "② Cắt liều — buddy kiểm từng liều",
+        Crit(r.practice && r.practice.ready, !(r.practice && r.practice.ready), "② a. Luyện tình huống trong app (AI chấm)",
+          r.practice && r.practice.n>0 ? Bar(Math.min(r.practice.n, R.practiceMinN||10), R.practiceMinN||10, r.practice.ready ? T.good : T.warn, `Đã làm ${r.practice.n} bài · TB 10 bài gần nhất`, r.practice.avg10!=null ? `${r.practice.avg10}/100` : "—")
+            : h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:4 } }, `Chưa làm bài nào. Cần ≥ ${R.practiceMinN||10} bài, TB ≥ ${R.practicePass||80} điểm.`),
+          r.practice && (r.practice.topErrors||[]).length>0 && h("div", { style:{ fontSize:11.5, marginTop:4 } }, "Hay sai: ", h("b", { style:{ color:T.bad } }, r.practice.topErrors.map(e=>`${e.label} (${e.n})`).join(" · "))),
+          h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:4 } }, "Đạt mới soạn liều thật cạnh buddy (buddy kiểm & xuất bill bằng tài khoản buddy).")),
+        Crit(r.readyDose, !r.readyDose, "② b. Soạn liều thật — buddy kiểm từng liều",
           d.ok2w!=null ? Bar(Math.round(d.ok2w*100), 100, d.ok2w>=R.doseOkRate ? T.good : d.ok2w>=0.75 ? T.warn : T.bad, "Đúng ngay lần đầu (2 tuần gần nhất)", Math.round(d.ok2w*100)+"%")
             : h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:4 } }, "Chưa có liều nào được kiểm trong 2 tuần."),
           h("div", { style:{ fontSize:11.5, marginTop:5, color:"var(--inkSoft)" } }, `Đã cắt ${d.n||0} liều · cần ≥ ${R.doseMinN} liều và ≥ ${Math.round(R.doseOkRate*100)}% đúng`),
@@ -8601,7 +8804,7 @@ function ProbationView({ isAdmin, myStaff, trainStats, navParam }){
         h("b", null, "② có ít nhất 1 tháng (trong 2 tháng đó) đạt doanh số ≥ 30 triệu VÀ hàng hệ số ≥ 12 triệu"),
         ". Doanh số và hàng hệ số (điểm × 1.000) lấy từ Chỉ tiêu cá nhân trên web Upharma. Tháng đang chạy hiện số DỰ KIẾN cuối tháng.")
       : h("p", { className:"pagesub" }, "Thực tập sinh không có tài khoản bán hàng nên ", h("b", null, "xét theo kiến thức sản phẩm và cắt liều"),
-        ". Buddy là người đào tạo và kiểm tra: ① học thẻ từ điển top 50 bán chạy của shop · ② mỗi liều thực tập sinh cắt, buddy kiểm trước khi giao khách · ③ buddy phỏng vấn trên app để lên nhân viên thử việc."),
+        ". Buddy là người đào tạo và kiểm tra: ① học thẻ từ điển top 50 bán chạy của shop + các khoá trong lộ trình (tab Khoá học) · ② a. tự luyện tình huống cắt liều trong app (AI ra đề từ phác đồ đã duyệt và chấm) — đạt ≥ 10 bài, TB ≥ 80 điểm · b. sau đó mới soạn liều cho khách thật đứng cạnh buddy; buddy kiểm và xuất bill bằng tài khoản của buddy · ③ buddy phỏng vấn trên app để lên nhân viên thử việc."),
     active==="nvtv" ? h("div", { className:"metrics" }, metric("Đang thử việc", nv.filter(r=>data.today<=r.end).length), metric("Đủ điều kiện", nv.filter(r=>r.status[1]==="good").length, "good"),
         metric("Có nguy cơ / không đạt", nv.filter(r=>r.status[1]==="warn"||r.status[1]==="bad").length, "warn"), metric("Kết thúc trong 14 ngày", soon(nv), "gold"))
       : h("div", { className:"metrics" }, metric("Thực tập sinh", tts.length), metric("Sẵn sàng phỏng vấn", tts.filter(r=>r.status[0]==="Sẵn sàng phỏng vấn").length, "good"),
@@ -8613,6 +8816,7 @@ function ProbationView({ isAdmin, myStaff, trainStats, navParam }){
       h("ul", { style:{ margin:"4px 0 0", paddingLeft:18 } }, (active==="nvtv"
         ? ["Từ tuần 3: doanh số/ngày dưới 60% nhịp cần để đạt 30tr/tháng.", "KPI dự kiến của tháng đang xét < 85% (kèm tiêu chí nào đang kéo điểm xuống).", "Còn 15 ngày mà chưa có tháng nào đạt 30tr/12tr — kèm số tiền còn thiếu mỗi ngày."]
         : ["Tuần 2 trở đi: học chưa được 20% số thẻ của shop.", "Một lỗi cắt liều lặp lại ≥ 3 lần trong tuần → báo buddy kèm phác đồ cần ôn.", "Đủ điều kiện ① và ② → báo buddy phỏng vấn.", "Phỏng vấn chưa đạt → báo buddy phần còn yếu, phỏng vấn lại sau 7 ngày."]).map((t,i) => h("li", { key:i }, t)))),
+    practice && h(TtsPracticeModal, { row:practice, onClose:()=>{ setPractice(null); load(); } }),
     dose && h(DoseCheckModal, { row:dose, protocols:data.protocols||[], doseErrors:data.doseErrors||{}, onClose:()=>setDose(null), onSaved:()=>{ setDose(null); load(); } }),
     iv && h(InterviewModal, { row:iv, onClose:()=>setIv(null), onSaved:()=>{ setIv(null); load(); } }),
     edit && h(ProbationHireEdit, { row:edit, onClose:(changed)=>{ setEdit(null); if(changed) load(); } }),
@@ -8621,8 +8825,8 @@ function ProbationView({ isAdmin, myStaff, trainStats, navParam }){
 
 
 function TrainingView({ isAdmin, myStaff, navParam }){
-  const [trSub, setTrSub] = useState((navParam && navParam.sub==="thuviec") ? "thuviec" : "checklist");
-  useEffect(()=>{ if(navParam && navParam.sub==="thuviec") setTrSub("thuviec"); }, [navParam]);
+  const [trSub, setTrSub] = useState((navParam && (navParam.sub==="thuviec" || navParam.sub==="khoahoc")) ? navParam.sub : "checklist");
+  useEffect(()=>{ if(navParam && (navParam.sub==="thuviec" || navParam.sub==="khoahoc")) setTrSub(navParam.sub); }, [navParam]);
   const [hires, setHires] = useState([]);
   const [staff, setStaff] = useState([]);
   const [checklistTpl, setChecklistTpl] = useState(DEFAULT_CHECKLIST);
@@ -8807,7 +9011,10 @@ function TrainingView({ isAdmin, myStaff, navParam }){
   // 30/9/2026: tiến độ checklist + điểm buddy TB → truyền sang màn Thử việc
   const trainStats = {};
   hires.forEach(hh => { const st = hireStats(hh); const rs = reports.filter(r=>r.hireId===hh.id && r.danhGia); trainStats[hh.id] = { pct:st.pct, verifiedPct:st.verifiedPct, star: rs.length ? rs.reduce((a,r)=>a+Number(r.danhGia||0),0)/rs.length : null }; });
-  const trTabs = [{ id:"checklist", label:"Checklist & buddy" }, { id:"thuviec", label:"Thử việc" }];
+  const trTabs = [{ id:"checklist", label:"Checklist & buddy" }, { id:"thuviec", label:"Thử việc" }, { id:"khoahoc", label:"Khoá học" }];
+  if(trSub==="khoahoc") return React.createElement(React.Fragment, null,
+    React.createElement(SubTabBar, { key:"sub", tabs:trTabs, active:trSub, onChange:setTrSub }),
+    React.createElement(CourseLibraryView, { key:"cl", isAdmin, myStaff }));
   if(trSub==="thuviec") return React.createElement(React.Fragment, null,
     React.createElement(SubTabBar, { key:"sub", tabs:trTabs, active:trSub, onChange:setTrSub }),
     React.createElement(ProbationView, { key:"pv", isAdmin, myStaff, trainStats, navParam }));
@@ -13414,8 +13621,8 @@ function PromoPeriodCompare(){
         shops.map(s => { const x = a.shop[s]||{}, y = b.shop[s]||{}; return h("tr", { key:s, style:{ cursor:"pointer" }, onClick:()=>setShopF(s) }, h("td", { style:{ ...L, fontWeight:700 } }, shopName(s)),
           h("td", { style:td }, fm(x.c||0)), h("td", { style:td }, fm(y.c||0)), h("td", { style:td }, dlt(x.c||0, y.c||0, true)), h("td", { style:td }, fm(x.rev||0)), h("td", { style:td }, fm(y.rev||0)),
           h("td", { style:td }, pcs(pc(x.c, x.rev))), h("td", { style:td }, pcs(pc(y.c, y.rev))), h("td", { style:td }, pcs(pc(x.pn, x.n))), h("td", { style:td }, pcs(pc(y.pn, y.n)))); }))),
-      stKeys.length>0 && card("Theo nhân viên", "theo thứ tự nhà thuốc", tbl(["Nhân viên", "NT", "Đơn KM A", "Đơn KM B", "Thay đổi", "% đơn KM A", "% đơn KM B", "Chi phí A", "Chi phí B", "CP/DT A", "CP/DT B"],
-        stKeys.map(k => { const x = a.staff[k]||[0,0,0,0,0], y = b.staff[k]||[0,0,0,0,0]; const [s, nv] = k.split("|"); return h("tr", { key:k }, h("td", { style:{ ...L, fontWeight:700 } }, nv), h("td", { style:L }, shopName(s)),
+      stKeys.filter(k => shopF==="all" || k.split("|")[0]===shopF).length>0 && card("Theo nhân viên" + (shopF!=="all" ? " · " + shopName(shopF) : ""), shopF==="all" ? "theo thứ tự nhà thuốc · chọn 1 nhà thuốc ở trên để lọc" : null, tbl(["Nhân viên", "NT", "Đơn KM A", "Đơn KM B", "Thay đổi", "% đơn KM A", "% đơn KM B", "Chi phí A", "Chi phí B", "CP/DT A", "CP/DT B"],
+        stKeys.filter(k => shopF==="all" || k.split("|")[0]===shopF).map(k => { const x = a.staff[k]||[0,0,0,0,0], y = b.staff[k]||[0,0,0,0,0]; const [s, nv] = k.split("|"); return h("tr", { key:k }, h("td", { style:{ ...L, fontWeight:700 } }, nv), h("td", { style:L }, shopName(s)),
           h("td", { style:td }, num(x[1])), h("td", { style:td }, num(y[1])), h("td", { style:td }, dlt(x[1], y[1])), h("td", { style:td }, pcs(pc(x[1], x[0]))), h("td", { style:td }, pcs(pc(y[1], y[0]))),
           h("td", { style:td }, fm(x[3])), h("td", { style:td }, fm(y[3])), h("td", { style:td }, x[3] ? pcs(pc(x[3], x[2])) : "—"), h("td", { style:td }, y[3] ? pcs(pc(y[3], y[2])) : "—")); }))),
       shopF==="all" && prKeys.length>0 && card("Theo chương trình", `${prKeys.length} chương trình`, tbl(["Chương trình", "Chi phí A", "Chi phí B", "Thay đổi", "Đơn A", "Đơn B", "CP/DT A", "CP/DT B"],
