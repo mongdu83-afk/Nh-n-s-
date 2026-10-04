@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261004-2";
+window.__APP_BUILD = "20261004-4";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -686,6 +686,7 @@ async function uploadTaskAttachmentFile(file, path, onProgress){
 }
 
 let DEFAULT_SHOPS = ["SHOP0058","SHOP0059","SHOP0072","SHOP0074","SHOP0089","SHOP0095","SHOP0121","SHOP0122","SHOP0163"];
+const ALL_SHOPS = [...DEFAULT_SHOPS]; // gồm cả nhà thuốc thử nghiệm (dùng cho form nhân viên / quản lý danh sách)
 const STAFF_ROLES = ["Nhân viên học việc","Nhân viên bán hàng","Cửa hàng trưởng"];
 // Thêm 23/9/2026: "Khu vực" (tỉnh/thành nơi nhà thuốc/nhân viên làm việc) — dùng làm cơ sở để lấy
 // đúng dữ liệu thời tiết theo vùng cho báo cáo kinh doanh sau này; và "Level nhân viên" (khớp với
@@ -801,9 +802,29 @@ async function logSystemError(source, err){
     });
   } catch(e){ console.error("Không ghi được systemErrors:", e); }
 }
-function subscribeCol(name, cb, orderField){
+// 4/10/2026 (Phương): nhân viên ĐÃ NGHỈ (ngày nghỉ việc ≤ hôm nay) và nhân viên của NHÀ THUỐC THỬ NGHIỆM (shop
+// "đào tạo" test nội dung app — opsConfig/shopList.testShops) không hiện ở các danh sách/thống kê. Lọc tập trung ở
+// đây cho mọi subscribeCol("staff"). Ngoại lệ: { all:true } (Danh sách nhân viên, tìm hồ sơ của chính mình),
+// { keepResigned:true } (KPI tháng — người nghỉ giữa tháng vẫn tính tới ngày nghỉ).
+window.__TEST_SHOPS = window.__TEST_SHOPS || new Set();
+window.__MY_SHOP = window.__MY_SHOP || null;
+const __staffSubs = new Set();
+function isTestShop(shop){ return !!shop && window.__TEST_SHOPS.has(shop) && window.__MY_SHOP!==shop; }
+function isStaffResigned(st){ return !!(st && st.ngayNghiViec && st.ngayNghiViec <= todayISO()); }
+function filterStaffRows(rows, opts){
+  if(opts && opts.all) return rows;
+  return rows.filter(st => !isTestShop(st.shop) && (opts && opts.keepResigned ? true : !isStaffResigned(st)));
+}
+function refreshStaffSubscribers(){ __staffSubs.forEach(sub => { if(sub.raw) sub.cb(filterStaffRows(sub.raw, sub.opts)); }); }
+function subscribeCol(name, cb, orderField, opts){
   let q = db.collection(name);
   if(orderField) q = q.orderBy(orderField, "desc");
+  if(name==="staff"){
+    const sub = { cb, opts, raw:null };
+    __staffSubs.add(sub);
+    const un = q.onSnapshot(snap => { sub.raw = snap.docs.map(d => ({ id:d.id, ...d.data() })); cb(filterStaffRows(sub.raw, opts)); }, err => logSystemError(name, err));
+    return () => { __staffSubs.delete(sub); un(); };
+  }
   return q.onSnapshot(snap => cb(snap.docs.map(d => ({ id:d.id, ...d.data() }))), err => logSystemError(name, err));
 }
 
@@ -8825,8 +8846,10 @@ function ProbationView({ isAdmin, myStaff, trainStats, navParam }){
 
 
 function TrainingView({ isAdmin, myStaff, navParam }){
-  const [trSub, setTrSub] = useState((navParam && (navParam.sub==="thuviec" || navParam.sub==="khoahoc")) ? navParam.sub : "checklist");
-  useEffect(()=>{ if(navParam && (navParam.sub==="thuviec" || navParam.sub==="khoahoc")) setTrSub(navParam.sub); }, [navParam]);
+  // 4/10/2026 (Phương): mọi thứ về đào tạo ở 1 chỗ — Nhân sự › Đào tạo.
+  const TR_SUBS = ["tracuu","phacdo","trieuchung","khoahoc","checklist","thuviec"];
+  const [trSub, setTrSub] = useState((navParam && TR_SUBS.includes(navParam.sub)) ? navParam.sub : (isAdmin ? "checklist" : "tracuu"));
+  useEffect(()=>{ if(navParam && TR_SUBS.includes(navParam.sub)) setTrSub(navParam.sub); }, [navParam]);
   const [hires, setHires] = useState([]);
   const [staff, setStaff] = useState([]);
   const [checklistTpl, setChecklistTpl] = useState(DEFAULT_CHECKLIST);
@@ -9011,7 +9034,13 @@ function TrainingView({ isAdmin, myStaff, navParam }){
   // 30/9/2026: tiến độ checklist + điểm buddy TB → truyền sang màn Thử việc
   const trainStats = {};
   hires.forEach(hh => { const st = hireStats(hh); const rs = reports.filter(r=>r.hireId===hh.id && r.danhGia); trainStats[hh.id] = { pct:st.pct, verifiedPct:st.verifiedPct, star: rs.length ? rs.reduce((a,r)=>a+Number(r.danhGia||0),0)/rs.length : null }; });
-  const trTabs = [{ id:"checklist", label:"Checklist & buddy" }, { id:"thuviec", label:"Thử việc" }, { id:"khoahoc", label:"Khoá học" }];
+  const trTabs = [{ id:"tracuu", label:"Thẻ sản phẩm" }, { id:"phacdo", label:"Phác đồ cắt liều" }, { id:"trieuchung", label:"🩺 Tư vấn theo triệu chứng" },
+    { id:"khoahoc", label:"Khoá học" }, { id:"checklist", label:"Checklist & buddy" }, { id:"thuviec", label:"Thử việc" }];
+  if(trSub==="tracuu" || trSub==="phacdo" || trSub==="trieuchung") return React.createElement(React.Fragment, null,
+    React.createElement(SubTabBar, { key:"sub", tabs:trTabs, active:trSub, onChange:setTrSub }),
+    trSub==="tracuu" && React.createElement(ProductDictionaryView, { key:"pd", isAdmin, myStaff }),
+    trSub==="phacdo" && React.createElement(DosingProtocolView, { key:"dp", isAdmin }),
+    trSub==="trieuchung" && React.createElement(SymptomConsultView, { key:"sc", isAdmin, myStaff }));
   if(trSub==="khoahoc") return React.createElement(React.Fragment, null,
     React.createElement(SubTabBar, { key:"sub", tabs:trTabs, active:trSub, onChange:setTrSub }),
     React.createElement(CourseLibraryView, { key:"cl", isAdmin, myStaff }));
@@ -9431,30 +9460,44 @@ function CleanupTokensButton(){
 function ShopListEditor(){
   const [newCode, setNewCode] = useState("");
   const [saving, setSaving] = useState(false);
+  // 4/10/2026: nhà thuốc THỬ NGHIỆM (VD shop "đào tạo" test nội dung app) — vẫn chọn được cho nhân viên nhưng bị
+  // loại khỏi mọi thống kê, báo cáo, bộ lọc nhà thuốc (opsConfig/shopList.testShops).
+  const testShops = [...(window.__TEST_SHOPS || [])];
+  const allShops = [...ALL_SHOPS];
+  const save = (shops, tests) => saveConfigDoc("shopList", { shops, testShops: tests.filter(x => shops.includes(x)) });
   async function addShop(){
     const code = newCode.trim().toUpperCase();
-    if(!code || DEFAULT_SHOPS.includes(code)) { setNewCode(""); return; }
+    if(!code || allShops.includes(code)) { setNewCode(""); return; }
     setSaving(true);
-    try{ await saveConfigDoc("shopList", { shops:[...DEFAULT_SHOPS, code] }); setNewCode(""); }
+    try{ await save([...allShops, code], testShops); setNewCode(""); }
     finally{ setSaving(false); }
   }
   async function removeShop(code){
     if(!window.confirm(`Xoá nhà thuốc ${code} khỏi danh sách? (Dữ liệu cũ đã có của nhà thuốc này vẫn giữ nguyên, chỉ ẩn khỏi các lựa chọn mới)`)) return;
     setSaving(true);
-    try{ await saveConfigDoc("shopList", { shops: DEFAULT_SHOPS.filter(s=>s!==code) }); }
+    try{ await save(allShops.filter(s=>s!==code), testShops.filter(s=>s!==code)); }
+    finally{ setSaving(false); }
+  }
+  async function toggleTest(code){
+    const isT = testShops.includes(code);
+    if(!isT && !window.confirm(`Đánh dấu ${code} là NHÀ THUỐC THỬ NGHIỆM?\n\nNhân viên, công việc, số liệu của nhà thuốc này sẽ KHÔNG tính vào thống kê, báo cáo, xếp hạng; không hiện ở bộ lọc nhà thuốc. Tài khoản của nhà thuốc này vẫn đăng nhập, học, thử app bình thường.`)) return;
+    setSaving(true);
+    try{ await save(allShops, isT ? testShops.filter(x=>x!==code) : [...testShops, code]); }
     finally{ setSaving(false); }
   }
   return React.createElement("div", { className:"card", style:{ marginBottom:20 } }, [
     React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:17.5, marginBottom:4 } }, "Quản lý danh sách nhà thuốc"),
-    React.createElement("div", { key:"s", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } }, "Thêm hoặc xoá mã nhà thuốc — áp dụng ngay cho toàn bộ app (tạo tài khoản, giao việc, báo cáo...), không cần sửa code."),
+    React.createElement("div", { key:"s", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:12 } }, "Thêm hoặc xoá mã nhà thuốc — áp dụng ngay cho toàn bộ app. Bấm 🧪 để đánh dấu nhà thuốc thử nghiệm (shop đào tạo/test app): vẫn dùng được nhưng không tính vào thống kê, báo cáo."),
     React.createElement("div", { key:"chips", style:{ display:"flex", flexWrap:"wrap", gap:8, marginBottom:14 } },
-      DEFAULT_SHOPS.map(code => React.createElement("span", { key:code, style:{ display:"inline-flex", alignItems:"center", gap:6, padding:"5px 10px", borderRadius:14, background:"var(--paper)", fontSize:12.5, fontWeight:600 } }, [
-        code,
-        React.createElement("button", { key:"x", type:"button", disabled:saving, onClick:()=>removeShop(code), style:{ border:"none", background:"none", cursor:"pointer", color:"var(--clay)", fontSize:13, lineHeight:1 } }, "✕"),
-      ]))
+      allShops.map(code => { const isT = testShops.includes(code);
+        return React.createElement("span", { key:code, style:{ display:"inline-flex", alignItems:"center", gap:6, padding:"5px 10px", borderRadius:14, background: isT ? "#FEF3C7" : "var(--paper)", border: isT ? "1px solid #F59E0B" : "1px solid transparent", fontSize:12.5, fontWeight:600 } }, [
+          code, isT && React.createElement("span", { key:"lb", style:{ fontSize:10.5, color:"#B45309" } }, "thử nghiệm · không thống kê"),
+          React.createElement("button", { key:"t", type:"button", disabled:saving, title: isT ? "Bỏ đánh dấu thử nghiệm" : "Đánh dấu là nhà thuốc thử nghiệm", onClick:()=>toggleTest(code), style:{ border:"none", background:"none", cursor:"pointer", fontSize:13, lineHeight:1, opacity: isT ? 1 : .5 } }, "🧪"),
+          React.createElement("button", { key:"x", type:"button", disabled:saving, onClick:()=>removeShop(code), style:{ border:"none", background:"none", cursor:"pointer", color:"var(--clay)", fontSize:13, lineHeight:1 } }, "✕"),
+        ]); })
     ),
     React.createElement("div", { key:"add", style:{ display:"flex", gap:8, flexWrap:"wrap" } }, [
-      React.createElement("input", { key:"i", value:newCode, onChange:e=>setNewCode(e.target.value), placeholder:"VD: SHOP0200", style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13, flex:"0 1 200px" }, onKeyDown:e=>{ if(e.key==="Enter"){ e.preventDefault(); addShop(); } } }),
+      React.createElement("input", { key:"i", value:newCode, onChange:e=>setNewCode(e.target.value), placeholder:"VD: SHOP0200", style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13, flex:"0 1 200px" }, onKeyDown:e=>{ if(e.key==="Enter") addShop(); } }),
       React.createElement("button", { key:"b", type:"button", className:"btn btnPrimary", disabled:saving, style:{ padding:"8px 14px", fontSize:13 }, onClick:addShop }, "＋ Thêm nhà thuốc"),
     ]),
   ]);
@@ -9703,7 +9746,20 @@ function StaffView(){
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({ name:"", shop:DEFAULT_SHOPS[0], role:STAFF_ROLES[1], ngayVaoLam:"", khuVuc:"", level:STAFF_LEVELS[0], tenHeThong:"", ngayNghiViec:"" });
   const [creatingFor, setCreatingFor] = useState(null);
-  useEffect(()=>{ const u = subscribeCol("staff", setStaff); return u; }, []);
+  useEffect(()=>{ const u = subscribeCol("staff", setStaff, null, { all:true }); return u; }, []);
+  // 4/10/2026: xác nhận nghỉ việc + ẩn người đã nghỉ khỏi danh sách (xem lại ở nút "Đã nghỉ việc")
+  const [showLeft, setShowLeft] = useState(false);
+  const [leaving, setLeaving] = useState(null);
+  const [leaveDate, setLeaveDate] = useState(todayISO());
+  async function confirmLeave(){
+    if(!leaving || !leaveDate) return;
+    await updateDoc("staff", leaving.id, { ngayNghiViec:leaveDate, nghiViecXacNhanAt:new Date().toISOString(), nghiViecXacNhanBy:(auth.currentUser && auth.currentUser.email) || "admin" });
+    setLeaving(null);
+  }
+  async function undoLeave(st){
+    if(!window.confirm(`Khôi phục ${st.name} về đang làm việc?`)) return;
+    await updateDoc("staff", st.id, { ngayNghiViec:null, nghiViecXacNhanAt:null });
+  }
 
   function openAdd(){ setEditingId(null); setForm({ name:"", shop:DEFAULT_SHOPS[0], role:STAFF_ROLES[1], ngayVaoLam:"", khuVuc:"", level:STAFF_LEVELS[0], tenHeThong:"", ngayNghiViec:"" }); setShowForm(true); }
   function openEdit(s){ setEditingId(s.id); setForm({ name:s.name, shop:s.shop, role:s.role, ngayVaoLam:s.ngayVaoLam||"", khuVuc:s.khuVuc||"", level:s.level||STAFF_LEVELS[0], tenHeThong:s.tenHeThong||"", ngayNghiViec:s.ngayNghiViec||"" }); setShowForm(true); }
@@ -9730,13 +9786,15 @@ function StaffView(){
     if(window.confirm(msg)) await deleteDoc("staff", id);
   }
 
+  const leftList = staff.filter(isStaffResigned);
+  const shownStaff = showLeft ? leftList : staff.filter(st => !isStaffResigned(st));
   const table = staff.length===0
     ? React.createElement("div", { className:"emptyState" }, "Chưa có nhân viên nào — thêm để dùng cho Buddy và Tặng sao.")
     : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
         React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Tên","Nhà thuốc","Khu vực","Vai trò","Level","Vào làm","Tài khoản",""].map((h,i)=>React.createElement("th",{key:i},h)))),
-        React.createElement("tbody",{key:"b"}, staff.map(s => React.createElement("tr",{key:s.id}, [
+        React.createElement("tbody",{key:"b"}, shownStaff.map(s => React.createElement("tr",{key:s.id, style: isTestShop(s.shop) || (window.__TEST_SHOPS.has(s.shop)) ? { background:"#FFFBEB" } : undefined}, [
           React.createElement("td",{key:"n"}, s.name),
-          React.createElement("td",{key:"sh"}, s.shop),
+          React.createElement("td",{key:"sh"}, [s.shop, window.__TEST_SHOPS.has(s.shop) && React.createElement("span",{key:"t", style:{ marginLeft:5, fontSize:10.5, fontWeight:700, color:"#B45309" }}, "🧪 thử nghiệm")]),
           React.createElement("td",{key:"kv"}, s.khuVuc || "—"),
           React.createElement("td",{key:"r"}, s.role),
           React.createElement("td",{key:"lv"}, s.level || "—"),
@@ -9745,6 +9803,9 @@ function StaffView(){
           React.createElement("td",{key:"a", style:{whiteSpace:"nowrap"}}, [
             !s.uid && React.createElement("button",{key:"acc", className:"btn btnAmber", style:{padding:"5px 10px",fontSize:11.5,marginRight:6}, onClick:()=>setCreatingFor(s)},"Tạo tài khoản"),
             React.createElement("button",{key:"e", className:"btn", style:{padding:"5px 10px",fontSize:11.5,marginRight:6}, onClick:()=>openEdit(s)},"Sửa"),
+            isStaffResigned(s)
+              ? React.createElement("button",{key:"u", className:"btn", style:{padding:"5px 10px",fontSize:11.5,marginRight:6}, onClick:()=>undoLeave(s)},`Khôi phục (nghỉ ${String(s.ngayNghiViec).split("-").reverse().join("/")})`)
+              : React.createElement("button",{key:"l", className:"btn btnGhost", style:{padding:"5px 10px",fontSize:11.5,marginRight:6}, onClick:()=>{ setLeaving(s); setLeaveDate(todayISO()); }},"Nghỉ việc"),
             React.createElement("button",{key:"d", className:"btn btnDanger", style:{padding:"5px 10px",fontSize:11.5}, onClick:()=>removeStaff(s.id)},"Xoá"),
           ]),
         ]))),
@@ -9756,7 +9817,7 @@ function StaffView(){
       React.createElement("form", { key:"f", onSubmit:submit }, [
         React.createElement("div", { key:"a", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Họ tên"), React.createElement("input",{key:"i",value:form.name,onChange:e=>setForm({...form,name:e.target.value}),required:true}) ]),
         React.createElement("div", { key:"r", className:"fieldRow", style:{ display:"flex", gap:10, marginBottom:16 } }, [
-          React.createElement("div", { key:"a", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Nhà thuốc"), React.createElement("select",{key:"i",value:form.shop,onChange:e=>setForm({...form,shop:e.target.value})}, DEFAULT_SHOPS.map(s=>React.createElement("option",{key:s,value:s},s))) ]),
+          React.createElement("div", { key:"a", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Nhà thuốc"), React.createElement("select",{key:"i",value:form.shop,onChange:e=>setForm({...form,shop:e.target.value})}, ALL_SHOPS.map(s=>React.createElement("option",{key:s,value:s},s))) ]),
           React.createElement("div", { key:"b", className:"field", style:{ flex:1 } }, [ React.createElement("label",{key:"l"},"Vai trò"), React.createElement("select",{key:"i",value:form.role,onChange:e=>setForm({...form,role:e.target.value})}, STAFF_ROLES.map(r=>React.createElement("option",{key:r,value:r},r))) ]),
         ]),
         React.createElement("div", { key:"r2", className:"fieldRow", style:{ display:"flex", gap:10, marginBottom:16 } }, [
@@ -9785,8 +9846,20 @@ function StaffView(){
     React.createElement("p", { key:"s", className:"pagesub" }, "Danh sách dùng chung cho Checklist ngày, Báo cáo tuần, Buddy và tặng sao ghi nhận. Tạo tài khoản để nhân viên đăng nhập thẳng vào giao diện riêng của mình. (Quản lý nhà thuốc và Đồng bộ dữ liệu đã chuyển sang nhóm \"Hệ thống\".)"),
     React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:16 } }, [
       React.createElement("button", { key:"add", className:"btn btnPrimary", onClick:openAdd }, "＋ Thêm nhân viên"),
+      React.createElement("button", { key:"left", className:"btn"+(showLeft?" btnPrimary":""), onClick:()=>setShowLeft(v=>!v) }, showLeft ? "← Đang làm việc" : `Đã nghỉ việc (${leftList.length})`),
     ]),
+    showLeft && React.createElement("div", { key:"lnote", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:10 } }, "Nhân viên đã nghỉ không hiện ở các danh sách, giao việc, thống kê từ ngày nghỉ (KPI tháng vẫn tính đến ngày nghỉ). Bấm \"Khôi phục\" nếu xác nhận nhầm."),
     table, formModal, createModal,
+    leaving && React.createElement("div", { key:"lv", className:"modalOverlay", onClick:()=>setLeaving(null) },
+      React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation(), style:{ maxWidth:420 } }, [
+        React.createElement("div", { key:"t", style:{ fontWeight:800, fontSize:17, marginBottom:6 } }, `Xác nhận ${leaving.name} nghỉ việc`),
+        React.createElement("div", { key:"s", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:10, lineHeight:1.5 } }, "Từ ngày nghỉ, nhân viên không còn hiện ở danh sách, giao việc, báo cáo, thống kê. Dữ liệu cũ giữ nguyên. Tài khoản đăng nhập (nếu có) nên khoá ở Firebase Authentication."),
+        React.createElement("div", { key:"f", className:"field", style:{ marginBottom:12 } }, [ React.createElement("label",{key:"l"},"Ngày nghỉ việc"), React.createElement("input",{key:"i",type:"date",value:leaveDate,onChange:e=>setLeaveDate(e.target.value)}) ]),
+        React.createElement("div", { key:"b", className:"btnRow", style:{ justifyContent:"flex-end" } }, [
+          React.createElement("button", { key:"c", className:"btn btnGhost", onClick:()=>setLeaving(null) }, "Huỷ"),
+          React.createElement("button", { key:"o", className:"btn btnPrimary", onClick:confirmLeave }, "Xác nhận nghỉ việc"),
+        ]),
+      ])),
   ]);
 }
 
@@ -15788,7 +15861,7 @@ const OPS_TABS = [
   { id:"crm", label:"Khách hàng" },
   { id:"nhanvien", label:"Danh sách nhân viên" },
   { id:"ctkm", label:"Khuyến mại" },
-  { id:"training", label:"Đào tạo & Buddy" },
+  { id:"training", label:"Đào tạo" }, // 4/10/2026: gộp Từ điển sản phẩm (thẻ, phác đồ, tư vấn triệu chứng) + Khoá học + Checklist & buddy + Thử việc
   { id:"kudos", label:"Ghi nhận & Quà" },
   { id:"temgia", label:"Tem giá" },
   { id:"kinhnghiem", label:"Lịch sử & kinh nghiệm xử lý" },
@@ -15816,7 +15889,7 @@ const OPS_GROUPS_ADMIN_V2 = [
   { id:"congviec",     label:"Công việc",    tabs:["tasks"] }, // 3/10/2026: gộp "Việc cần xử lý" vào Công việc (tab con 🔥 Cần xử lý)
   { id:"nhansu",       label:"Nhân sự",      tabs:["emp360","nhanvien","kpi","training","kudos"] },
   { id:"khachhang",    label:"Khách hàng",   tabs:["taimua","crm"] }, // 3/10/2026: Customer 360 mở từ danh sách khách; "Cần chăm sóc hôm nay" gộp tái mua + rời bỏ + VIP + sinh nhật
-  { id:"hanghoagroup", label:"Hàng hoá",     tabs:["hanghoa","prod360","tudien","donthuoc"] },
+  { id:"hanghoagroup", label:"Hàng hoá",     tabs:["hanghoa","prod360","donthuoc"] }, // 4/10/2026: Từ điển sản phẩm dồn về Nhân sự › Đào tạo
   { id:"kinhdoanh",    label:"Kinh doanh & Marketing", tabs:["revenueAnalytics","ctkm","temgia"] },
   { id:"baocao",       label:"Báo cáo & Phân tích",   tabs:["baocaotuan"] }, // 3/10/2026: "Kết quả ngày" gộp vào Doanh thu (tab con Hôm nay)
   { id:"ruiro",        label:"Rủi ro & Tuân thủ",     tabs:["risk","kinhnghiem"] },
@@ -15828,7 +15901,7 @@ const OPS_GROUPS_STAFF_V2 = [
   { id:"congviec",     label:"Công việc",    tabs:["tasks"] },
   { id:"nhansu",       label:"Nhân sự",      tabs:["kpi","nhanvien","training","kudos"] },
   { id:"khachhang",    label:"Khách hàng",   tabs:["taimua","crm"] },
-  { id:"hanghoagroup", label:"Hàng hoá",     tabs:["hanghoa","tudien"] },
+  { id:"hanghoagroup", label:"Hàng hoá",     tabs:["hanghoa"] },
   { id:"kinhdoanh",    label:"Kinh doanh & Marketing", tabs:["revenueAnalytics","ctkm","temgia"] },
   { id:"baocao",       label:"Báo cáo & Phân tích",   tabs:["sales","baocaotuan"] },
 ];
@@ -15844,7 +15917,7 @@ const MENU_LEGACY_ADMIN = [
   { id:"command", label:"Tổng quan điều hành", tabs:["command","risk","shop360"] },
   { id:"nhansu", label:"Nhân sự", tabs:["emp360","tasks","kpi","nhanvien","training","kudos"] },
   { id:"khachhang", label:"Khách hàng", tabs:["taimua","cust360","crm","ctkm"] },
-  { id:"hanghoagroup", label:"Hàng hoá", tabs:["prod360","hanghoa","tudien","donthuoc","temgia"] },
+  { id:"hanghoagroup", label:"Hàng hoá", tabs:["prod360","hanghoa","donthuoc","temgia"] },
   { id:"vanhanh", label:"Vận hành", tabs:["homnay","checklist","photos","revenueAnalytics","ketquangay","baocaotuan","kinhnghiem"] },
   { id:"action", label:"Công việc cần xử lý", tabs:["action"] },
   { id:"ai", label:"AI", tabs:["ai"] },
@@ -21917,7 +21990,7 @@ function Employee360View({ isAdmin, myStaff, navParam, onNavigate }){
   }, []);
   const thang = currentMonthStr();
 
-  useEffect(()=>{ const u = subscribeCol("staff", setStaffList); return u; }, []);
+  useEffect(()=>{ const u = subscribeCol("staff", setStaffList, null, { keepResigned:true }); return u; }, []);
   useEffect(()=>{
     return db.collection("dailyKpiPace").onSnapshot(s => setPaceList(s.docs.map(d => d.data())), err => logSystemError("dailyKpiPace", err));
   }, []);
@@ -24942,7 +25015,7 @@ function Dashboard({ user, isAdmin, myStaff }){
         // 27/9/2026 (Phương): THU GỌN sidebar nhân viên/CHT — 17 mục phẳng → 6 nhóm (tab con hiện ngay dưới nhóm đang chọn).
         const gs = OPS_GROUPS_STAFF.map(g => ({ ...g, tabs: g.tabs.filter(id => leafTabs.some(t=>t.id===id)) })).filter(g => g.tabs.length>0);
         const covered = new Set(gs.flatMap(g => g.tabs));
-        return [...gs, ...leafTabs.filter(t => !covered.has(t.id) && !["cust360","action","ketquangay"].includes(t.id)).map(t => ({ id:t.id, label:t.label, tabs:[t.id] }))];
+        return [...gs, ...leafTabs.filter(t => !covered.has(t.id) && !["cust360","action","ketquangay","tudien"].includes(t.id)).map(t => ({ id:t.id, label:t.label, tabs:[t.id] }))];
       })();
   const [activeTab, setActiveTabRaw] = useState(
     (!isAdmin && leafTabs.some(t=>t.id==="homnay")) ? "homnay"
@@ -24983,7 +25056,7 @@ function Dashboard({ user, isAdmin, myStaff }){
   const [showCompose360, setShowCompose360] = useState(false);
   function setActiveTab(tabId, param){
     // 3/10/2026: các tab đã gộp → chuyển về tab gộp + mở đúng tab con (link thông báo / nút cũ vẫn chạy)
-    const MERGED = { action:["tasks", { sub:"inbox" }], ketquangay:["revenueAnalytics", { sub:"ketqua" }], cust360:["crm", null] };
+    const MERGED = { action:["tasks", { sub:"inbox" }], ketquangay:["revenueAnalytics", { sub:"ketqua" }], cust360:["crm", null], tudien:["training", { sub:"tracuu" }] };
     if(MERGED[tabId] && !(tabId==="cust360" && param && (param.phone || param.customerId))){ const m = MERGED[tabId]; param = { ...(m[1]||{}), ...(param||{}) }; tabId = m[0]; }
     if(tabId===activeTab){
       // Bấm lại đúng tab đang đứng (sidebar/thanh tab/thanh tab con) — coi là yêu cầu RESET, không
@@ -25228,8 +25301,12 @@ function App(){
     if(authState.status!=="in") return undefined;
     const unsub = subscribeConfigDoc("shopList", (d) => {
       if(d && Array.isArray(d.shops) && d.shops.length>0){
+        // 4/10/2026: nhà thuốc thử nghiệm (testShops) không nằm trong DEFAULT_SHOPS (bộ lọc/thống kê) — vẫn có ở ALL_SHOPS (form nhân viên).
+        window.__TEST_SHOPS = new Set(Array.isArray(d.testShops) ? d.testShops : []);
+        ALL_SHOPS.length = 0; ALL_SHOPS.push(...d.shops, ...[...window.__TEST_SHOPS].filter(x => !d.shops.includes(x)));
         DEFAULT_SHOPS.length = 0;
-        DEFAULT_SHOPS.push(...d.shops);
+        DEFAULT_SHOPS.push(...d.shops.filter(x => !isTestShop(x)));
+        refreshStaffSubscribers();
         setShopTick(n=>n+1);
       }
     });
@@ -25239,7 +25316,7 @@ function App(){
   useEffect(()=>{
     if(authState.status!=="in" || !claimsReady) return;
     if(isAdmin){ setStaffLoaded(true); return; }
-    const unsub = subscribeCol("staff", rows => { setStaff(rows); setStaffLoaded(true); });
+    const unsub = subscribeCol("staff", rows => { setStaff(rows); setStaffLoaded(true); }, null, { all:true });
     return unsub;
   }, [authState.status, authState.user && authState.user.uid, isAdmin, claimsReady]);
 
@@ -25250,6 +25327,7 @@ function App(){
   const user = authState.user;
   if(!isAdmin && !staffLoaded) return React.createElement("div", { style:{ padding:40 } }, React.createElement(EmptyState, { kind:"loading" }));
   const myStaff = isAdmin ? null : staff.find(s => s.uid===user.uid);
+  if(myStaff && window.__MY_SHOP!==myStaff.shop){ window.__MY_SHOP = myStaff.shop; }
   if(!isAdmin && !myStaff) return React.createElement(NoStaffLinkedScreen, { user });
   return React.createElement(Dashboard, { user, isAdmin, myStaff });
 }
