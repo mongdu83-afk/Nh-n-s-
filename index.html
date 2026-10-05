@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261004-6";
+window.__APP_BUILD = "20261005-1";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -8658,7 +8658,7 @@ const TTS_MODES = [
 ];
 // 4/10/2026: Lịch sử bài luyện tình huống — quản lý/buddy/CHT/chính TTS xem lại toàn bộ nội dung từng bài.
 const PH_MODE = { quiz:"Trắc nghiệm", chat:"Khách ảo", write:"Tự viết" };
-function PracticeHistoryModal({ row, onClose }){
+function PracticeHistoryModal({ row, onClose, onChanged }){
   const h = React.createElement;
   const [list, setList] = useState(null);
   const [err, setErr] = useState(null);
@@ -8666,7 +8666,19 @@ function PracticeHistoryModal({ row, onClose }){
   const [item, setItem] = useState(null);
   const [busy, setBusy] = useState(false);
   const [modeF, setModeF] = useState("all");
-  useEffect(()=>{ (async()=>{ try{ const r = await pbCall("practiceList", { hireId:row.id, limit:200 }, 60000); if(r.ok===false) throw new Error(r.error); setList(r.rows||[]); } catch(e){ setErr(e.message||String(e)); } })(); }, []);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [picked, setPicked] = useState([]);
+  const [delBusy, setDelBusy] = useState(false);
+  async function reload(){ try{ const r = await pbCall("practiceList", { hireId:row.id, limit:200 }, 60000); if(r.ok===false) throw new Error(r.error); setList(r.rows||[]); setIsAdmin(!!r.isAdmin); } catch(e){ setErr(e.message||String(e)); } }
+  useEffect(()=>{ reload(); }, []);
+  // 5/10/2026: quản lý xoá bài luyện test nhầm
+  async function del(ids){
+    if(!ids.length) return;
+    if(!window.confirm(`Xoá vĩnh viễn ${ids.length} bài luyện của ${row.name}?\nĐiểm và lịch sử của các bài này sẽ không tính nữa.`)) return;
+    setDelBusy(true); setErr(null);
+    try{ const r = await pbCall("practiceDelete", { hireId:row.id, ids }, 60000); if(r.ok===false) throw new Error(r.error);
+      setPicked([]); if(sel && ids.includes(sel)){ setSel(null); setItem(null); } await reload(); onChanged && onChanged(); }
+    catch(e){ setErr(e.message||String(e)); } setDelBusy(false); }
   async function open(id){ setSel(id); setItem(null); setBusy(true); setErr(null);
     try{ const r = await pbCall("practiceDetail", { hireId:row.id, id }, 60000); if(r.ok===false) throw new Error(r.error); setItem(r.item); } catch(e){ setErr(e.message||String(e)); } setBusy(false); }
   const scC = s => s==null ? "var(--inkSoft)" : s>=80 ? CL360.good : s>=60 ? CL360.warn : CL360.bad;
@@ -8714,17 +8726,23 @@ function PracticeHistoryModal({ row, onClose }){
       !sel && h("div", null,
         h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", margin:"10px 0" } }, [["all","Tất cả"],["chat","Khách ảo"],["write","Tự viết"],["quiz","Trắc nghiệm"]].map(([k,l]) =>
           h("button", { key:k, className:"btn"+(modeF===k ? " btnPrimary" : ""), style:{ padding:"4px 10px", fontSize:12.5 }, onClick:()=>setModeF(k) }, l + (list ? ` (${(k==="all" ? list : list.filter(x=>x.mode===k)).length})` : "")))),
+        isAdmin && list && rows.length>0 && h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", margin:"0 0 8px", fontSize:12.5 } },
+          h("label", { style:{ display:"inline-flex", gap:5, alignItems:"center", cursor:"pointer" } }, h("input", { type:"checkbox", checked: rows.length>0 && rows.every(x=>picked.includes(x.id)), onChange:e=>setPicked(e.target.checked ? rows.map(x=>x.id) : []) }), "Chọn tất cả đang hiện"),
+          h("button", { className:"btn", disabled:!picked.length || delBusy, style:{ padding:"4px 10px", fontSize:12.5, color:CL360.bad, borderColor:CL360.bad }, onClick:()=>del(picked) }, delBusy ? "Đang xoá…" : `🗑 Xoá ${picked.length} bài đã chọn`)),
         !list && !err && h("div", { style:{ fontSize:13, color:"var(--inkSoft)" } }, "Đang tải…"),
         list && rows.length===0 && h("div", { style:{ fontSize:13, color:"var(--inkSoft)" } }, "Chưa có bài luyện nào."),
-        rows.map(x => h("div", { key:x.id, onClick:()=>open(x.id), style:{ display:"flex", gap:10, alignItems:"center", padding:"9px 10px", border:"1px solid var(--line)", borderRadius:10, marginBottom:6, cursor:"pointer", background:"#fff" } },
+        rows.map(x => h("div", { key:x.id, onClick:()=>open(x.id), style:{ display:"flex", gap:10, alignItems:"center", padding:"9px 10px", border:"1px solid var(--line)", borderRadius:10, marginBottom:6, cursor:"pointer", background: picked.includes(x.id) ? "#FEF2F2" : "#fff" } },
+          isAdmin && h("input", { type:"checkbox", checked:picked.includes(x.id), onClick:e=>e.stopPropagation(), onChange:e=>setPicked(p => e.target.checked ? [...p, x.id] : p.filter(i=>i!==x.id)) }),
           h("div", { style:{ width:44, textAlign:"center", fontWeight:900, fontSize:17, color:scC(x.score) } }, x.score!=null ? x.score : "—"),
           h("div", { style:{ flex:1, minWidth:0 } },
             h("div", { style:{ fontWeight:700, fontSize:13.5 } }, x.title || "(không rõ phác đồ)"),
             h("div", { style:{ fontSize:12, color:"var(--inkSoft)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" } },
               `${PH_MODE[x.mode]||x.mode} · ${fmtT(x.createdAt)}${x.mode==="chat" ? ` · ${x.turns} lượt` : ""}${x.status==="open" ? " · chưa nộp" : x.status==="ungraded" ? " · chưa chấm được" : ""}${x.khach ? " · " + x.khach : ""}`),
             (x.errors||[]).length>0 && h("div", { style:{ fontSize:11.5, color:CL360.bad } }, x.errors.map(e=>e.label).join(" · "))),
+          isAdmin && h("button", { className:"btn", title:"Xoá bài này", disabled:delBusy, style:{ padding:"3px 8px", fontSize:12, color:CL360.bad }, onClick:e=>{ e.stopPropagation(); del([x.id]); } }, "🗑"),
           h("span", { style:{ color:"var(--inkSoft)" } }, "›")))),
-      sel && (busy ? h("div", { style:{ fontSize:13, color:"var(--inkSoft)", marginTop:10 } }, "Đang tải bài…") : item && h("div", { style:{ marginTop:10 } }, detail(item)))));
+      sel && (busy ? h("div", { style:{ fontSize:13, color:"var(--inkSoft)", marginTop:10 } }, "Đang tải bài…") : item && h("div", { style:{ marginTop:10 } }, detail(item),
+        isAdmin && h("div", { style:{ marginTop:14, textAlign:"right" } }, h("button", { className:"btn", disabled:delBusy, style:{ color:CL360.bad, borderColor:CL360.bad }, onClick:()=>del([item.id]) }, delBusy ? "Đang xoá…" : "🗑 Xoá bài luyện này"))))));
 }
 function TtsPracticeModal({ row, onClose, onChanged }){
   const h = React.createElement;
@@ -8895,7 +8913,7 @@ function TtsCaseLibraryView({ isAdmin }){
   const pill = (s) => s==="approved" ? h(Pill360, { text:"Đã duyệt", color:CL360.good }) : s==="rejected" ? h(Pill360, { text:"Loại", color:CL360.gray }) : h(Pill360, { text:"Nháp", color:CL360.warn });
   const protsNoCase = (data.protocols||[]).filter(p => !byProt[p.id]);
   return h("div", null,
-    h("p", { className:"pagesub" }, "Thư viện tình huống cho thực tập sinh luyện (Trắc nghiệm · Khách ảo · Tự viết). AI soạn nháp từ phác đồ, dược sĩ mở từng tình huống kiểm tra đáp án rồi bấm Duyệt — chỉ tình huống đã duyệt mới được dùng. Ra đề từ thư viện không tốn phí AI."),
+    h("p", { className:"pagesub" }, "Thư viện tình huống cho thực tập sinh luyện (Trắc nghiệm · Khách ảo · Tự viết). AI soạn nháp từ phác đồ, dược sĩ mở từng tình huống kiểm tra đáp án rồi bấm Duyệt — chỉ tình huống đã duyệt mới được dùng. Ra đề từ thư viện không tốn phí AI. Giai đoạn này chỉ luyện phác đồ có sẵn trên POS — phác đồ AI để giai đoạn 2."),
     h("div", { className:"metrics" },
       h("div", { className:"metric good" }, h("div", { className:"label" }, "Đã duyệt"), h("div", { className:"value" }, approved)),
       h("div", { className:"metric warn" }, h("div", { className:"label" }, "Chờ duyệt"), h("div", { className:"value" }, drafts)),
@@ -9019,7 +9037,7 @@ function ProbationView({ isAdmin, myStaff, trainStats, navParam }){
           r.practice && (r.practice.topErrors||[]).length>0 && h("div", { style:{ fontSize:11.5, marginTop:4 } }, "Hay sai: ", h("b", { style:{ color:T.bad } }, r.practice.topErrors.map(e=>`${e.label} (${e.n})`).join(" · "))),
           r.practice && r.practice.quizN>0 && h("div", { style:{ fontSize:11.5, marginTop:4 } }, `Trắc nghiệm: ${r.practice.quizN} bài · TB ${r.practice.quizAvg ?? "—"} điểm (ôn tập, không tính điều kiện)`),
           h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:4 } }, "Tính điều kiện: bài Khách ảo + Tự viết. Đạt mới soạn liều thật cạnh buddy (buddy kiểm & xuất bill bằng tài khoản buddy)."),
-          r.practice && (r.practice.n + (r.practice.quizN||0))>0 && h("button", { className:"btn", style:{ marginTop:6, padding:"4px 10px", fontSize:12.5 }, onClick:()=>setPracticeHist(r) }, `📜 Xem lịch sử bài luyện (${r.practice.n + (r.practice.quizN||0)})`)),
+          r.practice && h("button", { className:"btn", style:{ marginTop:6, padding:"4px 10px", fontSize:12.5 }, onClick:()=>setPracticeHist(r) }, `📜 Xem lịch sử bài luyện${(r.practice.n + (r.practice.quizN||0))>0 ? ` (${r.practice.n + (r.practice.quizN||0)} bài đã chấm)` : ""}`)),
         Crit(r.readyDose, !r.readyDose, "② b. Soạn liều thật — buddy kiểm từng liều",
           d.ok2w!=null ? Bar(Math.round(d.ok2w*100), 100, d.ok2w>=R.doseOkRate ? T.good : d.ok2w>=0.75 ? T.warn : T.bad, "Đúng ngay lần đầu (2 tuần gần nhất)", Math.round(d.ok2w*100)+"%")
             : h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:4 } }, "Chưa có liều nào được kiểm trong 2 tuần."),
@@ -9061,7 +9079,7 @@ function ProbationView({ isAdmin, myStaff, trainStats, navParam }){
         ? ["Từ tuần 3: doanh số/ngày dưới 60% nhịp cần để đạt 30tr/tháng.", "KPI dự kiến của tháng đang xét < 85% (kèm tiêu chí nào đang kéo điểm xuống).", "Còn 15 ngày mà chưa có tháng nào đạt 30tr/12tr — kèm số tiền còn thiếu mỗi ngày."]
         : ["Tuần 2 trở đi: học chưa được 20% số thẻ của shop.", "Một lỗi cắt liều lặp lại ≥ 3 lần trong tuần → báo buddy kèm phác đồ cần ôn.", "Đủ điều kiện ① và ② → báo buddy phỏng vấn.", "Phỏng vấn chưa đạt → báo buddy phần còn yếu, phỏng vấn lại sau 7 ngày."]).map((t,i) => h("li", { key:i }, t)))),
     practice && h(TtsPracticeModal, { row:practice, onClose:()=>{ setPractice(null); load(); } }),
-    practiceHist && h(PracticeHistoryModal, { row:practiceHist, onClose:()=>setPracticeHist(null) }),
+    practiceHist && h(PracticeHistoryModal, { row:practiceHist, onClose:()=>{ setPracticeHist(null); load(); } }),
     dose && h(DoseCheckModal, { row:dose, protocols:data.protocols||[], doseErrors:data.doseErrors||{}, onClose:()=>setDose(null), onSaved:()=>{ setDose(null); load(); } }),
     iv && h(InterviewModal, { row:iv, onClose:()=>setIv(null), onSaved:()=>{ setIv(null); load(); } }),
     edit && h(ProbationHireEdit, { row:edit, onClose:(changed)=>{ setEdit(null); if(changed) load(); } }),
