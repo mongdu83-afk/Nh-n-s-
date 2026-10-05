@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261005-9";
+window.__APP_BUILD = "20261005-10";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -14129,9 +14129,10 @@ function PromoRangeView(){
       if(u.n<5 && !u.skip && !u.near && !u.short) tips.push("Rất ít khách dùng — xem lại truyền thông hoặc bỏ");
       return { ...u, dn, cpr, reach, uptake, lift, ratio, bRatio, score, grade, tips, sEff, sReach, sExec, sLift };
     }).sort((a,b) => b.c - a.c || b.n - a.n);
-    const byKind = { near:0, skip:0, combo:0 }; const gapNear = { n:0, g:0 };
-    const ST = {}; rows.forEach(r => { byKind[r[6]] = (byKind[r[6]]||0)+1; if(r[6]==="near"){ gapNear.n++; gapNear.g += r[9]||0; }
+    const byKind = { near:0, skip:0, combo:0 }; const gapNear = { n:0, g:0 }; const kSet = { near:new Set(), skip:new Set(), combo:new Set() }; const allInv = new Set();
+    const ST = {}; rows.forEach(r => { if(kSet[r[6]]) kSet[r[6]].add(r[0]); allInv.add(r[0]); if(r[6]==="near"){ gapNear.n++; gapNear.g += r[9]||0; }
       const k = r[1]+"|"+r[2]; const x = ST[k] || (ST[k] = { s:r[1], nv:r[2], near:0, skip:0, combo:0, inv:new Set() }); x[r[6]]++; x.inv.add(r[0]); });
+    Object.keys(kSet).forEach(k => { byKind[k] = kSet[k].size; }); byKind.total = allInv.size;
     const staff = Object.values(ST).map(x => ({ ...x, tot: staffN[x.s+"|"+x.nv] || 0, orders: x.inv.size })).map(x => ({ ...x, rate: x.tot ? x.orders/x.tot*100 : null })).sort((a,b) => b.orders - a.orders);
     return { tot, units, rows, byKind, gapNear, staff, nShops, shops:[...shopsSeen].sort() };
   }, [daily, miss, base, rules, shopF]);
@@ -14170,7 +14171,7 @@ function PromoRangeView(){
       card("Hoá đơn", M.tot.n.toLocaleString("vi-VN"), `${M.tot.pn.toLocaleString("vi-VN")} đơn có KM (${ps(pct(M.tot.pn, M.tot.n))})`),
       card("Chi phí KM", fm(M.tot.c), `${ps(pct(M.tot.c, M.tot.rev))} doanh thu ${fm(M.tot.rev)}`),
       card("Số CTKM chạy", M.units.filter(u=>u.n>0).length, "đã có khách dùng trong khoảng"),
-      card("Đơn bỏ lỡ KM", (M.byKind.near + M.byKind.skip + M.byKind.combo).toLocaleString("vi-VN"), `sát ngưỡng ${M.byKind.near} · không áp ${M.byKind.skip} · thiếu combo ${M.byKind.combo}`, "#B91C1C")),
+      card("Đơn bỏ lỡ KM", (M.byKind.total||0).toLocaleString("vi-VN"), `sát ngưỡng ${M.byKind.near} · không áp ${M.byKind.skip} · thiếu combo ${M.byKind.combo} (1 đơn có thể thuộc nhiều loại)`, "#B91C1C")),
     M && h(SubTabBar, { tabs:[{ id:"eval", label:"Đánh giá & gợi ý CTKM" }, { id:"all", label:"Tất cả CTKM trong khoảng" }, { id:"miss", label:"Đơn bỏ lỡ KM" }], active:tab, onChange:setTab }),
     M && !hasMissData && h("div", { style:{ fontSize:12.5, color:"#B45309", margin:"8px 0", padding:"8px 10px", background:"#FFFBEB", borderRadius:8 } }, "Chưa có dữ liệu đơn bỏ lỡ cho khoảng ngày này — bấm \"Tính lại\" ở tab Theo đợt chiến dịch (hoặc chờ lần tính tự động sáng mai)."),
     // ===== Tất cả CTKM =====
@@ -25050,7 +25051,8 @@ function InvDecisionView(){
           h("button", { className:"btn", disabled:busy, onClick:run }, busy ? "Đang tính…" : "Tính lại"))),
       d && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:4 } }, "Tính lúc " + new Date(d.computedAt).toLocaleString("vi-VN"))),
     !d ? h("div", { className:"emptyState" }, "Chưa có — bấm Tính lại.") : !S ? h("div", { className:"emptyState" }, "Nhà thuốc này không có mã cần quyết định.") :
-    INV_DEC.map(([k, label, color, unit]) => { const g = S[k]; if(!g || !g.n) return null; const isOpen = open===k;
+    INV_DEC.map(([k, label0, color, unit]) => { const g = S[k]; if(!g || !g.n) return null; const isOpen = open===k;
+      const label = k==="CLEAR" && (d.dataDays||0) < 60 ? `Chưa bán từ khi có dữ liệu (${d.dataDays||0} ngày — đủ 60 ngày mới kết luận "không bán")` : label0;
       return h("div", { key:k, className:"card", style:{ padding:"10px 12px", marginBottom:8, borderLeft:`4px solid ${color}` } },
         h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8, cursor:"pointer" }, onClick:()=>setOpen(isOpen ? "" : k) },
           h("div", { style:{ fontWeight:800, color } }, `${label} · ${g.n} mã`), h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)" } }, unit==="rev" ? (g.rev ? `Doanh thu ~${opsFmtV(g.rev)}/ngày đang bị đe doạ (ước tính)` : "") : (g.val ? `Giá trị tồn ~${opsFmtV(g.val)}` : ""), isOpen ? " ▲" : " ▼")),
@@ -25215,7 +25217,15 @@ function OpsOperatorView({ onNavigate }){
       metric("Đang theo dõi", track.length, `${cnt(track, r=>r.status==="overdue")} việc quá hạn`, cnt(track, r=>r.status==="overdue") ? "#B91C1C" : null),
       metric("7 ngày: đã giao", cnt(wk, assigned), `${wk.length} đề xuất · duyệt ${wk.length ? Math.round(cnt(wk, assigned)/wk.length*100) : 0}%`),
       metric("7 ngày: đã xong", cnt(wk, r=>r.status==="done"), `${cnt(wk, r=>r.status==="done" && /rủi ro đã hết/.test(r.outcome||""))} việc rủi ro đã hết`, "#15803D")),
-    h(SubTabBar, { tabs:[{ id:"pending", label:`Chờ duyệt (${st("pending").length})` }, { id:"shop", label:"Kế hoạch theo nhà thuốc" }, { id:"track", label:`Đang theo dõi (${track.length})` }, { id:"done", label:`Kết quả (${done.length})` }, { id:"report", label:"Báo cáo điều hành" }, { id:"learn", label:"📈 Học từ kết quả" }, { id:"inv", label:"📦 Quyết định hàng hoá" }, { id:"dna", label:"🧬 Nhà thuốc mẫu & nhân bản" }, { id:"ask", label:"💬 Nhận định & hỏi AI" }, { id:"cfg", label:"⚙️ Cách xử lý & cấu hình" }], active:view, onChange:setView }),
+    // 5/10/2026 (Phương): thu gọn còn 4 tab chính, mỗi tab có nút chọn nhỏ bên trong
+    (() => { const GROUPS = { pending:[["pending","Danh sách"],["shop","Theo nhà thuốc"]], track:[["track",`Đang theo dõi (${track.length})`],["done",`Kết quả (${done.length})`],["learn","Học từ kết quả"],["report","Báo cáo điều hành"]],
+        insight:[["ask","Nhận định & hỏi AI"],["inv","Quyết định hàng hoá"],["dna","Nhà thuốc mẫu & nhân bản"]], settings:[["cfg","Cách xử lý & quy tắc"],["s_cfg","Mô hình AI & chi phí"],["s_reports","Báo cáo tự động"],["s_gov","Giám sát AI"],["s_features","Tính năng AI"]] };
+      const mainOf = (v) => Object.keys(GROUPS).find(g => GROUPS[g].some(x => x[0]===v)) || "pending";
+      const main = mainOf(view);
+      return h("div", null,
+        h(SubTabBar, { tabs:[{ id:"pending", label:`Việc chờ duyệt (${st("pending").length})` }, { id:"track", label:"Theo dõi & kết quả" }, { id:"insight", label:"Phân tích" }, { id:"settings", label:"Cài đặt AI" }], active:main, onChange:(g)=>setView(GROUPS[g][0][0]) }),
+        h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", margin:"8px 0" } }, GROUPS[main].map(([k,l]) => h("button", { key:k, onClick:()=>setView(k), style:{ padding:"5px 12px", borderRadius:16, fontSize:12.5, fontWeight:700, cursor:"pointer", fontFamily:"inherit", border:"1px solid " + (view===k ? "var(--pine)" : "var(--line)"), background: view===k ? "var(--pineSoft)" : "#fff", color:"var(--ink)" } }, l)))); })(),
+    /^s_/.test(view) && h(AiHubView, { onNavigate, settingsSub: view.slice(2) }),
     view==="learn" && h(OpsLearningView, null), view==="inv" && h(InvDecisionView, null), view==="dna" && h(ReplicationView, null),
     // 5/10/2026 (Phương): AI Briefing + Trợ lý thông minh chuyển từ Tổng quan điều hành sang đây
     view==="ask" && h("div", { style:{ marginTop:8 } }, h(ExecOverviewView, { isAdmin:true, myStaff:null, onNavigate, aiOnly:true })),
@@ -25251,10 +25261,11 @@ function OpsOperatorView({ onNavigate }){
           return h("tr", { key:k }, h("td", { style:td }, k==="all" ? "Tổng" : OPS_DOM[k]), h("td", { style:td }, a.length), h("td", { style:td }, cnt(a, assigned)), h("td", { style:td }, cnt(a, r=>r.status==="done")),
             h("td", { style:{ ...td, color: cnt(a, r=>r.status==="overdue") ? "#B91C1C" : undefined } }, cnt(a, r=>r.status==="overdue")), h("td", { style:td }, cnt(a, r=>r.status==="done" && /rủi ro đã hết/.test(r.outcome||""))), h("td", { style:td }, cnt(a, r=>r.status==="rejected"))); })))));
 }
-function AiHubView({ onNavigate }){
+function AiHubView({ onNavigate, settingsSub }){
   // 3/10/2026 (Phương): thêm "Cấu hình AI & chi phí" (chuyển Claude ↔ Gemini theo từng chức năng) + so sánh mô hình.
   // Gộp: "Phân tích KPI" + "Phân tích tổng hợp" (tab KPI) đã bỏ — dùng Nhận định điều hành / Hỏi AI ở Tổng quan và Báo cáo tự động ở đây.
-  const [sub, setSub] = useState("ops");
+  const [sub0, setSub] = useState("ops");
+  const sub = settingsSub || sub0;
   const [showCmp, setShowCmp] = useState(false);
   const card = (icon, title, desc, btnLabel, tab) => React.createElement("div", { key:tab, className:"card", style:{ marginBottom:14, padding:18 } }, [
     React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:17.5, marginBottom:6 } }, `${icon} ${title}`),
@@ -25262,9 +25273,10 @@ function AiHubView({ onNavigate }){
     React.createElement("button", { key:"b", type:"button", className:"btn btnPrimary", onClick:()=>onNavigate && onNavigate(tab) }, btnLabel),
   ]);
   const tabs = [{ id:"ops", label:"🧭 AI điều hành" }, { id:"cfg", label:"⚙️ Cấu hình AI & chi phí" }, { id:"reports", label:"Báo cáo tự động" }, { id:"gov", label:"Giám sát & quản trị AI" }, { id:"features", label:"Tính năng AI" }];
-  return React.createElement("div", { style:{ maxWidth:1160, margin:"0 auto", padding:16 } }, [
-    React.createElement(PageTitle, { key:"title" }, "AI"),
-    React.createElement(SubTabBar, { key:"tabs", tabs, active:sub, onChange:setSub }),
+  // 5/10/2026 (Phương): thu gọn — trang AI chỉ còn AI điều hành; cấu hình/giám sát/báo cáo tự động nằm trong tab "Cài đặt AI" của AI điều hành
+  if(!settingsSub) return React.createElement("div", { style:{ maxWidth:1160, margin:"0 auto", padding:16 } }, [
+    React.createElement(PageTitle, { key:"title" }, "AI điều hành"), React.createElement(OpsOperatorView, { key:"ops", onNavigate })]);
+  return React.createElement("div", { style:{ marginTop:8 } }, [
     sub==="cfg" && React.createElement("div", { key:"cfg", className:"card" }, [
       React.createElement("div", { key:"b", style:{ display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap", alignItems:"center", marginBottom:10 } }, [
         React.createElement("div", { key:"t", style:{ fontWeight:800, fontSize:15 } }, "Mô hình AI cho từng chức năng"),
