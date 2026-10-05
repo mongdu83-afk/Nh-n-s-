@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261005-5";
+window.__APP_BUILD = "20261005-6";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -13665,7 +13665,7 @@ function PromoOrderView({ isAdmin }){
   useEffect(()=>{ if(key || !camps.length) return; const r = camps.find(c => c.kind==="campaign" && c.running) || camps.find(c => c.kind==="campaign") || camps[0]; setKey(r.key); }, [idx]);
   useEffect(()=>{ setOd(null); setListF(null); setFamF("all"); setShopF("all"); setOpen(null); }, [key]);
   async function openList(f){ setListF(f); setLim(100); setQ(""); if(!od){ try{ const s = await db.collection("promoOrderAnalytics").doc(key + "_orders").get(); setOd(s.exists ? s.data() : { orders:[] }); }catch(e){ setOd({ orders:[], error:e.message }); } } }
-  useEffect(()=>{ if(!key){ setD(idx===undefined ? undefined : null); return; } setD(undefined); return db.collection("promoOrderAnalytics").doc(key).onSnapshot(s => setD(s.exists ? s.data() : null), () => setD(null)); }, [key, idx===undefined]);
+  useEffect(()=>{ if(key==="__range") return; if(!key){ setD(idx===undefined ? undefined : null); return; } setD(undefined); return db.collection("promoOrderAnalytics").doc(key).onSnapshot(s => setD(s.exists ? s.data() : null), () => setD(null)); }, [key, idx===undefined]);
   async function compute(){
     setBusy(true); setMsg("Đang tính từ hoá đơn và tra tên chương trình trên POS (1–5 phút)…");
     try{ const r = await callCf(`https://asia-southeast1-upharma-176d5.cloudfunctions.net/runJobNow?job=promoOrderAnalyticsNow`, {}, 560000);
@@ -13691,7 +13691,10 @@ function PromoOrderView({ isAdmin }){
     h("div", { style:{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:8 } },
       camps.filter(x=>x.kind==="campaign").map(campBtn),
       camps.some(x=>x.kind!=="campaign") && h("span", { style:{ alignSelf:"center", fontSize:11, color:"var(--inkSoft)", padding:"0 4px" } }, "Thường xuyên:"),
-      camps.filter(x=>x.kind!=="campaign").map(campBtn)),
+      camps.filter(x=>x.kind!=="campaign").map(campBtn),
+      // 5/10/2026 (Phương): chọn khoảng ngày bất kỳ ngay trong tab này (đơn bỏ lỡ KM + đánh giá CTKM)
+      isAdmin && h("button", { key:"__range", onClick:()=>setKey("__range"), style:{ textAlign:"left", padding:"6px 10px", borderRadius:10, cursor:"pointer", border:"1px solid " + (key==="__range" ? "var(--pine)" : "var(--line)"), background: key==="__range" ? "var(--pineSoft)" : "#fff", minWidth:150 } },
+        h("div", { style:{ fontWeight:800, fontSize:12.5 } }, "📅 Chọn khoảng ngày"), h("div", { style:{ fontSize:11, color:"var(--inkSoft)" } }, "Đơn bỏ lỡ KM · đánh giá & gợi ý CTKM"))),
     h("div", { style:{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" } },
       isAdmin && h("button", { className:"btn btnPrimary", disabled:busy, onClick:compute }, busy ? "Đang tính…" : "↻ Tính lại"),
       d && h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, `Tính lúc ${new Date(d.computedAt).toLocaleString("vi-VN")} · tự tính 0h50 mỗi đêm · dữ liệu bán hàng từ ${dm((idx||{}).dataFrom)}`),
@@ -13710,6 +13713,7 @@ function PromoOrderView({ isAdmin }){
         cmpC.flatMap(x => { const f = (x.fam||{})[k]; return [h("td", { key:x.key+"a", style:td }, f ? (f.c ? fm(f.c) : "trong giá") : "—"), h("td", { key:x.key+"b", style:td }, f && f.c ? fm(f.c/(x.days||1)) : "—"), h("td", { key:x.key+"c", style:td }, f && f.c ? chip(pc(f.c, f.r), 5.5, 10) : "—")]; }))),
       h("tr", null, h("td", { style:{ ...L, fontWeight:800 } }, "Tổng"), cmpC.flatMap(x => [h("td", { key:x.key+"a", style:{ ...td, fontWeight:800 } }, fm(x.cost)), h("td", { key:x.key+"b", style:{ ...td, fontWeight:800 } }, fm(x.cost/(x.days||1))), h("td", { key:x.key+"c", style:td }, chip(pc(x.cost, x.rev), 2, 3))])),
       h("tr", null, h("td", { style:{ ...L, color:"var(--inkSoft)" } }, "Số ngày có dữ liệu"), cmpC.map(x => h("td", { key:x.key, colSpan:3, style:{ ...td, color:"var(--inkSoft)" } }, `${x.days} ngày${x.partial ? " (thiếu đầu đợt)" : ""}${x.running ? " (đang chạy)" : ""}`))))));
+  if(key==="__range") return h("div", null, head, h(PromoRangeView, null));
   if(idx===undefined || d===undefined) return h("div", null, head, h(EmptyState, { kind:"loading" }));
   if(!d) return h("div", null, head, h("div", { className:"card", style:{ fontSize:13 } }, isAdmin ? "Chưa có số liệu theo đợt — bấm \"↻ Tính lại\"." : "Chưa có số liệu."));
   const c = d.chain || {}; const bt = c.byType || {};
@@ -14114,7 +14118,7 @@ function PromoRangeView(){
     return { tot, units, rows, byKind, gapNear, staff, nShops, shops:[...shopsSeen].sort() };
   }, [daily, miss, base, rules, shopF]);
   const presets = (() => { const out = [{ id:"d7", label:"7 ngày", r:[addD(today,-6), today] }, { id:"d30", label:"30 ngày", r:[addD(today,-29), today] }, { id:"m", label:"Tháng này", r:[today.slice(0,7)+"-01", today] }];
-    ((idx && idx.campaigns) || []).filter(c => c.kind==="campaign").forEach(c => out.push({ id:c.key, label:c.label.replace("Chiến dịch ","Đợt "), r:[c.from, c.to > today ? today : c.to] }));
+    ((idx && idx.campaigns) || []).filter(c => c.kind==="campaign").forEach(c => out.push({ id:c.key, label:"Khoảng ngày " + c.label.replace("Chiến dịch ","đợt "), r:[c.from, c.to > today ? today : c.to] }));
     return out.map(p => ({ ...p, r:[p.r[0] < DATA_FROM ? DATA_FROM : p.r[0], p.r[1]] })); })();
   const card = (label, val, sub, color) => h("div", { style:{ flex:"1 1 150px", background:"#fff", border:"1px solid var(--line)", borderRadius:12, padding:"10px 12px" } },
     h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", fontWeight:700, textTransform:"uppercase" } }, label), h("div", { style:{ fontSize:20, fontWeight:900, color: color||"var(--ink)" } }, val), sub && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, sub));
@@ -14216,7 +14220,7 @@ function PromoAnalyticsView({ isAdmin, myStaff }){
     React.createElement(PageTitle, { key:"title" }, "Khuyến Mại"),
     React.createElement("div", { key:"src", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8, padding:"6px 10px", background:"var(--paper)", borderRadius:8, border:"1px solid var(--line)" } },
       "Hiệu quả từng đợt chiến dịch, tính tự động từ hoá đơn bán trên POS (voucher, giảm giá, quà tặng, đổi điểm, combo) — tên chương trình lấy từ POS, không cần nhập tay."),
-    isAdmin && React.createElement(SubTabBar, { key:"bar", tabs:[{ id:"camp", label:"Theo đợt chiến dịch" }, { id:"range", label:"Theo khoảng ngày · đơn bỏ lỡ · đánh giá" }, { id:"cmp", label:"So sánh theo kỳ" }], active:sub, onChange:setSub }),
+    isAdmin && React.createElement(SubTabBar, { key:"bar", tabs:[{ id:"camp", label:"Theo dõi chiến dịch" }, { id:"cmp", label:"So sánh theo kỳ" }], active:sub, onChange:setSub }),
     !isAdmin ? React.createElement(PromoMyView, { key:"my", myStaff }) : sub==="cmp" ? React.createElement(PromoPeriodCompare, { key:"cmp" }) : sub==="range" ? React.createElement(PromoRangeView, { key:"rg" }) : React.createElement(PromoOrderView, { key:"po", isAdmin }),
   ]);
 }
