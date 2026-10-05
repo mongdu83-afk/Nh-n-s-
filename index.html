@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261005-6";
+window.__APP_BUILD = "20261005-8";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -11208,6 +11208,24 @@ function WeeklyPlanManagerView(){
                 React.createElement("div",{key:"d"},[ React.createElement("b",{key:"s"}, (t.shop? t.shop+": ":"")), t.task, t.reason && React.createElement("div",{key:"r",style:{color:"var(--inkSoft)",fontSize:12}}, t.reason) ]),
               ])),
             ]),
+            // 5/10/2026: target tuần tới theo số liệu thật + đánh giá báo cáo công việc NV + đối chiếu báo cáo với số liệu
+            Array.isArray(aiA.targets) && aiA.targets.length>0 && React.createElement("div", { key:"tg", style:{ marginTop:8 } }, [
+              React.createElement("div",{key:"l",style:{fontWeight:700,marginBottom:4}}, "🎯 Target tuần tới (theo số liệu thực tế)"),
+              React.createElement("div",{key:"t",style:{ overflowX:"auto" }}, React.createElement("table",{ style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5 } }, [
+                React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Mảng","Nhà thuốc","Chỉ tiêu","Tuần này","Mục tiêu tuần tới","Đo bằng"].map(x=>React.createElement("th",{ key:x, style:{ textAlign:"left", padding:"4px 6px", borderBottom:"1px solid var(--line)", color:"var(--inkSoft)", fontSize:11.5 } }, x)))),
+                React.createElement("tbody",{key:"b"}, aiA.targets.map((t,i)=>React.createElement("tr",{ key:i }, [
+                  ({ doanhThu:"💰 Doanh thu", nhanSu:"👥 Nhân sự", khachHang:"🤝 Khách hàng", hangHoa:"📦 Hàng hoá" }[t.mang] || t.mang), t.shop, t.chiTieu, t.hienTai, t.mucTieu, t.cachDo
+                ].map((v,j)=>React.createElement("td",{ key:j, style:{ padding:"4px 6px", borderBottom:"1px solid var(--line)", fontWeight: j===4 ? 800 : 400, color: j===4 ? "var(--pine)" : undefined } }, v||"—"))))),
+              ])),
+            ]),
+            aiA.staffReview && React.createElement("div", { key:"sr", style:{ marginTop:8, background:"var(--paper)", borderRadius:8, padding:"8px 10px" } }, [
+              React.createElement("b",{key:"b"},"👥 Báo cáo công việc của nhân viên: "), aiA.staffReview.assessment,
+              (aiA.staffReview.good||[]).length>0 && aiLabel("Làm tốt:"), aiList(aiA.staffReview.good),
+              (aiA.staffReview.needSupport||[]).length>0 && aiLabel("Cần hỗ trợ:"), aiList(aiA.staffReview.needSupport),
+            ]),
+            Array.isArray(aiA.dataCheck) && aiA.dataCheck.length>0 && React.createElement("div", { key:"dc", style:{ marginTop:8, background:"#FEF2F2", borderRadius:8, padding:"8px 10px" } }, [
+              React.createElement("b",{key:"b"},"🔎 Báo cáo chưa khớp số liệu:"), aiList(aiA.dataCheck),
+            ]),
             mgrAi.shopsMissing && mgrAi.shopsMissing.length>0 && React.createElement("div",{key:"nr",style:{ fontSize:12, color:"var(--clay)", marginTop:6 }}, "Chưa gửi báo cáo tuần: "+mgrAi.shopsMissing.join(", ")),
             mgrAi.aiValidation && mgrAi.aiValidation.status==="warn" && React.createElement("div",{key:"vw",style:{ fontSize:11.5, color:"var(--amber)", marginTop:6 }}, "⚠ Có số trong phân tích chưa đối chiếu được với dữ liệu gốc: "+(mgrAi.aiValidation.unverified||[]).slice(0,6).join(", ")+" — hãy kiểm tra lại."),
             mgrAi.aiUpdatedAtTs && React.createElement("div",{key:"ts",style:{ fontSize:11, color:"var(--inkSoft)", marginTop:6 }}, "Phân tích lúc "+(mgrAi.aiUpdatedAtTs.toDate ? mgrAi.aiUpdatedAtTs.toDate() : new Date(mgrAi.aiUpdatedAtTs)).toLocaleString("vi-VN")+" · AI có thể sai, hãy đối chiếu với dữ liệu ở các mục bên dưới."),
@@ -19498,7 +19516,7 @@ function OverviewGroupCard({ title, color, headline, headlineSub, lines, onClick
   ]);
 }
 
-function ExecOverviewView({ isAdmin, myStaff, onNavigate }){
+function ExecOverviewView({ isAdmin, myStaff, onNavigate, aiOnly }){
   const todayStr = todayISO();
   const [monthKey, setMonthKey] = useState(todayStr.slice(0,7));
   const mt = useMonthTracking(monthKey);
@@ -19725,6 +19743,18 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate }){
     }
   }
 
+  if(aiOnly) return rc("div", null, [
+    rc(CommandCenterAiBriefing, { key:"ai", scopeLabel: isAll ? "Toàn chuỗi" : adminShop, healthScore: agg ? agg.score : null, healthParts,
+      checklistPct: checklistEligibleSum ? Math.round((checklistSubmittedSum/checklistEligibleSum)*1000)/10 : null, submittedCount:checklistSubmittedSum, totalStaff:checklistEligibleSum,
+      revenueBlock, overdueTasks, urgentCount: goods ? (goods.urgent||0)+(goods.soon||0) : null,
+      urgentItems: isAll ? urgentItemsAll : urgentItemsAll.filter(it => it.shopCode===adminShop),
+      atRiskCount: cust ? (cust.atRisk||0) : 0, silentVipCount: cust ? (cust.silentVip||0) : 0, staffNeedingAttention }),
+    rc(SmartAssistantBox, { key:"assist", scopeLabel: isAll ? "Toàn chuỗi" : adminShop, healthScore: agg ? agg.score : null, healthParts,
+      checklistPct: checklistEligibleSum ? Math.round((checklistSubmittedSum/checklistEligibleSum)*1000)/10 : null, submittedCount:checklistSubmittedSum, totalStaff:checklistEligibleSum,
+      revenueBlock, overdueTasks, urgentCount: goods ? (goods.urgent||0)+(goods.soon||0) : null,
+      urgentItems: isAll ? urgentItemsAll : urgentItemsAll.filter(it => it.shopCode===adminShop),
+      atRiskCount: cust ? (cust.atRisk||0) : 0, silentVipCount: cust ? (cust.silentVip||0) : 0, staffNeedingAttention })
+  ]);
   return rc("div", { style:{ maxWidth:1160, margin:"0 auto", padding:16 } }, [
     // 26/9/2026 (Risk & Compliance Center): dải tóm tắt rủi ro đang mở — bấm để vào màn Rủi ro & Tuân thủ.
     isAdmin && rc(RiskStrip360, { key:"riskstrip", onNavigate }),
@@ -19929,17 +19959,7 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate }){
           })),
     ]),
 
-    // AI Briefing (giữ nguyên tính năng cũ, đọc số liệu đang hiển thị)
-    rc(CommandCenterAiBriefing, { key:"ai", scopeLabel: isAll ? "Toàn chuỗi" : adminShop, healthScore: agg ? agg.score : null, healthParts,
-      checklistPct: checklistEligibleSum ? Math.round((checklistSubmittedSum/checklistEligibleSum)*1000)/10 : null, submittedCount:checklistSubmittedSum, totalStaff:checklistEligibleSum,
-      revenueBlock, overdueTasks, urgentCount: goods ? (goods.urgent||0)+(goods.soon||0) : null,
-      urgentItems: isAll ? urgentItemsAll : urgentItemsAll.filter(it => it.shopCode===adminShop),
-      atRiskCount: cust ? (cust.atRisk||0) : 0, silentVipCount: cust ? (cust.silentVip||0) : 0, staffNeedingAttention }),
-    rc(SmartAssistantBox, { key:"assist", scopeLabel: isAll ? "Toàn chuỗi" : adminShop, healthScore: agg ? agg.score : null, healthParts,
-      checklistPct: checklistEligibleSum ? Math.round((checklistSubmittedSum/checklistEligibleSum)*1000)/10 : null, submittedCount:checklistSubmittedSum, totalStaff:checklistEligibleSum,
-      revenueBlock, overdueTasks, urgentCount: goods ? (goods.urgent||0)+(goods.soon||0) : null,
-      urgentItems: isAll ? urgentItemsAll : urgentItemsAll.filter(it => it.shopCode===adminShop),
-      atRiskCount: cust ? (cust.atRisk||0) : 0, silentVipCount: cust ? (cust.silentVip||0) : 0, staffNeedingAttention }),
+    // 5/10/2026 (Phương): AI Briefing + Trợ lý thông minh chuyển sang AI điều hành (aiOnly) — Tổng quan không hiện nữa
     composer && rc(TaskComposer360, { key:"cmp", preset:composer, onClose:()=>setComposer(null) }),
     issueDetail && rc(IssueDetailModal360, { key:"issuedetail", issue:issueDetail, shop:issueDetail.shopCode, onClose:()=>setIssueDetail(null), onNavigate:go }),
   ]);
@@ -24977,7 +24997,7 @@ function OpsOperatorView({ onNavigate }){
   const [domF, setDomF] = useState("all");
   const [rep, setRep] = useState(null);
   useEffect(()=>{ const from = (() => { const d = new Date(); d.setDate(d.getDate()-30); return d.toISOString().slice(0,10); })();
-    const u1 = db.collection("opsProposals").where("date", ">=", from).onSnapshot(s => { const a = []; s.forEach(d => a.push({ id:d.id, ...d.data() })); setRows(a); }, e => setMsg("Lỗi tải: " + e.message));
+    const u1 = db.collection("opsProposals").where("date", ">=", from).onSnapshot(s => { const a = []; s.forEach(d => { const x = d.data(); if(x.status!=="merged") a.push({ id:d.id, ...x }); }); setRows(a); }, e => setMsg("Lỗi tải: " + e.message));
     const u2 = db.collection("opsOperatorReports").orderBy("date", "desc").limit(8).onSnapshot(s => { const a = []; s.forEach(d => a.push(d.data())); setRep(a); }, () => setRep([]));
     return () => { u1(); u2(); }; }, []);
   const API = "https://asia-southeast1-upharma-176d5.cloudfunctions.net/runJobNow?job=opsOperatorApiNow";
@@ -25048,7 +25068,9 @@ function OpsOperatorView({ onNavigate }){
       metric("Đang theo dõi", track.length, `${cnt(track, r=>r.status==="overdue")} việc quá hạn`, cnt(track, r=>r.status==="overdue") ? "#B91C1C" : null),
       metric("7 ngày: đã giao", cnt(wk, assigned), `${wk.length} đề xuất · duyệt ${wk.length ? Math.round(cnt(wk, assigned)/wk.length*100) : 0}%`),
       metric("7 ngày: đã xong", cnt(wk, r=>r.status==="done"), `${cnt(wk, r=>r.status==="done" && /rủi ro đã hết/.test(r.outcome||""))} việc rủi ro đã hết`, "#15803D")),
-    h(SubTabBar, { tabs:[{ id:"pending", label:`Chờ duyệt (${st("pending").length})` }, { id:"shop", label:"Kế hoạch theo nhà thuốc" }, { id:"track", label:`Đang theo dõi (${track.length})` }, { id:"done", label:`Kết quả (${done.length})` }, { id:"report", label:"Báo cáo điều hành" }, { id:"cfg", label:"⚙️ Cách xử lý & cấu hình" }], active:view, onChange:setView }),
+    h(SubTabBar, { tabs:[{ id:"pending", label:`Chờ duyệt (${st("pending").length})` }, { id:"shop", label:"Kế hoạch theo nhà thuốc" }, { id:"track", label:`Đang theo dõi (${track.length})` }, { id:"done", label:`Kết quả (${done.length})` }, { id:"report", label:"Báo cáo điều hành" }, { id:"ask", label:"💬 Nhận định & hỏi AI" }, { id:"cfg", label:"⚙️ Cách xử lý & cấu hình" }], active:view, onChange:setView }),
+    // 5/10/2026 (Phương): AI Briefing + Trợ lý thông minh chuyển từ Tổng quan điều hành sang đây
+    view==="ask" && h("div", { style:{ marginTop:8 } }, h(ExecOverviewView, { isAdmin:true, myStaff:null, onNavigate, aiOnly:true })),
     view==="shop" && h("div", { style:{ marginTop:8 } }, (() => { const g = {}; st("pending").concat(track).forEach(r => { const k = r.shop || (r.target && r.target.shop) || "Chuỗi"; (g[k] = g[k] || []).push(r); });
       const keys = Object.keys(g).sort((a,b) => g[b].reduce((x,r)=>x+(r.impactPerDay||0),0) - g[a].reduce((x,r)=>x+(r.impactPerDay||0),0));
       return keys.length ? keys.map(k => { const list = g[k]; const root = (list.find(r => r.rootCause && r.date===today) || list.find(r => r.rootCause) || {}).rootCause; const money = list.reduce((x,r)=>x+(r.impactPerDay||0),0);
@@ -25058,6 +25080,7 @@ function OpsOperatorView({ onNavigate }){
           list.sort((a,b)=>(b.impactPerDay||0)-(a.impactPerDay||0)).map(r => h("div", { key:r.id, style:{ fontSize:13, padding:"4px 0", borderTop:"1px solid var(--line)", display:"flex", gap:8, justifyContent:"space-between" } },
             h("span", null, h("b", { style:{ color: r.status==="pending" ? "#B45309" : r.status==="overdue" ? "#B91C1C" : "#2563EB", fontSize:11.5 } }, (OPS_ST[r.status]||r.status) + " · "), r.title, r.money && h("span", { style:{ color:"var(--inkSoft)" } }, " · " + r.money.label)),
             h("span", { style:{ fontSize:12, color:"var(--inkSoft)", whiteSpace:"nowrap" } }, who(r))))); }) : h("div", { className:"emptyState" }, "Chưa có việc nào."); })()),
+    view==="cfg" && h(AiTeachPanel, { configDocId:"aiOpsOperatorConfig", label:"— AI điều hành" }),
     view==="cfg" && h(OpsOperatorConfig, { onMsg:setMsg }),
     view==="pending" && h("div", null,
       h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", margin:"8px 0" } }, [["all","Tất cả"], ...doms.map(k => [k, OPS_DOM[k]])].map(([k,l]) =>
