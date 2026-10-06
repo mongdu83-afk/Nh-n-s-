@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261007-10";
+window.__APP_BUILD = "20261007-12";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -4794,6 +4794,10 @@ function TodayShopTasksView({ isAdmin, myStaff, onNavigate }){
           : "Làm lần lượt các thẻ bên dưới — xong ca khi checklist đã nộp và không còn việc quá hạn."),
     ]),
     React.createElement(MyDayCard, { key:"myday", isAdmin, myStaff, onNavigate }),
+    !isAdmin && React.createElement(NewsFeedCard, { key:"feed", isAdmin, myStaff }),
+    // 7/10/2026: cửa hàng trưởng thấy nhà thuốc mình so với kế hoạch tháng + các quyết định/việc đang được đo kết quả
+    !isAdmin && myStaff && myStaff.role==="Cửa hàng trưởng" && React.createElement(ShopDiagnosisCard, { key:"diag", isAdmin, myStaff, onNavigate }),
+    !isAdmin && myStaff && myStaff.role==="Cửa hàng trưởng" && React.createElement(DecisionsCard, { key:"decisions", isAdmin, myStaff }),
     snapCard,
     React.createElement(CareTodayCard, { key:"care", isAdmin, myStaff }),
     React.createElement(PromoThresholdCard, { key:"promoT", isAdmin, myStaff }),
@@ -13951,13 +13955,15 @@ function PromoCampaignReport({ isAdmin, myStaff, monthKey, setMonthKey }){
       ),
   ]);
 }
-// ===== 30/9/2026 (Phương): HIỆU QUẢ KHUYẾN MÃI THẬT — so với lúc chưa chạy, chi phí, lãi tăng thêm =====
+// ===== 30/9/2026 (Phương): HIỆU QUẢ KHUYẾN MÃI THẬT — so với lúc chưa chạy, chi phí =====
+// 7/10/2026: bỏ lãi / biên lãi (quản lý khu vực không xem giá vốn) — đo bằng doanh thu tăng thêm trên mỗi 1đ chi phí KM.
 // Backend: promoEffectNow (tính lại) / promoEffectDaily 07:20. Xem computePromoEffects trong index.js.
 const PE_API = "https://asia-southeast1-upharma-176d5.cloudfunctions.net/promoEffectNow";
 const PE_VERDICT = {
   repeat:  { text:"Nên lặp lại", color:"#16A34A", order:1 },
   ok:      { text:"Tạm được", color:"#0a6bb4", order:3 },
-  loss:    { text:"Mua doanh thu bằng lỗ", color:"#B3261E", order:0 },
+  low_roi: { text:"Chi phí cao so với doanh thu tăng", color:"#B3261E", order:0 },
+  loss:    { text:"Chi phí cao so với doanh thu tăng", color:"#B3261E", order:0 }, // bản tính cũ trước 7/10
   no_lift: { text:"Không tăng doanh thu", color:"#D98A1F", order:2 },
   new:     { text:"SKU mới — chưa so được", color:"#6B7A70", order:4 },
   no_data: { text:"Chưa đủ dữ liệu", color:"#6B7A70", order:5 },
@@ -13967,7 +13973,7 @@ function PromoEffectView(){
   const [month, setMonth] = useState(todayISO().slice(0,7));
   const [autoBack, setAutoBack] = useState(null);
   const [data, setData] = useState(null);
-  const [margin, setMargin] = useState("");
+  const [roiMin, setRoiMin] = useState("");
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState("");
   const [open, setOpen] = useState(null);
@@ -13975,10 +13981,10 @@ function PromoEffectView(){
     setBusy(compute ? "compute" : "load"); setErr("");
     try{
       const body = { month, compute: !!compute };
-      if(compute && margin!=="") body.marginPct = Number(margin);
+      if(compute && roiMin!=="") body.roiMin = Number(roiMin);
       const d = await callCf(PE_API, { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify(body) }, compute ? 540000 : 60000);
       if(!compute && !autoBack && month===todayISO().slice(0,7) && !((d && d.campaigns) || []).length){ setAutoBack(month); setMonth(promoPrevMonth(month)); setBusy(""); return; }
-      setData(d); if(margin==="") setMargin(String(d.marginPct));
+      setData(d); if(roiMin==="") setRoiMin(String(d.roiMin != null ? d.roiMin : 3));
     } catch(e){ setErr(e.message||String(e)); }
     setBusy("");
   }
@@ -13993,11 +13999,11 @@ function PromoEffectView(){
   const m1 = (v) => v==null ? "—" : Math.abs(v)>=1e6 ? (v/1e6).toLocaleString("vi-VN",{maximumFractionDigits:1})+"tr" : fmtVNDCompact(v);
   return h("div", { style:{ marginTop:4 } },
     h("div", { style:{ fontSize:12, color:"var(--inkSoft)", lineHeight:1.55, marginBottom:10 } },
-      "So doanh thu các SKU trong chương trình với ", h("b", null, "cùng số ngày ngay trước khi chạy"), " (mức nền). Doanh thu tăng thêm × ", h("b", null, "biên lãi gộp ước tính"), " − chi phí KM (giảm giá + quà tặng theo giá bán lẻ, tính từ hoá đơn có mã CTKM) = lãi tăng thêm. Âm nghĩa là chương trình đang ", h("b", null, "mua doanh thu bằng lỗ"), ". Chưa có giá vốn nên biên lãi là số ước tính do quản lý nhập."),
+      "So doanh thu các SKU trong chương trình với ", h("b", null, "cùng số ngày ngay trước khi chạy"), " (mức nền). Chi phí KM = giảm giá + quà tặng (theo giá bán lẻ, tính từ hoá đơn có mã CTKM). Hiệu quả = ", h("b", null, "doanh thu tăng thêm trên mỗi 1đ chi phí KM"), " — thấp hơn ngưỡng nghĩa là chương trình tốn nhiều so với doanh thu kéo thêm, nên điều chỉnh hoặc thử ở phạm vi nhỏ."),
     h("div", { style:{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap", marginBottom:10 } },
       h("input", { type:"month", value:month, onChange:e=>setMonth(e.target.value), style:{ padding:"6px 8px", border:"1px solid var(--line)", borderRadius:8 } }),
-      h("label", { style:{ fontSize:12.5, display:"flex", gap:6, alignItems:"center" } }, "Biên lãi gộp ước tính",
-        h("input", { type:"number", min:0, max:90, value:margin, onChange:e=>setMargin(e.target.value), style:{ width:64, padding:"5px 6px", border:"1px solid var(--line)", borderRadius:6 } }), "%"),
+      h("label", { style:{ fontSize:12.5, display:"flex", gap:6, alignItems:"center" } }, "Ngưỡng hiệu quả: mỗi 1đ KM ≥",
+        h("input", { type:"number", min:0.5, max:50, step:0.5, value:roiMin, onChange:e=>setRoiMin(e.target.value), style:{ width:64, padding:"5px 6px", border:"1px solid var(--line)", borderRadius:6 } }), "đ doanh thu tăng thêm"),
       h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:()=>load(true) }, busy==="compute" ? "Đang tính (1–3 phút)…" : "Tính lại"),
       data && withFx[0] && withFx[0].effect.computedAt && h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, `Tính lúc ${new Date(withFx[0].effect.computedAt).toLocaleString("vi-VN")} · tự tính 07:20 mỗi sáng`)),
     err && h("div", { style:{ color:"var(--clay)", fontSize:12.5, marginBottom:8 } }, err),
@@ -14009,32 +14015,32 @@ function PromoEffectView(){
       h("div", { className:"metrics" },
         h("div", { className:"metric" }, h("div", { className:"label" }, "Doanh thu tăng thêm"), h("div", { className:"value" }, fmtVNDCompact(sum("incRevenue")))),
         h("div", { className:"metric" }, h("div", { className:"label" }, "Chi phí KM"), h("div", { className:"value" }, fmtVNDCompact(sum("costUsed")))),
-        h("div", { className:"metric " + (sum("incGrossProfit")>=0 ? "good" : "warn") }, h("div", { className:"label" }, "Lãi tăng thêm (ước tính)"), h("div", { className:"value" }, fmtVNDCompact(sum("incGrossProfit")))),
+        h("div", { className:"metric " + (sum("costUsed")>0 && sum("incRevenue")/sum("costUsed") >= Number(roiMin||3) ? "good" : "warn") }, h("div", { className:"label" }, "DT tăng thêm / 1đ KM"), h("div", { className:"value" }, sum("costUsed")>0 ? (Math.round(sum("incRevenue")/sum("costUsed")*10)/10).toLocaleString("vi-VN") + "đ" : "—")),
         h("div", { className:"metric good" }, h("div", { className:"label" }, "Nên lặp lại"), h("div", { className:"value" }, fmtNum(cnt("repeat")))),
-        h("div", { className:"metric warn" }, h("div", { className:"label" }, "Mua doanh thu bằng lỗ"), h("div", { className:"value" }, fmtNum(cnt("loss"))))),
+        h("div", { className:"metric warn" }, h("div", { className:"label" }, "Chi phí cao so với DT tăng"), h("div", { className:"value" }, fmtNum(cnt("low_roi") + cnt("loss"))))),
       h("div", { className:"tableWrap" }, h("table", { className:"data tblCompact" },
         h("thead", null, h("tr", null, h("th", null, "Chương trình"), h("th", null, "Thời gian"), h("th", { className:"num" }, "DT/ngày trước → trong"), h("th", { className:"num" }, "Tăng"),
-          h("th", { className:"num" }, "DT tăng thêm"), h("th", { className:"num" }, "Chi phí KM"), h("th", { className:"num" }, "Lãi tăng thêm"), h("th", null, "Kết luận"))),
+          h("th", { className:"num" }, "DT tăng thêm"), h("th", { className:"num" }, "Chi phí KM"), h("th", { className:"num" }, "DT tăng / 1đ KM"), h("th", null, "Kết luận"))),
         h("tbody", null, rows.map(r => {
           const e = r.effect || {};
           const v = PE_VERDICT[e.verdict] || { text:"Chưa tính", color:"#6B7A70" };
           const isOpen = open===r.id;
           return [
-            h("tr", { key:r.id, onClick:()=>setOpen(isOpen?null:r.id), style:{ cursor:"pointer", background: e.verdict==="loss" ? "#FBE3E1" : null } },
+            h("tr", { key:r.id, onClick:()=>setOpen(isOpen?null:r.id), style:{ cursor:"pointer", background: (e.verdict==="loss" || e.verdict==="low_roi") ? "#FBE3E1" : null } },
               h("td", { style:{ minWidth:180 } }, h("div", { style:{ fontWeight:600 } }, r.name), e.skuCount ? h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)" } }, `${e.skuCount} SKU · ${fmtNum(e.promoOrders||0)} hoá đơn dùng KM`) : null),
               h("td", { style:{ whiteSpace:"nowrap" } }, e.start ? `${dd(e.start)}–${dd(e.end)}${e.running?" (đang chạy)":""}` : "—"),
               h("td", { className:"num" }, e.baseline ? `${m1(e.baseline.revPerDay)} → ${m1(e.during.revPerDay)}` : "—"),
               h("td", { className:"num", style:{ fontWeight:700, color: e.upliftPct==null ? "var(--inkSoft)" : e.upliftPct>0 ? CL360.good : CL360.bad } }, pct(e.upliftPct)),
               h("td", { className:"num" }, e.incRevenue!=null ? fmtVND(e.incRevenue) : "—"),
               h("td", { className:"num" }, e.costUsed!=null ? fmtVND(e.costUsed) : "—", e.costPlan && e.costEst ? h("div", { style:{ fontSize:10, color:"var(--inkSoft)" } }, `KH ${fmtVNDCompact(e.costPlan)}`) : null),
-              h("td", { className:"num", style:{ fontWeight:800, color: e.incGrossProfit==null ? "var(--inkSoft)" : e.incGrossProfit>=0 ? CL360.good : CL360.bad } }, e.incGrossProfit!=null ? fmtVND(e.incGrossProfit) : "—"),
+              h("td", { className:"num", style:{ fontWeight:800, color: e.roi==null ? "var(--inkSoft)" : e.roi >= Number(roiMin||3) ? CL360.good : CL360.bad } }, e.roi!=null ? String(e.roi).replace(".",",") + "đ" : "—"),
               h("td", null, h(Pill360, { text:v.text, color:v.color }), e.pullForward && h("div", { style:{ fontSize:10.5, color:CL360.warn, marginTop:2 } }, "⚠ sau KM doanh số tụt"))),
             isOpen && h("tr", { key:r.id+"_d" }, h("td", { colSpan:8, style:{ background:"var(--paper)", fontSize:12.5, lineHeight:1.6 } },
               h("div", null, h("b", null, "Kết luận: "), e.verdictText || "—"),
               e.baseline && h("div", null, `Mức nền ${dd(e.baseline.start)}–${dd(e.baseline.end)} (${e.baseline.days} ngày): ${fmtVND(e.baseline.revPerDay)}/ngày, ${String(e.baseline.qtyPerDay).replace(".",",")} SP/ngày. Trong CTKM (${e.days} ngày): ${fmtVND(e.during.revPerDay)}/ngày, ${String(e.during.qtyPerDay).replace(".",",")} SP/ngày.`),
               e.after && h("div", null, `Sau CTKM ${dd(e.after.start)}–${dd(e.after.end)}: ${fmtVND(e.after.revPerDay)}/ngày${e.pullForward ? " — thấp hơn mức nền > 20%: khách có thể đã mua dồn trong đợt KM (doanh thu tăng thêm thực tế thấp hơn con số trên)." : "."}`),
               e.costUsed!=null && h("div", null, `Chi phí KM: giảm giá ${fmtVND(e.costDiscount||0)} + quà tặng (giá bán lẻ) ${fmtVND(e.costGift||0)}${e.costPlan ? ` · chi phí kế hoạch ${fmtVND(e.costPlan)}` : ""}${!e.costEst && e.costPlan ? " (không đọc được chi phí từ hoá đơn → dùng chi phí kế hoạch)" : ""}.`),
-              e.incRevenue!=null && h("div", null, `Lãi tăng thêm = ${fmtVND(e.incRevenue)} × ${e.marginPct}% − ${fmtVND(e.costUsed)} = `, h("b", null, fmtVND(e.incGrossProfit)), e.roi!=null ? ` · mỗi 1đ chi phí mang về ${String(e.roi).replace(".",",")}đ doanh thu tăng thêm.` : ""),
+              e.incRevenue!=null && e.roi!=null && h("div", null, `Doanh thu tăng thêm ${fmtVND(e.incRevenue)} ÷ chi phí KM ${fmtVND(e.costUsed)} = `, h("b", null, `${String(e.roi).replace(".",",")}đ doanh thu tăng thêm / 1đ KM`), ` (ngưỡng ${roiMin||3}đ).`),
               e.verdict==="no_data" && h("div", { style:{ color:"var(--inkSoft)" } }, "Theo dõi chương trình theo DocumentID/API ở mục \"Nhập dữ liệu\" để có danh sách SKU."))),
           ];
         }))))));
@@ -14440,6 +14446,7 @@ function PromoRangeView(){
   const [rng, setRng] = useState([addD(today,-29) < DATA_FROM ? DATA_FROM : addD(today,-29), today]);
   const [pid, setPid] = useState("d30");
   const [shopF, setShopF] = useState("all");
+  const [decide, setDecide] = useState(null); // 7/10/2026: ra quyết định từ CTKM
   const [daily, setDaily] = useState(null); const [miss, setMiss] = useState(null); const [base, setBase] = useState(null); const [rules, setRules] = useState(null);
   const [err, setErr] = useState("");
   const [tab, setTab] = useState("eval");
@@ -14612,7 +14619,14 @@ function PromoRangeView(){
               `${u.n} đơn · chi phí ${fm(u.c)} · CP/DT ${u.cpr==null ? "—" : ps(Math.round(u.cpr*10)/10)} · ${u.reach.toFixed(2).replace(".",",")} đơn/ngày/NT`
               + (u.uptake!=null ? ` · áp ${Math.round(u.uptake)}% đơn đủ ĐK` : "") + (u.lift!=null ? ` · tác động ×${u.lift.toFixed(2).replace(".",",")}` : "")
               + (u.near||u.skip||u.short ? ` · bỏ lỡ: sát ngưỡng ${u.near}, không áp ${u.skip}${u.short ? ", thiếu combo " + u.short : ""}` : "")),
-            u.tips.length>0 && h("ul", { style:{ margin:"5px 0 0 16px", padding:0, fontSize:12.5 } }, u.tips.map((t,i) => h("li", { key:i }, t)))))))));
+            u.tips.length>0 && h("ul", { style:{ margin:"5px 0 0 16px", padding:0, fontSize:12.5 } }, u.tips.map((t,i) => h("li", { key:i }, t))),
+            // 7/10/2026: CTKM → quyết định (tiếp tục / điều chỉnh / thử nhỏ / dừng) → app tự đo kết quả sau 7–14 ngày
+            h("button", { type:"button", className:"btn btnGhost", style:{ fontSize:12, padding:"3px 10px", marginTop:6 }, onClick:()=>setDecide({
+              type:{ A:"promo_continue", B:"promo_adjust", C:"pilot", D:"promo_stop" }[u.grade] || "promo_adjust",
+              shops: shopF==="all" ? [...DEFAULT_SHOPS] : [shopF], campaignName:u.name.replace(/^\[[^\]]*\]\s*/,""),
+              title:`${gText[u.grade]}: ${u.name.replace(/^\[[^\]]*\]\s*/,"")}`, hypothesis:(u.tips||[])[0] || "",
+              metric:/voucher|qua|combo/.test(String(u.kind||"")) ? "tbb" : "rev", assignTask:u.grade!=="A", source:{ kind:"promo", key:u.key } }) }, "Ra quyết định & theo dõi")))))),
+    decide && h(DecisionModal, { preset:decide, onClose:()=>setDecide(null) }));
 }
 function PromoAnalyticsView({ isAdmin, myStaff }){
   // 1/10/2026 (Phương): bỏ "Báo cáo hiệu quả", "Hiệu quả thật" và "Nhập dữ liệu" (theo dõi CTKM thủ công theo tháng) —
@@ -19940,7 +19954,7 @@ const TAB_ICON_SVG = {
   nhipvanhanh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>',
   ketquangay: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>',
 };
-const TAB_ICON_ALIAS = { kiemtra:"checklist", congviec:"tasks", kinhdoanh:"revenueAnalytics", baocao:"baocaotuan", ruiro:"risk" };
+const TAB_ICON_ALIAS = { xemthem:"hethong", kiemtra:"checklist", congviec:"tasks", kinhdoanh:"revenueAnalytics", baocao:"baocaotuan", ruiro:"risk" };
 function renderTabIcon(id, sizePx, extraProps){
   const markup = (TAB_ICON_SVG[id] || TAB_ICON_SVG[TAB_ICON_ALIAS[id]] || TAB_ICON_SVG.staff).replace("<svg ", '<svg width="' + sizePx + '" height="' + sizePx + '" ');
   return React.createElement("span", Object.assign({
@@ -20543,6 +20557,12 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate, aiOnly }){
       atRiskCount: cust ? (cust.atRisk||0) : 0, silentVipCount: cust ? (cust.silentVip||0) : 0, staffNeedingAttention })
   ]);
   return rc("div", { style:{ maxWidth:1160, margin:"0 auto", padding:16 } }, [
+    // 7/10/2026 (tinh gọn): trọng tâm hôm nay (nhịp điều hành + chỉ số dẫn dắt) + bản tin gộp — đứng đầu màn chính của quản lý.
+    isAdmin && rc(OpsFocusStrip, { key:"focus", onNavigate }),
+    // 7/10/2026: vòng điều hành — (1) nhà thuốc nào có vấn đề & ở đâu → (2) ra quyết định / giao việc → (3) kết quả sau 7–14 ngày
+    isAdmin && rc(ShopDiagnosisCard, { key:"diag", isAdmin, myStaff, onNavigate }),
+    isAdmin && rc(DecisionsCard, { key:"decisions", isAdmin, myStaff }),
+    isAdmin && rc(NewsFeedCard, { key:"feed", isAdmin, myStaff }),
     // 26/9/2026 (Risk & Compliance Center): dải tóm tắt rủi ro đang mở — bấm để vào màn Rủi ro & Tuân thủ.
     isAdmin && rc(RiskStrip360, { key:"riskstrip", onNavigate }),
     // Thanh bộ lọc — Nhà thuốc + Kỳ doanh thu (tháng) + ngày hiện tại. (Khu vực/Quản lý khu vực: hệ thống hiện chỉ có 1 tài khoản quản lý, chưa có dữ liệu khu vực để lọc.)
@@ -25883,6 +25903,8 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
     !embedded && rc("div", { key:"head", style:{ marginBottom:14 } }, [
       rc(PageTitle, { key:"h", style:{ marginBottom:2 } }, "Công việc cần xử lý"),
     ]),
+    // 7/10/2026 (tinh gọn — hộp việc chung): rủi ro cao chưa có việc xử lý hiện ngay trong hộp việc
+    (isAdmin || shopScope) && rc(UnassignedRiskStrip, { key:"unrisk", shop:shopScope || null, onNavigate }),
     // 28/9/2026: sidebar chỉ giữ 2 mục "Tiến độ nhân viên" + "Hiệu quả sau xử lý"; các tab việc còn lại
     // (Của tôi, Hôm nay, Đội nhóm, Chờ xác minh, Quá hạn, ...) nằm ngay trong trang chính để gọn sidebar.
     (() => {
@@ -26849,6 +26871,21 @@ function ClaimsAdminPanel(){
 // 7/10/2026 (mục 6): MỨC DÙNG APP — màn nào được mở, bởi ai, bao lâu → căn cứ ẩn/gộp màn ít dùng, rút gọn menu.
 function UsagePanel(){
   const [days, setDays] = useState(30);
+  // 7/10/2026 (tinh gọn): chỉnh "menu gọn" ngay trên bảng mức dùng — tick để chuyển màn vào nhóm "Xem thêm" theo vai trò
+  const [layout, setLayout] = useState(null);
+  const [layoutMsg, setLayoutMsg] = useState("");
+  useEffect(()=> subscribeConfigDoc("menuLayout", d => setLayout(l => l || { ql:[], cht:[], nv:[], ...((d && d.hidden) || {}) })), []);
+  const roleTabs = { ql:OPS_TABS.map(t => t.id).filter(id => id!=="sales" && id!=="donthuoc"), cht:[...STAFF_TABS, "shop360", "risk", "kiemtra"], nv:[...STAFF_TABS] };
+  const toggleHide = (g, id) => setLayout(l => { const cur = l[g] || []; return { ...l, [g]: cur.includes(id) ? cur.filter(x => x!==id) : [...cur, id] }; });
+  async function saveLayout(){
+    try{ await saveConfigDoc("menuLayout", { hidden:layout, updatedAt:new Date().toISOString() }); setLayoutMsg("✅ Đã lưu — menu cập nhật ngay cho mọi người."); }
+    catch(e){ setLayoutMsg("Lỗi: " + (e.message || e)); }
+  }
+  function suggestLayout(stats){
+    const next = { ql:[], cht:[], nv:[] };
+    ["ql","cht","nv"].forEach(g => roleTabs[g].forEach(id => { if(MENU_NEVER_HIDE.includes(id)) return; const s = stats.find(x => x.tab===id); if(!s || !s[g]) next[g].push(id); }));
+    setLayout(next); setLayoutMsg("Đã đánh dấu các màn vai trò đó KHÔNG mở lần nào trong kỳ — xem lại rồi bấm Lưu menu.");
+  }
   const [rows, setRows] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
@@ -26899,13 +26936,23 @@ function UsagePanel(){
         ...["ql","cht","nv"].map(g => React.createElement("span", { key:g }, `${ROLE_LABEL[g]}: ${users[g].size}`)),
       ]),
       React.createElement("div", { key:"tt", className:"tableWrap", style:{ maxHeight:420, overflowY:"auto", marginBottom:12 } }, React.createElement("table", { className:"data tblCompact" }, [
-        React.createElement("thead", { key:"h" }, React.createElement("tr", null, ["Màn", "Lượt mở", "Số người", "Tổng phút", "Quản lý", "CHT", "Nhân viên"].map(th))),
+        React.createElement("thead", { key:"h" }, React.createElement("tr", null, ["Màn", "Lượt mở", "Số người", "Tổng phút", "Quản lý", "CHT", "Nhân viên", "Ẩn vào \"Xem thêm\" (QL · CHT · NV)"].map(th))),
         React.createElement("tbody", { key:"b" }, tabStats.map(t => React.createElement("tr", { key:t.tab, style:{ color: t.opens ? undefined : CL360.bad } }, [
           React.createElement("td", { key:"n" }, labelOf(t.tab) + (t.opens ? "" : " — không ai mở")),
           tdR("o", fmtNum(t.opens), { fontWeight:700 }), tdR("u", t.users.size), tdR("m", fmtNum(Math.round(t.sec / 60))),
           tdR("q", t.ql || "—"), tdR("c", t.cht || "—"), tdR("v", t.nv || "—"),
+          React.createElement("td", { key:"hide", style:{ textAlign:"right", whiteSpace:"nowrap" } }, layout && ["ql","cht","nv"].map(g =>
+            roleTabs[g].includes(t.tab) && !MENU_NEVER_HIDE.includes(t.tab)
+              ? React.createElement("input", { key:g, type:"checkbox", title:MENU_ROLE_LABEL[g], checked:(layout[g]||[]).includes(t.tab), onChange:()=>toggleHide(g, t.tab), style:{ marginLeft:8 } })
+              : React.createElement("span", { key:g, style:{ display:"inline-block", width:13, marginLeft:8, color:"var(--line)" } }, "·"))),
         ]))),
       ])),
+      layout && React.createElement("div", { key:"lay", className:"btnRow", style:{ marginBottom:12, alignItems:"center" } }, [
+        React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", onClick:saveLayout }, "Lưu menu"),
+        React.createElement("button", { key:"g", type:"button", className:"btn", onClick:()=>suggestLayout(tabStats) }, "Gợi ý: ẩn màn không ai mở"),
+        React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", onClick:()=>{ setLayout({ ql:[], cht:[], nv:[] }); setLayoutMsg("Đã bỏ hết — bấm Lưu menu để hiện lại toàn bộ."); } }, "Hiện lại tất cả"),
+        layoutMsg && React.createElement("span", { key:"m", style:{ fontSize:12.5, fontWeight:600 } }, layoutMsg),
+      ]),
       shopStats.length > 0 && React.createElement("div", { key:"sh" }, [
         React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13.5, marginBottom:6 } }, "Theo nhà thuốc"),
         React.createElement("div", { key:"tb", className:"tableWrap" }, React.createElement("table", { className:"data tblCompact" }, [
@@ -26935,6 +26982,322 @@ function SystemHubView(){
     React.createElement(ClaimsAdminPanel, { key:"claims" }),
     React.createElement(CleanupTokensButton, { key:"cleanup" }),
     React.createElement(SystemErrorLogView, { key:"errlog" }),
+  ]);
+}
+
+// ================= 7/10/2026 (Phương): VÒNG ĐIỀU HÀNH "VẤN ĐỀ → HÀNH ĐỘNG → KẾT QUẢ" =================
+// (1) ShopDiagnosisCard: nhà thuốc nào đang thấp hơn KẾ HOẠCH tháng của công ty & vấn đề nằm ở đâu (shopDiagnosis/{ngày}, 7h30)
+// (2) DecisionModal: ra quyết định → giao việc cho nhà thuốc + chốt chỉ số theo dõi, mức nền 14 ngày trước, mục tiêu
+// (3) DecisionsCard: app tự đánh giá sau 7 & 14 ngày (thử nhỏ: so thêm với nhà thuốc đối chứng). Không dùng giá vốn / lợi nhuận.
+const DIAG_STATUS = { nang:{ text:"Thấp nhiều", color:"#B3261E" }, thap:{ text:"Thấp hơn kỳ vọng", color:"#D98A1F" }, giam:{ text:"Đang giảm", color:"#D98A1F" }, ok:{ text:"Đúng tiến độ", color:"#16A34A" }, chua_co_ke_hoach:{ text:"Chưa có kế hoạch", color:"#6B7A70" } };
+const DECISION_TYPES_UI = { action:"Hành động cải thiện", promo_continue:"Tiếp tục CTKM", promo_adjust:"Điều chỉnh CTKM", pilot:"Thử nghiệm phạm vi nhỏ", promo_stop:"Dừng CTKM" };
+const DECISION_METRICS_UI = { rev:"Doanh thu/ngày", bills:"Số bill/ngày", tbb:"Giá trị bill TB", hhs:"Doanh thu hàng hệ số/ngày" };
+const DECISION_VERDICT_UI = { cai_thien:{ text:"✅ Cải thiện", color:"#16A34A" }, khong_doi:{ text:"➖ Không đổi", color:"#6B7A70" }, xau_di:{ text:"❌ Xấu đi", color:"#B3261E" }, chua_du_lieu:{ text:"Chưa đủ dữ liệu", color:"#6B7A70" } };
+const CF_JOB = (job) => "https://asia-southeast1-upharma-176d5.cloudfunctions.net/runJobLight?job=" + job;
+const fmtTr = v => v == null ? "—" : Math.abs(v) >= 1e6 ? (Math.round(v / 1e5) / 10).toLocaleString("vi-VN") + "tr" : fmtNum(Math.round(v));
+const fmtSignPct = v => v == null ? "—" : (v > 0 ? "+" : "") + String(v).replace(".", ",") + "%";
+function useLatestDiagnosis(){
+  const [d, setD] = useState(undefined);
+  useEffect(()=> db.collection("shopDiagnosis").orderBy("date", "desc").limit(1).onSnapshot(s => setD(s.empty ? null : s.docs[0].data()), err => { logSystemError("shopDiagnosis", err); setD(null); }), []);
+  return d;
+}
+
+function DecisionModal({ preset, onClose, onDone }){
+  const p = preset || {};
+  const [f, setF] = useState({ type:p.type || "action", shops:p.shops || [], title:p.title || "", hypothesis:p.hypothesis || "", metric:p.metric || "rev", targetPct:p.targetPct != null ? p.targetPct : 10,
+    promoCostMax:"", campaignName:p.campaignName || "", assignTask:p.assignTask !== false, deadline:addDays(todayISO(), 3), taskNote:p.taskNote || "", source:p.source || null });
+  const [busy, setBusy] = useState(false);
+  const isPromo = /^promo_|^pilot$/.test(f.type);
+  const toggleShop = s => setF(x => ({ ...x, shops: x.shops.includes(s) ? x.shops.filter(y => y!==s) : [...x.shops, s] }));
+  async function submit(){
+    if(!f.shops.length){ window.alert("Chọn ít nhất 1 nhà thuốc."); return; }
+    if(!f.title.trim()){ window.alert("Ghi nội dung quyết định / hành động."); return; }
+    if(f.type==="pilot" && f.shops.length > Math.max(1, Math.floor(DEFAULT_SHOPS.length / 2))){ window.alert("Thử nghiệm phạm vi nhỏ: chọn tối đa một nửa số nhà thuốc — các nhà thuốc còn lại làm nhóm đối chứng."); return; }
+    setBusy(true);
+    try{
+      const headers = await authHeader();
+      const r = await fetch(CF_JOB("decisionCreateNow"), { method:"POST", headers:{ ...headers, "Content-Type":"application/json" }, body:JSON.stringify({ ...f, targetPct:Number(f.targetPct)||null, promoCostMax:Number(f.promoCostMax)||null }) });
+      const d = await r.json().catch(()=>null);
+      if(!r.ok || !d || !d.ok) throw new Error((d && d.error) || ("Lỗi " + r.status));
+      onDone && onDone(d); onClose();
+    } catch(e){ window.alert("Không lưu được: " + (e.message || e)); }
+    setBusy(false);
+  }
+  const inSt = { padding:"7px 9px", border:"1px solid var(--line)", borderRadius:8, fontSize:13, boxSizing:"border-box" };
+  return React.createElement("div", { className:"modalOverlay", onClick:onClose },
+    React.createElement("div", { className:"modal", style:{ maxWidth:620, maxHeight:"92vh", overflowY:"auto" }, onClick:e=>e.stopPropagation() }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:17, marginBottom:4 } }, "Ra quyết định & theo dõi kết quả"),
+      React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10, lineHeight:1.5 } }, "App lưu mức nền (14 ngày trước khi bắt đầu), giao việc cho nhà thuốc và TỰ ĐÁNH GIÁ sau 7 & 14 ngày. Thử nghiệm phạm vi nhỏ: các nhà thuốc không chọn làm nhóm đối chứng để loại trừ yếu tố mùa vụ."),
+      React.createElement("div", { key:"ty", style:{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:10 } }, Object.entries(DECISION_TYPES_UI).map(([k, l]) =>
+        React.createElement("button", { key:k, type:"button", onClick:()=>setF({ ...f, type:k }), style:{ padding:"5px 10px", borderRadius:8, fontSize:12.5, fontWeight:700, cursor:"pointer", border:"1px solid " + (f.type===k ? "var(--pine)" : "var(--line)"), background:f.type===k ? "var(--pine)" : "#fff", color:f.type===k ? "#fff" : "var(--ink)" } }, l))),
+      React.createElement("div", { key:"sh", style:{ marginBottom:10 } }, [
+        React.createElement("div", { key:"l", style:{ fontSize:12.5, fontWeight:700, marginBottom:4 } }, f.type==="pilot" ? "Nhà thuốc thử nghiệm (còn lại = đối chứng)" : "Nhà thuốc áp dụng"),
+        React.createElement("div", { key:"c", style:{ display:"flex", gap:6, flexWrap:"wrap" } }, DEFAULT_SHOPS.map(s => React.createElement("label", { key:s, style:{ fontSize:12.5, display:"flex", gap:4, alignItems:"center", border:"1px solid var(--line)", borderRadius:8, padding:"3px 8px" } }, [
+          React.createElement("input", { key:"i", type:"checkbox", checked:f.shops.includes(s), onChange:()=>toggleShop(s) }), s]))),
+        React.createElement("button", { key:"all", type:"button", className:"btn btnGhost", style:{ fontSize:11.5, padding:"2px 8px", marginTop:4 }, onClick:()=>setF({ ...f, shops: f.shops.length===DEFAULT_SHOPS.length ? [] : [...DEFAULT_SHOPS] }) }, f.shops.length===DEFAULT_SHOPS.length ? "Bỏ chọn tất cả" : "Chọn tất cả"),
+      ]),
+      React.createElement("div", { key:"ti", className:"field" }, [React.createElement("label", { key:"l" }, "Quyết định / hành động"), React.createElement("input", { key:"i", value:f.title, onChange:e=>setF({ ...f, title:e.target.value }), placeholder:"VD: Gọi 50 khách đến hạn tái mua mỗi ngày trong 7 ngày" })]),
+      isPromo && React.createElement("div", { key:"cp", className:"field" }, [React.createElement("label", { key:"l" }, "Chương trình khuyến mại"), React.createElement("input", { key:"i", value:f.campaignName, onChange:e=>setF({ ...f, campaignName:e.target.value }), placeholder:"Tên CTKM" })]),
+      React.createElement("div", { key:"hy", className:"field" }, [React.createElement("label", { key:"l" }, "Vì sao / kỳ vọng (giả thuyết)"), React.createElement("textarea", { key:"i", rows:2, value:f.hypothesis, onChange:e=>setF({ ...f, hypothesis:e.target.value }), placeholder:"VD: Số bill thiếu 18% do khách cũ không quay lại — gọi nhắc sẽ kéo bill tăng" })]),
+      React.createElement("div", { key:"m", style:{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center", marginBottom:10, fontSize:13 } }, [
+        "Theo dõi:", React.createElement("select", { key:"s", value:f.metric, onChange:e=>setF({ ...f, metric:e.target.value }), style:inSt }, Object.entries(DECISION_METRICS_UI).map(([k, l]) => React.createElement("option", { key:k, value:k }, l))),
+        "mục tiêu +", React.createElement("input", { key:"p", type:"number", min:0, max:200, value:f.targetPct, onChange:e=>setF({ ...f, targetPct:e.target.value }), style:{ ...inSt, width:64 } }), "% so với 14 ngày trước",
+        isPromo && React.createElement("span", { key:"c", style:{ display:"flex", gap:6, alignItems:"center" } }, "· chi phí KM tối đa", React.createElement("input", { type:"number", min:0, step:100000, value:f.promoCostMax, onChange:e=>setF({ ...f, promoCostMax:e.target.value }), placeholder:"đ", style:{ ...inSt, width:120 } })),
+      ]),
+      React.createElement("label", { key:"as", style:{ display:"flex", gap:6, alignItems:"center", fontSize:13, marginBottom:6 } }, [
+        React.createElement("input", { key:"i", type:"checkbox", checked:f.assignTask, onChange:e=>setF({ ...f, assignTask:e.target.checked }) }), "Giao việc cho nhà thuốc, hạn",
+        React.createElement("input", { key:"d", type:"date", value:f.deadline, min:todayISO(), onChange:e=>setF({ ...f, deadline:e.target.value }), style:{ ...inSt, padding:"4px 8px" } })]),
+      f.assignTask && React.createElement("textarea", { key:"tn", rows:2, value:f.taskNote, onChange:e=>setF({ ...f, taskNote:e.target.value }), placeholder:"Hướng dẫn cho cửa hàng trưởng (làm gì, báo cáo gì)", style:{ ...inSt, width:"100%", marginBottom:8 } }),
+      React.createElement("div", { key:"b", className:"btnRow", style:{ justifyContent:"flex-end" } }, [
+        React.createElement("button", { key:"x", type:"button", className:"btn btnGhost", onClick:onClose }, "Huỷ"),
+        React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", disabled:busy, onClick:submit }, busy ? "Đang lưu…" : (f.assignTask ? `Lưu & giao ${f.shops.length} việc` : "Lưu quyết định")),
+      ]),
+    ]));
+}
+
+function ShopDiagnosisCard({ isAdmin, myStaff, onNavigate }){
+  const d = useLatestDiagnosis();
+  const [open, setOpen] = useState(null);
+  const [showAll, setShowAll] = useState(false);
+  const [preset, setPreset] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const myShop = !isAdmin && myStaff ? myStaff.shop : null;
+  if(d === undefined) return React.createElement("div", { className:"card", style:{ marginBottom:14 } }, React.createElement("div", { className:"emptyState" }, "Đang tải chẩn đoán nhà thuốc…"));
+  async function runNow(){ setBusy(true); try{ await callCf(CF_JOB("shopDiagnosisNow"), {}, 180000); } catch(e){ window.alert("Lỗi: " + (e.message || e)); } setBusy(false); }
+  if(!d) return isAdmin ? React.createElement("div", { className:"card", style:{ marginBottom:14 } }, [
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15, marginBottom:4 } }, "🩺 Chẩn đoán nhà thuốc"),
+    React.createElement("div", { key:"s", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:8 } }, "Chưa có — máy chủ tự chẩn đoán 7h30 mỗi sáng sau khi đồng bộ doanh thu."),
+    React.createElement("button", { key:"b", type:"button", className:"btn", disabled:busy, onClick:runNow }, busy ? "Đang chẩn đoán…" : "Chẩn đoán ngay")]) : null;
+  const list = Object.values(d.shops || {}).filter(x => !myShop || x.shop===myShop)
+    .sort((a, b) => ((a.plan && a.plan.projectedPct) ?? 999) - ((b.plan && b.plan.projectedPct) ?? 999));
+  const problems = list.filter(x => x.status!=="ok" && x.status!=="chua_co_ke_hoach");
+  const shown = showAll || myShop ? list : problems;
+  const decideFrom = (x, sg) => setPreset({ type:"action", shops:[x.shop], metric:sg ? sg.metric : ((x.issues[0]||{}).key==="tbb" ? "tbb" : (x.issues[0]||{}).key==="hhs" ? "hhs" : (x.issues[0]||{}).key==="bills" ? "bills" : "rev"),
+    title:sg ? sg.text.split(":")[0] : "", hypothesis:x.summary, taskNote:sg ? sg.text : (x.issues||[]).map(i=>"• " + i.text).join("\n"), source:{ kind:"diagnosis", date:d.date } });
+  const row = (x) => { const st = DIAG_STATUS[x.status] || DIAG_STATUS.ok; const isOpen = open===x.shop || !!myShop;
+    return React.createElement("div", { key:x.shop, style:{ borderTop:"1px solid #F0EEE2", padding:"8px 0" } }, [
+      React.createElement("div", { key:"r", onClick:()=>!myShop && setOpen(isOpen ? null : x.shop), style:{ display:"flex", gap:10, alignItems:"center", cursor:myShop ? undefined : "pointer", flexWrap:"wrap" } }, [
+        React.createElement("b", { key:"s", style:{ minWidth:80 } }, x.shop),
+        React.createElement("span", { key:"p", style:{ fontWeight:800, color:st.color, minWidth:48 } }, x.plan && x.plan.projectedPct != null ? Math.round(x.plan.projectedPct) + "%" : "—"),
+        React.createElement(Pill360, { key:"st", text:st.text, color:st.color }),
+        React.createElement("span", { key:"t", style:{ fontSize:12.5, color:"var(--inkSoft)", flex:"1 1 260px" } }, x.summary),
+      ]),
+      isOpen && React.createElement("div", { key:"d", style:{ marginTop:8, background:"var(--paper)", borderRadius:8, padding:"8px 10px", fontSize:12.5, lineHeight:1.6 } }, [
+        x.plan && React.createElement("div", { key:"pl" }, `Kế hoạch tháng ${fmtTr(x.plan.target)} · đã đạt ${fmtTr(x.plan.actual)} (kỳ vọng đến nay ${fmtTr(x.plan.expectedToDate)}, ${x.plan.gapToDate >= 0 ? "vượt" : "thiếu"} ${fmtTr(Math.abs(x.plan.gapToDate))}) · cần ${fmtTr(x.plan.needPerDay)}/ngày cho các ngày còn lại`),
+        x.plan && React.createElement("div", { key:"pp" }, `So kế hoạch (dự kiến cuối tháng): số bill ${x.plan.invoicePct != null ? Math.round(x.plan.invoicePct) + "%" : "—"} · bill TB ${x.plan.tbbPct != null ? Math.round(x.plan.tbbPct) + "%" : "—"} · hàng hệ số ${x.plan.hhsPct != null ? Math.round(x.plan.hhsPct) + "%" : "—"}${x.plan.customersOldPct != null ? ` · khách cũ ${Math.round(x.plan.customersOldPct)}%` : ""}${x.plan.customersNewPct != null ? ` · khách mới ${Math.round(x.plan.customersNewPct)}%` : ""}`),
+        React.createElement("div", { key:"tr" }, `7 ngày qua so với 4 tuần trước: doanh thu/ngày ${fmtTr(x.last7.rev)} (${fmtSignPct(x.trend.rev)}) · bill/ngày ${String(x.last7.bills).replace(".", ",")} (${fmtSignPct(x.trend.bills)}) · bill TB ${fmtTr(x.last7.tbb)} (${fmtSignPct(x.trend.tbb)})`),
+        (x.issues || []).length > 0 && React.createElement("div", { key:"is", style:{ marginTop:4 } }, [React.createElement("b", { key:"b" }, "Vấn đề nằm ở: "), React.createElement("ul", { key:"u", style:{ margin:"2px 0 0 16px", padding:0 } }, x.issues.map((i, k) => React.createElement("li", { key:k }, i.text)))]),
+        (x.suggestions || []).length > 0 && React.createElement("div", { key:"sg", style:{ marginTop:6 } }, [React.createElement("b", { key:"b" }, "Hành động gợi ý:"),
+          ...x.suggestions.map((s, k) => React.createElement("div", { key:k, style:{ display:"flex", gap:8, alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", padding:"3px 0" } }, [
+            React.createElement("span", { key:"t" }, "• " + s.text),
+            isAdmin && React.createElement("button", { key:"b", type:"button", className:"btn btnPrimary", style:{ padding:"3px 10px", fontSize:12 }, onClick:()=>decideFrom(x, s) }, "Giao việc & theo dõi")]))]),
+        isAdmin && !(x.suggestions || []).length && x.status!=="ok" && React.createElement("button", { key:"dc", type:"button", className:"btn btnPrimary", style:{ marginTop:6, padding:"3px 10px", fontSize:12 }, onClick:()=>decideFrom(x, null) }, "Ra quyết định"),
+      ]),
+    ]); };
+  const badPromos = (d.promos || []).filter(p => p.running && (p.verdict==="low_roi" || p.verdict==="no_lift" || p.verdict==="loss"));
+  return React.createElement("div", { className:"card", style:{ marginBottom:14 } }, [
+    React.createElement("div", { key:"h", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, flexWrap:"wrap", marginBottom:4 } }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15 } }, myShop ? `🩺 Nhà thuốc ${myShop} so với kế hoạch tháng` : `🩺 Chẩn đoán nhà thuốc · ${problems.length}/${list.length} thấp hơn kỳ vọng`),
+      React.createElement("span", { key:"d", style:{ fontSize:11.5, color:"var(--inkSoft)" } }, `Kỳ vọng = kế hoạch tháng công ty · ngày ${d.daysElapsed || "—"}/${d.daysInMonth || "—"} · cập nhật ${String(d.date).split("-").reverse().join("/")}`),
+    ]),
+    shown.length === 0 ? React.createElement("div", { key:"e", style:{ fontSize:12.5, color:CL360.good, padding:"6px 0" } }, "Tất cả nhà thuốc đang đúng tiến độ kế hoạch tháng.") : React.createElement("div", { key:"l" }, shown.map(row)),
+    !myShop && React.createElement("button", { key:"all", type:"button", className:"btn btnGhost", style:{ fontSize:12, marginTop:6 }, onClick:()=>setShowAll(!showAll) }, showAll ? "Chỉ nhà thuốc có vấn đề" : `Xem cả ${list.length} nhà thuốc`),
+    !myShop && badPromos.length > 0 && React.createElement("div", { key:"pr", style:{ marginTop:10, fontSize:12.5, borderTop:"1px solid var(--line)", paddingTop:8 } }, [
+      React.createElement("b", { key:"t" }, `CTKM đang chạy chưa hiệu quả (${badPromos.length}): `),
+      badPromos.slice(0, 4).map(p => `${p.name} — ${p.verdictText}`).join(" · "),
+      isAdmin && React.createElement("button", { key:"b", type:"button", className:"btn btnGhost", style:{ fontSize:12, marginLeft:6, padding:"2px 8px" }, onClick:()=>onNavigate && onNavigate("ctkm") }, "Mở Khuyến mại"),
+    ]),
+    preset && React.createElement(DecisionModal, { key:"m", preset, onClose:()=>setPreset(null) }),
+  ]);
+}
+
+function DecisionsCard({ isAdmin, myStaff }){
+  const [rows, setRows] = useState(null);
+  const [preset, setPreset] = useState(null);
+  const [open, setOpen] = useState(null);
+  const [showDone, setShowDone] = useState(false);
+  const myShop = !isAdmin && myStaff ? myStaff.shop : null;
+  useEffect(()=>{
+    const q = myShop ? db.collection("opsDecisions").where("shops", "array-contains", myShop) : db.collection("opsDecisions").where("createdAt", ">=", addDays(todayISO(), -90));
+    return q.onSnapshot(s => setRows(s.docs.map(d => ({ id:d.id, ...d.data() })).sort((a, b) => String(b.startDate).localeCompare(String(a.startDate)))), err => { logSystemError("opsDecisions", err); setRows([]); });
+  }, [myShop]);
+  if(rows === null) return null;
+  if(!rows.length && !isAdmin) return null;
+  const today = todayISO();
+  const active = rows.filter(r => r.status==="dang_theo_doi"), done = rows.filter(r => r.status!=="dang_theo_doi");
+  const shown = showDone ? rows : active;
+  const lastReview = r => (r.reviews || {}).d14 || (r.reviews || {}).d7 || null;
+  const stat = done.reduce((a, r) => { const v = (lastReview(r) || {}).verdict; if(v) a[v] = (a[v]||0) + 1; return a; }, {});
+  return React.createElement("div", { className:"card", style:{ marginBottom:14 } }, [
+    React.createElement("div", { key:"h", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, flexWrap:"wrap", marginBottom:4 } }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15 } }, `📈 Quyết định & kết quả · ${active.length} đang theo dõi`),
+      isAdmin && React.createElement("button", { key:"n", type:"button", className:"btn btnPrimary", style:{ padding:"4px 10px", fontSize:12 }, onClick:()=>setPreset({}) }, "＋ Ra quyết định"),
+    ]),
+    React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:6 } }, done.length ? `Đã đánh giá ${done.length}: ✅ ${stat.cai_thien||0} cải thiện · ➖ ${stat.khong_doi||0} không đổi · ❌ ${stat.xau_di||0} xấu đi — xem lại để biết cách xử lý nào hiệu quả.` : "App tự so kết quả sau 7 và 14 ngày với 14 ngày trước khi bắt đầu."),
+    shown.length === 0 ? React.createElement("div", { key:"e", style:{ fontSize:12.5, color:"var(--inkSoft)" } }, "Chưa có quyết định nào đang theo dõi.") :
+    React.createElement("div", { key:"l" }, shown.map(r => { const rv = lastReview(r); const v = rv ? DECISION_VERDICT_UI[rv.verdict] : null; const day = Math.max(0, Math.round((new Date(today) - new Date(r.startDate)) / 86400000)); const isOpen = open===r.id;
+      return React.createElement("div", { key:r.id, style:{ borderTop:"1px solid #F0EEE2", padding:"7px 0" } }, [
+        React.createElement("div", { key:"r", onClick:()=>setOpen(isOpen ? null : r.id), style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", cursor:"pointer" } }, [
+          React.createElement("span", { key:"ty", style:{ fontSize:11, fontWeight:700, color:"var(--pine)", border:"1px solid var(--pine)", borderRadius:6, padding:"1px 6px" } }, r.typeLabel || DECISION_TYPES_UI[r.type] || ""),
+          React.createElement("b", { key:"t", style:{ fontSize:13, flex:"1 1 220px" } }, r.title),
+          React.createElement("span", { key:"sh", style:{ fontSize:12, color:"var(--inkSoft)" } }, (r.shops || []).join(", ")),
+          v ? React.createElement(Pill360, { key:"v", text:`${v.text}${rv.effect != null ? " " + fmtSignPct(rv.effect) : ""}`, color:v.color })
+            : React.createElement("span", { key:"w", style:{ fontSize:12, color:"var(--inkSoft)" } }, `ngày ${Math.min(day, 7)}/7 — đánh giá ${String(addDays(r.startDate, 7)).split("-").reverse().join("/")}`),
+        ]),
+        isOpen && React.createElement("div", { key:"d", style:{ marginTop:6, background:"var(--paper)", borderRadius:8, padding:"8px 10px", fontSize:12.5, lineHeight:1.6 } }, [
+          React.createElement("div", { key:"m" }, `Theo dõi: ${DECISION_METRICS_UI[r.metric] || r.metric}${r.targetPct ? ` · mục tiêu +${r.targetPct}%` : ""} · bắt đầu ${String(r.startDate).split("-").reverse().join("/")}${(r.controlShops || []).length ? ` · đối chứng: ${r.controlShops.join(", ")}` : ""}${r.campaignName ? ` · CTKM: ${r.campaignName}` : ""}`),
+          r.hypothesis && React.createElement("div", { key:"h" }, "Giả thuyết: " + r.hypothesis),
+          ...["d7", "d14"].filter(k => (r.reviews || {})[k]).map(k => { const x = r.reviews[k];
+            return React.createElement("div", { key:k, style:{ marginTop:4 } }, [React.createElement("b", { key:"b" }, `Sau ${k.slice(1)} ngày: `), x.text,
+              React.createElement("div", { key:"a", style:{ color:"var(--inkSoft)" } }, `Trước: DT ${fmtTr(x.all && x.all.before.rev)}/ngày · ${x.all ? String(x.all.before.bills).replace(".", ",") : "—"} bill · TB ${fmtTr(x.all && x.all.before.tbb)} → Sau: DT ${fmtTr(x.all && x.all.after.rev)}/ngày · ${x.all ? String(x.all.after.bills).replace(".", ",") : "—"} bill · TB ${fmtTr(x.all && x.all.after.tbb)}`)]); }),
+          (r.taskIds || []).length > 0 && React.createElement("div", { key:"tk", style:{ color:"var(--inkSoft)" } }, `${r.taskIds.length} việc đã giao cho nhà thuốc (xem ở Công việc).`),
+          isAdmin && r.status==="dang_theo_doi" && React.createElement("button", { key:"c", type:"button", className:"btn btnGhost", style:{ fontSize:12, marginTop:4, padding:"2px 8px" }, onClick:async()=>{ if(window.confirm("Dừng theo dõi quyết định này?")) await db.collection("opsDecisions").doc(r.id).set({ status:"da_dung", stoppedAt:new Date().toISOString() }, { merge:true }); } }, "Dừng theo dõi"),
+        ]),
+      ]); })),
+    done.length > 0 && React.createElement("button", { key:"sd", type:"button", className:"btn btnGhost", style:{ fontSize:12, marginTop:6 }, onClick:()=>setShowDone(!showDone) }, showDone ? "Chỉ đang theo dõi" : `Xem cả đã đánh giá (${done.length})`),
+    preset && React.createElement(DecisionModal, { key:"m", preset, onClose:()=>setPreset(null) }),
+  ]);
+}
+
+// ================= 7/10/2026 (tinh gọn): MENU GỌN — màn ít dùng chuyển vào nhóm "Xem thêm" =================
+// opsConfig/menuLayout.hidden = { ql:[tab], cht:[tab], nv:[tab] } — quản lý chỉnh ở Hệ thống › Mức dùng app.
+const MENU_ROLE_LABEL = { ql:"Quản lý", cht:"CHT", nv:"Nhân viên" };
+const MENU_NEVER_HIDE = ["command", "homnay", "hethong", "tasks", "checklist"];
+function menuRoleKey(isAdmin, myStaff){ return isAdmin ? "ql" : (myStaff && myStaff.role === "Cửa hàng trưởng" ? "cht" : "nv"); }
+function useMenuLayout(){
+  const [m, setM] = useState({ hidden:{} });
+  useEffect(()=> subscribeConfigDoc("menuLayout", d => setM({ hidden:(d && d.hidden) || {} })), []);
+  return m;
+}
+function applyMenuLayout(navGroups, hiddenList){
+  const hidden = new Set((hiddenList || []).filter(id => !MENU_NEVER_HIDE.includes(id)));
+  if(!hidden.size) return navGroups;
+  const more = [];
+  const groups = navGroups.map(g => { const keep = g.tabs.filter(id => { if(hidden.has(id)){ more.push(id); return false; } return true; }); return { ...g, tabs:keep }; }).filter(g => g.tabs.length > 0);
+  return more.length ? [...groups, { id:"xemthem", label:"Xem thêm", tabs:more }] : groups;
+}
+
+// ================= 7/10/2026 (tinh gọn): TRỌNG TÂM HÔM NAY — bản tin gộp + nhịp điều hành + việc chưa có người xử lý =================
+const PUSH_CAT_LABELS_UI = { viec:"Việc được giao", ruiro:"Rủi ro & cảnh báo", duyet:"Duyệt / nhận xét báo cáo", ghinhan:"Ghi nhận & quà",
+  daotao:"Đào tạo & thử việc", kinhdoanh:"Chỉ tiêu & doanh số", khachhang:"Chăm sóc khách hàng", hanghoa:"Hàng hoá & điều chuyển",
+  hethong:"Hệ thống & dữ liệu", nhip:"Nhịp điều hành", khac:"Khác" };
+const PUSH_UNMUTABLE_UI = ["viec", "ruiro"];
+function notifKeyOf(isAdmin, myStaff){ return myStaff ? myStaff.id : (isAdmin ? "admin" : null); }
+function NotifPrefsModal({ notifKey, onClose }){
+  const [muted, setMuted] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(()=>{ db.collection("fcmTokens").doc(notifKey).get().then(d => setMuted((d.exists && d.data().mutedCats) || [])).catch(()=>setMuted([])); }, [notifKey]);
+  async function save(){
+    setBusy(true);
+    try{ await db.collection("fcmTokens").doc(notifKey).set({ mutedCats:muted, mutedUpdatedAt:new Date().toISOString() }, { merge:true }); onClose(); }
+    catch(e){ window.alert("Lưu lỗi: " + (e.message || e)); }
+    setBusy(false);
+  }
+  return React.createElement("div", { className:"modalOverlay", onClick:onClose },
+    React.createElement("div", { className:"modal", style:{ maxWidth:460 }, onClick:e=>e.stopPropagation() }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:17, marginBottom:6 } }, "Tuỳ chọn thông báo"),
+      React.createElement("div", { key:"h", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:10, lineHeight:1.5 } }, "Việc gấp (việc mới, rủi ro, hàng điều chuyển) luôn báo ngay. Các tin còn lại gộp thành bản tin lúc 8h10 · 12h10 · 17h10. Bỏ chọn loại tin bạn không cần nhận qua điện thoại (vẫn xem được trong Bản tin trên app)."),
+      muted === null ? React.createElement("div", { key:"l", className:"emptyState" }, "Đang tải…") :
+      React.createElement("div", { key:"c" }, Object.keys(PUSH_CAT_LABELS_UI).map(k => { const locked = PUSH_UNMUTABLE_UI.includes(k);
+        return React.createElement("label", { key:k, style:{ display:"flex", gap:8, alignItems:"center", padding:"5px 0", fontSize:13.5, color: locked ? "var(--inkSoft)" : undefined } }, [
+          React.createElement("input", { key:"i", type:"checkbox", disabled:locked, checked:locked || !muted.includes(k), onChange:e=>setMuted(m => e.target.checked ? m.filter(x => x!==k) : [...m, k]) }),
+          PUSH_CAT_LABELS_UI[k] + (locked ? " (luôn bật)" : "")]); })),
+      React.createElement("div", { key:"b", className:"btnRow", style:{ justifyContent:"flex-end", marginTop:10 } }, [
+        React.createElement("button", { key:"x", type:"button", className:"btn btnGhost", onClick:onClose }, "Huỷ"),
+        React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", disabled:busy || muted === null, onClick:save }, busy ? "Đang lưu…" : "Lưu"),
+      ]),
+    ]));
+}
+function NewsFeedCard({ isAdmin, myStaff, defaultOpen }){
+  const key = notifKeyOf(isAdmin, myStaff);
+  const [doc, setDoc] = useState(null);
+  const [showAll, setShowAll] = useState(!!defaultOpen);
+  const [prefs, setPrefs] = useState(false);
+  useEffect(()=>{ if(!key) return undefined; return db.collection("pushQueue").doc(key).onSnapshot(s => setDoc(s.exists ? s.data() : {}), () => setDoc({})); }, [key]);
+  if(!key) return null;
+  const pending = ((doc && doc.items) || []).slice().sort((a, b) => String(b.at).localeCompare(String(a.at))).map(x => ({ ...x, _new:true }));
+  const last = (doc && doc.lastDigest && doc.lastDigest.items) || [];
+  const all = [...pending, ...last];
+  const shown = showAll ? all.slice(0, 40) : all.slice(0, 4);
+  const open = l => { if(l) window.dispatchEvent(new CustomEvent("upharma-open-link", { detail:l })); };
+  const fmt = s => { try{ return new Date(s).toLocaleString("vi-VN", { hour:"2-digit", minute:"2-digit", day:"2-digit", month:"2-digit" }); } catch(e){ return ""; } };
+  return React.createElement("div", { className:"card", style:{ marginBottom:14 } }, [
+    React.createElement("div", { key:"h", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, marginBottom:6 } }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15 } }, `📬 Bản tin${pending.length ? ` · ${pending.length} tin mới` : ""}`),
+      React.createElement("button", { key:"p", type:"button", className:"btn btnGhost", style:{ padding:"3px 10px", fontSize:12 }, onClick:()=>setPrefs(true) }, "⚙️ Tuỳ chọn"),
+    ]),
+    doc === null ? React.createElement("div", { key:"l", className:"emptyState" }, "Đang tải…")
+    : all.length === 0 ? React.createElement("div", { key:"e", style:{ fontSize:12.5, color:"var(--inkSoft)" } }, "Chưa có tin. Các cập nhật không gấp (duyệt báo cáo, ghi nhận, tiến độ, chăm sóc khách…) sẽ gom ở đây và gửi 1 bản tin lúc 8h10 · 12h10 · 17h10.")
+    : React.createElement("div", { key:"list" }, shown.map((x, i) => React.createElement("div", { key:i, onClick:()=>open(x.l), style:{ padding:"6px 0", borderTop:i ? "1px solid #F0EEE2" : "none", cursor:x.l ? "pointer" : undefined } }, [
+        React.createElement("div", { key:"t", style:{ fontSize:13, fontWeight:x._new ? 700 : 500 } }, [x._new && React.createElement("span", { key:"d", style:{ color:CL360.warn } }, "● "), x.t]),
+        React.createElement("div", { key:"b", style:{ fontSize:12, color:"var(--inkSoft)" } }, `${fmt(x.at)} · ${PUSH_CAT_LABELS_UI[x.c] || ""}${x.b ? " · " + String(x.b).slice(0, 140) : ""}`),
+      ]))),
+    all.length > 4 && React.createElement("button", { key:"m", type:"button", className:"btn btnGhost", style:{ marginTop:6, fontSize:12 }, onClick:()=>setShowAll(!showAll) }, showAll ? "Thu gọn" : `Xem tất cả (${Math.min(all.length, 40)})`),
+    prefs && React.createElement(NotifPrefsModal, { key:"pm", notifKey:key, onClose:()=>setPrefs(false) }),
+  ]);
+}
+// Quản lý khu vực: nhịp điều hành + chỉ số dẫn dắt trong ngày (5 ô, bấm vào mở đúng màn xử lý)
+function OpsFocusStrip({ onNavigate }){
+  const [f, setF] = useState(null);
+  useEffect(()=>{
+    let alive = true;
+    (async () => {
+      const today = todayISO();
+      try{
+        const [t, r, v, p] = await Promise.all([
+          db.collection("tasks").where("trangThai", "==", "Đang giao").get(),
+          db.collection("risks").where("isOpen", "==", true).get(),
+          db.collection("storeVisits").orderBy("date", "desc").limit(300).get(),
+          db.collection("dailyKpiPace").get(),
+        ]);
+        const overdue = t.docs.filter(d => { const x = d.data(); return x.deadline && x.deadline < today; }).length;
+        const hi = r.docs.map(d => d.data()).filter(x => x.level === "HIGH" || x.level === "CRITICAL");
+        const unassigned = hi.filter(x => x.status === "OPEN" || x.status === "REOPENED").length;
+        const last = {}; v.docs.forEach(d => { const x = d.data(); if(x.shop && !last[x.shop]) last[x.shop] = x.date; });
+        const notVisited = DEFAULT_SHOPS.filter(s => !last[s] || last[s] < addDays(today, -30));
+        const pace = p.docs.map(d => d.data()).filter(x => x.date === today && x.kpiOnTrack != null);
+        if(alive) setF({ overdue, unassigned, hi:hi.length, notVisited, onTrack:pace.filter(x => x.kpiOnTrack).length, paceTotal:pace.length });
+      } catch(e){ console.warn("OpsFocusStrip", e && e.message); if(alive) setF({ err:true }); }
+    })();
+    return () => { alive = false; };
+  }, []);
+  const go = (tab, param) => onNavigate && onNavigate(tab, param);
+  const tile = (k, label, value, sub, tone, onClick) => React.createElement("div", { key:k, onClick, style:{ flex:"1 1 150px", border:"1px solid var(--line)", borderRadius:10, padding:"10px 12px", cursor:"pointer", background:"#fff" } }, [
+    React.createElement("div", { key:"l", style:{ fontSize:11.5, color:"var(--inkSoft)", fontWeight:600 } }, label),
+    React.createElement("div", { key:"v", style:{ fontSize:22, fontWeight:800, color:tone } }, value),
+    React.createElement("div", { key:"s", style:{ fontSize:11.5, color:"var(--inkSoft)" } }, sub),
+  ]);
+  if(!f) return React.createElement("div", { className:"card", style:{ marginBottom:14 } }, React.createElement("div", { className:"emptyState" }, "Đang tải trọng tâm hôm nay…"));
+  if(f.err) return null;
+  const d = new Date(); const dow = d.getDay();
+  const rhythm = dow === 1 ? "Thứ 2: họp tuần với CHT — rà việc quá hạn, rủi ro, mục tiêu tuần." : d.getDate() === 1 ? "Đầu tháng: chấm KPI tháng trước, xem Mức dùng app, lên lịch kiểm tra nhà thuốc." : `Tuần này nên kiểm tra: ${f.notVisited.slice(0, 3).join(", ") || "đã kiểm tra đủ"}.`;
+  return React.createElement("div", { className:"card", style:{ marginBottom:14 } }, [
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15, marginBottom:4 } }, "🎯 Trọng tâm hôm nay"),
+    React.createElement("div", { key:"r", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:10 } }, "🗓️ " + rhythm),
+    React.createElement("div", { key:"g", style:{ display:"flex", gap:8, flexWrap:"wrap" } }, [
+      tile("p", "Nhân viên kịp chỉ tiêu", f.paceTotal ? `${f.onTrack}/${f.paceTotal}` : "—", "KPI dự kiến ≥ 85% cuối tháng", f.paceTotal && f.onTrack / f.paceTotal < 0.6 ? CL360.bad : CL360.good, () => go("kpi")),
+      tile("o", "Việc quá hạn", f.overdue, "toàn chuỗi", f.overdue ? CL360.bad : CL360.good, () => go("tasks", { sub:"inbox" })),
+      tile("u", "Rủi ro cao chưa giao việc", f.unassigned, `${f.hi} rủi ro cao đang mở`, f.unassigned ? CL360.bad : CL360.good, () => go("risk")),
+      tile("v", "Chưa kiểm tra ≥ 30 ngày", f.notVisited.length, f.notVisited.slice(0, 3).join(", ") || "đủ cả chuỗi", f.notVisited.length ? CL360.warn : CL360.good, () => go("kiemtra")),
+    ]),
+  ]);
+}
+// Hộp việc chung: rủi ro mức Cao/Nghiêm trọng CHƯA có việc xử lý hiện ngay đầu "Cần xử lý" — bấm để giao việc.
+function UnassignedRiskStrip({ shop, onNavigate }){
+  const [rows, setRows] = useState([]);
+  useEffect(()=>{
+    const q = shop ? db.collection("risks").where("shop", "==", shop) : db.collection("risks").where("isOpen", "==", true);
+    return q.onSnapshot(s => setRows(s.docs.map(d => ({ id:d.id, ...d.data() })).filter(r => r.isOpen && (r.level === "HIGH" || r.level === "CRITICAL") && (r.status === "OPEN" || r.status === "REOPENED"))
+      .sort((a, b) => (a.level === "CRITICAL" ? 0 : 1) - (b.level === "CRITICAL" ? 0 : 1) || String(a.detectedAt||"").localeCompare(String(b.detectedAt||"")))), () => setRows([]));
+  }, [shop]);
+  if(!rows.length) return null;
+  return React.createElement("div", { className:"card", style:{ marginBottom:12, borderLeft:"4px solid " + CL360.bad } }, [
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:14.5, marginBottom:6 } }, `⚠️ ${rows.length} rủi ro cao chưa có người xử lý`),
+    ...rows.slice(0, 5).map(r => React.createElement("div", { key:r.id, style:{ display:"flex", justifyContent:"space-between", gap:8, alignItems:"center", padding:"5px 0", borderTop:"1px solid #F0EEE2", flexWrap:"wrap" } }, [
+      React.createElement("div", { key:"l", style:{ fontSize:13, flex:"1 1 240px" } }, [React.createElement("b", { key:"s" }, (r.shop || "") + " · "), r.title || r.code || "Rủi ro"]),
+      React.createElement("button", { key:"b", type:"button", className:"btn btnPrimary", style:{ padding:"4px 10px", fontSize:12 }, onClick:()=>onNavigate && onNavigate("risk", { riskId:r.id }) }, "Giao việc"),
+    ])),
+    rows.length > 5 && React.createElement("button", { key:"m", type:"button", className:"btn btnGhost", style:{ fontSize:12, marginTop:4 }, onClick:()=>onNavigate && onNavigate("risk") }, `Xem cả ${rows.length} rủi ro`),
   ]);
 }
 
@@ -26978,7 +27341,7 @@ function Dashboard({ user, isAdmin, myStaff }){
   // 20/9/2026: quản lý thấy sidebar GOM NHÓM theo mẫu mockup (7 nhóm thay vì 14 tab phẳng); nhân
   // viên KHÔNG đổi gì — mỗi tab của nhân viên coi như 1 "nhóm" chỉ có đúng 1 tab bên trong, để dùng
   // chung 1 đoạn code render sidebar/topnav/lưới điện thoại cho cả 2 vai trò.
-  const navGroups = isAdmin
+  const navGroups0 = isAdmin
     ? OPS_GROUPS_ADMIN.map(g => ({ ...g, tabs: g.tabs.filter(id => leafTabs.some(t=>t.id===id)) })).filter(g => g.tabs.length>0)
     : (() => {
         // 27/9/2026 (Phương): THU GỌN sidebar nhân viên/CHT — 17 mục phẳng → 6 nhóm (tab con hiện ngay dưới nhóm đang chọn).
@@ -26986,6 +27349,9 @@ function Dashboard({ user, isAdmin, myStaff }){
         const covered = new Set(gs.flatMap(g => g.tabs));
         return [...gs, ...leafTabs.filter(t => !covered.has(t.id) && !["cust360","action","ketquangay","tudien"].includes(t.id)).map(t => ({ id:t.id, label:t.label, tabs:[t.id] }))];
       })();
+  // 7/10/2026 (tinh gọn): màn ít dùng → nhóm "Xem thêm" (cấu hình ở Hệ thống › Mức dùng app)
+  const menuLayout = useMenuLayout();
+  const navGroups = applyMenuLayout(navGroups0, (menuLayout.hidden || {})[menuRoleKey(isAdmin, myStaff)]);
   const [activeTab, setActiveTabRaw] = useState(
     (!isAdmin && leafTabs.some(t=>t.id==="homnay")) ? "homnay"
     : (isAdmin && leafTabs.some(t=>t.id==="command")) ? "command"
