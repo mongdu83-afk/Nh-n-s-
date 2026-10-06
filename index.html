@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261007-7";
+window.__APP_BUILD = "20261007-9";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -1120,18 +1120,7 @@ function subscribeConfigDoc(docId, cb){
 }
 async function saveConfigDoc(docId, data){
   await db.collection("opsConfig").doc(docId).set(data, { merge:false });
-  // P0 (27/9/2026): audit log tối thiểu khi đổi cấu hình — không chặn thao tác nếu ghi log lỗi.
-  try{
-    const u = auth.currentUser;
-    await db.collection("auditLogs").add({
-      action: "config.set",
-      target: "opsConfig/" + docId,
-      byEmail: (u && u.email) || "",
-      byUid: (u && u.uid) || "",
-      atTs: new Date().toISOString(),
-      keys: data && typeof data === "object" ? Object.keys(data).slice(0, 40) : [],
-    });
-  } catch(e){ console.warn("auditLog config:", e && e.message); }
+  // 7/10/2026: nhật ký thay đổi cấu hình nay do máy chủ ghi (trigger auditOpsConfig) — kèm giá trị trước/sau.
 }
 
 const TONE_COLOR = {
@@ -10318,35 +10307,103 @@ async function findOpenTaskBySource({ sourceRiskId, sourceCode, sourceType, shop
     return null;
   }
 }
+// 7/10/2026 (mục 4): nhật ký thao tác do máy chủ ghi — nhân sự, KPI, rủi ro, xử lý vấn đề, cấu hình, xoá việc / xoá khách.
+const AUDIT_ACTION_LABELS = { create:"Tạo", update:"Sửa", delete:"Xoá", set:"Lưu" };
+const AUDIT_COL_LABELS = { staff:"Nhân sự", kpiAssignments:"KPI", risks:"Rủi ro", issueActions:"Xử lý vấn đề", opsConfig:"Cấu hình", tasks:"Việc", crmCustomers:"Khách hàng", config:"Cấu hình" };
 function AuditLogViewer(){
   const [rows, setRows] = useState([]);
   const [loaded, setLoaded] = useState(false);
+  const [col, setCol] = useState("");
+  const [open, setOpen] = useState(null);
   useEffect(()=>{
-    return db.collection("auditLogs").orderBy("atTs", "desc").limit(50)
+    return db.collection("auditLogs").orderBy("atTs", "desc").limit(200)
       .onSnapshot(s => { setRows(s.docs.map(d => ({ id:d.id, ...d.data() }))); setLoaded(true); },
         err => { console.error("auditLogs", err); setLoaded(true); });
   }, []);
+  const colOf = r => String(r.action || "").split(".")[0];
+  const shown = rows.filter(r => !col || colOf(r) === col).slice(0, 100);
+  const actLabel = r => { const [c, k] = String(r.action || "").split("."); return `${AUDIT_ACTION_LABELS[k] || k || ""} ${AUDIT_COL_LABELS[c] || c || ""}`.trim(); };
+  const fmtVal = v => v == null ? "∅" : String(v).length > 80 ? String(v).slice(0, 80) + "…" : String(v);
   return React.createElement("div", { className:"card", style:{ marginBottom:16 } }, [
-    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, "Nhật ký cấu hình (audit)"),
-    React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } }, "50 thay đổi opsConfig gần nhất (khi Lưu cấu hình qua app)."),
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, "Nhật ký thao tác (ai sửa gì, lúc nào)"),
+    React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } }, "Máy chủ tự ghi khi người dùng sửa nhân sự, KPI, rủi ro, xử lý vấn đề, cấu hình, hoặc xoá việc / khách hàng. Bấm 1 dòng để xem giá trị trước → sau."),
+    React.createElement("select", { key:"f", value:col, onChange:e=>setCol(e.target.value), style:{ padding:"6px 9px", border:"1px solid var(--line)", borderRadius:8, fontSize:12.5, marginBottom:8 } },
+      [React.createElement("option", { key:"", value:"" }, "Tất cả")].concat(Object.keys(AUDIT_COL_LABELS).filter(k=>k!=="config").map(k => React.createElement("option", { key:k, value:k }, AUDIT_COL_LABELS[k])))),
     !loaded ? React.createElement("div", { key:"l", className:"emptyState" }, "Đang tải…")
-    : rows.length === 0 ? React.createElement("div", { key:"e", className:"emptyState" }, "Chưa có bản ghi — lưu một cấu hình (danh sách shop, ngưỡng…) để tạo log.")
-    : React.createElement("div", { key:"tbl", className:"tableWrap" }, React.createElement("table", { className:"data tblCompact" }, [
+    : shown.length === 0 ? React.createElement("div", { key:"e", className:"emptyState" }, "Chưa có bản ghi.")
+    : React.createElement("div", { key:"tbl", className:"tableWrap", style:{ maxHeight:420, overflowY:"auto" } }, React.createElement("table", { className:"data tblCompact" }, [
         React.createElement("thead", { key:"h" }, React.createElement("tr", null,
-          ["Thời điểm", "Người", "Đối tượng", "Trường"].map(h => React.createElement("th", { key:h }, h))
+          ["Thời điểm", "Người", "Thao tác", "Đối tượng", "Trường thay đổi"].map(h => React.createElement("th", { key:h }, h))
         )),
-        React.createElement("tbody", { key:"b" }, rows.map(r => React.createElement("tr", { key:r.id }, [
+        React.createElement("tbody", { key:"b" }, shown.flatMap(r => [React.createElement("tr", { key:r.id, style:{ cursor:"pointer" }, onClick:()=>setOpen(open===r.id ? null : r.id) }, [
           React.createElement("td", { key:"t", className:"nw" }, (r.atTs || "").replace("T", " ").slice(0, 19)),
-          React.createElement("td", { key:"e" }, r.byEmail || "—"),
-          React.createElement("td", { key:"tg" }, r.target || "—"),
+          React.createElement("td", { key:"e" }, r.byName || r.byEmail || "—"),
+          React.createElement("td", { key:"a", className:"nw", style:{ color: String(r.action||"").endsWith(".delete") ? CL360.bad : undefined, fontWeight:600 } }, actLabel(r)),
+          React.createElement("td", { key:"tg" }, r.label || r.target || "—"),
           React.createElement("td", { key:"k", style:{ fontSize:11 } }, Array.isArray(r.keys) ? r.keys.join(", ") : "—"),
-        ]))),
+        ]),
+        open===r.id && React.createElement("tr", { key:r.id+"_d" }, React.createElement("td", { colSpan:5, style:{ fontSize:11.5, background:"var(--paper)", lineHeight:1.6 } },
+          r.changes && Object.keys(r.changes).length
+            ? Object.entries(r.changes).map(([k, v]) => React.createElement("div", { key:k }, React.createElement("b", null, k + ": "), `${fmtVal(v && v.from)} → ${fmtVal(v && v.to)}`))
+            : r.snapshot ? React.createElement("div", { style:{ wordBreak:"break-all" } }, "Dữ liệu trước khi xoá: " + r.snapshot)
+            : `${r.target || ""}${r.byEmail ? " · " + r.byEmail : ""}`)),
+        ].filter(Boolean))),
       ])),
+  ]);
+}
+// 7/10/2026 (mục 3): tình trạng MỌI job tự động — máy chủ ghi systemStatus/jobStatus sau mỗi lần chạy; 8h30 tổng hợp + báo quản lý.
+function JobStatusPanel(){
+  const [d, setD] = useState(null);
+  const [loaded, setLoaded] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(()=>db.collection("systemStatus").doc("jobStatus").onSnapshot(s => { setD(s.exists ? s.data() : null); setLoaded(true); }, err => { console.error("jobStatus", err); setLoaded(true); }), []);
+  async function checkNow(){
+    setBusy(true);
+    try{ const headers = await authHeader(); await fetch(CF_CLAIMS_BASE + "/runJobLight?job=jobHealthNow", { headers }); }
+    catch(e){ console.warn("jobHealthNow", e && e.message); }
+    setBusy(false);
+  }
+  const jobs = (d && d.jobs) || {}; const lc = d && d.lastCheck;
+  const names = Object.keys(jobs).sort((a,b) => (jobs[a].ok === jobs[b].ok ? a.localeCompare(b) : jobs[a].ok ? 1 : -1));
+  const lateSet = new Set(((lc && lc.late) || []).map(x => x.name));
+  const rows = showAll ? names : names.filter(n => jobs[n].ok === false || lateSet.has(n));
+  const fmtAt = s => s ? new Date(s).toLocaleString("vi-VN", { hour:"2-digit", minute:"2-digit", day:"2-digit", month:"2-digit" }) : "—";
+  return React.createElement("div", { className:"card", style:{ marginBottom:16 } }, [
+    React.createElement("div", { key:"t", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, flexWrap:"wrap", marginBottom:4 } }, [
+      React.createElement("div", { key:"a", style:{ fontWeight:700, fontSize:16 } }, "Tình trạng job tự động"),
+      React.createElement("button", { key:"b", type:"button", className:"btn", disabled:busy, onClick:checkNow }, busy ? "Đang kiểm tra…" : "Kiểm tra ngay"),
+    ]),
+    React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } }, "Mọi job theo lịch tự ghi kết quả sau mỗi lần chạy. 8h30 sáng máy chủ đối chiếu lịch và gửi thông báo cho quản lý nếu có job lỗi hoặc không chạy."),
+    !loaded ? React.createElement("div", { key:"l", className:"emptyState" }, "Đang tải…")
+    : !d ? React.createElement("div", { key:"e", className:"emptyState" }, "Chưa có dữ liệu — sau khi deploy, các job sẽ ghi nhận ở lần chạy kế tiếp.")
+    : React.createElement(React.Fragment, { key:"c" }, [
+      lc && React.createElement("div", { key:"sum", style:{ display:"flex", gap:14, flexWrap:"wrap", fontSize:13, marginBottom:8 } }, [
+        React.createElement("span", { key:"o", style:{ color:CL360.good, fontWeight:700 } }, `✅ ${lc.ok}/${lc.total} chạy tốt`),
+        React.createElement("span", { key:"f", style:{ color: lc.failed.length ? CL360.bad : "var(--inkSoft)", fontWeight:700 } }, `❌ ${lc.failed.length} lỗi`),
+        React.createElement("span", { key:"lt", style:{ color: lc.late.length ? CL360.warn : "var(--inkSoft)", fontWeight:700 } }, `⏰ ${lc.late.length} không chạy đúng lịch`),
+        lc.never.length ? React.createElement("span", { key:"n", style:{ color:"var(--inkSoft)" } }, `${lc.never.length} chưa ghi nhận`) : null,
+        React.createElement("span", { key:"at", style:{ color:"var(--inkSoft)" } }, `kiểm tra lúc ${fmtAt(lc.checkedAt)}`),
+      ]),
+      rows.length ? React.createElement("div", { key:"tbl", className:"tableWrap", style:{ maxHeight:360, overflowY:"auto" } }, React.createElement("table", { className:"data tblCompact" }, [
+        React.createElement("thead", { key:"h" }, React.createElement("tr", null, ["Job", "Lịch", "Lần chạy gần nhất", "Thời gian", "Kết quả"].map(h => React.createElement("th", { key:h }, h)))),
+        React.createElement("tbody", { key:"b" }, rows.map(n => { const j = jobs[n]; const late = lateSet.has(n);
+          return React.createElement("tr", { key:n }, [
+            React.createElement("td", { key:"n" }, n),
+            React.createElement("td", { key:"s", className:"nw", style:{ fontSize:11 } }, j.schedule || "—"),
+            React.createElement("td", { key:"a", className:"nw" }, fmtAt(j.at)),
+            React.createElement("td", { key:"m", className:"nw" }, j.ms != null ? `${(j.ms/1000).toFixed(1)}s` : "—"),
+            React.createElement("td", { key:"r", style:{ color: j.ok === false ? CL360.bad : late ? CL360.warn : CL360.good, fontSize:12 } }, j.ok === false ? "❌ " + (j.error || "lỗi") : late ? "⏰ quá hạn chưa chạy lại" : "✅ OK"),
+          ]); })),
+      ])) : React.createElement("div", { key:"none", className:"emptyState" }, "Không có job lỗi."),
+      React.createElement("button", { key:"all", type:"button", className:"btn btnGhost", style:{ marginTop:8 }, onClick:()=>setShowAll(!showAll) }, showAll ? "Chỉ xem job có vấn đề" : `Xem tất cả ${names.length} job`),
+    ]),
   ]);
 }
 function DataSyncSection(){
   return React.createElement(React.Fragment, null, [
     React.createElement(FunctionCostPanel, { key:"cost" }),
+    React.createElement(JobStatusPanel, { key:"jobs" }),
     React.createElement(SyncHealthPanel, { key:"health" }),
     React.createElement(SyncAllDataButton, { key:"sync" }),
   ]);
@@ -15877,8 +15934,8 @@ function AiRoutingPanel(){
   return h("div", null,
     h("datalist", { id:"gemModels" }, models.map(m => h("option", { key:m, value:m }))),
     h("div", { style:{ display:"flex", gap:16, flexWrap:"wrap", alignItems:"center", marginBottom:8 } },
-      h("label", { style:{ fontSize:13, fontWeight:700, display:"flex", gap:6, alignItems:"center" } }, h("input", { type:"radio", checked:f.provider==="claude", onChange:()=>setF({ ...f, provider:"claude" }) }), "Claude (như hiện nay)"),
-      h("label", { style:{ fontSize:13, fontWeight:700, display:"flex", gap:6, alignItems:"center" } }, h("input", { type:"radio", checked:f.provider==="gemini", onChange:()=>setF({ ...f, provider:"gemini" }) }), "Gemini (đề xuất — rẻ hơn ~5 lần)"),
+      h("label", { style:{ fontSize:13, fontWeight:700, display:"flex", gap:6, alignItems:"center" } }, h("input", { type:"radio", checked:f.provider==="claude", onChange:()=>setF({ ...f, provider:"claude" }) }), "Claude (dự phòng)"),
+      h("label", { style:{ fontSize:13, fontWeight:700, display:"flex", gap:6, alignItems:"center" } }, h("input", { type:"radio", checked:f.provider==="gemini", onChange:()=>setF({ ...f, provider:"gemini" }) }), "Gemini (mặc định — rẻ hơn ~5 lần)"),
       h("span", { style:{ fontSize:12, color:"var(--inkSoft)" } }, `Đang chạy: ${r.provider==="gemini" ? "Gemini" : "Claude"} · chi phí AI 30 ngày: ${usd(totalCost)}`)),
     h("div", { style:{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center", marginBottom:6 } },
       h("input", { type:"password", name:"gemini-api-key", autoComplete:"new-password", "data-lpignore":"true", value:f.geminiKey, onChange:e=>setF({ ...f, geminiKey:e.target.value }), placeholder: r.hasGemini ? `Khoá Gemini đã lưu ${r.geminiKeyHint} — dán khoá mới để thay` : "Dán khoá API Gemini (AQ.… hoặc AIza…)", style:{ ...selSt, flex:"1 1 280px" } }),
