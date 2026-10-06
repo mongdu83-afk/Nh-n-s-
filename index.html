@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261006-7";
+window.__APP_BUILD = "20261007-1";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -4428,7 +4428,9 @@ function PromoThresholdCard({ isAdmin, myStaff }){
   if (!act.length) return null;
   const num = (v) => Number(String(v||"").replace(/[^\d]/g, "")) || 0; const B = num(bill), N = nonDrug === "" ? null : num(nonDrug);
   const fmt = (v) => Math.round(v).toLocaleString("vi-VN") + "đ";
-  const tot = act.filter(r => r.T > 0).sort((a, b) => a.T - b.T);
+  // gộp các chương trình cùng loại + cùng ngưỡng (nhiều CTKM khác quà nhưng chung mốc tiền) → 1 dòng
+  const totMap = {}; act.filter(r => r.T > 0).forEach(r => { const k = r.kind + "|" + r.T; (totMap[k] = totMap[k] || { ...r, gk:k, n:0, names:[] }).n++; totMap[k].names.push(String(r.name||"").replace(/\t/g," ").replace(/^\[[^\]]*\]\s*/,"")); });
+  const tot = Object.values(totMap).sort((a, b) => a.T - b.T).map(r => ({ ...r, name: r.n > 1 ? `${r.n} chương trình: ` + r.names.slice(0, 3).map(x => x.slice(0, 45)).join(" · ") + (r.n > 3 ? "…" : "") : r.names[0] }));
   const combos = act.filter(r => r.kind === "combo");
   const shops = Array.from(new Set(rules.flatMap(r => r.shops || []))).sort();
   return h("div", { key:"promoT", className:"card", style:{ marginBottom:12, borderLeft:"4px solid #D97706" } },
@@ -15094,12 +15096,12 @@ function OpsPulseView({ isAdmin, myStaff }){
     msg && h("div", { className:"card", style:{ fontSize:13, marginBottom:10 } }, msg),
     h("div", { style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(210px, 1fr))", gap:10, marginBottom:12 } },
       tile("① Dữ liệu", (d.score ?? "—") + "/100", [d.syncFail && d.syncFail.length ? "Đồng bộ lỗi: " + d.syncFail.join(", ") : "Đồng bộ ổn", d.gaps ? `${d.gaps} ngày-nhà thuốc thiếu hoá đơn` : "Hoá đơn đủ 14 ngày", (d.planMissing||[]).length ? `Chỉ tiêu POS chưa có thực đạt: ${d.planMissing.length} shop` : null, d.errors24h ? `${d.errors24h} lỗi app 24h (${(d.errorTop||[]).slice(0,2).map(x=>x[0]+" "+x[1]).join(", ")})` : "Không có lỗi app 24h"].filter(Boolean).join(" · "), col(d.score, 85, 60)),
-      tile("② AI tự xử lý (7 ngày)", dec.autoPct == null ? "—" : dec.autoPct + "%", `${dec.total||0} đề xuất · tự giao ${dec.auto||0} · chị duyệt ${dec.manual||0} · từ chối ${dec.rejected||0} · hết hạn ${dec.expired||0} · đang chờ ${dec.pending||0}`, col(dec.autoPct, 60, 30)),
+      tile("② AI tự xử lý (7 ngày)", dec.autoPct == null ? "—" : dec.autoPct + "%", `${dec.total||0} đề xuất · tự giao ${dec.auto||0} · quản lý duyệt ${dec.manual||0} · từ chối ${dec.rejected||0} · hết hạn ${dec.expired||0} · đang chờ ${dec.pending||0}`, col(dec.autoPct, 60, 30)),
       tile("③ Việc đúng hạn (14 ngày)", ex.onTimeRate == null ? "—" : ex.onTimeRate + "%", `${ex.assigned||0} việc giao · xong ${ex.done||0} (${ex.doneRate ?? "—"}%) · đang quá hạn ${ex.overdue||0}`, col(ex.onTimeRate, 85, 65)),
       tile("④ Rủi ro cần xử lý", rk.actionable ?? "—", `quá hạn ${rk.overdue ?? "—"} · chưa ai nhận ${rk.unacked ?? "—"} · lượt quét gần nhất tự đóng ${rk.autoClosed ?? 0}`, col(rk.actionable == null ? null : 100 - rk.actionable * 2, 60, 30)),
       tile("⑤ Gọi khách theo danh sách (7 ngày)", lp.care && lp.care.pct != null ? lp.care.pct + "%" : "—", lp.care && lp.care.quota ? `${lp.care.done}/${lp.care.quota} khách đã liên hệ` : "Danh sách bắt đầu từ sáng mai 7h30", col(lp.care && lp.care.pct, 80, 50)),
       TRANSFER_FLOW_ON && tile("⑥ Điều chuyển khép kín (30 ngày)", lp.transfer && lp.transfer.total ? lp.transfer.total + " phiếu" : "—", lp.transfer && lp.transfer.total ? `chờ gửi ${lp.transfer.CHO_GUI||0} · đang chuyển ${lp.transfer.DA_GUI||0} · gửi TB ${lp.transfer.avgSendH ?? "—"}h · có hàng sau 3 ngày ${lp.transfer.measured ? Math.round(lp.transfer.ok/lp.transfer.measured*100)+"%" : "—"}` : "Phiếu tạo khi AI giao việc điều chuyển", "#2563EB"),
-      tile("⑦ Mất doanh thu do hết hàng", fm(mo.lostPerDay) + "/ngày", `đầu tháng ${fm(mo.lostAtMonthStart)}/ngày · xử lý được bằng điều chuyển ${fm(mo.transferablePerDay)}/ngày`, mo.lostAtMonthStart && mo.lostPerDay > mo.lostAtMonthStart ? "#B91C1C" : "#15803D"),
+      tile("⑦ Mất doanh thu do hết hàng", fm(mo.lostPerDay) + "/ngày", `đầu tháng ${fm(mo.lostAtMonthStart)}/ngày${TRANSFER_FLOW_ON ? ` · xử lý được bằng điều chuyển ${fm(mo.transferablePerDay)}/ngày` : " · đặt hàng bổ sung các mã đang hết"}`, mo.lostAtMonthStart && mo.lostPerDay > mo.lostAtMonthStart ? "#B91C1C" : "#15803D"),
       tile("⑧ Việc AI giao có hiệu quả (30 ngày)", mo.measured ? Math.round(mo.success/mo.measured*100) + "%" : "—", mo.measured ? `${mo.success}/${mo.measured} việc đo được đạt kỳ vọng · giữ ~${fm(mo.savedPerDay)}/ngày` : "Chưa có việc đo được kết quả", "#7C3AED")),
     shopRows.length > 0 && h("div", { className:"card", style:{ marginBottom:12 } }, h("div", { style:{ fontWeight:800, marginBottom:6 } }, "Thực thi theo nhà thuốc (14 ngày)"),
       h("div", { style:{ overflowX:"auto" } }, h("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:13 } },
@@ -15275,8 +15277,8 @@ function buildLeaderReportHtml(D, M){
     `<b>Khách hàng:</b> ${lrInt(csAll.atRisk)} khách có nguy cơ rời bỏ và ${lrInt(csAll.silentVip)} khách VIP đã lâu không quay lại. Từ ${lrDM(monthStart)} đến ${lrDM(cut)} có ${lrInt(pmN)} đơn bỏ lỡ khuyến mại, trong đó ${lrInt(pmNear)} đơn chỉ còn thiếu rất ít là đạt ngưỡng.`,
   ].filter(Boolean);
 
-  let h = `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Báo cáo tuần & Kế hoạch triển khai · ${lrDM(W1)}–${lrDM(W2)}/${W2.slice(0,4)}</title><style>${LR_CSS}</style></head><body><div class="wrap">`;
-  h += `<header class="top"><div class="k">Upharma · Báo cáo gửi Ban lãnh đạo</div><h1>Báo cáo tuần &amp; Kế hoạch triển khai tuần ${lrDM(W1)} – ${lrDM(W2)}/${W2.slice(0,4)}</h1><div class="meta">Khu vực ${shops.length} nhà thuốc (${shops.map(s => lrShop(s).replace("NT","")).sort((a, b) => a - b).join(" · ")}) · Người lập: ${lrEsc(M.author || "Quản lý khu vực")} · Số liệu chốt đến hết ngày ${lrDM(cut)}/${cut.slice(0,4)}</div></header>`;
+  let h = `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Báo cáo tổng hợp tuần · ${lrDM(W1)}–${lrDM(W2)}/${W2.slice(0,4)}</title><style>${LR_CSS}</style></head><body><div class="wrap">`;
+  h += `<header class="top"><div class="k">Upharma · Báo cáo tổng hợp</div><h1>Báo cáo tổng hợp tuần &amp; Kế hoạch triển khai tuần ${lrDM(W1)} – ${lrDM(W2)}/${W2.slice(0,4)}</h1><div class="meta">Khu vực ${shops.length} nhà thuốc (${shops.map(s => lrShop(s).replace("NT","")).sort((a, b) => a - b).join(" · ")}) · Người lập: ${lrEsc(M.author || "Quản lý khu vực")} · Số liệu chốt đến hết ngày ${lrDM(cut)}/${cut.slice(0,4)}</div></header>`;
   h += H("Tóm tắt điều hành") + `<div class="exec"><ol>${exec.map(x => `<li>${x}</li>`).join("")}</ol></div>`;
   h += `<div class="grid g4" style="margin-top:12px"><div class="card tile warn"><div class="l">Doanh thu ${lrDM(monthStart)} – ${lrDM(cut)}</div><div class="v">${lrTr(revA)}</div><div class="s">${lrPct(revA, revT)} target · dự kiến ${lrDec(projAll,1)}%</div></div><div class="card tile warn"><div class="l">Bình quân / ngày</div><div class="v">${lrTr(perDay)}</div><div class="s">Cần ${lrTr(needDay)}/ngày để đạt target</div></div><div class="card tile bad"><div class="l">Mất doanh thu do hết hàng</div><div class="v">${lrTr(lostDay)}/ngày</div><div class="s">${lrTr(lostTr)}/ngày xử lý được bằng điều chuyển</div></div><div class="card tile info"><div class="l">Nhân sự cần tuyển thêm</div><div class="v">${hireN} người</div><div class="s">${hires.length} nhà thuốc · hiện có ${staffTotal} nhân sự</div></div></div>`;
   // 2. bảng chỉ số
@@ -15397,7 +15399,7 @@ function LeaderReportView({ isAdmin }){
     return () => unsub();
   }, [weekStart]);
   const html = React.useMemo(() => { try { return D && M ? buildLeaderReportHtml(D, { ...M, weekStart }) : ""; } catch (e) { return `<p style="color:#b3261e;font:14px sans-serif">Lỗi dựng báo cáo: ${lrEsc(e.message)}</p>`; } }, [D, M, weekStart]);
-  if (!isAdmin) return h("div", { className:"emptyState" }, "Chỉ quản lý xem được báo cáo lãnh đạo.");
+  if (!isAdmin) return h("div", { className:"emptyState" }, "Chỉ quản lý xem được báo cáo tổng hợp.");
   if (err) return h("div", { className:"card", style:{ color:"#b3261e" } }, "Lỗi tải số liệu: " + err);
   if (!D || !M) return h("div", { className:"emptyState" }, "Đang tổng hợp số liệu…");
   const setF = (k, v) => setM(m => ({ ...m, [k]: v }));
@@ -15413,14 +15415,14 @@ function LeaderReportView({ isAdmin }){
   }
   function download(){
     const blob = new Blob([html], { type:"text/html;charset=utf-8" });
-    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `Bao-cao-tuan-KV-${lrDM(weekStart).replace("/","-")}-${lrDM(lrAdd(weekStart,6)).replace("/","-")}-${weekStart.slice(0,4)}.html`;
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `Bao-cao-tong-hop-${lrDM(weekStart).replace("/","-")}-${lrDM(lrAdd(weekStart,6)).replace("/","-")}-${weekStart.slice(0,4)}.html`;
     document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
   }
   function printPdf(){ const w = window.open("", "_blank"); if (!w) { alert("Trình duyệt chặn cửa sổ mới — cho phép popup rồi thử lại."); return; } w.document.open(); w.document.write(html); w.document.close(); setTimeout(() => { try { w.focus(); w.print(); } catch(e) {} }, 600); }
   const ta = (k, ph, rows) => h("textarea", { value: M[k], onChange: e => setF(k, e.target.value), placeholder: ph, rows: rows || 3, style:{ width:"100%", fontSize:13, padding:8, borderRadius:8, border:"1px solid var(--line)", fontFamily:"inherit" } });
   const lbl = (t, sub) => h("div", { style:{ fontWeight:700, fontSize:13.5, margin:"12px 0 4px" } }, t, sub && h("span", { style:{ fontWeight:400, color:"var(--inkSoft)", fontSize:12 } }, " · " + sub));
   return h("div", null,
-    h("p", { className:"pagesub" }, "Tự tổng hợp báo cáo tuần gửi Ban lãnh đạo từ số liệu trong app (doanh số, hàng hệ số, TB bill, số đơn từ đầu tháng; khách hàng; hàng hoá; nhân sự; kế hoạch hành động). Chị chỉ nhập thêm phần tuyển dụng, cơ sở vật chất, đề xuất — bấm Lưu, rồi Tải file HTML hoặc In / PDF."),
+    h("p", { className:"pagesub" }, "Tự tổng hợp báo cáo tuần gửi Ban lãnh đạo từ số liệu trong app (doanh số, hàng hệ số, TB bill, số đơn từ đầu tháng; khách hàng; hàng hoá; nhân sự; kế hoạch hành động). Chỉ cần nhập thêm phần tuyển dụng, cơ sở vật chất, đề xuất — bấm Lưu, rồi Tải file HTML hoặc In / PDF."),
     h("div", { className:"card", style:{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap", marginBottom:12 } },
       h("span", { style:{ fontWeight:700 } }, "Tuần bắt đầu (thứ Hai):"),
       h("input", { type:"date", value: weekStart, onChange: e => e.target.value && setWeekStart(mondayOf(e.target.value)), style:{ padding:"6px 8px", borderRadius:8, border:"1px solid var(--line)" } }),
@@ -16963,7 +16965,7 @@ const OPS_TABS = [
   { id:"revenueAnalytics", label:"Doanh thu" },
   { id:"ketquangay", label:"Kết quả ngày" },
   { id:"baocaotuan", label:"Báo cáo tuần" },
-  { id:"baocaolanhdao", label:"Báo cáo lãnh đạo" },
+  { id:"baocaolanhdao", label:"Báo cáo tổng hợp" },
   { id:"nhipvanhanh", label:"Nhịp vận hành" },
   { id:"sales", label:"Báo cáo doanh số ngày" },
   { id:"tasks", label:"Công việc" },
@@ -25587,31 +25589,31 @@ function OpsOperatorConfig({ onMsg }){
           h("select", { value:(s.stopFlag||{}).key||"", onChange:e=>setS({ ...s, stopFlag:{ key:e.target.value, values:[] } }) }, h("option", { value:"" }, "— Chưa chọn —"), Object.keys(sk).map(k => h("option", { key:k, value:k }, k))),
           (s.stopFlag||{}).key && h("div", { style:{ marginTop:6 } }, Object.entries(sk[(s.stopFlag||{}).key]||{}).map(([v, n]) => chk((s.stopFlag.values||[]).includes(v), `${v} (${n} mã)`, on => setS({ ...s, stopFlag:{ ...s.stopFlag, values: on ? [...(s.stopFlag.values||[]), v] : s.stopFlag.values.filter(x=>x!==v) } }))))),
       h("button", { className:"btn btnPrimary", style:{ marginTop:10 }, disabled:busy==="s", onClick:save }, busy==="s" ? "Đang lưu…" : "Lưu")),
-    sec("Cảnh báo trong ngày (11h20 & 16h20)", "Lấy doanh thu trực tiếp từ POS, so với cùng giờ 4 tuần trước; dưới ngưỡng thì AI soạn việc ngay và báo chị nếu gấp. Đồng thời bắt các rủi ro mức CAO mới phát sinh trong ngày.",
+    sec("Cảnh báo trong ngày (11h20 & 16h20)", "Lấy doanh thu trực tiếp từ POS, so với cùng giờ 4 tuần trước; dưới ngưỡng thì AI soạn việc ngay và báo quản lý nếu gấp. Đồng thời bắt các rủi ro mức CAO mới phát sinh trong ngày.",
       chk(s.intraday, "Bật cảnh báo trong ngày", on => setS({ ...s, intraday:on })),
       h("span", { style:{ fontSize:13 } }, "Báo khi doanh thu dưới ", h("input", { type:"number", min:30, max:95, value:Math.round((s.pacePct||0.65)*100), onChange:e=>setS({ ...s, pacePct:Number(e.target.value)/100 }), style:{ width:60 } }), "% nhịp thường"),
       h("div", null, h("button", { className:"btn btnPrimary", style:{ marginTop:8 }, disabled:busy==="s", onClick:save }, "Lưu"))),
-    sec("① Tự giao việc nhỏ theo quy trình chuẩn", "Các loại việc tick dưới đây AI giao luôn cho nhà thuốc, không chờ chị duyệt (trừ mức NGHIÊM TRỌNG). Việc về nhân sự, tiền, trả hàng NCC, kiểm kê luôn chờ chị duyệt. Nếu một loại việc tự giao mà làm xong không cải thiện số liệu, AI tự thu hồi quyền tự giao loại đó và báo chị.",
+    sec("① Tự giao việc nhỏ theo quy trình chuẩn", "Các loại việc tick dưới đây AI giao luôn cho nhà thuốc, không chờ duyệt (trừ mức NGHIÊM TRỌNG). Việc về nhân sự, tiền, trả hàng NCC, kiểm kê luôn chờ duyệt. Nếu một loại việc tự giao mà làm xong không cải thiện số liệu, AI tự thu hồi quyền tự giao loại đó và báo quản lý.",
       chk(aa.policyOn !== false, "Bật tự giao việc nhỏ", on => setS({ ...s, autoApprove:{ ...aa, policyOn:on } })),
-      h("div", { style:{ marginTop:6 } }, types.filter(t => !(d.neverAuto||[]).includes(t)).map(t => { const pt = aa.policyTypes || d.policyDefault || []; const dem = (aa.demoted||{})[t];
+      h("div", { style:{ marginTop:6 } }, types.filter(t => !(d.neverAuto||[]).includes(t) && (TRANSFER_FLOW_ON || t !== "transfer")).map(t => { const pt = aa.policyTypes || d.policyDefault || []; const dem = (aa.demoted||{})[t];
         return h("span", { key:t, style:{ display:"inline-flex", alignItems:"center", marginRight:4 } }, chk(pt.includes(t), d.typeLabels[t] + (dem ? " ⛔" : ""), on => setS({ ...s, autoApprove:{ ...aa, policyTypes: on ? [...pt.filter(x=>x!==t), t] : pt.filter(x=>x!==t), demoted: on ? Object.fromEntries(Object.entries(aa.demoted||{}).filter(([k])=>k!==t)) : (aa.demoted||{}) } }))); })),
       Object.keys(aa.demoted||{}).length > 0 && h("div", { style:{ fontSize:12.5, color:"#B45309", marginTop:6 } }, "⛔ AI đã thu hồi tự giao: " + Object.entries(aa.demoted).map(([t, x]) => `${d.typeLabels[t]||t} (${(x&&x.reason)||""})`).join("; ") + ". Tick lại để mở lại."),
-      h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:6 } }, "Luôn chờ chị duyệt: " + (d.neverAuto||[]).map(t => d.typeLabels[t]||t).join(", ") + "."),
+      h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:6 } }, "Luôn chờ duyệt: " + (d.neverAuto||[]).map(t => d.typeLabels[t]||t).join(", ") + "."),
       h("button", { className:"btn btnPrimary", style:{ marginTop:8 }, disabled:busy==="s", onClick:save }, "Lưu")),
-    sec("② Tự giao loại việc chị đã tin cậy", "Ngoài danh sách trên: loại việc chị đã duyệt nhiều lần với tỉ lệ cao thì AI cũng tự giao. Việc mức CAO và loại bị loại trừ vẫn chờ chị duyệt. Mặc định TẮT.",
+    sec("② Tự giao loại việc đã tin cậy", "Ngoài danh sách trên: loại việc đã được duyệt nhiều lần với tỉ lệ cao thì AI cũng tự giao. Việc mức CAO và loại bị loại trừ vẫn chờ duyệt. Mặc định TẮT.",
       chk(aa.enabled, "Bật tự giao", on => setS({ ...s, autoApprove:{ ...aa, enabled:on } })),
       h("span", { style:{ fontSize:13 } }, "khi tỉ lệ duyệt ≥ ", h("input", { type:"number", min:50, max:100, value:Math.round((aa.minRate||0.9)*100), onChange:e=>setS({ ...s, autoApprove:{ ...aa, minRate:Number(e.target.value)/100 } }), style:{ width:60 } }), "% trên ít nhất ",
         h("input", { type:"number", min:3, max:50, value:aa.minN||10, onChange:e=>setS({ ...s, autoApprove:{ ...aa, minN:Number(e.target.value) } }), style:{ width:60 } }), " đề xuất"),
       h("div", { style:{ fontSize:13, margin:"6px 0 2px" } }, "Không tự giao các loại:"),
       h("div", null, types.map(t => chk((aa.excludeTypes||[]).includes(t), d.typeLabels[t], on => setS({ ...s, autoApprove:{ ...aa, excludeTypes: on ? [...(aa.excludeTypes||[]), t] : (aa.excludeTypes||[]).filter(x=>x!==t) } })))),
       h("button", { className:"btn btnPrimary", style:{ marginTop:8 }, disabled:busy==="s", onClick:save }, "Lưu")),
-    sec("Hiệu quả theo loại việc (AI học từ đây)", "60 ngày gần nhất. Loại việc chị từ chối ≥ 70% (từ 5 lần) sẽ chỉ được đề xuất khi mức CAO. Lý do từ chối được đưa cho AI đọc trước khi soạn lần sau.",
+    sec("Hiệu quả theo loại việc (AI học từ đây)", "60 ngày gần nhất. Loại việc bị từ chối ≥ 70% (từ 5 lần) sẽ chỉ được đề xuất khi mức CAO. Lý do từ chối được đưa cho AI đọc trước khi soạn lần sau.",
       h("div", { style:{ overflow:"auto" } }, h("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5 } },
         h("thead", null, h("tr", null, ["Loại việc","Đề xuất","Tỉ lệ duyệt","Đã xong","Rủi ro hết/cải thiện","Tự giao?"].map(x => h("th", { key:x, style:{ textAlign:"left", padding:"5px 7px", borderBottom:"1px solid var(--line)", color:"var(--inkSoft)" } }, x)))),
         h("tbody", null, Object.entries(d.stats||{}).sort((a,b)=>b[1].n-a[1].n).map(([t, x]) => { const ok = aa.enabled && (x.approved+x.rejected) >= (aa.minN||10) && x.approveRate >= (aa.minRate||0.9) && !(aa.excludeTypes||[]).includes(t);
           return h("tr", { key:t }, h("td", { style:{ padding:"5px 7px" } }, d.typeLabels[t]||t), h("td", { style:{ padding:"5px 7px" } }, x.n), h("td", { style:{ padding:"5px 7px", color: x.approveRate!=null && x.approveRate<0.3 ? "#B91C1C" : undefined } }, x.approveRate==null ? "—" : Math.round(x.approveRate*100)+"%"),
             h("td", { style:{ padding:"5px 7px" } }, x.done), h("td", { style:{ padding:"5px 7px" } }, x.improveRate==null ? "—" : Math.round(x.improveRate*100)+"%"), h("td", { style:{ padding:"5px 7px", color: ok ? "#15803D" : "var(--inkSoft)" } }, ok ? "Có" : "Chờ duyệt")); }))))),
-    sec("Cách xử lý chuẩn (AI bám theo khi soạn việc)", "Chị sửa các bước, số ngày hạn và người nhận mặc định cho từng loại vấn đề. AI sẽ điền chi tiết cụ thể (sản phẩm, khách, con số) theo đúng cách này.",
+    sec("Cách xử lý chuẩn (AI bám theo khi soạn việc)", "Sửa các bước, số ngày hạn và người nhận mặc định cho từng loại vấn đề. AI sẽ điền chi tiết cụ thể (sản phẩm, khách, con số) theo đúng cách này.",
       types.map(t => { const pb = { ...(d.playbooks[t]||{}), ...(pbEdit[t]||{}) }; const dirty = !!pbEdit[t];
         return h("div", { key:t, style:{ borderTop:"1px solid var(--line)", padding:"8px 0" } },
           h("div", { style:{ fontWeight:700, fontSize:13 } }, d.typeLabels[t]),
@@ -25712,7 +25714,7 @@ function ReplicationView(){
     h("div", { className:"card", style:{ padding:12, marginBottom:10, background:"#F5F3FF" } },
       h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap", alignItems:"center" } },
         h("div", null, h("div", { style:{ fontWeight:800, fontSize:15 } }, "🧬 Nhà thuốc mẫu & nhân bản chuẩn"),
-          h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", maxWidth:760, lineHeight:1.5 } }, "DNA từng nhà thuốc → cụm nhà thuốc tương đồng → nhà thuốc mẫu của cụm → cách làm tốt hơn hẳn (pattern) → AI soạn thực hành chuẩn → chị duyệt (có phiên bản) → triển khai sang NT cùng cụm → đo lại. Tự tính sáng thứ Hai. Mục tiêu: không phụ thuộc người giỏi để mở nhà thuốc tốt.")),
+          h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", maxWidth:760, lineHeight:1.5 } }, "DNA từng nhà thuốc → cụm nhà thuốc tương đồng → nhà thuốc mẫu của cụm → cách làm tốt hơn hẳn (pattern) → AI soạn thực hành chuẩn → quản lý duyệt (có phiên bản) → triển khai sang NT cùng cụm → đo lại. Tự tính sáng thứ Hai. Mục tiêu: không phụ thuộc người giỏi để mở nhà thuốc tốt.")),
         h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap" } }, h("button", { className:"btn", disabled:!!busy, onClick:()=>run("dna", {}, "Đang tính DNA…") }, busy==="dna" ? "Đang tính…" : "Tính DNA"),
           h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:()=>run("bpDraft", {}, "AI đang soạn thực hành chuẩn…") }, busy==="bpDraft" ? "AI đang soạn…" : "AI soạn thực hành chuẩn"))),
       msg && h("div", { style:{ fontSize:12.5, marginTop:6, color: /^Lỗi/.test(msg) ? "#B91C1C" : "#6D28D9" } }, msg)),
@@ -25735,7 +25737,7 @@ function ReplicationView(){
     sub==="bp" && h("div", { style:{ marginTop:8 } }, !bps || !bps.length ? h("div", { className:"emptyState" }, "Chưa có thực hành chuẩn — bấm \"AI soạn thực hành chuẩn\" (cần tính DNA trước).") :
       bps.filter(b=>b.status!=="rejected").map(b => { const e = edit[b.id] || {}; const cl = (dna && (dna.clusters||[]).find(c=>c.id===b.cluster)) || { shops: b.shops||[] }; const sel = dep[b.id] || cl.shops.filter(s => s!==b.master && !(b.deployed||[]).includes(s));
         return h("div", { key:b.id, className:"card", style:{ padding:12, marginBottom:10, borderLeft:`4px solid ${b.status==="approved" ? "#15803D" : "#B45309"}` } },
-          h("div", { style:{ fontSize:11.5, fontWeight:800, color: b.status==="approved" ? "#15803D" : "#B45309" } }, b.status==="approved" ? `ĐÃ DUYỆT · phiên bản ${b.version}` : "NHÁP — chờ chị duyệt", ` · ${b.clusterLabel||""} · NT mẫu ${shopLabel(b.master)}`),
+          h("div", { style:{ fontSize:11.5, fontWeight:800, color: b.status==="approved" ? "#15803D" : "#B45309" } }, b.status==="approved" ? `ĐÃ DUYỆT · phiên bản ${b.version}` : "NHÁP — chờ duyệt", ` · ${b.clusterLabel||""} · NT mẫu ${shopLabel(b.master)}`),
           b.status==="draft" ? h("input", { value: e.title ?? b.title, onChange:ev=>setEdit(x=>({ ...x, [b.id]:{ ...e, title:ev.target.value } })), style:{ width:"100%", fontWeight:800, marginTop:4 } }) : h("div", { style:{ fontWeight:800, fontSize:14.5, marginTop:2 } }, b.title),
           h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", marginTop:3 } }, b.why),
           b.status==="draft" ? h("textarea", { rows:4, value:(e.steps ?? b.steps ?? []).join("\n"), onChange:ev=>setEdit(x=>({ ...x, [b.id]:{ ...e, steps:ev.target.value.split("\n") } })), style:{ width:"100%", marginTop:6, fontSize:13 } })
@@ -25841,13 +25843,13 @@ function OpsOperatorView({ onNavigate }){
     h("div", { className:"card", style:{ padding:14, marginBottom:12, background:"#F0F9FF" } },
       h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap", alignItems:"center" } },
         h("div", null, h("div", { style:{ fontWeight:800, fontSize:16 } }, "🧭 AI điều hành"),
-          h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", lineHeight:1.5, maxWidth:720 } }, "Mỗi sáng 7h20 AI đọc rủi ro đang mở (doanh số/KPI, hàng hoá, khách hàng, nhân sự, công việc), nhân viên thử việc có nguy cơ, đơn bỏ lỡ khuyến mại và đề xuất chuyển hàng → soạn việc cần giao (người làm, hạn, hướng dẫn). Chị duyệt thì mới giao. Việc quá hạn được nhắc chung trong tin «🔔 đầu việc quá hạn» lúc 8h sáng (không nhắc trùng); quá hạn 2 ngày AI báo CHT 1 lần, đóng vòng khi rủi ro hết và tổng kết lúc 20h20.")),
+          h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", lineHeight:1.5, maxWidth:720 } }, "Mỗi sáng 7h20 AI đọc rủi ro đang mở (doanh số/KPI, hàng hoá, khách hàng, nhân sự, công việc), nhân viên thử việc có nguy cơ, đơn bỏ lỡ khuyến mại và đề xuất chuyển hàng → soạn việc cần giao (người làm, hạn, hướng dẫn). Quản lý duyệt thì mới giao (trừ việc nhỏ AI được tự giao). Việc quá hạn được nhắc chung trong tin «🔔 đầu việc quá hạn» lúc 8h sáng (không nhắc trùng); quá hạn 2 ngày AI báo CHT 1 lần, đóng vòng khi rủi ro hết và tổng kết lúc 20h20.")),
         h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap" } },
           h("button", { className:"btn", disabled:!!busy, onClick:()=>call("followup", {}, "Đang kiểm tra tiến độ…") }, busy==="followup" ? "Đang kiểm tra…" : "Kiểm tra tiến độ"),
           h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:()=>call("propose", {}, "AI đang đọc số liệu và soạn việc (1–3 phút)…") }, busy==="propose" ? "AI đang soạn…" : "AI soạn đề xuất ngay"))),
       msg && h("div", { style:{ fontSize:12.5, marginTop:8, color: /^Lỗi/.test(msg) ? "#B91C1C" : "#1D4ED8" } }, msg)),
     h("div", { style:{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12 } },
-      metric("Chờ chị duyệt", st("pending").length, "đề xuất đang chờ", st("pending").length ? "#B45309" : null),
+      metric("Chờ duyệt", st("pending").length, "đề xuất đang chờ", st("pending").length ? "#B45309" : null),
       metric("Đang theo dõi", track.length, `${cnt(track, r=>r.status==="overdue")} việc quá hạn`, cnt(track, r=>r.status==="overdue") ? "#B91C1C" : null),
       metric("7 ngày: đã giao", cnt(wk, assigned), `${wk.length} đề xuất · duyệt ${wk.length ? Math.round(cnt(wk, assigned)/wk.length*100) : 0}%`),
       metric("7 ngày: đã xong", cnt(wk, r=>r.status==="done"), `${cnt(wk, r=>r.status==="done" && /rủi ro đã hết/.test(r.outcome||""))} việc rủi ro đã hết`, "#15803D")),
@@ -26574,7 +26576,7 @@ function Dashboard({ user, isAdmin, myStaff }){
   // 3/10/2026: tab đã gộp nhưng vẫn mở được (VD hồ sơ Customer 360 của 1 khách) → hiện trong nhóm của tab cha
   const TAB_PARENT = { cust360:"crm", action:"tasks", ketquangay:"revenueAnalytics" };
   const activeGroup = navGroups.find(g => g.tabs.includes(activeTab)) || navGroups.find(g => g.tabs.includes(TAB_PARENT[activeTab])) || navGroups[0];
-  const FEATURE_KEYWORDS = { taimua:"tai mua nhac het thuoc cham soc", crm:"crm khach hang phan khuc", cust360:"ho so khach", emp360:"ho so nhan vien", prod360:"ho so hang hoa san pham", hanghoa:"ton kho kiem ke dieu chuyen dat hang toc do tieu thu", action:"cong viec can xu ly cho kiem tra qua han tien do", tasks:"giao viec", risk:"rui ro canh bao tuan thu", kinhnghiem:"kinh nghiem", photos:"hinh anh minh chung", revenueAnalytics:"doanh thu", ctkm:"khuyen mai", tudien:"tu dien san pham thuoc hoat chat cong dung duoc", temgia:"tem gia in tem khuyen mai combo", kpi:"kpi chi tieu", ketquangay:"ket qua ngay", baocaotuan:"bao cao tuan", baocaolanhdao:"bao cao lanh dao ban giam doc tong hop tuan", nhipvanhanh:"nhip van hanh khep kin tu dong hoa diem", sales:"doanh so ngay", checklist:"checklist", homnay:"hom nay", shop360:"ho so nha thuoc" };
+  const FEATURE_KEYWORDS = { taimua:"tai mua nhac het thuoc cham soc", crm:"crm khach hang phan khuc", cust360:"ho so khach", emp360:"ho so nhan vien", prod360:"ho so hang hoa san pham", hanghoa:"ton kho kiem ke dieu chuyen dat hang toc do tieu thu", action:"cong viec can xu ly cho kiem tra qua han tien do", tasks:"giao viec", risk:"rui ro canh bao tuan thu", kinhnghiem:"kinh nghiem", photos:"hinh anh minh chung", revenueAnalytics:"doanh thu", ctkm:"khuyen mai", tudien:"tu dien san pham thuoc hoat chat cong dung duoc", temgia:"tem gia in tem khuyen mai combo", kpi:"kpi chi tieu", ketquangay:"ket qua ngay", baocaotuan:"bao cao tuan", baocaolanhdao:"bao cao tong hop tuan lanh dao", nhipvanhanh:"nhip van hanh khep kin tu dong hoa diem", sales:"doanh so ngay", checklist:"checklist", homnay:"hom nay", shop360:"ho so nha thuoc" };
   const featureItems = navGroups.flatMap(g => g.tabs.map(id => ({ id, label:(leafTabs.find(t=>t.id===id)||{}).label || id, group:g.label, keywords:FEATURE_KEYWORDS[id] || "" })));
   function groupUnread(g){ return g.tabs.reduce((s,id)=>s+(unreadCount[id]||0),0) + ((g.tabs.includes("action") || (isAdmin && g.tabs.includes("tasks"))) ? needAction360 : 0); }
   const totalUnread = Object.values(unreadCount).reduce((a,b)=>a+(b||0), 0);
