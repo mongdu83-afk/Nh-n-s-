@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261007-9";
+window.__APP_BUILD = "20261007-10";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -542,28 +542,22 @@ function cfErrorLabel(err){
 // Project Settings > Cloud Messaging > Web configuration > "Generate key pair", dán vào đây.
 const FCM_VAPID_KEY = "BHp0H9G6vblCIpkPRi8yDlXcJ6o4yhVAJGuMpcuNG99J-Ptrx-ZCsOid-EM530rmnIV1MHZYK7j-Wdkq1YeaMAM";
 
-// App Firebase phụ, dùng riêng để TẠO tài khoản nhân viên mà không làm mất
-// phiên đăng nhập hiện tại của quản lý (Firebase sẽ tự đăng nhập vào tài
-// khoản vừa tạo nếu dùng app chính — dùng app phụ này để tránh việc đó).
-const secondaryApp = firebase.initializeApp(FIREBASE_CONFIG, "Secondary");
-const secondaryAuth = secondaryApp.auth();
-// Không lưu phiên đăng nhập cho app phụ này (chỉ dùng tạm lúc tạo tài khoản nhân viên) —
-// tránh việc mỗi lần tải trang nó tự thử khôi phục phiên cũ, gây lỗi 400 vô hại làm nhiễu Console.
-secondaryAuth.setPersistence(firebase.auth.Auth.Persistence.NONE).catch(()=>{});
+// 7/10/2026 (mục 1 bảo mật): tài khoản nhân viên do MÁY CHỦ tạo (createStaffAccountNow, chỉ quản lý gọi được) —
+// trình duyệt không còn tự gọi createUserWithEmailAndPassword nên có thể TẮT "cho phép tự đăng ký" trong Firebase
+// Authentication (người ngoài không tự tạo tài khoản được nữa). Máy chủ gắn luôn uid vào hồ sơ + cấp quyền (claims).
 async function createStaffAccount(email, password, staffId){
-  const cred = await secondaryAuth.createUserWithEmailAndPassword(email, password);
-  const newUid = cred.user.uid;
-  await secondaryAuth.signOut();
-  await updateDoc("staff", staffId, { uid:newUid, email });
-  // Gắn custom claims staff (role/shop) — trigger onStaffWrittenClaims cũng chạy; gọi thêm cho chắc.
-  try{
-    const headers = await authHeader();
-    await fetch(CF_CLAIMS_BASE + "/setUserClaimsNow", {
-      method:"POST", headers:{ ...headers, "Content-Type":"application/json" },
-      body: JSON.stringify({ uid:newUid, mode:"auto" }),
-    });
-  } catch(e){ console.warn("setUserClaims after createStaff:", e && e.message); }
-  return newUid;
+  const headers = await authHeader();
+  const resp = await fetch(CF_CLAIMS_BASE + "/runJobLight?job=createStaffAccountNow", {
+    method:"POST", headers:{ ...headers, "Content-Type":"application/json" },
+    body: JSON.stringify({ email, password, staffId }),
+  });
+  const data = await resp.json().catch(() => null);
+  if(!resp.ok || !data || !data.ok){
+    const err = new Error((data && data.error) || ("Lỗi tạo tài khoản (" + resp.status + ")"));
+    if(data && data.code === "auth/email-already-exists") err.code = "auth/email-already-in-use";
+    throw err;
+  }
+  return data.uid;
 }
 
 // Seed admin (migration). isAdmin ưu tiên Firebase custom claims.admin — ADMIN_EMAILS chỉ fallback.
@@ -17106,6 +17100,7 @@ const STAFF_TABS = ["homnay","checklist","photos","hanghoa","tudien","tasks","kp
 const OPS_TABS = [
   { id:"command", label:"Tổng quan điều hành" },
   { id:"shop360", label:"Hồ sơ nhà thuốc" },
+  { id:"kiemtra", label:"Kiểm tra nhà thuốc" }, // 7/10/2026: phiếu chấm điểm khi quản lý khu vực đi thăm
   { id:"risk", label:"Danh sách rủi ro & cảnh báo" },
   { id:"action", label:"Việc cần xử lý" },
   { id:"emp360", label:"Hồ sơ nhân viên 360" },
@@ -17153,7 +17148,7 @@ const OPS_TABS = [
 // Bản trước khi tái cấu trúc: xem MENU_LEGACY_* bên dưới (hoàn nguyên = đổi USE_LEGACY_MENU = true).
 const OPS_GROUPS_ADMIN_V2 = [
   { id:"command",      label:"Tổng quan điều hành",   tabs:["command","nhipvanhanh"] },
-  { id:"nhathuoc",     label:"Nhà thuốc",    tabs:["shop360","homnay","checklist","photos"] },
+  { id:"nhathuoc",     label:"Nhà thuốc",    tabs:["shop360","kiemtra","homnay","checklist","photos"] },
   { id:"congviec",     label:"Công việc",    tabs:["tasks"] }, // 3/10/2026: gộp "Việc cần xử lý" vào Công việc (tab con 🔥 Cần xử lý)
   { id:"nhansu",       label:"Nhân sự",      tabs:["emp360","nhanvien","kpi","training","kudos"] },
   { id:"khachhang",    label:"Khách hàng",   tabs:["taimua","crm"] }, // 3/10/2026: Customer 360 mở từ danh sách khách; "Cần chăm sóc hôm nay" gộp tái mua + rời bỏ + VIP + sinh nhật
@@ -17165,7 +17160,7 @@ const OPS_GROUPS_ADMIN_V2 = [
   { id:"hethong",      label:"Hệ thống",              tabs:["hethong"] },
 ];
 const OPS_GROUPS_STAFF_V2 = [
-  { id:"nhathuoc",     label:"Nhà thuốc",    tabs:["homnay","checklist","photos","shop360","risk"] }, // shop360/risk: chỉ CHT (lọc ở leafTabs)
+  { id:"nhathuoc",     label:"Nhà thuốc",    tabs:["homnay","checklist","photos","shop360","kiemtra","risk"] }, // shop360/kiemtra/risk: chỉ CHT (lọc ở leafTabs)
   { id:"congviec",     label:"Công việc",    tabs:["tasks"] },
   { id:"nhansu",       label:"Nhân sự",      tabs:["kpi","nhanvien","training","kudos"] },
   { id:"khachhang",    label:"Khách hàng",   tabs:["taimua","crm"] },
@@ -19945,7 +19940,7 @@ const TAB_ICON_SVG = {
   nhipvanhanh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>',
   ketquangay: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>',
 };
-const TAB_ICON_ALIAS = { congviec:"tasks", kinhdoanh:"revenueAnalytics", baocao:"baocaotuan", ruiro:"risk" };
+const TAB_ICON_ALIAS = { kiemtra:"checklist", congviec:"tasks", kinhdoanh:"revenueAnalytics", baocao:"baocaotuan", ruiro:"risk" };
 function renderTabIcon(id, sizePx, extraProps){
   const markup = (TAB_ICON_SVG[id] || TAB_ICON_SVG[TAB_ICON_ALIAS[id]] || TAB_ICON_SVG.staff).replace("<svg ", '<svg width="' + sizePx + '" height="' + sizePx + '" ');
   return React.createElement("span", Object.assign({
@@ -20886,6 +20881,253 @@ const PRIORITY_ORDER_UI = ["P0","P1","P2","P3"];
 // của ĐÚNG 1 nhà thuốc (nhân viên, tiến độ KPI, việc đang mở, SKU thiếu gấp) — không quét dữ liệu lớn.
 // Mỗi vấn đề có "Xem chi tiết" + "Tạo công việc xử lý"; nếu đã có việc đang mở cho đúng vấn đề đó thì hiện
 // việc đó thay vì cho tạo trùng (chống trùng lặp — mục XXXI.4).
+// ================= 7/10/2026 (mục 2): PHIẾU KIỂM TRA NHÀ THUỐC (quản lý khu vực đi thăm) =================
+// Tiêu chí sửa được ở opsConfig/storeVisitTemplate (dạng văn bản: "# Nhóm", mỗi dòng 1 tiêu chí, "*" đầu dòng = tiêu chí
+// trọng yếu). Mỗi phiếu lưu storeVisits/<id>: kết quả từng tiêu chí (Đạt / Chưa đạt / Không áp dụng) + ghi chú + ảnh,
+// điểm % = Đạt / (Đạt + Chưa đạt). Tiêu chí Chưa đạt → tự giao việc khắc phục cho nhà thuốc (tasks, assignType "shop").
+// Cửa hàng trưởng xem được phiếu của nhà thuốc mình (luật Firestore storeVisits).
+const STORE_VISIT_TEMPLATE_DEFAULT = `# Ngoại quan & trưng bày
+Biển hiệu, đèn, mặt tiền sạch sẽ – sáng sủa
+Quầy kệ gọn gàng, hàng xếp đúng sơ đồ trưng bày
+Hàng trưng bày đủ, có tem giá đúng
+POSM / ấn phẩm khuyến mại đúng chương trình hiện hành
+# Tuân thủ GPP
+* Khu thuốc kê đơn tách riêng, không bán thuốc kê đơn khi không có đơn
+* Có sổ / theo dõi nhiệt độ – độ ẩm, khu bảo quản đạt điều kiện
+Giấy phép, chứng chỉ hành nghề treo đúng quy định
+* Hàng cận date / hết hạn tách riêng, không bày bán
+# Nhân sự & dịch vụ khách hàng
+Đồng phục, bảng tên đúng quy định
+Chào hỏi, hỏi bệnh và tư vấn đúng quy trình
+Nắm sản phẩm trọng tâm và chương trình khuyến mại tháng
+Đủ nhân sự theo ca, đúng lịch đăng ký
+# Vận hành
+Checklist ngày được cập nhật đầy đủ
+Kiểm quỹ và bàn giao ca đúng quy trình
+Việc được giao / rủi ro xử lý đúng hạn
+Kho, khu vực sau quầy sạch sẽ, gọn gàng`;
+function parseStoreVisitTemplate(text){
+  const groups = []; let g = null; let n = 0;
+  String(text || "").split(/\r?\n/).forEach(line => {
+    const s = line.trim(); if(!s) return;
+    if(s.startsWith("#")){ g = { name:s.replace(/^#+\s*/, ""), items:[] }; groups.push(g); return; }
+    if(!g){ g = { name:"Chung", items:[] }; groups.push(g); }
+    const critical = s.startsWith("*");
+    g.items.push({ id:"c" + (++n), label:s.replace(/^\*\s*/, ""), critical });
+  });
+  return groups.filter(x => x.items.length);
+}
+function storeVisitScore(results){
+  const pass = results.filter(r => r.status === "dat").length, fail = results.filter(r => r.status === "chua").length;
+  return { pass, fail, na:results.filter(r => r.status === "na").length, criticalFail:results.filter(r => r.status === "chua" && r.critical).length,
+    score: pass + fail ? Math.round(pass / (pass + fail) * 100) : null };
+}
+function scoreTone(s){ return s == null ? "var(--inkSoft)" : s >= 90 ? CL360.good : s >= 75 ? CL360.warn : CL360.bad; }
+
+function StoreVisitTemplateEditor({ text, onClose }){
+  const [v, setV] = useState(text);
+  const [busy, setBusy] = useState(false);
+  const groups = parseStoreVisitTemplate(v);
+  async function save(){
+    if(!groups.length){ window.alert("Chưa có tiêu chí nào."); return; }
+    setBusy(true);
+    try{ await saveConfigDoc("storeVisitTemplate", { text:v, updatedAt:new Date().toISOString() }); onClose(); }
+    catch(e){ window.alert("Lưu lỗi: " + (e.message || e)); }
+    setBusy(false);
+  }
+  return React.createElement("div", { className:"modalOverlay", onClick:onClose },
+    React.createElement("div", { className:"modal", style:{ maxWidth:640 }, onClick:e=>e.stopPropagation() }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:17, marginBottom:6 } }, "Tiêu chí kiểm tra nhà thuốc"),
+      React.createElement("div", { key:"h", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:8, lineHeight:1.5 } }, "Mỗi dòng 1 tiêu chí. Dòng bắt đầu bằng \"#\" là tên nhóm. Thêm \"*\" ở đầu dòng cho tiêu chí trọng yếu (chưa đạt → việc khắc phục mức ảnh hưởng Cao). Phiếu cũ giữ nguyên nội dung đã chấm."),
+      React.createElement("textarea", { key:"a", value:v, onChange:e=>setV(e.target.value), rows:18, style:{ width:"100%", boxSizing:"border-box", fontFamily:"inherit", fontSize:13, padding:10, border:"1px solid var(--line)", borderRadius:8 } }),
+      React.createElement("div", { key:"c", style:{ fontSize:12, color:"var(--inkSoft)", margin:"6px 0 10px" } }, `${groups.length} nhóm · ${groups.reduce((a,g)=>a+g.items.length,0)} tiêu chí · ${groups.reduce((a,g)=>a+g.items.filter(i=>i.critical).length,0)} trọng yếu`),
+      React.createElement("div", { key:"b", className:"btnRow", style:{ justifyContent:"flex-end" } }, [
+        React.createElement("button", { key:"d", type:"button", className:"btn btnGhost", onClick:()=>setV(STORE_VISIT_TEMPLATE_DEFAULT) }, "Về mẫu gợi ý"),
+        React.createElement("button", { key:"x", type:"button", className:"btn", onClick:onClose }, "Huỷ"),
+        React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", disabled:busy, onClick:save }, busy ? "Đang lưu…" : "Lưu tiêu chí"),
+      ]),
+    ]));
+}
+
+function StoreVisitForm({ groups, onClose }){
+  const today = todayISO();
+  const draftKey = "storeVisitDraft";
+  const blank = () => ({ shop:DEFAULT_SHOPS[0], date:today, res:{}, overall:"", strengths:"", deadlineDays:3, assign:{} });
+  const [f, setF] = useState(() => { try{ const d = JSON.parse(localStorage.getItem(draftKey) || "null"); if(d && d.date === today) return { ...blank(), ...d }; } catch(e){} return blank(); });
+  const [uploading, setUploading] = useState({});
+  const [busy, setBusy] = useState(false);
+  useEffect(()=>{ try{ localStorage.setItem(draftKey, JSON.stringify(f)); } catch(e){} }, [f]);
+  const items = groups.flatMap(g => g.items.map(i => ({ ...i, group:g.name })));
+  const setRes = (id, patch) => setF(x => ({ ...x, res:{ ...x.res, [id]:{ ...(x.res[id]||{}), ...patch } } }));
+  const results = items.map(i => ({ id:i.id, group:i.group, label:i.label, critical:!!i.critical, status:(f.res[i.id]||{}).status || "", note:((f.res[i.id]||{}).note || "").trim(), link:((f.res[i.id]||{}).link || "").trim(), files:(f.res[i.id]||{}).files || [] }));
+  const sc = storeVisitScore(results);
+  const missing = results.filter(r => !r.status).length;
+  async function upload(id, files){
+    setUploading(u => ({ ...u, [id]:true }));
+    try{
+      for(const file of files){
+        const meta = await uploadTaskAttachmentFile(file, `storeVisits/${f.shop}/${f.date}/${id}/${Date.now()}_${file.name}`, pct => setUploading(u => ({ ...u, [id]:pct })));
+        setF(x => ({ ...x, res:{ ...x.res, [id]:{ ...(x.res[id]||{}), files:[...(((x.res[id]||{}).files)||[]), meta] } } }));
+      }
+    } catch(e){ window.alert("Tải ảnh lỗi: " + (e.message || e)); }
+    setUploading(u => { const n = { ...u }; delete n[id]; return n; });
+  }
+  async function submit(){
+    if(missing){ window.alert(`Còn ${missing} tiêu chí chưa chấm.`); return; }
+    const fails = results.filter(r => r.status === "chua");
+    if(fails.some(r => !r.note) && !window.confirm("Có tiêu chí Chưa đạt chưa ghi chú lý do — vẫn lưu?")) return;
+    setBusy(true);
+    try{
+      const u = auth.currentUser;
+      const ref = db.collection("storeVisits").doc();
+      const deadline = addDays(f.date, Number(f.deadlineDays) || 3);
+      const toAssign = fails.filter(r => f.assign[r.id] !== false);
+      const taskIds = [];
+      for(const r of toAssign){
+        const t = await addDoc("tasks", {
+          title:`[Kiểm tra NT] ${r.label}`, mota:`Phiếu kiểm tra ngày ${f.date}: chưa đạt.${r.note ? " Ghi chú: " + r.note : ""} — khắc phục và báo cáo kết quả kèm ảnh.`,
+          truocXuLy:"", deadline, hanGio:"", trangThai:"Đang giao", subTrangThai:"Mới giao", ketQua:"", nguoiBaoCao:"", ngayGiao:today,
+          module:"Ops", mucDoAnhHuong: r.critical ? "Cao" : "Trung bình", createdAtTs:new Date().toISOString(),
+          nguoiGiaoViec:"Quản lý khu vực", nguoiGiaoViecRole:"Quản lý khu vực", dinhKemFiles:r.files || [], dinhKemLink:r.link || "",
+          assignType:"shop", staffId:null, staffName:"", shop:f.shop,
+          sourceType:"storeVisit", sourceId:ref.id, sourceCode:"KTNT-" + r.id,
+        });
+        taskIds.push(t.id);
+      }
+      await ref.set({ shop:f.shop, date:f.date, results, ...sc, overall:f.overall.trim(), strengths:f.strengths.trim(), taskIds, taskDeadline:toAssign.length ? deadline : null,
+        visitorEmail:(u && u.email) || "", createdAt:new Date().toISOString() });
+      try{ localStorage.removeItem(draftKey); } catch(e){}
+      onClose(true);
+    } catch(e){ window.alert("Lưu phiếu lỗi: " + (e.message || e)); }
+    setBusy(false);
+  }
+  const stBtn = (id, val, label, color) => { const on = (f.res[id]||{}).status === val;
+    return React.createElement("button", { key:val, type:"button", onClick:()=>setRes(id, { status:on ? "" : val }), style:{ padding:"5px 10px", borderRadius:8, fontSize:12.5, fontWeight:700, cursor:"pointer",
+      border:"1px solid " + (on ? color : "var(--line)"), background:on ? color : "#fff", color:on ? "#fff" : "var(--ink)" } }, label); };
+  const inSt = { padding:"7px 9px", border:"1px solid var(--line)", borderRadius:8, fontSize:13 };
+  return React.createElement("div", { className:"modalOverlay" },
+    React.createElement("div", { className:"modal", style:{ maxWidth:760, maxHeight:"92vh", overflowY:"auto" }, onClick:e=>e.stopPropagation() }, [
+      React.createElement("div", { key:"t", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, flexWrap:"wrap", marginBottom:10 } }, [
+        React.createElement("div", { key:"a", style:{ fontWeight:700, fontSize:17 } }, "Phiếu kiểm tra nhà thuốc"),
+        React.createElement("div", { key:"s", style:{ fontWeight:800, fontSize:18, color:scoreTone(sc.score) } }, sc.score == null ? "—" : `${sc.score} điểm`),
+      ]),
+      React.createElement("div", { key:"h", style:{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12 } }, [
+        React.createElement("select", { key:"s", value:f.shop, onChange:e=>setF({ ...f, shop:e.target.value }), style:inSt }, DEFAULT_SHOPS.map(x => React.createElement("option", { key:x, value:x }, x))),
+        React.createElement("input", { key:"d", type:"date", value:f.date, max:today, onChange:e=>setF({ ...f, date:e.target.value }), style:inSt }),
+        React.createElement("span", { key:"c", style:{ fontSize:12.5, color:"var(--inkSoft)", alignSelf:"center" } }, `Đạt ${sc.pass} · Chưa đạt ${sc.fail}${sc.criticalFail ? ` (${sc.criticalFail} trọng yếu)` : ""} · Không áp dụng ${sc.na} · còn ${missing} chưa chấm`),
+      ]),
+      ...groups.map(g => React.createElement("div", { key:g.name, style:{ marginBottom:12 } }, [
+        React.createElement("div", { key:"g", style:{ fontWeight:800, fontSize:13.5, margin:"6px 0", color:"var(--pine)" } }, g.name),
+        ...g.items.map(i => { const r = f.res[i.id] || {};
+          return React.createElement("div", { key:i.id, style:{ border:"1px solid var(--line)", borderRadius:10, padding:"8px 10px", marginBottom:6, background: r.status === "chua" ? "var(--claySoft)" : r.status === "dat" ? "var(--pineSoft)" : undefined } }, [
+            React.createElement("div", { key:"r", style:{ display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap", alignItems:"center" } }, [
+              React.createElement("div", { key:"l", style:{ fontSize:13.5, flex:"1 1 260px" } }, [i.critical && React.createElement("b", { key:"c", style:{ color:CL360.bad } }, "★ "), i.label]),
+              React.createElement("div", { key:"b", style:{ display:"flex", gap:5 } }, [stBtn(i.id, "dat", "Đạt", CL360.good), stBtn(i.id, "chua", "Chưa đạt", CL360.bad), stBtn(i.id, "na", "Không áp dụng", CL360.gray)]),
+            ]),
+            !!(r.status === "chua" || r.note || r.link || (r.files||[]).length) && React.createElement("div", { key:"x", style:{ marginTop:6, display:"flex", flexDirection:"column", gap:6 } }, [
+              React.createElement("input", { key:"n", value:r.note || "", onChange:e=>setRes(i.id, { note:e.target.value }), placeholder:"Ghi chú / lý do chưa đạt", style:{ ...inSt, width:"100%", boxSizing:"border-box" } }),
+              React.createElement(TaskAttachments, { key:"a", files:r.files || [], link:r.link || "", uploading:uploading[i.id], onUploadFiles:fs=>upload(i.id, fs),
+                onRemoveFile:m=>setRes(i.id, { files:(r.files||[]).filter(x => x.url !== m.url) }), onLinkBlur:text=>setRes(i.id, { link:text }) }),
+              r.status === "chua" && React.createElement("label", { key:"as", style:{ fontSize:12.5, display:"flex", gap:6, alignItems:"center" } }, [
+                React.createElement("input", { key:"c", type:"checkbox", checked:f.assign[i.id] !== false, onChange:e=>setF(x => ({ ...x, assign:{ ...x.assign, [i.id]:e.target.checked } })) }),
+                "Giao việc khắc phục cho nhà thuốc"]),
+            ]),
+          ]); }),
+      ])),
+      React.createElement("div", { key:"o", className:"field" }, [React.createElement("label", { key:"l" }, "Điểm mạnh / ghi nhận"), React.createElement("textarea", { key:"i", rows:2, value:f.strengths, onChange:e=>setF({ ...f, strengths:e.target.value }) })]),
+      React.createElement("div", { key:"o2", className:"field" }, [React.createElement("label", { key:"l" }, "Nhận xét chung & yêu cầu"), React.createElement("textarea", { key:"i", rows:2, value:f.overall, onChange:e=>setF({ ...f, overall:e.target.value }) })]),
+      React.createElement("div", { key:"dl", style:{ fontSize:13, margin:"8px 0", display:"flex", gap:6, alignItems:"center", flexWrap:"wrap" } }, [
+        "Hạn khắc phục:", React.createElement("input", { key:"i", type:"number", min:1, max:30, value:f.deadlineDays, onChange:e=>setF({ ...f, deadlineDays:e.target.value }), style:{ ...inSt, width:64 } }), "ngày",
+        React.createElement("span", { key:"n", style:{ color:"var(--inkSoft)" } }, `· sẽ giao ${results.filter(r => r.status === "chua" && f.assign[r.id] !== false).length} việc cho ${f.shop}`)]),
+      React.createElement("div", { key:"b", className:"btnRow", style:{ justifyContent:"flex-end", marginTop:6 } }, [
+        React.createElement("button", { key:"x", type:"button", className:"btn btnGhost", onClick:()=>{ if(window.confirm("Đóng phiếu? Nội dung đang chấm vẫn được giữ nháp trong hôm nay.")) onClose(false); } }, "Đóng"),
+        React.createElement("button", { key:"c", type:"button", className:"btn", onClick:()=>{ if(window.confirm("Xoá toàn bộ nội dung đang chấm?")) setF(blank()); } }, "Làm lại"),
+        React.createElement("button", { key:"s", type:"button", className:"btn btnPrimary", disabled:busy, onClick:submit }, busy ? "Đang lưu…" : "Lưu phiếu & giao việc"),
+      ]),
+    ]));
+}
+
+function StoreVisitView({ isAdmin, myStaff }){
+  const myShop = !isAdmin && myStaff ? myStaff.shop : null;
+  const [tplText, setTplText] = useState(STORE_VISIT_TEMPLATE_DEFAULT);
+  const [visits, setVisits] = useState(null);
+  const [shopF, setShopF] = useState("Tất cả");
+  const [open, setOpen] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [showTpl, setShowTpl] = useState(false);
+  useEffect(()=> subscribeConfigDoc("storeVisitTemplate", d => setTplText((d && d.text) || STORE_VISIT_TEMPLATE_DEFAULT)), []);
+  useEffect(()=>{
+    let q = db.collection("storeVisits");
+    q = myShop ? q.where("shop", "==", myShop) : q.orderBy("date", "desc").limit(300);
+    return q.onSnapshot(s => setVisits(s.docs.map(d => ({ id:d.id, ...d.data() })).sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.createdAt).localeCompare(String(a.createdAt)))),
+      err => { logSystemError("storeVisits", err); setVisits([]); });
+  }, [myShop]);
+  const groups = parseStoreVisitTemplate(tplText);
+  const list = (visits || []).filter(v => shopF === "Tất cả" || v.shop === shopF);
+  const shops = myShop ? [myShop] : DEFAULT_SHOPS;
+  const byShop = shops.map(s => { const vs = (visits || []).filter(v => v.shop === s);
+    return { shop:s, n:vs.length, last:vs[0], prev:vs[1], avg:vs.length ? Math.round(vs.filter(v=>v.score!=null).reduce((a, v) => a + v.score, 0) / Math.max(1, vs.filter(v=>v.score!=null).length)) : null }; });
+  const fmtD = d => d ? d.split("-").reverse().join("/") : "—";
+  const detail = open && (visits || []).find(v => v.id === open);
+  return React.createElement("div", { style:{ maxWidth:1000, margin:"0 auto", padding:16 } }, [
+    React.createElement(PageTitle, { key:"t" }, "Kiểm tra nhà thuốc"),
+    React.createElement("p", { key:"s", className:"pagesub" }, isAdmin ? "Phiếu chấm điểm khi đi thăm nhà thuốc. Tiêu chí chưa đạt tự giao việc khắc phục cho nhà thuốc." : "Kết quả các lần quản lý khu vực kiểm tra nhà thuốc của bạn và việc cần khắc phục."),
+    isAdmin && React.createElement("div", { key:"b", className:"btnRow", style:{ marginBottom:14 } }, [
+      React.createElement("button", { key:"n", type:"button", className:"btn btnPrimary", onClick:()=>setShowForm(true) }, "＋ Lập phiếu kiểm tra"),
+      React.createElement("button", { key:"t", type:"button", className:"btn", onClick:()=>setShowTpl(true) }, "Chỉnh tiêu chí"),
+    ]),
+    React.createElement("div", { key:"sum", className:"card", style:{ marginBottom:14 } }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15, marginBottom:8 } }, "Điểm theo nhà thuốc"),
+      visits === null ? React.createElement("div", { key:"l", className:"emptyState" }, "Đang tải…") :
+      React.createElement("div", { key:"tb", className:"tableWrap" }, React.createElement("table", { className:"data tblCompact" }, [
+        React.createElement("thead", { key:"h" }, React.createElement("tr", null, ["Nhà thuốc", "Lần gần nhất", "Điểm", "So lần trước", "Điểm TB", "Số lần"].map((x,i) => React.createElement("th", { key:i, style:{ textAlign:i>1 ? "right" : "left" } }, x)))),
+        React.createElement("tbody", { key:"b" }, byShop.map(r => { const d = r.last && r.prev && r.last.score != null && r.prev.score != null ? r.last.score - r.prev.score : null;
+          return React.createElement("tr", { key:r.shop, style:{ cursor:r.last ? "pointer" : undefined }, onClick:()=>{ if(!myShop) setShopF(r.shop); } }, [
+            React.createElement("td", { key:"s" }, r.shop),
+            React.createElement("td", { key:"d", className:"nw" }, r.last ? fmtD(r.last.date) : React.createElement("span", { style:{ color:CL360.warn } }, "Chưa kiểm tra")),
+            React.createElement("td", { key:"p", style:{ textAlign:"right", fontWeight:800, color:scoreTone(r.last && r.last.score) } }, r.last && r.last.score != null ? r.last.score : "—"),
+            React.createElement("td", { key:"c", style:{ textAlign:"right", color: d == null ? "var(--inkSoft)" : d >= 0 ? CL360.good : CL360.bad } }, d == null ? "—" : (d > 0 ? "▲ " : d < 0 ? "▼ " : "") + Math.abs(d)),
+            React.createElement("td", { key:"a", style:{ textAlign:"right" } }, r.avg == null ? "—" : r.avg),
+            React.createElement("td", { key:"n", style:{ textAlign:"right" } }, r.n),
+          ]); })),
+      ])),
+    ]),
+    React.createElement("div", { key:"list", className:"card" }, [
+      React.createElement("div", { key:"h", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, flexWrap:"wrap", marginBottom:8 } }, [
+        React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15 } }, "Các phiếu kiểm tra"),
+        !myShop && React.createElement("select", { key:"f", value:shopF, onChange:e=>setShopF(e.target.value), style:{ padding:"6px 9px", border:"1px solid var(--line)", borderRadius:8, fontSize:12.5 } },
+          ["Tất cả", ...DEFAULT_SHOPS].map(x => React.createElement("option", { key:x, value:x }, x))),
+      ]),
+      visits === null ? null : list.length === 0 ? React.createElement("div", { key:"e", className:"emptyState" }, "Chưa có phiếu kiểm tra nào.") :
+      React.createElement("div", { key:"tb", className:"tableWrap", style:{ maxHeight:460, overflowY:"auto" } }, React.createElement("table", { className:"data tblCompact" }, [
+        React.createElement("thead", { key:"h" }, React.createElement("tr", null, ["Ngày", "Nhà thuốc", "Điểm", "Chưa đạt", "Việc khắc phục"].map((x,i) => React.createElement("th", { key:i }, x)))),
+        React.createElement("tbody", { key:"b" }, list.map(v => React.createElement("tr", { key:v.id, style:{ cursor:"pointer", background: open === v.id ? "var(--paper)" : undefined }, onClick:()=>setOpen(open === v.id ? null : v.id) }, [
+          React.createElement("td", { key:"d", className:"nw" }, fmtD(v.date)),
+          React.createElement("td", { key:"s" }, v.shop),
+          React.createElement("td", { key:"p", style:{ fontWeight:800, color:scoreTone(v.score) } }, v.score == null ? "—" : v.score),
+          React.createElement("td", { key:"f" }, `${v.fail || 0}${v.criticalFail ? ` (${v.criticalFail} trọng yếu)` : ""}`),
+          React.createElement("td", { key:"k" }, (v.taskIds || []).length ? `${v.taskIds.length} việc · hạn ${fmtD(v.taskDeadline)}` : "—"),
+        ]))),
+      ])),
+      detail && React.createElement("div", { key:"det", style:{ marginTop:12, borderTop:"1px solid var(--line)", paddingTop:10 } }, [
+        React.createElement("div", { key:"t", style:{ fontWeight:800, fontSize:14.5, marginBottom:6 } }, `${detail.shop} · ${fmtD(detail.date)} · ${detail.score == null ? "—" : detail.score + " điểm"}`),
+        detail.strengths && React.createElement("div", { key:"s", style:{ fontSize:13, marginBottom:4 } }, [React.createElement("b", { key:"b" }, "Điểm mạnh: "), detail.strengths]),
+        detail.overall && React.createElement("div", { key:"o", style:{ fontSize:13, marginBottom:8 } }, [React.createElement("b", { key:"b" }, "Nhận xét: "), detail.overall]),
+        ...(detail.results || []).filter(r => r.status === "chua").map(r => React.createElement("div", { key:r.id, style:{ fontSize:12.5, padding:"6px 8px", background:"var(--claySoft)", borderRadius:8, marginBottom:5 } }, [
+          React.createElement("b", { key:"l" }, (r.critical ? "★ " : "") + r.label), r.note ? " — " + r.note : "",
+          (r.files || []).length ? React.createElement("div", { key:"f", style:{ display:"flex", gap:6, marginTop:4, flexWrap:"wrap" } }, r.files.map((x, i) => React.createElement("a", { key:i, href:x.url, target:"_blank", rel:"noopener noreferrer" }, x.type === "image" ? React.createElement("img", { src:x.url, style:{ width:64, height:64, objectFit:"cover", borderRadius:6 } }) : (x.name || "Tệp")))) : null,
+        ])),
+        React.createElement("details", { key:"all", style:{ fontSize:12.5, marginTop:6 } }, [
+          React.createElement("summary", { key:"s", style:{ cursor:"pointer", color:"var(--inkSoft)" } }, `Xem đủ ${(detail.results || []).length} tiêu chí`),
+          ...(detail.results || []).map(r => React.createElement("div", { key:r.id, style:{ padding:"3px 0" } }, `${r.status === "dat" ? "✅" : r.status === "chua" ? "❌" : "➖"} ${r.label}${r.note ? " — " + r.note : ""}`)),
+        ]),
+      ]),
+    ]),
+    showForm && React.createElement(StoreVisitForm, { key:"f", groups, onClose:()=>setShowForm(false) }),
+    showTpl && React.createElement(StoreVisitTemplateEditor, { key:"tp", text:tplText, onClose:()=>setShowTpl(false) }),
+  ]);
+}
+
 function ShopProfileView({ isAdmin, myStaff, navParam, onNavigate }){
   const todayStr = todayISO();
   const lockShop = !isAdmin && myStaff ? myStaff.shop : null; // CHT chỉ xem nhà thuốc mình
@@ -26604,6 +26846,78 @@ function ClaimsAdminPanel(){
     msg && React.createElement("pre", { key:"m", style:{ fontSize:11, background:"var(--paper)", padding:10, borderRadius:8, overflow:"auto", maxHeight:180 } }, msg),
   ]);
 }
+// 7/10/2026 (mục 6): MỨC DÙNG APP — màn nào được mở, bởi ai, bao lâu → căn cứ ẩn/gộp màn ít dùng, rút gọn menu.
+function UsagePanel(){
+  const [days, setDays] = useState(30);
+  const [rows, setRows] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  async function load(d){
+    setBusy(true); setErr(null);
+    try{
+      const since = addDays(todayISO(), -(d - 1));
+      const s = await db.collection("usageDaily").where("date", ">=", since).get();
+      setRows(s.docs.map(x => x.data()));
+    } catch(e){ setErr(e.message || String(e)); }
+    setBusy(false);
+  }
+  const roleGroup = r => r.isAdmin ? "ql" : (r.role === "Cửa hàng trưởng" ? "cht" : "nv");
+  const ROLE_LABEL = { ql:"Quản lý", cht:"CHT", nv:"Nhân viên" };
+  let tabStats = [], shopStats = [], users = { all:new Set(), ql:new Set(), cht:new Set(), nv:new Set() };
+  if(rows){
+    const by = {};
+    const shops = {};
+    rows.forEach(r => {
+      const g = roleGroup(r); users.all.add(r.uid); users[g].add(r.uid);
+      if(r.shop){ const sh = shops[r.shop] || (shops[r.shop] = { users:new Set(), userDays:0 }); sh.users.add(r.uid); sh.userDays++; }
+      Object.entries(r.tabs || {}).forEach(([tab, v]) => {
+        const t = by[tab] || (by[tab] = { tab, opens:0, sec:0, users:new Set(), ql:0, cht:0, nv:0 });
+        t.opens += v.opens || 0; t.sec += v.sec || 0; t.users.add(r.uid); t[g] += v.opens || 0;
+      });
+    });
+    OPS_TABS.forEach(t => { if(!by[t.id] && !["sales","donthuoc","action","ketquangay","cust360"].includes(t.id)) by[t.id] = { tab:t.id, opens:0, sec:0, users:new Set(), ql:0, cht:0, nv:0 }; });
+    tabStats = Object.values(by).sort((a, b) => b.opens - a.opens);
+    shopStats = Object.entries(shops).map(([shop, v]) => ({ shop, users:v.users.size, avgDays:Math.round(v.userDays / Math.max(1, v.users.size) * 10) / 10 })).sort((a, b) => a.shop.localeCompare(b.shop));
+  }
+  const labelOf = id => (OPS_TABS.find(t => t.id === id) || {}).label || id;
+  const th = (x, i) => React.createElement("th", { key:i, style:{ textAlign:i ? "right" : "left" } }, x);
+  const tdR = (k, v, st) => React.createElement("td", { key:k, style:{ textAlign:"right", ...(st||{}) } }, v);
+  return React.createElement("div", { className:"card", style:{ marginBottom:16 } }, [
+    React.createElement("div", { key:"t", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, flexWrap:"wrap", marginBottom:4 } }, [
+      React.createElement("div", { key:"a", style:{ fontWeight:700, fontSize:16 } }, "Mức dùng app (màn nào được mở, bởi ai)"),
+      React.createElement("div", { key:"b", style:{ display:"flex", gap:6 } }, [
+        React.createElement("select", { key:"d", value:days, onChange:e=>{ const d = Number(e.target.value); setDays(d); if(rows) load(d); }, style:{ padding:"6px 9px", border:"1px solid var(--line)", borderRadius:8, fontSize:12.5 } },
+          [7, 14, 30].map(d => React.createElement("option", { key:d, value:d }, `${d} ngày`))),
+        React.createElement("button", { key:"l", type:"button", className:"btn btnPrimary", disabled:busy, onClick:()=>load(days) }, busy ? "Đang tải…" : (rows ? "Tải lại" : "Xem số liệu")),
+      ]),
+    ]),
+    React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } }, "App tự ghi số lần mở và thời gian xem từng màn của mỗi người (bắt đầu từ bản cập nhật 7/10/2026). Màn \"Không ai mở\" hoặc rất ít người dùng là ứng viên để ẩn / gộp cho menu gọn hơn."),
+    err && React.createElement("div", { key:"e", style:{ color:CL360.bad, fontSize:12.5 } }, "Lỗi: " + err),
+    rows && React.createElement(React.Fragment, { key:"r" }, [
+      React.createElement("div", { key:"sum", style:{ display:"flex", gap:14, flexWrap:"wrap", fontSize:13, marginBottom:10 } }, [
+        React.createElement("b", { key:"a" }, `${users.all.size} người dùng`),
+        ...["ql","cht","nv"].map(g => React.createElement("span", { key:g }, `${ROLE_LABEL[g]}: ${users[g].size}`)),
+      ]),
+      React.createElement("div", { key:"tt", className:"tableWrap", style:{ maxHeight:420, overflowY:"auto", marginBottom:12 } }, React.createElement("table", { className:"data tblCompact" }, [
+        React.createElement("thead", { key:"h" }, React.createElement("tr", null, ["Màn", "Lượt mở", "Số người", "Tổng phút", "Quản lý", "CHT", "Nhân viên"].map(th))),
+        React.createElement("tbody", { key:"b" }, tabStats.map(t => React.createElement("tr", { key:t.tab, style:{ color: t.opens ? undefined : CL360.bad } }, [
+          React.createElement("td", { key:"n" }, labelOf(t.tab) + (t.opens ? "" : " — không ai mở")),
+          tdR("o", fmtNum(t.opens), { fontWeight:700 }), tdR("u", t.users.size), tdR("m", fmtNum(Math.round(t.sec / 60))),
+          tdR("q", t.ql || "—"), tdR("c", t.cht || "—"), tdR("v", t.nv || "—"),
+        ]))),
+      ])),
+      shopStats.length > 0 && React.createElement("div", { key:"sh" }, [
+        React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13.5, marginBottom:6 } }, "Theo nhà thuốc"),
+        React.createElement("div", { key:"tb", className:"tableWrap" }, React.createElement("table", { className:"data tblCompact" }, [
+          React.createElement("thead", { key:"h" }, React.createElement("tr", null, ["Nhà thuốc", "Số người dùng", "TB ngày dùng / người"].map(th))),
+          React.createElement("tbody", { key:"b" }, shopStats.map(s => React.createElement("tr", { key:s.shop }, [
+            React.createElement("td", { key:"n" }, s.shop), tdR("u", s.users), tdR("d", s.avgDays),
+          ]))),
+        ])),
+      ]),
+    ]),
+  ]);
+}
 function SystemHubView(){
   return React.createElement("div", { style:{ maxWidth:900, margin:"0 auto", padding:16 } }, [
     React.createElement(PageTitle, { key:"title" }, "Hệ thống"),
@@ -26611,6 +26925,7 @@ function SystemHubView(){
     React.createElement(AlertRulesConfigView, { key:"rules" }),
     React.createElement(ShopHealthWeightsEditor, { key:"healthweights" }),
     React.createElement(IssuePriorityEditor, { key:"issuepriority" }),
+    React.createElement(UsagePanel, { key:"usage" }),
     React.createElement(DataSyncSection, { key:"datasync" }),
     React.createElement(DataQualityPanel, { key:"dq" }),
     React.createElement(DeployRulesGuidePanel, { key:"deploy" }),
@@ -26623,12 +26938,43 @@ function SystemHubView(){
   ]);
 }
 
+// ================= 7/10/2026 (mục 6): ĐO MỨC DÙNG APP =================
+// Đếm số lần mở + thời gian xem từng màn (tab) của mỗi người, gom trong máy rồi ghi 1 lần/phút (và khi ẩn app)
+// vào usageDaily/<ngày>_<uid> — mỗi người mỗi ngày đúng 1 tài liệu, chi phí ghi rất nhỏ. Chỉ quản lý xem tổng hợp.
+const UsageTracker = (() => {
+  let ctx = null, cur = null, curStart = 0, pending = {}, started = false;
+  function add(tab, k, n){ if(!tab || !n) return; const p = pending[tab] || (pending[tab] = { opens:0, sec:0 }); p[k] += n; }
+  function closeCur(){ if(cur && curStart){ add(cur, "sec", Math.min(1800, Math.round((Date.now() - curStart) / 1000))); curStart = Date.now(); } }
+  async function flush(){
+    if(!ctx || !auth.currentUser) return;
+    if(document.visibilityState === "visible") closeCur();
+    const tabs = pending; pending = {};
+    const keys = Object.keys(tabs).filter(k => tabs[k].opens || tabs[k].sec);
+    if(!keys.length) return;
+    const date = todayISO(); const uid = auth.currentUser.uid; const inc = firebase.firestore.FieldValue.increment;
+    const t = {}; keys.forEach(k => { t[k] = { opens:inc(tabs[k].opens), sec:inc(tabs[k].sec) }; });
+    try{
+      await db.collection("usageDaily").doc(date + "_" + uid).set({ date, uid, ...ctx, tabs:t, updatedAt:new Date().toISOString() }, { merge:true });
+    } catch(e){ console.warn("usageDaily", e && e.message); }
+  }
+  function start(c){
+    ctx = c;
+    if(started) return; started = true;
+    setInterval(flush, 60000);
+    document.addEventListener("visibilitychange", () => {
+      if(document.visibilityState === "hidden"){ closeCur(); curStart = 0; flush(); }
+      else if(cur) curStart = Date.now();
+    });
+  }
+  function view(tab){ if(tab === cur) return; closeCur(); cur = tab; curStart = Date.now(); add(tab, "opens", 1); }
+  return { start, view, flush };
+})();
 function Dashboard({ user, isAdmin, myStaff }){
   // 19/9/2026: tab "sales" (Báo cáo doanh số ngày) chỉ dành cho nhân viên nhập theo nhà thuốc mình —
   // tài khoản quản lý không gắn nhà thuốc nên không có gì để nhập/xem, ẩn hẳn khỏi menu quản lý.
   // 3/10/2026 (mục B1): CỬA HÀNG TRƯỞNG thấy thêm Hồ sơ nhà thuốc + Rủi ro & cảnh báo của nhà thuốc mình
   const isCHT = !isAdmin && !!myStaff && myStaff.role==="Cửa hàng trưởng";
-  const leafTabs = isAdmin ? OPS_TABS.filter(t => t.id!=="sales" && t.id!=="donthuoc") : OPS_TABS.filter(t => STAFF_TABS.includes(t.id) || (isCHT && (t.id==="shop360" || t.id==="risk")));
+  const leafTabs = isAdmin ? OPS_TABS.filter(t => t.id!=="sales" && t.id!=="donthuoc") : OPS_TABS.filter(t => STAFF_TABS.includes(t.id) || (isCHT && (t.id==="shop360" || t.id==="risk" || t.id==="kiemtra")));
   // 20/9/2026: quản lý thấy sidebar GOM NHÓM theo mẫu mockup (7 nhóm thay vì 14 tab phẳng); nhân
   // viên KHÔNG đổi gì — mỗi tab của nhân viên coi như 1 "nhóm" chỉ có đúng 1 tab bên trong, để dùng
   // chung 1 đoạn code render sidebar/topnav/lưới điện thoại cho cả 2 vai trò.
@@ -26647,6 +26993,9 @@ function Dashboard({ user, isAdmin, myStaff }){
   );
   const [visitedTabs, setVisitedTabs] = useState({});
   useEffect(()=>{ setVisitedTabs(v => v[activeTab] ? v : { ...v, [activeTab]: true }); }, [activeTab]);
+  // 7/10/2026 (mục 6): đo mức dùng từng màn
+  useEffect(()=>{ UsageTracker.start({ isAdmin:!!isAdmin, staffId:(myStaff && myStaff.id) || null, name:isAdmin ? "Quản lý" : ((myStaff && myStaff.name) || ""), role:isAdmin ? "Quản lý" : ((myStaff && myStaff.role) || ""), shop:(myStaff && myStaff.shop) || null }); }, [isAdmin, myStaff && myStaff.id]);
+  useEffect(()=>{ UsageTracker.view(activeTab); }, [activeTab]);
   function keepTab(id){ return activeTab===id || !!visitedTabs[id]; }
 
   // Chỉ có ý nghĩa trên điện thoại (theo CSS @media) — trên máy tính thanh tab ngang vẫn luôn
@@ -26737,7 +27086,7 @@ function Dashboard({ user, isAdmin, myStaff }){
   // 3/10/2026: tab đã gộp nhưng vẫn mở được (VD hồ sơ Customer 360 của 1 khách) → hiện trong nhóm của tab cha
   const TAB_PARENT = { cust360:"crm", action:"tasks", ketquangay:"revenueAnalytics" };
   const activeGroup = navGroups.find(g => g.tabs.includes(activeTab)) || navGroups.find(g => g.tabs.includes(TAB_PARENT[activeTab])) || navGroups[0];
-  const FEATURE_KEYWORDS = { taimua:"tai mua nhac het thuoc cham soc", crm:"crm khach hang phan khuc", cust360:"ho so khach", emp360:"ho so nhan vien", prod360:"ho so hang hoa san pham", hanghoa:"ton kho kiem ke dieu chuyen dat hang toc do tieu thu", action:"cong viec can xu ly cho kiem tra qua han tien do", tasks:"giao viec", risk:"rui ro canh bao tuan thu", kinhnghiem:"kinh nghiem", photos:"hinh anh minh chung", revenueAnalytics:"doanh thu", ctkm:"khuyen mai", tudien:"tu dien san pham thuoc hoat chat cong dung duoc", temgia:"tem gia in tem khuyen mai combo", kpi:"kpi chi tieu", ketquangay:"ket qua ngay", baocaotuan:"bao cao tuan", baocaolanhdao:"bao cao tong hop tuan lanh dao", nhipvanhanh:"nhip van hanh khep kin tu dong hoa diem", sales:"doanh so ngay", checklist:"checklist", homnay:"hom nay", shop360:"ho so nha thuoc" };
+  const FEATURE_KEYWORDS = { kiemtra:"kiem tra tham nha thuoc phieu cham diem", taimua:"tai mua nhac het thuoc cham soc", crm:"crm khach hang phan khuc", cust360:"ho so khach", emp360:"ho so nhan vien", prod360:"ho so hang hoa san pham", hanghoa:"ton kho kiem ke dieu chuyen dat hang toc do tieu thu", action:"cong viec can xu ly cho kiem tra qua han tien do", tasks:"giao viec", risk:"rui ro canh bao tuan thu", kinhnghiem:"kinh nghiem", photos:"hinh anh minh chung", revenueAnalytics:"doanh thu", ctkm:"khuyen mai", tudien:"tu dien san pham thuoc hoat chat cong dung duoc", temgia:"tem gia in tem khuyen mai combo", kpi:"kpi chi tieu", ketquangay:"ket qua ngay", baocaotuan:"bao cao tuan", baocaolanhdao:"bao cao tong hop tuan lanh dao", nhipvanhanh:"nhip van hanh khep kin tu dong hoa diem", sales:"doanh so ngay", checklist:"checklist", homnay:"hom nay", shop360:"ho so nha thuoc" };
   const featureItems = navGroups.flatMap(g => g.tabs.map(id => ({ id, label:(leafTabs.find(t=>t.id===id)||{}).label || id, group:g.label, keywords:FEATURE_KEYWORDS[id] || "" })));
   function groupUnread(g){ return g.tabs.reduce((s,id)=>s+(unreadCount[id]||0),0) + ((g.tabs.includes("action") || (isAdmin && g.tabs.includes("tasks"))) ? needAction360 : 0); }
   const totalUnread = Object.values(unreadCount).reduce((a,b)=>a+(b||0), 0);
@@ -26857,6 +27206,7 @@ function Dashboard({ user, isAdmin, myStaff }){
         activeTab==="command" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(ExecOverviewView, { key:viewResetKey, isAdmin, myStaff, onNavigate:setActiveTab })),
         activeTab==="risk" && (isAdmin || isCHT) && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(RiskCenterView, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab })),
         activeTab==="shop360" && (isAdmin || isCHT) && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(ShopProfileView, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab })),
+        activeTab==="kiemtra" && (isAdmin || isCHT) && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(StoreVisitView, { key:viewResetKey, isAdmin, myStaff })),
         activeTab==="action" && isAdmin && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(ActionCenterView, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab, openTasks:openTasks360 })),
         activeTab==="emp360" && isAdmin && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(Employee360View, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab })),
         activeTab==="cust360" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(Customer360View, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab })),
@@ -26901,6 +27251,9 @@ function App(){
   const [staffLoaded, setStaffLoaded] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [claimsReady, setClaimsReady] = useState(false);
+  // 7/10/2026 (mục 1): luật bảo mật chỉ cho tài khoản có claim staffId (hoặc admin) đọc dữ liệu → tài khoản chưa gắn hồ sơ
+  // đi thẳng màn "chưa gắn nhân viên" thay vì treo ở màn chờ vì không đọc được danh sách nhân viên.
+  const [hasStaffClaim, setHasStaffClaim] = useState(false);
   const [, setShopTick] = useState(0);
 
   useEffect(()=>{
@@ -26916,6 +27269,9 @@ function App(){
       // Đồng bộ claims rồi đọc token mới (admin từ claims, không chỉ email list)
       try{ await syncMyClaims(); } catch(e){}
       const admin = await resolveIsAdmin(user);
+      let staffClaim = false;
+      try{ const tr = await user.getIdTokenResult(); staffClaim = !!(tr.claims && tr.claims.staffId); } catch(e){}
+      setHasStaffClaim(staffClaim);
       setIsAdmin(admin);
       setClaimsReady(true);
     });
@@ -26923,7 +27279,7 @@ function App(){
   }, []);
 
   useEffect(()=>{
-    if(authState.status!=="in") return undefined;
+    if(authState.status!=="in" || !claimsReady || (!isAdmin && !hasStaffClaim)) return undefined;
     const unsub = subscribeConfigDoc("shopList", (d) => {
       if(d && Array.isArray(d.shops) && d.shops.length>0){
         // 4/10/2026: nhà thuốc thử nghiệm (testShops) không nằm trong DEFAULT_SHOPS (bộ lọc/thống kê) — vẫn có ở ALL_SHOPS (form nhân viên).
@@ -26936,14 +27292,15 @@ function App(){
       }
     });
     return unsub;
-  }, [authState.status]);
+  }, [authState.status, claimsReady, isAdmin, hasStaffClaim]);
 
   useEffect(()=>{
     if(authState.status!=="in" || !claimsReady) return;
     if(isAdmin){ setStaffLoaded(true); return; }
+    if(!hasStaffClaim){ setStaff([]); setStaffLoaded(true); return; }
     const unsub = subscribeCol("staff", rows => { setStaff(rows); setStaffLoaded(true); }, null, { all:true });
     return unsub;
-  }, [authState.status, authState.user && authState.user.uid, isAdmin, claimsReady]);
+  }, [authState.status, authState.user && authState.user.uid, isAdmin, claimsReady, hasStaffClaim]);
 
   if(authState.status==="loading" || (authState.status==="in" && !claimsReady))
     return React.createElement("div", { style:{ padding:40 } }, React.createElement(EmptyState, { kind:"loading" }));
