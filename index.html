@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261006-2";
+window.__APP_BUILD = "20261006-3";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -14833,6 +14833,331 @@ function DailyResultsView({ isAdmin, myStaff }){
     ]),
   ]);
 }
+// ===== 6/10/2026 (chị Hà): BÁO CÁO LÃNH ĐẠO — tự tổng hợp báo cáo tuần gửi Ban lãnh đạo (doanh số, khách hàng,
+// hàng hoá, nhân sự, kế hoạch hành động, đề xuất) từ số liệu sẵn có trong app. Phần nhập tay (tuyển dụng, đề xuất,
+// cơ sở vật chất, việc bổ sung) lưu ở leaderReports/{thứ Hai của tuần}. Xuất file HTML / In PDF để gửi ra ngoài app.
+const LR_CSS = `
+:root{
+  --g:#178a43; --g2:#e8f6ee; --ink:#1d2a24; --soft:#5d6b64; --line:#dfe7e2; --bg:#f6f8f7; --card:#fff;
+  --red:#c0392b; --red2:#fdecea; --amb:#b7700a; --amb2:#fff4e0; --blue:#2463b0; --blue2:#e9f1fb;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14.5px/1.55 "Segoe UI",Roboto,Arial,sans-serif}
+.wrap{max-width:1100px;margin:0 auto;padding:28px 20px 60px}
+header.top{background:linear-gradient(120deg,#0f6e35,#1fa354);color:#fff;border-radius:16px;padding:26px 28px}
+header.top .k{font-size:12.5px;letter-spacing:.08em;text-transform:uppercase;opacity:.85}
+header.top h1{margin:6px 0 4px;font-size:26px;line-height:1.25}
+header.top .meta{font-size:13.5px;opacity:.92}
+h2{font-size:19px;margin:34px 0 10px;padding-bottom:6px;border-bottom:2px solid var(--g);display:flex;gap:10px;align-items:center}
+h2 .n{background:var(--g);color:#fff;border-radius:8px;font-size:13px;padding:2px 9px}
+h3{font-size:15.5px;margin:20px 0 8px}
+p{margin:6px 0}
+.sub{color:var(--soft);font-size:13px}
+.grid{display:grid;gap:12px}
+.g4{grid-template-columns:repeat(4,1fr)} .g3{grid-template-columns:repeat(3,1fr)} .g2{grid-template-columns:repeat(2,1fr)}
+@media(max-width:820px){.g4,.g3{grid-template-columns:repeat(2,1fr)}.g2{grid-template-columns:1fr}}
+@media(max-width:520px){.g4,.g3{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.tile .l{font-size:12.5px;color:var(--soft)} .tile .v{font-size:24px;font-weight:700;margin:2px 0} .tile .s{font-size:12.5px;color:var(--soft)}
+.tile.good{border-top:4px solid var(--g)} .tile.warn{border-top:4px solid var(--amb)} .tile.bad{border-top:4px solid var(--red)} .tile.info{border-top:4px solid var(--blue)}
+.exec{background:var(--card);border:1px solid var(--line);border-left:5px solid var(--g);border-radius:12px;padding:14px 18px}
+.exec ol{margin:6px 0 0 0;padding-left:20px} .exec li{margin:5px 0}
+.tbl{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:13.5px}
+.tbl th{background:#f0f5f2;text-align:left;font-weight:600;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+.tbl td{padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+.tbl tr:last-child td{border-bottom:0}
+.tbl td.num,.tbl th.num{text-align:right;white-space:nowrap}
+.tbl tr.total td{font-weight:700;background:#f6faf7}
+.scroll{overflow-x:auto;border-radius:12px}
+.up{color:var(--g);font-weight:600} .down{color:var(--red);font-weight:600}
+.pill{display:inline-block;border-radius:999px;padding:1px 9px;font-size:12px;font-weight:600;white-space:nowrap}
+.p-red{background:var(--red2);color:var(--red)} .p-amb{background:var(--amb2);color:var(--amb)} .p-g{background:var(--g2);color:var(--g)} .p-b{background:var(--blue2);color:var(--blue)}
+.bar{height:8px;background:#edf1ef;border-radius:6px;overflow:hidden;min-width:90px}
+.bar i{display:block;height:100%;background:var(--g);border-radius:6px}
+.bar i.a{background:var(--amb)} .bar i.r{background:var(--red)}
+.pillar{border-radius:12px;padding:14px 16px;border:1px solid var(--line);background:var(--card)}
+.pillar h4{margin:0 0 6px;font-size:15px}
+.pillar ul{margin:4px 0 0;padding-left:18px} .pillar li{margin:4px 0}
+.note{background:var(--amb2);border:1px solid #f3dcae;border-radius:10px;padding:10px 14px;font-size:13px}
+.ask{background:var(--blue2);border:1px solid #cddff4;border-radius:12px;padding:12px 16px}
+.ask li{margin:6px 0}
+.tbl.kpi{font-size:12.8px}.tbl.kpi th,.tbl.kpi td{padding:6px 8px}
+.gh{text-align:center!important;color:#fff;font-weight:700;letter-spacing:.04em}
+.gh1{background:#1f9d55!important}.gh2{background:#d9822b!important}.gh3{background:#7b4fd6!important}.gh4{background:#2f6fe0!important}
+.c2,.c3,.c4{border-left:2px solid #cfd8d3}
+.tbl.kpi tr.total td{background:#eef8f1}
+footer{margin-top:36px;color:var(--soft);font-size:12.5px;text-align:center}
+@media print{
+  body{background:#fff;font-size:12.5px} .wrap{padding:0} header.top{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  h2{break-after:avoid} .card,.pillar,.tbl tr{break-inside:avoid}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+`;
+const lrShop = (c) => { const n = String(c||"").replace(/\D/g,""); return n ? "NT" + Number(n) : String(c||""); };
+const lrEsc = (s) => String(s==null?"":s).replace(/[&<>"]/g, (ch) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[ch]));
+const lrDec = (v, d) => (Number(v)||0).toFixed(d).replace(".", ",");
+const lrInt = (v) => Math.round(Number(v)||0).toLocaleString("de-DE");
+const lrTr = (v) => { v = Number(v)||0; return Math.abs(v) >= 1e9 ? lrDec(v/1e9, 2) + " tỷ" : lrDec(v/1e6, 1) + " tr"; };
+const lrK = (v) => Math.round((Number(v)||0)/1000) + "k";
+const lrPct = (a, t) => t ? lrDec(a/t*100, 1) + "%" : "—";
+const lrCls = (p) => p == null ? "" : (p >= 95 ? "up" : (p >= 80 ? "" : "down"));
+const lrDM = (iso) => iso ? `${iso.slice(8,10)}/${iso.slice(5,7)}` : "";
+const lrAdd = (iso, n) => { const [y,m,d] = iso.split("-").map(Number); const t = new Date(Date.UTC(y, m-1, d+n)); return t.toISOString().slice(0,10); };
+
+function lrDefaultReason(sh, D){
+  const c = D.staffByShop[sh] || 0, ov = (D.overdue[sh]||0), g = D.paceUp[sh];
+  const parts = [];
+  if (c <= 2) parts.push(`Chỉ có ${c} nhân viên, không có người thay khi nghỉ`);
+  else parts.push(`Hiện có ${c} nhân viên`);
+  if (ov) parts.push(`${ov} việc quá hạn`);
+  if (g != null && g > 0) parts.push(`doanh thu cần tăng ${g}%/ngày để đạt target`);
+  return parts.join("; ") + ".";
+}
+
+// Dựng toàn bộ trang HTML báo cáo (dùng chung cho xem trước, tải file, in PDF).
+function buildLeaderReportHtml(D, M){
+  const mt = D.mt || {}; const ch = mt.chain || {}; const by = mt.byShop || {};
+  const days = mt.daysElapsed || 0, dim = mt.daysInMonth || 30, left = Math.max(1, dim - days);
+  const P = days ? dim / days : 0;
+  const shops = D.shops;
+  const sum = (f) => shops.reduce((a, s) => a + (Number(f(s))||0), 0);
+  const revT = sum(s => by[s].revenue.target), revA = sum(s => by[s].revenue.actual);
+  const hT = sum(s => by[s].hangHeSo.target), hA = sum(s => by[s].hangHeSo.actual);
+  const iT = sum(s => by[s].invoice.target), iA = sum(s => by[s].invoice.actual);
+  const perDay = days ? revA / days : 0, needDay = (revT - revA) / left, hPerDay = days ? hA / days : 0, hNeed = (hT - hA) / left;
+  const upAll = perDay ? Math.round((needDay / perDay - 1) * 100) : 0;
+  const projAll = revT ? revA * P / revT * 100 : 0, hProj = hT ? hA * P / hT * 100 : 0;
+  const ms = mt.month ? `${mt.month.slice(5,7)}/${mt.month.slice(0,4)}` : "";
+  const monthStart = mt.month ? mt.month + "-01" : "";
+  const cut = D.cutoff;
+  const W1 = M.weekStart, W2 = lrAdd(M.weekStart, 6);
+  const fromOrd = shops.filter(s => by[s].fromOrders);
+  // --- tuyển dụng
+  const hires = shops.map(s => ({ s, n: Number((M.hires||{})[s] && M.hires[s].n) || 0, reason: ((M.hires||{})[s] && M.hires[s].reason) || lrDefaultReason(s, D) })).filter(x => x.n > 0);
+  const hireN = hires.reduce((a, x) => a + x.n, 0);
+  const staffTotal = shops.reduce((a, s) => a + (D.staffByShop[s]||0), 0);
+  // --- khách hàng
+  const cs = D.cust || {}; const csAll = cs.all || {};
+  const custRows = shops.map(s => ({ s, ...((cs.byShop||{})[s]||{}) })).sort((a,b) => (b.atRisk||0) - (a.atRisk||0));
+  const careT = custRows.reduce((a, r) => a + Math.round((r.atRisk||0) * 0.25), 0);
+  const vipTop = custRows.filter(r => r.silentVip).sort((a,b) => b.silentVip - a.silentVip).slice(0, 3).map(r => `${lrShop(r.s)}: ${r.silentVip}`).join(", ");
+  // --- khuyến mại
+  const pm = D.promo || {}; const pmN = sum(s => (pm[s]||{}).n), pmNear = sum(s => (pm[s]||{}).near);
+  const pmDays = D.promoDays || 1; const pmWeekT = (n) => Math.round(n / pmDays * 7 / 2);
+  const pmT = shops.reduce((a, s) => a + pmWeekT((pm[s]||{}).n || 0), 0);
+  // --- hàng hoá
+  const ls = D.lost || {}; const lsBy = ls.byShop || {}; const ic = (D.inv || {}).byShop || {};
+  const urgentAll = sum(s => (ic[s]||{}).urgent);
+  const lostDay = ls.perDay || 0, lostTr = ls.transferablePerDay || 0;
+  const lostTrend = (ls.trend || []).filter(t => !monthStart || t.date >= monthStart);
+  const allOut = (ls.topProducts || []).filter(p => p.allOut).slice(0, 3);
+  const trf = (ls.topProducts || []).filter(p => !p.allOut).slice(0, 3);
+  // --- vận hành
+  const ovAll = sum(s => D.overdue[s]);
+  const ovTop = shops.filter(s => D.overdue[s]).sort((a,b) => D.overdue[b] - D.overdue[a]).slice(0, 3);
+  const lowStaff = shops.filter(s => (D.staffByShop[s]||0) <= 2);
+  const tbbLow = shops.filter(s => by[s].tbb.target && by[s].tbb.actual / by[s].tbb.target < 0.9).sort((a,b) => by[a].tbb.actual/by[a].tbb.target - by[b].tbb.actual/by[b].tbb.target).slice(0, 3);
+  const paceSorted = shops.slice().sort((a, b) => (D.paceUp[b]||0) - (D.paceUp[a]||0));
+  const best = shops.slice().sort((a, b) => (by[b].revenue.projectedPct||0) - (by[a].revenue.projectedPct||0))[0];
+  const lines = (t) => String(t||"").split("\n").map(x => x.trim()).filter(Boolean);
+  const csvc = lines(M.csvc), asks = lines(M.asks), notes = lines(M.notes);
+
+  const kpiRow = (lbl, o, total) => {
+    const r = o.revenue, hh = o.hangHeSo, iv = o.invoice, tb = o.tbb;
+    const rp = r.target ? r.actual * P / r.target * 100 : null, hp = hh.target ? hh.actual * P / hh.target * 100 : null, ip = iv.target ? iv.actual * P / iv.target * 100 : null, tp = tb.target ? tb.actual / tb.target * 100 : null;
+    return `<tr${total ? ' class="total"' : ""}><td>${total ? lbl : "<b>" + lbl + "</b>"}${o.fromOrders ? " *" : ""}</td><td class="num">${lrTr(r.target)}</td><td class="num">${lrTr(r.actual)}</td><td class="num">${lrPct(r.actual, r.target)}</td><td class="num ${lrCls(rp)}">${rp==null?"—":lrDec(rp,1)+"%"}</td>`
+      + `<td class="num c2">${lrTr(hh.target)}</td><td class="num">${lrTr(hh.actual)}</td><td class="num">${lrPct(hh.actual, hh.target)}</td><td class="num ${lrCls(hp)}">${hp==null?"—":lrDec(hp,1)+"%"}</td>`
+      + `<td class="num c3">${lrK(tb.target)}</td><td class="num">${lrK(tb.actual)}</td><td class="num ${lrCls(tp)}">${tp==null?"—":lrDec(tp,1)+"%"}</td>`
+      + `<td class="num c4">${lrInt(iv.target)}</td><td class="num">${lrInt(iv.actual)}</td><td class="num">${lrPct(iv.actual, iv.target)}</td><td class="num ${lrCls(ip)}">${ip==null?"—":lrDec(ip,1)+"%"}</td></tr>`;
+  };
+  const chainObj = { revenue:{ target:revT, actual:revA }, hangHeSo:{ target:hT, actual:hA }, invoice:{ target:iT, actual:iA }, tbb:{ target: ch.tbb && ch.tbb.target || (iT ? revT/iT : 0), actual: iA ? revA/iA : 0 } };
+  const shopsByRev = shops.slice().sort((a, b) => (by[b].revenue.target||0) - (by[a].revenue.target||0));
+  const sgn = (x) => `<span class="${x <= 10 ? "up" : "down"}">${x >= 0 ? "+" : ""}${x}%</span>`;
+  const pill = (s) => { const g = D.paceUp[s] || 0; return g >= 50 ? '<span class="pill p-red">Rủi ro cao</span>' : g >= 25 ? '<span class="pill p-amb">Tăng tốc</span>' : '<span class="pill p-g">Giữ nhịp</span>'; };
+  const actions = [
+    ["p-g","Doanh số","Họp đầu tuần từng nhà thuốc: giao target tuần cho từng nhân viên theo bảng mục 4.","Tất cả","QLKV + nhà thuốc trưởng",lrDM(lrAdd(W1,1)),"100% nhân viên có target tuần"],
+    ["p-g","Doanh số","Dán bảng ngưỡng khuyến mại tại quầy; luyện câu tư vấn \"thêm 1 sản phẩm để nhận quà\".","Tất cả, ưu tiên " + shops.slice().sort((a,b)=>((pm[b]||{}).n||0)-((pm[a]||{}).n||0)).slice(0,3).map(lrShop).join(", "),"Nhà thuốc trưởng",lrDM(lrAdd(W1,2)),`Đơn bỏ lỡ ≤ ${lrInt(pmT)}/tuần`],
+    ["p-g","Doanh số","Kèm bán hàng tăng TB bill: tư vấn trọn liệu trình và sản phẩm đi kèm, ưu tiên hàng hệ số.", tbbLow.map(lrShop).join(", ") || "Tất cả","QLKV",lrDM(W2), tbbLow.map(s => `${lrShop(s)} ≥ ${lrK(by[s].tbb.target*0.95)}`).join(" · ") || "TB bill đạt target"],
+    ["p-b","Khách hàng",`Gọi lại ${lrInt(csAll.silentVip)} khách VIP lâu chưa quay lại; ghi kết quả trên app.`, vipTop ? vipTop.replace(/: \d+/g,"") + "…" : "Tất cả","Nhà thuốc trưởng",lrDM(lrAdd(W1,3)),"100% VIP được liên hệ"],
+    ["p-b","Khách hàng","Chăm sóc 25% khách nguy cơ rời bỏ theo danh sách trên app.","Tất cả, trọng tâm " + custRows.slice(0,2).map(r=>lrShop(r.s)).join(", "),"Nhân viên bán hàng",lrDM(W2),`≥ ${lrInt(careT)} lượt chăm sóc ghi nhận`],
+    ["p-amb","Hàng hoá","Làm phiếu điều chuyển theo đề xuất trên app cho các mã đang hết.","Tất cả","Nhà thuốc trưởng + kho",lrDM(lrAdd(W1,2)),`Mất DT ≤ ${lrDec(lostDay/2/1e6,1)} tr/ngày`],
+    ["p-amb","Hàng hoá",`Đặt hàng ${lrInt(urgentAll)} mã cần gọi gấp${allOut.length ? ", trong đó có " + allOut.map(p=>lrEsc(p.name)).join(", ") : ""}.`,"Tất cả","Phòng mua hàng",lrDM(lrAdd(W1,3)),"0 mã gấp tồn quá 3 ngày"],
+    ["p-amb","Hàng hoá","Chọn 20 mã tồn lâu không bán/nhà thuốc để trưng bày, tư vấn đẩy bán hoặc trả hàng.","Tất cả","Nhà thuốc trưởng",lrDM(W2),`${shops.length*20} mã có phương án`],
+  ];
+  if (hireN) actions.push(["p-v","Nhân sự",`Đăng tuyển ${hireN} vị trí, sàng lọc và phỏng vấn.`, hires.map(x=>lrShop(x.s)).join(", "),"QLKV + Phòng nhân sự",lrDM(W2),`≥ ${hireN*2} ứng viên phỏng vấn`]);
+  if (ovAll) actions.push(["p-v","Nhân sự",`Đóng ${ovAll} việc quá hạn; nhà thuốc nào còn việc quá hạn thì báo nguyên nhân.`, ovTop.map(lrShop).join(", "),"Nhà thuốc trưởng",lrDM(lrAdd(W1,3)),"0 việc quá hạn trên 2 ngày"]);
+  actions.push(["p-v","Nhân sự","Mỗi nhân viên luyện ≥ 5 tình huống tư vấn trên app.","Tất cả","Nhân viên",lrDM(W2),`≥ ${staffTotal*5} bài, điểm TB ≥ 70`]);
+  if (csvc.length) actions.push(["p-red","Cơ sở vật chất", csvc.map(lrEsc).join("; ") + ".","Theo danh sách","QLKV + Hành chính",lrDM(W2),"100% hạng mục xử lý"]);
+  lines(M.extraActions).forEach(l => { const p = l.split("|").map(x => x.trim()); actions.push(["p-b", p[0]||"Khác", p[1]||"", p[2]||"", p[3]||"", p[4]||"", p[5]||""]); });
+
+  let n = 0; const H = (t) => `<h2><span class="n">${++n}</span>${t}</h2>`;
+  const exec = [
+    `<b>Từ ${lrDM(monthStart)} đến ${lrDM(cut)}, doanh thu đạt ${lrTr(revA)} / target ${lrTr(revT)} (${lrPct(revA, revT)})</b>, bình quân ${lrTr(perDay)}/ngày. Với tốc độ này cả tháng dự kiến đạt khoảng ${lrDec(projAll,1)}%. Để đạt 100%, ${left} ngày còn lại cần bình quân <b>${lrTr(needDay)}/ngày</b> (${upAll >= 0 ? "cao hơn" : "thấp hơn"} hiện tại ${Math.abs(upAll)}%), tức khoảng <b>${lrTr(needDay*7)}/tuần</b>.`,
+    `<b>Hàng hệ số đạt ${lrTr(hA)} / ${lrTr(hT)} (${lrPct(hA, hT)})</b>, dự kiến đạt khoảng ${lrDec(hProj,0)}%. Cần nâng từ ${lrTr(hPerDay)} lên <b>${lrTr(hNeed)}/ngày</b>, tức khoảng ${lrTr(hNeed*7)}/tuần.`,
+    best ? `<b>${lrShop(best)} đang dẫn đầu</b>, dự kiến đạt ${lrDec(by[best].revenue.projectedPct,1)}% doanh thu. Các nhà thuốc cần tăng tốc mạnh nhất là <b>${paceSorted.slice(0,3).map(s => `${lrShop(s)} (+${D.paceUp[s]}%/ngày)`).join(", ")}</b>.` : "",
+    `<b>Hàng hoá đang làm mất khoảng ${lrTr(lostDay)} doanh thu mỗi ngày</b> vì hết hàng bán chạy, trong đó khoảng ${lrTr(lostTr)}/ngày có thể xử lý ngay bằng điều chuyển giữa các nhà thuốc. Có ${lrInt(urgentAll)} mã cần gọi hàng gấp.`,
+    `<b>Nhân sự:</b> ${lowStaff.length ? `${lowStaff.length} nhà thuốc chỉ có tối đa 2 nhân viên. ` : ""}${hireN ? `Đề xuất <b>tuyển thêm ${hireN} người</b> (${hires.map(x => `${lrShop(x.s)}: ${x.n}`).join(" · ")}).` : "Chưa có đề xuất tuyển dụng tuần này."}${ovAll ? ` Còn ${ovAll} việc quá hạn.` : ""}`,
+    `<b>Khách hàng:</b> ${lrInt(csAll.atRisk)} khách có nguy cơ rời bỏ và ${lrInt(csAll.silentVip)} khách VIP đã lâu không quay lại. Từ ${lrDM(monthStart)} đến ${lrDM(cut)} có ${lrInt(pmN)} đơn bỏ lỡ khuyến mại, trong đó ${lrInt(pmNear)} đơn chỉ còn thiếu rất ít là đạt ngưỡng.`,
+  ].filter(Boolean);
+
+  let h = `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Báo cáo tuần & Kế hoạch triển khai · ${lrDM(W1)}–${lrDM(W2)}/${W2.slice(0,4)}</title><style>${LR_CSS}</style></head><body><div class="wrap">`;
+  h += `<header class="top"><div class="k">Upharma · Báo cáo gửi Ban lãnh đạo</div><h1>Báo cáo tuần &amp; Kế hoạch triển khai tuần ${lrDM(W1)} – ${lrDM(W2)}/${W2.slice(0,4)}</h1><div class="meta">Khu vực ${shops.length} nhà thuốc (${shops.map(s => lrShop(s).replace("NT","")).sort((a, b) => a - b).join(" · ")}) · Người lập: ${lrEsc(M.author || "Quản lý khu vực")} · Số liệu chốt đến hết ngày ${lrDM(cut)}/${cut.slice(0,4)}</div></header>`;
+  h += H("Tóm tắt điều hành") + `<div class="exec"><ol>${exec.map(x => `<li>${x}</li>`).join("")}</ol></div>`;
+  h += `<div class="grid g4" style="margin-top:12px"><div class="card tile warn"><div class="l">Doanh thu ${lrDM(monthStart)} – ${lrDM(cut)}</div><div class="v">${lrTr(revA)}</div><div class="s">${lrPct(revA, revT)} target · dự kiến ${lrDec(projAll,1)}%</div></div><div class="card tile warn"><div class="l">Bình quân / ngày</div><div class="v">${lrTr(perDay)}</div><div class="s">Cần ${lrTr(needDay)}/ngày để đạt target</div></div><div class="card tile bad"><div class="l">Mất doanh thu do hết hàng</div><div class="v">${lrTr(lostDay)}/ngày</div><div class="s">${lrTr(lostTr)}/ngày xử lý được bằng điều chuyển</div></div><div class="card tile info"><div class="l">Nhân sự cần tuyển thêm</div><div class="v">${hireN} người</div><div class="s">${hires.length} nhà thuốc · hiện có ${staffTotal} nhân sự</div></div></div>`;
+  // 2. bảng chỉ số
+  h += H(`Kết quả chỉ tiêu từ đầu tháng (${lrDM(monthStart)} – ${lrDM(cut)}/${cut.slice(0,4)})`);
+  h += `<div class="scroll"><table class="tbl kpi"><thead><tr><th rowspan="2" style="vertical-align:bottom">Nhà thuốc</th><th colspan="4" class="gh gh1">DOANH THU</th><th colspan="4" class="gh gh2">HÀNG HỆ SỐ</th><th colspan="3" class="gh gh3">TB BILL (TBB)</th><th colspan="4" class="gh gh4">SỐ ĐƠN (BILL)</th></tr><tr><th class="num">Target</th><th class="num">Thực tế</th><th class="num">TL đạt</th><th class="num">Dự kiến</th><th class="num c2">Target</th><th class="num">Thực tế</th><th class="num">TL đạt</th><th class="num">Dự kiến</th><th class="num c3">Target</th><th class="num">Thực tế</th><th class="num">TL đạt</th><th class="num c4">Target</th><th class="num">Thực tế</th><th class="num">TL đạt</th><th class="num">Dự kiến</th></tr></thead><tbody>`;
+  h += kpiRow("TOÀN KHU VỰC", chainObj, true) + shopsByRev.map(s => kpiRow(lrShop(s), by[s])).join("") + `</tbody></table></div>`;
+  h += `<p class="sub">Số liệu ${days} ngày (${lrDM(monthStart)} – ${lrDM(cut)}), không cộng tháng trước. "TL đạt" = thực tế ÷ target tháng ${ms}. "Dự kiến" = tỷ lệ hoàn thành cả tháng nếu giữ tốc độ hiện tại. Màu: <span class="up">xanh ≥ 95%</span> · đen 80–95% · <span class="down">đỏ &lt; 80%</span>.${fromOrd.length ? ` (*) ${fromOrd.map(lrShop).join(", ")}: hệ thống chỉ tiêu chưa trả thực đạt, đang lấy tạm từ hoá đơn POS.` : ""}</p>`;
+  // 3. tốc độ
+  h += H(`Tốc độ bán cần đạt mỗi ngày (${left} ngày còn lại)`) + `<div class="scroll"><table class="tbl"><thead><tr><th>Nhà thuốc</th><th class="num">DT bình quân/ngày</th><th class="num">DT cần/ngày</th><th class="num">Cần tăng</th><th class="num">HHS bình quân/ngày</th><th class="num">HHS cần/ngày</th><th class="num">Cần tăng</th></tr></thead><tbody>`;
+  h += shopsByRev.map(s => { const o = by[s]; const c = days ? o.revenue.actual/days : 0, nd = (o.revenue.target - o.revenue.actual)/left, hc = days ? o.hangHeSo.actual/days : 0, hn = (o.hangHeSo.target - o.hangHeSo.actual)/left; return `<tr><td>${lrShop(s)}</td><td class="num">${lrDec(c/1e6,2)} tr</td><td class="num"><b>${lrDec(nd/1e6,2)} tr</b></td><td class="num">${c ? sgn(Math.round((nd/c-1)*100)) : "—"}</td><td class="num">${lrDec(hc/1e6,2)} tr</td><td class="num"><b>${lrDec(hn/1e6,2)} tr</b></td><td class="num">${hc ? sgn(Math.round((hn/hc-1)*100)) : "—"}</td></tr>`; }).join("");
+  h += `<tr class="total"><td>Toàn khu vực</td><td class="num">${lrDec(perDay/1e6,2)} tr</td><td class="num">${lrDec(needDay/1e6,2)} tr</td><td class="num">${sgn(upAll)}</td><td class="num">${lrDec(hPerDay/1e6,2)} tr</td><td class="num">${lrDec(hNeed/1e6,2)} tr</td><td class="num">${hPerDay ? sgn(Math.round((hNeed/hPerDay-1)*100)) : "—"}</td></tr></tbody></table></div><p class="sub">Cần/ngày = (target tháng − số đã đạt) ÷ ${left} ngày còn lại của tháng.</p>`;
+  // 4. mục tiêu tuần
+  h += H(`Mục tiêu trọng tâm tuần ${lrDM(W1)} – ${lrDM(W2)}`) + `<div class="grid g2">`;
+  h += `<div class="pillar" style="border-top:4px solid var(--g)"><h4>💰 Doanh số</h4><ul><li>Doanh thu khu vực tuần tới <b>≥ ${lrTr(needDay*7)}</b> (${lrTr(needDay)}/ngày) để quay lại đúng nhịp target tháng.</li><li>Hàng hệ số <b>≥ ${lrTr(hNeed*7)}/tuần</b>.</li><li>TB bill khu vực từ ${lrK(chainObj.tbb.actual)} lên <b>≥ ${lrK(chainObj.tbb.target)}</b>${tbbLow.length ? `. Ưu tiên ${tbbLow.map(s => `${lrShop(s)} (${lrK(by[s].tbb.actual)})`).join(", ")}` : ""}.</li><li>Giảm một nửa số đơn bỏ lỡ khuyến mại: <b>≤ ${lrInt(pmT)} đơn/tuần</b>.</li></ul></div>`;
+  h += `<div class="pillar" style="border-top:4px solid var(--blue)"><h4>🤝 Khách hàng</h4><ul><li>Liên hệ <b>100% trong ${lrInt(csAll.silentVip)} khách VIP</b> lâu chưa quay lại${vipTop ? ` (${vipTop})` : ""}.</li><li>Chăm sóc <b>≥ 25% khách nguy cơ rời bỏ</b>, khoảng ${lrInt(careT)} khách, ưu tiên ${custRows.slice(0,3).map(r => lrShop(r.s)).join(", ")}.</li><li>Ghi nhận lượt chăm sóc khách hàng trên app đầy đủ 100%.</li></ul></div>`;
+  h += `<div class="pillar" style="border-top:4px solid var(--amb)"><h4>📦 Hàng hoá</h4><ul><li>Giảm mất doanh thu do hết hàng từ ${lrTr(lostDay)} xuống <b>≤ ${lrTr(lostDay/2)}/ngày</b>.</li><li>Xử lý <b>100% trong ${lrInt(urgentAll)} mã cần gọi hàng gấp</b>: điều chuyển trước, mã nào không điều chuyển được thì đặt hàng.</li>${allOut.length ? `<li>${allOut.map(p => lrEsc(p.name)).join(", ")}: đang hết, không còn hàng để điều chuyển → cần mua hàng.</li>` : ""}<li>Mỗi nhà thuốc chọn 20 mã tồn lâu không bán để đẩy bán hoặc trả hàng.</li></ul></div>`;
+  h += `<div class="pillar" style="border-top:4px solid #7a4cc2"><h4>👥 Nhân sự</h4><ul>${hireN ? `<li>Tuyển <b>${hireN} vị trí</b> (chi tiết mục ${n+1}).</li>` : ""}${ovAll ? `<li>Xử lý dứt điểm <b>${ovAll} việc quá hạn</b>${ovTop.length ? `. Nhiều nhất ở ${ovTop.map(s => `${lrShop(s)} (${D.overdue[s]})`).join(", ")}` : ""}.</li>` : ""}<li>Mỗi nhân viên làm <b>≥ 5 bài luyện tình huống tư vấn</b> trên app trong tuần.</li><li>Kèm riêng nhân viên đang chậm KPI tháng.</li></ul></div></div>`;
+  h += `<h3>Mục tiêu tuần tới theo từng nhà thuốc</h3><div class="scroll"><table class="tbl"><thead><tr><th>Nhà thuốc</th><th class="num">Đã đạt từ ${lrDM(monthStart)}</th><th class="num">Mục tiêu DT tuần</th><th class="num">HHS đã đạt</th><th class="num">Mục tiêu HHS tuần</th><th>Mức độ</th></tr></thead><tbody>`;
+  h += shopsByRev.map(s => { const o = by[s]; return `<tr><td>${lrShop(s)}</td><td class="num">${lrTr(o.revenue.actual)}</td><td class="num"><b>${lrTr((o.revenue.target-o.revenue.actual)/left*7)}</b></td><td class="num">${lrTr(o.hangHeSo.actual)}</td><td class="num"><b>${lrTr((o.hangHeSo.target-o.hangHeSo.actual)/left*7)}</b></td><td>${pill(s)} cần +${D.paceUp[s]||0}%/ngày</td></tr>`; }).join("");
+  h += `<tr class="total"><td>Toàn khu vực</td><td class="num">${lrTr(revA)}</td><td class="num">${lrTr(needDay*7)}</td><td class="num">${lrTr(hA)}</td><td class="num">${lrTr(hNeed*7)}</td><td></td></tr></tbody></table></div><p class="sub">Mục tiêu tuần = (target tháng − số đã đạt) ÷ ${left} ngày còn lại × 7 ngày.</p>`;
+  // nhân sự
+  h += H("Nhân sự – Kế hoạch tuyển dụng");
+  if (hireN) {
+    h += `<div class="scroll"><table class="tbl"><thead><tr><th>Nhà thuốc</th><th class="num">Hiện có</th><th class="num">Tuyển thêm</th><th class="num">Sau tuyển</th><th>Lý do</th></tr></thead><tbody>`;
+    h += hires.map(x => `<tr><td><b>${lrShop(x.s)}</b></td><td class="num">${D.staffByShop[x.s]||0}</td><td class="num"><span class="pill ${x.n >= 2 ? "p-red" : "p-amb"}">+${x.n}</span></td><td class="num">${(D.staffByShop[x.s]||0) + x.n}</td><td>${lrEsc(x.reason)}</td></tr>`).join("");
+    const cur = hires.reduce((a, x) => a + (D.staffByShop[x.s]||0), 0);
+    h += `<tr class="total"><td>Tổng</td><td class="num">${cur}</td><td class="num">+${hireN}</td><td class="num">${cur + hireN}</td><td>Toàn khu vực từ ${staffTotal} lên ${staffTotal + hireN} nhân sự</td></tr></tbody></table></div>`;
+  } else h += `<p class="sub">Tuần này chưa có đề xuất tuyển dụng.</p>`;
+  h += `<h3>Nhân sự hiện có theo nhà thuốc</h3><div class="scroll"><table class="tbl"><thead><tr>${shops.map(s => `<th class="num">${lrShop(s)}</th>`).join("")}<th class="num">Tổng</th></tr></thead><tbody><tr>${shops.map(s => `<td class="num">${D.staffByShop[s]||0}</td>`).join("")}<td class="num"><b>${staffTotal}</b></td></tr></tbody></table></div>`;
+  h += `<h3>Lộ trình nhân sự mới</h3><div class="grid g4"><div class="card"><b>Tuần 1</b><p class="sub">Đăng tuyển, sàng lọc hồ sơ, phỏng vấn. Ưu tiên ứng viên có chứng chỉ hành nghề dược.</p></div><div class="card"><b>Tuần 2</b><p class="sub">Nhận việc, học việc có người kèm (buddy). Học thẻ top 50 sản phẩm bán chạy.</p></div><div class="card"><b>Tuần 3–4</b><p class="sub">Luyện ≥ 10 tình huống tư vấn trên app, điểm TB ≥ 80, sau đó mới bán độc lập.</p></div><div class="card"><b>Tháng 2–3</b><p class="sub">Thử việc: ≥ 2 tháng đạt KPI, doanh số ≥ 30 triệu và hàng hệ số ≥ 12 triệu mỗi tháng.</p></div></div>`;
+  // khách hàng
+  h += H("Khách hàng") + `<div class="scroll"><table class="tbl"><thead><tr><th>Nhà thuốc</th><th class="num">Tổng khách</th><th class="num">VIP</th><th class="num">VIP lâu chưa quay lại</th><th class="num">Khách nguy cơ rời bỏ</th><th class="num">Tỷ lệ nguy cơ</th><th class="num">Mục tiêu chăm sóc tuần</th></tr></thead><tbody>`;
+  h += custRows.map(r => { const p = r.total ? Math.round(r.atRisk/r.total*100) : 0; return `<tr><td>${lrShop(r.s)}</td><td class="num">${lrInt(r.total)}</td><td class="num">${lrInt(r.vip)}</td><td class="num">${lrInt(r.silentVip)}</td><td class="num">${lrInt(r.atRisk)}</td><td class="num ${p >= 35 ? "down" : p <= 10 ? "up" : ""}">${p}%</td><td class="num">${lrInt(Math.round((r.atRisk||0)*0.25))}${r.silentVip ? " + " + r.silentVip + " VIP" : ""}</td></tr>`; }).join("");
+  h += `<tr class="total"><td>Toàn khu vực</td><td class="num">${lrInt(csAll.total)}</td><td class="num">${lrInt(csAll.vip)}</td><td class="num">${lrInt(csAll.silentVip)}</td><td class="num">${lrInt(csAll.atRisk)}</td><td class="num">${csAll.total ? Math.round(csAll.atRisk/csAll.total*100) : 0}%</td><td class="num">${lrInt(careT)} + ${lrInt(csAll.silentVip)} VIP</td></tr></tbody></table></div><p class="sub">Cách làm: gọi điện / nhắn Zalo theo danh sách trên app (mục Khách hàng), hỏi thăm sức khoẻ, nhắc mua lại thuốc dùng định kỳ, mời ưu đãi quay lại; ghi kết quả trên app.</p>`;
+  h += `<h3>Khuyến mại: đơn có thể tư vấn lên ngưỡng nhưng đã bỏ lỡ (${lrDM(monthStart)} – ${lrDM(cut)})</h3><div class="scroll"><table class="tbl"><thead><tr><th>Nhà thuốc</th><th class="num">Đơn bỏ lỡ (${pmDays} ngày)</th><th class="num">Trong đó: chỉ thiếu một chút</th><th class="num">Mục tiêu tuần tới</th></tr></thead><tbody>`;
+  h += shops.slice().sort((a,b)=>((pm[b]||{}).n||0)-((pm[a]||{}).n||0)).map(s => `<tr><td>${lrShop(s)}</td><td class="num">${lrInt((pm[s]||{}).n)}</td><td class="num">${lrInt((pm[s]||{}).near)}</td><td class="num">≤ ${lrInt(pmWeekT((pm[s]||{}).n||0))}</td></tr>`).join("");
+  h += `<tr class="total"><td>Toàn khu vực</td><td class="num">${lrInt(pmN)}</td><td class="num">${lrInt(pmNear)}</td><td class="num">≤ ${lrInt(pmT)}</td></tr></tbody></table></div><p class="sub">Voucher chỉ tính trên sản phẩm ngoài thuốc.</p>`;
+  // hàng hoá
+  h += H("Hàng hoá") + `<div class="scroll"><table class="tbl"><thead><tr><th>Nhà thuốc</th><th class="num">Mất DT do hết hàng</th><th class="num">Xử lý được bằng điều chuyển</th><th class="num">Mã hết hàng</th><th class="num">Cần gọi gấp</th><th class="num">Sắp cần gọi</th><th class="num">Mã tồn không bán</th><th class="num">Mã tồn cao</th></tr></thead><tbody>`;
+  h += shops.slice().sort((a,b)=>((lsBy[b]||{}).perDay||0)-((lsBy[a]||{}).perDay||0)).map(s => { const l = lsBy[s]||{}, c = ic[s]||{}; return `<tr><td>${lrShop(s)}</td><td class="num">${lrTr(l.perDay)}/ngày</td><td class="num">${lrTr(l.transferable)}</td><td class="num">${lrInt(l.skuCount)}</td><td class="num">${lrInt(c.urgent)}</td><td class="num">${lrInt(c.soon)}</td><td class="num">${lrInt(c.dead)}</td><td class="num">${lrInt(c.overstock)}</td></tr>`; }).join("");
+  h += `<tr class="total"><td>Toàn khu vực</td><td class="num">${lrTr(lostDay)}/ngày</td><td class="num">${lrTr(lostTr)}</td><td class="num">${lrInt(sum(s => (lsBy[s]||{}).skuCount))}</td><td class="num">${lrInt(urgentAll)}</td><td class="num">${lrInt(sum(s => (ic[s]||{}).soon))}</td><td class="num">${lrInt(sum(s => (ic[s]||{}).dead))}</td><td class="num">${lrInt(sum(s => (ic[s]||{}).overstock))}</td></tr></tbody></table></div>`;
+  h += `<p class="sub">${lostTrend.length >= 2 ? `Mức mất doanh thu từ đầu tháng: ${lrTr(lostTrend[0].perDay)}/ngày (${lrDM(lostTrend[0].date)}) → ${lrTr(lostDay)}/ngày hiện tại. ` : ""}${lostDay ? `Khoảng ${Math.round(lostTr/lostDay*100)}% xử lý được ngay bằng điều chuyển. ` : ""}Đã loại hàng thiết bị y tế bán lẻ tẻ, mã ngừng kinh doanh và hàng điều chuyển khỏi cách tính.</p>`;
+  if (allOut.length || trf.length) h += `<h3>Mã cần xử lý ngay</h3><div class="grid g3">` + allOut.map(p => `<div class="card"><span class="pill p-red">Hết, không còn hàng điều chuyển</span><p><b>${lrEsc(p.name)}</b><br><span class="sub">Hết ở ${p.shopCount} nhà thuốc (${(p.shops||[]).slice(0,3).map(lrShop).join(", ")}…) · mất ~${lrK(p.perDay)}/ngày → cần mua hàng.</span></p></div>`).join("") + trf.map(p => `<div class="card"><span class="pill p-amb">Điều chuyển</span><p><b>${lrEsc(p.name)}</b><br><span class="sub">Hết ở ${p.shopCount} nhà thuốc (${(p.shops||[]).slice(0,3).map(lrShop).join(", ")}…), nhà thuốc khác còn hàng để điều chuyển.</span></p></div>`).join("") + `</div>`;
+  // kế hoạch hành động
+  h += H("Kế hoạch hành động chi tiết") + `<div class="scroll"><table class="tbl"><thead><tr><th>#</th><th>Hạng mục</th><th>Việc cần làm</th><th>Nhà thuốc</th><th>Phụ trách</th><th>Hạn</th><th>Đo kết quả</th></tr></thead><tbody>`;
+  h += actions.map((a, i) => `<tr><td>${i+1}</td><td><span class="pill ${a[0] === "p-v" ? '" style="background:#f1eafb;color:#7a4cc2' : a[0]}">${lrEsc(a[1])}</span></td><td>${a[2]}</td><td>${lrEsc(a[3])}</td><td>${lrEsc(a[4])}</td><td>${lrEsc(a[5])}</td><td>${lrEsc(a[6])}</td></tr>`).join("") + `</tbody></table></div>`;
+  // đề xuất
+  const askAll = [];
+  if (hireN) askAll.push(`<b>Phê duyệt tuyển ${hireN} nhân sự</b> cho ${hires.map(x => `${lrShop(x.s)} (${x.n})`).join(", ")}.`);
+  if (csvc.length) askAll.push(`<b>Ngân sách sửa chữa cơ sở vật chất:</b> ${csvc.map(lrEsc).join("; ")}.`);
+  if (allOut.length || urgentAll) askAll.push(`<b>Phòng mua hàng ưu tiên nhập</b> ${allOut.length ? "các mã đang hết toàn khu vực (" + allOut.map(p => lrEsc(p.name)).join(", ") + ") và " : ""}${lrInt(urgentAll)} mã cần gọi gấp.`);
+  if (fromOrd.length) askAll.push(`<b>Phòng IT / hệ thống:</b> trang Chỉ tiêu nhà thuốc chưa cập nhật thực đạt tháng ${ms} cho ${fromOrd.map(lrShop).join(", ")}. Báo cáo đang tạm dùng số từ hoá đơn POS.`);
+  asks.forEach(a => askAll.push(lrEsc(a)));
+  h += H("Đề xuất cần Ban lãnh đạo phê duyệt / hỗ trợ") + (askAll.length ? `<div class="ask"><ol>${askAll.map(a => `<li>${a}</li>`).join("")}</ol></div>` : `<p class="sub">Không có.</p>`);
+  // ghi chú
+  h += H("Ghi chú") + `<div class="note"><p>• Nguồn: hệ thống Upharma Ops (hoá đơn POS, chỉ tiêu tháng từ upharma.com.vn, tồn kho, khách hàng, ca làm việc). Đã loại tài khoản đào tạo khỏi mọi số liệu.</p><p>• Doanh số, hàng hệ số, bill và khuyến mại tính từ ${lrDM(monthStart)}/${cut.slice(0,4)}, không cộng tháng trước. "Dự kiến cả tháng" là ngoại suy từ ${days} ngày đầu tháng.</p>${notes.map(x => `<p>• ${lrEsc(x)}</p>`).join("")}</div>`;
+  h += `<footer>Upharma · Báo cáo tuần khu vực · Lập ngày ${lrDM(D.today)}/${D.today.slice(0,4)}</footer></div></body></html>`;
+  return h;
+}
+
+function LeaderReportView({ isAdmin }){
+  const h = React.createElement;
+  const today = todayISO();
+  const [weekStart, setWeekStart] = React.useState(mondayOf(today));
+  const [D, setD] = React.useState(null);
+  const [M, setM] = React.useState(null);
+  const [err, setErr] = React.useState("");
+  const [saving, setSaving] = React.useState(false);
+  const [msg, setMsg] = React.useState("");
+  React.useEffect(() => { (async () => {
+    try {
+      setErr("");
+      const g = async (id) => { const d = await db.collection("opsConfig").doc(id).get(); return d.exists ? d.data() : null; };
+      const [ra, cust, inv, lost, snap, shopListD] = await Promise.all(["revenueAnalytics","customerSegmentsByShop","inventoryConsumptionSummary","lostSalesSummary","opsDaySnapshot","shopList"].map(g));
+      const mt = (ra && ra.monthTracking) || {};
+      const test = new Set(((shopListD && shopListD.testShops) || []).concat(["ĐÀO TẠO"]));
+      const shops = Object.keys(mt.byShop || {}).filter(s => !test.has(s) && mt.byShop[s] && mt.byShop[s].revenue && mt.byShop[s].revenue.target);
+      const st = await db.collection("staff").get();
+      const staffByShop = {};
+      st.forEach(d => { const x = d.data(); if (x.active === false || x.status === "inactive" || x.endDate || x.quit) return; if (!shops.includes(x.shop)) return; staffByShop[x.shop] = (staffByShop[x.shop]||0) + 1; });
+      const overdue = {}; ((snap && snap.byShop) || []).forEach(r => { if (shops.includes(r.shop)) overdue[r.shop] = r.overdue || 0; });
+      const days = mt.daysElapsed || 0, left = Math.max(1, (mt.daysInMonth||30) - days);
+      const paceUp = {}; shops.forEach(s => { const o = mt.byShop[s].revenue; const c = days ? o.actual/days : 0; paceUp[s] = c ? Math.round(((o.target-o.actual)/left / c - 1) * 100) : 0; });
+      const cutoff = mt.month ? `${mt.month}-${String(Math.max(1, days)).padStart(2,"0")}` : lrAdd(today, -1);
+      const monthStart = (mt.month || today.slice(0,7)) + "-01";
+      const promo = {}; let promoDays = 0;
+      for (let d = monthStart; d <= cutoff; d = lrAdd(d, 1)) {
+        const x = await db.collection("promoMissDaily").doc(d).get(); if (!x.exists) continue; promoDays++;
+        let rows = []; try { rows = JSON.parse(x.data().rowsJson || "[]"); } catch(e) {}
+        const seen = new Set(); rows.forEach(r => { if (seen.has(r[0])) return; seen.add(r[0]); const s = r[1]; if (!shops.includes(s)) return; const o = promo[s] || (promo[s] = { n:0, near:0 }); o.n++; if (r[6] === "near") o.near++; });
+      }
+      setD({ mt, shops, staffByShop, overdue, paceUp, cust, inv, lost, promo, promoDays: promoDays || 1, cutoff, today });
+    } catch (e) { setErr(e.message || String(e)); }
+  })(); }, []);
+  React.useEffect(() => {
+    setM(null);
+    const unsub = db.collection("leaderReports").doc(weekStart).onSnapshot(doc => {
+      const x = doc.exists ? doc.data() : {};
+      setM({ hires: x.hires || {}, csvc: x.csvc || "", asks: x.asks || "", notes: x.notes || "", extraActions: x.extraActions || "", author: x.author || "Quản lý khu vực", weekStart });
+    }, e => setErr(e.message));
+    return () => unsub();
+  }, [weekStart]);
+  const html = React.useMemo(() => { try { return D && M ? buildLeaderReportHtml(D, { ...M, weekStart }) : ""; } catch (e) { return `<p style="color:#b3261e;font:14px sans-serif">Lỗi dựng báo cáo: ${lrEsc(e.message)}</p>`; } }, [D, M, weekStart]);
+  if (!isAdmin) return h("div", { className:"emptyState" }, "Chỉ quản lý xem được báo cáo lãnh đạo.");
+  if (err) return h("div", { className:"card", style:{ color:"#b3261e" } }, "Lỗi tải số liệu: " + err);
+  if (!D || !M) return h("div", { className:"emptyState" }, "Đang tổng hợp số liệu…");
+  const setF = (k, v) => setM(m => ({ ...m, [k]: v }));
+  const setHire = (s, k, v) => setM(m => ({ ...m, hires: { ...m.hires, [s]: { ...(m.hires[s] || {}), [k]: v } } }));
+  async function save(){
+    setSaving(true); setMsg("");
+    try {
+      const hires = {}; Object.entries(M.hires || {}).forEach(([s, v]) => { const n = Number(v && v.n) || 0; if (n > 0 || (v && v.reason)) hires[s] = { n, reason: String((v && v.reason) || "").slice(0, 400) }; });
+      await db.collection("leaderReports").doc(weekStart).set({ weekStart, hires, csvc: M.csvc, asks: M.asks, notes: M.notes, extraActions: M.extraActions, author: M.author, updatedAt: new Date().toISOString() });
+      setMsg("Đã lưu.");
+    } catch (e) { setMsg("Lỗi lưu: " + e.message); }
+    setSaving(false);
+  }
+  function download(){
+    const blob = new Blob([html], { type:"text/html;charset=utf-8" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `Bao-cao-tuan-KV-${lrDM(weekStart).replace("/","-")}-${lrDM(lrAdd(weekStart,6)).replace("/","-")}-${weekStart.slice(0,4)}.html`;
+    document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+  function printPdf(){ const w = window.open("", "_blank"); if (!w) { alert("Trình duyệt chặn cửa sổ mới — cho phép popup rồi thử lại."); return; } w.document.open(); w.document.write(html); w.document.close(); setTimeout(() => { try { w.focus(); w.print(); } catch(e) {} }, 600); }
+  const ta = (k, ph, rows) => h("textarea", { value: M[k], onChange: e => setF(k, e.target.value), placeholder: ph, rows: rows || 3, style:{ width:"100%", fontSize:13, padding:8, borderRadius:8, border:"1px solid var(--line)", fontFamily:"inherit" } });
+  const lbl = (t, sub) => h("div", { style:{ fontWeight:700, fontSize:13.5, margin:"12px 0 4px" } }, t, sub && h("span", { style:{ fontWeight:400, color:"var(--inkSoft)", fontSize:12 } }, " · " + sub));
+  return h("div", null,
+    h("p", { className:"pagesub" }, "Tự tổng hợp báo cáo tuần gửi Ban lãnh đạo từ số liệu trong app (doanh số, hàng hệ số, TB bill, số đơn từ đầu tháng; khách hàng; hàng hoá; nhân sự; kế hoạch hành động). Chị chỉ nhập thêm phần tuyển dụng, cơ sở vật chất, đề xuất — bấm Lưu, rồi Tải file HTML hoặc In / PDF."),
+    h("div", { className:"card", style:{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap", marginBottom:12 } },
+      h("span", { style:{ fontWeight:700 } }, "Tuần bắt đầu (thứ Hai):"),
+      h("input", { type:"date", value: weekStart, onChange: e => e.target.value && setWeekStart(mondayOf(e.target.value)), style:{ padding:"6px 8px", borderRadius:8, border:"1px solid var(--line)" } }),
+      h("span", { style:{ color:"var(--inkSoft)", fontSize:12.5 } }, `${lrDM(weekStart)} – ${lrDM(lrAdd(weekStart,6))} · số liệu chốt đến ${lrDM(D.cutoff)}`),
+      h("div", { style:{ flex:1 } }),
+      h("button", { className:"btn btnGhost", onClick: save, disabled: saving }, saving ? "Đang lưu…" : "💾 Lưu"),
+      h("button", { className:"btn btnPrimary", onClick: download }, "⬇ Tải file HTML"),
+      h("button", { className:"btn btnGhost", onClick: printPdf }, "🖨 In / PDF"),
+      msg && h("span", { style:{ fontSize:12.5, color: msg.startsWith("Lỗi") ? "#b3261e" : "var(--g, #178a43)" } }, msg)),
+    h("div", { style:{ display:"grid", gridTemplateColumns:"minmax(280px, 380px) 1fr", gap:12, alignItems:"start" }, className:"lrGrid" },
+      h("div", { className:"card", style:{ position:"sticky", top:8, maxHeight:"85vh", overflowY:"auto" } },
+        lbl("Người lập"),
+        h("input", { value: M.author, onChange: e => setF("author", e.target.value), style:{ width:"100%", padding:"6px 8px", borderRadius:8, border:"1px solid var(--line)" } }),
+        lbl("Tuyển dụng", "số người cần tuyển thêm + lý do"),
+        D.shops.map(s => h("div", { key:s, style:{ display:"grid", gridTemplateColumns:"56px 54px 1fr", gap:6, alignItems:"start", marginBottom:6 } },
+          h("div", { style:{ fontWeight:600, fontSize:13, paddingTop:6 } }, lrShop(s), h("div", { style:{ fontSize:11, color:"var(--inkSoft)", fontWeight:400 } }, `có ${D.staffByShop[s]||0}`)),
+          h("input", { type:"number", min:0, value: (M.hires[s] && M.hires[s].n) || "", placeholder:"0", onChange: e => setHire(s, "n", e.target.value), style:{ width:"100%", padding:"6px", borderRadius:8, border:"1px solid var(--line)" } }),
+          h("textarea", { rows:2, value: (M.hires[s] && M.hires[s].reason) || "", placeholder: lrDefaultReason(s, D), onChange: e => setHire(s, "reason", e.target.value), style:{ width:"100%", fontSize:12, padding:6, borderRadius:8, border:"1px solid var(--line)", fontFamily:"inherit" } }))),
+        lbl("Cơ sở vật chất cần sửa", "mỗi dòng 1 hạng mục"),
+        ta("csvc", "VD: NT72: sửa la phông, bảng hiệu\nNT95: chống dột", 3),
+        lbl("Đề xuất thêm với Ban lãnh đạo", "mỗi dòng 1 ý"),
+        ta("asks", "Các đề xuất tuyển dụng, mua hàng, IT đã tự thêm — ghi thêm ý khác ở đây", 3),
+        lbl("Việc bổ sung vào kế hoạch", "Hạng mục | Việc | Nhà thuốc | Phụ trách | Hạn | Đo kết quả"),
+        ta("extraActions", "VD: Marketing | Chạy tờ rơi khai trương | NT122 | CHT | 10/10 | 500 tờ", 3),
+        lbl("Ghi chú thêm", "mỗi dòng 1 ý"),
+        ta("notes", "", 2)),
+      h("iframe", { title:"Xem trước báo cáo", srcDoc: html, style:{ width:"100%", height:"85vh", border:"1px solid var(--line)", borderRadius:12, background:"#fff" } })));
+}
+
 function BaoCaoTuanView({ isAdmin, myStaff }){
   const subTabsAll = [
     { id:"quanly", label:"Báo cáo quản lý", adminOnly:true },
@@ -16346,6 +16671,7 @@ const OPS_TABS = [
   { id:"revenueAnalytics", label:"Doanh thu" },
   { id:"ketquangay", label:"Kết quả ngày" },
   { id:"baocaotuan", label:"Báo cáo tuần" },
+  { id:"baocaolanhdao", label:"Báo cáo lãnh đạo" },
   { id:"sales", label:"Báo cáo doanh số ngày" },
   { id:"tasks", label:"Công việc" },
   { id:"kpi", label:"KPI" },
@@ -16382,7 +16708,7 @@ const OPS_GROUPS_ADMIN_V2 = [
   { id:"khachhang",    label:"Khách hàng",   tabs:["taimua","crm"] }, // 3/10/2026: Customer 360 mở từ danh sách khách; "Cần chăm sóc hôm nay" gộp tái mua + rời bỏ + VIP + sinh nhật
   { id:"hanghoagroup", label:"Hàng hoá",     tabs:["hanghoa","prod360","donthuoc"] }, // 4/10/2026: Từ điển sản phẩm dồn về Nhân sự › Đào tạo
   { id:"kinhdoanh",    label:"Kinh doanh & Marketing", tabs:["revenueAnalytics","ctkm","temgia"] },
-  { id:"baocao",       label:"Báo cáo & Phân tích",   tabs:["baocaotuan"] }, // 3/10/2026: "Kết quả ngày" gộp vào Doanh thu (tab con Hôm nay)
+  { id:"baocao",       label:"Báo cáo & Phân tích",   tabs:["baocaotuan","baocaolanhdao"] }, // 3/10/2026: "Kết quả ngày" gộp vào Doanh thu (tab con Hôm nay)
   { id:"ruiro",        label:"Rủi ro & Tuân thủ",     tabs:["risk","kinhnghiem"] },
   { id:"ai",           label:"AI điều hành",          tabs:["ai"] },
   { id:"hethong",      label:"Hệ thống",              tabs:["hethong"] },
@@ -19114,6 +19440,7 @@ const TAB_STYLE = {
   hanghoa:          { icon:"📦", color:"#0f6b5c" },
   nhanvien:         { icon:"👥", color:"#475569" },
   baocaotuan:       { icon:"📅", color:"#4f46e5" },
+  baocaolanhdao:    { icon:"📑", color:"#178a43" },
   ketquangay:       { icon:"📈", color:"#c8503a" },
 };
 
@@ -19153,6 +19480,7 @@ const TAB_ICON_SVG = {
   hanghoa: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5V8z"/><path d="M3 8l9 5 9-5"/><path d="M12 13v8"/></svg>',
   nhanvien: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><circle cx="18" cy="9" r="2.6"/><path d="M16 14.3c2.7.3 4.9 2.3 4.9 5.2"/></svg>',
   baocaotuan: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
+  baocaolanhdao: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg>',
   ketquangay: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>',
 };
 const TAB_ICON_ALIAS = { congviec:"tasks", kinhdoanh:"revenueAnalytics", baocao:"baocaotuan", ruiro:"risk" };
@@ -25941,7 +26269,7 @@ function Dashboard({ user, isAdmin, myStaff }){
   // 3/10/2026: tab đã gộp nhưng vẫn mở được (VD hồ sơ Customer 360 của 1 khách) → hiện trong nhóm của tab cha
   const TAB_PARENT = { cust360:"crm", action:"tasks", ketquangay:"revenueAnalytics" };
   const activeGroup = navGroups.find(g => g.tabs.includes(activeTab)) || navGroups.find(g => g.tabs.includes(TAB_PARENT[activeTab])) || navGroups[0];
-  const FEATURE_KEYWORDS = { taimua:"tai mua nhac het thuoc cham soc", crm:"crm khach hang phan khuc", cust360:"ho so khach", emp360:"ho so nhan vien", prod360:"ho so hang hoa san pham", hanghoa:"ton kho kiem ke dieu chuyen dat hang toc do tieu thu", action:"cong viec can xu ly cho kiem tra qua han tien do", tasks:"giao viec", risk:"rui ro canh bao tuan thu", kinhnghiem:"kinh nghiem", photos:"hinh anh minh chung", revenueAnalytics:"doanh thu", ctkm:"khuyen mai", tudien:"tu dien san pham thuoc hoat chat cong dung duoc", temgia:"tem gia in tem khuyen mai combo", kpi:"kpi chi tieu", ketquangay:"ket qua ngay", baocaotuan:"bao cao tuan", sales:"doanh so ngay", checklist:"checklist", homnay:"hom nay", shop360:"ho so nha thuoc" };
+  const FEATURE_KEYWORDS = { taimua:"tai mua nhac het thuoc cham soc", crm:"crm khach hang phan khuc", cust360:"ho so khach", emp360:"ho so nhan vien", prod360:"ho so hang hoa san pham", hanghoa:"ton kho kiem ke dieu chuyen dat hang toc do tieu thu", action:"cong viec can xu ly cho kiem tra qua han tien do", tasks:"giao viec", risk:"rui ro canh bao tuan thu", kinhnghiem:"kinh nghiem", photos:"hinh anh minh chung", revenueAnalytics:"doanh thu", ctkm:"khuyen mai", tudien:"tu dien san pham thuoc hoat chat cong dung duoc", temgia:"tem gia in tem khuyen mai combo", kpi:"kpi chi tieu", ketquangay:"ket qua ngay", baocaotuan:"bao cao tuan", baocaolanhdao:"bao cao lanh dao ban giam doc tong hop tuan", sales:"doanh so ngay", checklist:"checklist", homnay:"hom nay", shop360:"ho so nha thuoc" };
   const featureItems = navGroups.flatMap(g => g.tabs.map(id => ({ id, label:(leafTabs.find(t=>t.id===id)||{}).label || id, group:g.label, keywords:FEATURE_KEYWORDS[id] || "" })));
   function groupUnread(g){ return g.tabs.reduce((s,id)=>s+(unreadCount[id]||0),0) + ((g.tabs.includes("action") || (isAdmin && g.tabs.includes("tasks"))) ? needAction360 : 0); }
   const totalUnread = Object.values(unreadCount).reduce((a,b)=>a+(b||0), 0);
@@ -26079,6 +26407,7 @@ function Dashboard({ user, isAdmin, myStaff }){
         activeTab==="kudos" && React.createElement(KudosView, { key:viewResetKey, isAdmin, myStaff }),
         activeTab==="temgia" && React.createElement(TemGiaView, { key:viewResetKey }),
         activeTab==="baocaotuan" && React.createElement(BaoCaoTuanView, { key:viewResetKey, isAdmin, myStaff }),
+        activeTab==="baocaolanhdao" && React.createElement(LeaderReportView, { key:viewResetKey, isAdmin }),
         activeTab==="kinhnghiem" && React.createElement(KinhNghiemVanHanhView, { key:viewResetKey, myStaff, navParam }),
         activeTab==="revenueAnalytics" && React.createElement(RevenueAnalyticsView, { key:viewResetKey, isAdmin, myStaff, navParam }),
         activeTab==="ketquangay" && React.createElement(DailyResultsView, { key:viewResetKey, isAdmin, myStaff }),
