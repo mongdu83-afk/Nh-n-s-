@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261005-10";
+window.__APP_BUILD = "20261006-1";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -8786,7 +8786,7 @@ function TtsPracticeModal({ row, onClose, onChanged, groups }){
   return h("div", { className:"modalOverlay", onClick:onClose },
     h("div", { className:"modal", onClick:e=>e.stopPropagation(), style:{ maxWidth:680, maxHeight:"94vh", overflow:"auto" } },
       h("div", { style:{ fontWeight:800, fontSize:17 } }, "🎯 Luyện tình huống cắt liều"),
-      h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:8 } }, `${row.name}${hist ? ` · thư viện ${hist.libraryN} tình huống đã duyệt · đã làm ${hist.rows.filter(x=>x.status==="graded" && x.mode!=="quiz").length} bài khách ảo/tự viết${row.id==="self" ? "" : ` (cần ≥ ${hist.minN}, TB ≥ ${hist.pass})`}` : ""}${(groups||[]).length && hist && hist.groups ? " · nhóm: " + hist.groups.filter(g=>groups.includes(g.k)).map(g=>g.label).join(", ") : ""}`),
+      h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:8 } }, `${row.name}${hist ? ` · thư viện ${hist.libraryN} tình huống · đã làm ${hist.rows.filter(x=>x.status==="graded" && x.mode!=="quiz").length} bài khách ảo/tự viết${row.id==="self" ? "" : ` (cần ≥ ${hist.minN}, TB ≥ ${hist.pass})`}` : ""}${(groups||[]).length && hist && hist.groups ? " · nhóm: " + hist.groups.filter(g=>groups.includes(g.k)).map(g=>g.label).join(", ") : ""}`),
       h("div", { style:{ display:"flex", gap:6, marginBottom:10, flexWrap:"wrap" } }, TTS_MODES.map(m => h("button", { key:m.id, disabled:!!busy, onClick:()=>{ setMode(m.id); next(m.id); }, title:m.sub, style:{
         flex:"1 1 150px", textAlign:"left", padding:"7px 10px", borderRadius:10, cursor:"pointer", fontFamily:"inherit", border:"1.5px solid " + (mode===m.id ? "var(--pine)" : "var(--line)"), background: mode===m.id ? "var(--pineSoft)" : "#fff" } },
         h("div", { style:{ fontWeight:800, fontSize:13 } }, m.label), h("div", { style:{ fontSize:11, color:"var(--inkSoft)" } }, m.sub)))),
@@ -8931,7 +8931,7 @@ function TtsCaseLibraryInner({ isAdmin }){
   const cases = data.cases || [], kinds = data.kinds || {};
   const byProt = {}; cases.forEach(c => { const k = c.protocolId || "?"; const a = byProt[k] || (byProt[k] = { title:c.protocolTitle, n:0, ok:0, draft:0 }); a.n++; if(c.status==="approved") a.ok++; if(c.status==="draft") a.draft++; });
   const approved = cases.filter(c=>c.status==="approved").length, drafts = cases.filter(c=>c.status==="draft").length;
-  if(!data.canEdit) return h("div", { className:"card" }, h("div", { style:{ fontWeight:800, fontSize:15 } }, `Thư viện có ${approved} tình huống đã duyệt`),
+  if(!data.canEdit) return h("div", { className:"card" }, h("div", { style:{ fontWeight:800, fontSize:15 } }, `Thư viện có ${approved + drafts} tình huống để luyện`),
     h("div", { style:{ fontSize:12.8, color:"var(--inkSoft)", marginTop:4 } }, "Thực tập sinh luyện ở Đào tạo › Thử việc → nút \"🎯 Luyện tình huống\" (Trắc nghiệm · Khách ảo · Tự viết)."));
   let list = cases;
   if(prot!=="all") list = list.filter(c => c.protocolId===prot);
@@ -8944,7 +8944,7 @@ function TtsCaseLibraryInner({ isAdmin }){
   const pill = (s) => s==="approved" ? h(Pill360, { text:"Đã duyệt", color:CL360.good }) : s==="rejected" ? h(Pill360, { text:"Loại", color:CL360.gray }) : h(Pill360, { text:"Nháp", color:CL360.warn });
   const protsNoCase = (data.protocols||[]).filter(p => !byProt[p.id]);
   return h("div", null,
-    h("p", { className:"pagesub" }, "Thư viện tình huống cho thực tập sinh luyện (Trắc nghiệm · Khách ảo · Tự viết). AI soạn nháp từ phác đồ, dược sĩ mở từng tình huống kiểm tra đáp án rồi bấm Duyệt — chỉ tình huống đã duyệt mới được dùng. Ra đề từ thư viện không tốn phí AI. Giai đoạn này chỉ luyện phác đồ có sẵn trên POS — phác đồ AI để giai đoạn 2."),
+    h("p", { className:"pagesub" }, "Thư viện tình huống cho thực tập sinh luyện (Trắc nghiệm · Khách ảo · Tự viết). AI soạn nháp từ phác đồ, dược sĩ mở từng tình huống kiểm tra đáp án rồi bấm Duyệt. Tình huống nháp vẫn được dùng để luyện (chỉ bài bị từ chối mới bị loại). Ra đề từ thư viện không tốn phí AI. Giai đoạn này chỉ luyện phác đồ có sẵn trên POS — phác đồ AI để giai đoạn 2."),
     h("div", { className:"metrics" },
       h("div", { className:"metric good" }, h("div", { className:"label" }, "Đã duyệt"), h("div", { className:"value" }, approved)),
       h("div", { className:"metric warn" }, h("div", { className:"label" }, "Chờ duyệt"), h("div", { className:"value" }, drafts)),
@@ -25160,7 +25160,7 @@ function OpsOperatorView({ onNavigate }){
   const fmM = (v) => { const n = Math.round(Number(v)||0); return n>=1e6 ? (Math.round(n/1e5)/10).toString().replace(".",",")+"tr" : Math.round(n/1000)+"k"; };
   const track = rows.filter(r => r.status==="approved" || r.status==="overdue").sort((a,b) => (b.lateDays||0)-(a.lateDays||0) || String(a.deadline).localeCompare(String(b.deadline)));
   const done = st("done").sort((a,b) => String(b.doneAt).localeCompare(String(a.doneAt)));
-  const wk = rows.filter(r => r.date >= (() => { const d = new Date(); d.setDate(d.getDate()-6); return d.toISOString().slice(0,10); })());
+  const wk = rows.filter(r => r.status!=="expired" && r.date >= (() => { const d = new Date(); d.setDate(d.getDate()-6); return d.toISOString().slice(0,10); })());
   const cnt = (arr, f) => arr.filter(f).length;
   const assigned = (r) => ["approved","overdue","done"].includes(r.status);
   const ed = (id, k, v) => setEdits(e => ({ ...e, [id]: { ...(e[id]||{}), [k]: v } }));
