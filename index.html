@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261007-1";
+window.__APP_BUILD = "20261007-4";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -4416,6 +4416,42 @@ function ZaloOptionsModal({ o, phone, onClose }){
         zp && h("a", { className:"btn btnGhost", href:`https://zalo.me/${zp}`, target:"_blank", rel:"noopener", onClick:copy }, "Chép & mở Zalo"),
         edited && h("button", { className:"btn btnGhost", onClick:()=>{ setEdited(false); setTxt((opts[sel]||opts[0]).text); } }, "↺ Về mẫu gốc"))));
 }
+// ===== 7/10/2026 — ĐỐI CHIẾU DỰ TRÙ TỰ ĐỘNG POS (opsConfig/posDraftReview, 7h00): POS đã tự gọi hàng theo tốc độ bán → app chỉ nêu
+// mã POS BỎ SÓT / ĐẶT THIẾU / ĐẶT DƯ để nhà thuốc chỉnh dự trù trên POS (Kho hàng › Gọi hàng › Dự trù tự động), không nhắc đặt hàng trùng.
+function PosDraftCard({ isAdmin, myStaff }){
+  const h = React.createElement;
+  const [R, setR] = useState(null); const [open, setOpen] = useState(false); const [shopSel, setShopSel] = useState(""); const [days, setDays] = useState({});
+  useEffect(() => db.collection("opsConfig").doc("posDraftReview").onSnapshot(d => setR(d.exists ? d.data() : null), () => {}), []);
+  useEffect(() => db.collection("opsConfig").doc("posDraftConfig").onSnapshot(d => setDays((d.exists && d.data().days) || {}), () => {}), []);
+  const DOW = ["CN","T2","T3","T4","T5","T6","T7"];
+  const setDay = async (s, v) => { try { await db.collection("opsConfig").doc("posDraftConfig").set({ days: { ...days, [s]: v === "" ? null : Number(v) } }, { merge:true }); } catch(e){ alert(e.message); } };
+  const dayInfo = (s) => { const d = days[s]; if (d == null) return "chưa đặt ngày POS tự duyệt"; const t = new Date().getDay(); const k = (d - t + 7) % 7; return `POS tự duyệt ${DOW[d]}${k === 0 ? " — HÔM NAY" : k === 1 ? " — ngày mai" : ` — còn ${k} ngày`}`; };
+  if (!R || !R.byShop) return null;
+  const myShop = myStaff && myStaff.shop; const sn = (c) => { const n = String(c||"").replace(/\D/g,""); return n ? "NT" + Number(n) : c; };
+  const shops = Object.keys(R.byShop).filter(s => isAdmin || s === myShop).sort();
+  if (!shops.length) return null;
+  const tot = shops.reduce((a, s) => { const c = R.byShop[s].counts || {}; a.m += c.missed||0; a.u += c.under||0; a.o += c.over||0; a.pos += R.byShop[s].posLines||0; return a; }, { m:0, u:0, o:0, pos:0 });
+  const cur = shopSel || (isAdmin ? "" : myShop); const V = cur ? R.byShop[cur] : null;
+  const row = (t, sub, col) => h("div", { style:{ fontSize:12.5, padding:"3px 0", borderTop:"1px dashed var(--line)" } }, h("span", { style:{ color:col, fontWeight:700 } }, t), sub ? " · " + sub : "");
+  return h("div", { key:"posdraft", className:"card", style:{ marginBottom:12, borderLeft:"4px solid #7C3AED" } },
+    h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap", alignItems:"baseline" } },
+      h("div", { style:{ fontWeight:800, fontSize:15 } }, `🧾 Rà dự trù tự động POS (${String(R.date||"").split("-").reverse().join("/")})`),
+      h("button", { className:"btn btnGhost", style:{ fontSize:12, padding:"2px 8px" }, onClick:()=>setOpen(v=>!v) }, open ? "Thu gọn" : "Xem chi tiết")),
+    h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", margin:"2px 0 6px" } }, `POS đã tự dự trù ${tot.pos} mã theo tốc độ bán. Cần chỉnh: ${tot.m} mã POS bỏ sót · ${tot.u} mã đặt thiếu · ${tot.o} mã đặt dư/mã dừng. POS tự duyệt dự trù 1 lần/tuần → chỉnh trên POS (Kho hàng › Gọi hàng › Dự trù tự động) TRƯỚC lượt tự duyệt.${!isAdmin && myShop ? " Nhà thuốc: " + dayInfo(myShop) + "." : ""}`),
+    open && h("div", null,
+      isAdmin && h("div", { style:{ fontSize:12.5, margin:"4px 0 8px", padding:8, background:"#F5F3FF", borderRadius:8 } },
+        h("div", { style:{ fontWeight:700, marginBottom:4 } }, "Ngày POS TỰ DUYỆT dự trù hàng tuần của từng nhà thuốc (AI giao việc chỉnh dự trù vào hôm trước và sáng ngày tự duyệt):"),
+        h("div", { style:{ marginBottom:6 } }, "Cùng 1 ngày cho tất cả: ", h("select", { value:"", onChange:async e => { if (e.target.value === "") return; const v = Number(e.target.value); try { await db.collection("opsConfig").doc("posDraftConfig").set({ days: Object.fromEntries(shops.map(s => [s, v])) }, { merge:true }); } catch(er){ alert(er.message); } }, style:{ fontSize:12 } }, h("option", { value:"" }, "chọn…"), DOW.map((d, i) => h("option", { key:i, value:String(i) }, d)))),
+        h("div", { style:{ display:"flex", gap:8, flexWrap:"wrap" } }, shops.map(s => h("label", { key:s, style:{ display:"inline-flex", gap:4, alignItems:"center" } }, sn(s),
+          h("select", { value: days[s] == null ? "" : String(days[s]), onChange:e=>setDay(s, e.target.value), style:{ fontSize:12 } }, h("option", { value:"" }, "—"), DOW.map((d, i) => h("option", { key:i, value:String(i) }, d))))))),
+      isAdmin && h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:6 } }, shops.map(s => { const c = R.byShop[s].counts || {};
+        return h("button", { key:s, title: dayInfo(s), onClick:()=>setShopSel(s === shopSel ? "" : s), style:{ fontSize:12, padding:"3px 9px", borderRadius:999, cursor:"pointer", border:"1px solid var(--line)", background: s === shopSel ? "#7C3AED" : "#fff", color: s === shopSel ? "#fff" : "inherit" } }, `${sn(s)}${days[s] != null ? " (" + DOW[days[s]] + ")" : ""}: +${c.missed||0} ↑${c.under||0} ↓${c.over||0}`); })),
+      !V ? (isAdmin && h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)" } }, "Bấm 1 nhà thuốc để xem danh sách.")) : h("div", null,
+        (V.missed||[]).map(x => row(`+ ${x.name}`, `POS bỏ sót · nên gọi ~${x.need} · tồn ${x.stock} · đang mất ${Math.round((x.perDay||0)/1000)}k/ngày`, "#15803D")),
+        (V.under||[]).map(x => row(`↑ ${x.name}`, `POS ${x.q} → nên ${x.need} ${x.unit||""} (${x.why})`, "#2563EB")),
+        (V.over||[]).map(x => row(`↓ ${x.name}`, `POS gọi ${x.q} ${x.unit||""} — ${x.why}`, "#B45309")),
+        !((V.missed||[]).length + (V.under||[]).length + (V.over||[]).length) && h("div", { style:{ fontSize:12.5, color:"#15803D" } }, "✅ Dự trù POS khớp tốc độ bán — không cần chỉnh."))));
+}
 // ===== 6/10/2026 — TRA NGƯỠNG KHUYẾN MẠI TẠI QUẦY: nhập tổng bill (và tiền hàng ngoài thuốc) → biết ngay đang đạt/thiếu bao nhiêu để được quà.
 function PromoThresholdCard({ isAdmin, myStaff }){
   const h = React.createElement; const today = todayISO();
@@ -4725,6 +4761,7 @@ function TodayShopTasksView({ isAdmin, myStaff, onNavigate }){
     snapCard,
     React.createElement(CareTodayCard, { key:"care", isAdmin, myStaff }),
     React.createElement(PromoThresholdCard, { key:"promoT", isAdmin, myStaff }),
+    React.createElement(PosDraftCard, { key:"posdraft", isAdmin, myStaff }),
     TRANSFER_FLOW_ON && React.createElement(TransferOrdersCard, { key:"tro", isAdmin, myStaff, compact:true }),
     React.createElement("div", { key:"tiles", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:10, marginBottom:18 } }, tiles.filter(Boolean)),
     React.createElement("div", { key:"sec", style:{ fontWeight:700, fontSize:13.5, marginBottom:8 } }, "Việc đến hạn / quá hạn theo nhà thuốc"),
@@ -15258,7 +15295,7 @@ function buildLeaderReportHtml(D, M){
     ["p-g","Doanh số","Kèm bán hàng tăng TB bill: tư vấn trọn liệu trình và sản phẩm đi kèm, ưu tiên hàng hệ số.", tbbLow.map(lrShop).join(", ") || "Tất cả","QLKV",lrDM(W2), tbbLow.map(s => `${lrShop(s)} ≥ ${lrK(by[s].tbb.target*0.95)}`).join(" · ") || "TB bill đạt target"],
     ["p-b","Khách hàng",`Gọi lại ${lrInt(csAll.silentVip)} khách VIP lâu chưa quay lại; ghi kết quả trên app.`, vipTop ? vipTop.replace(/: \d+/g,"") + "…" : "Tất cả","Nhà thuốc trưởng",lrDM(lrAdd(W1,3)),"100% VIP được liên hệ"],
     ["p-b","Khách hàng","Chăm sóc 25% khách nguy cơ rời bỏ theo danh sách trên app.","Tất cả, trọng tâm " + custRows.slice(0,2).map(r=>lrShop(r.s)).join(", "),"Nhân viên bán hàng",lrDM(W2),`≥ ${lrInt(careT)} lượt chăm sóc ghi nhận`],
-    ["p-amb","Hàng hoá",`Đặt hàng ${lrInt(urgentAll)} mã cần gọi gấp${allOut.length ? ", trong đó có " + allOut.map(p=>lrEsc(p.name)).join(", ") : ""}.`,"Tất cả","Phòng mua hàng",lrDM(lrAdd(W1,3)),"0 mã gấp tồn quá 3 ngày"],
+    ["p-amb","Hàng hoá",`Chỉnh dự trù tự động trên POS trước lượt POS tự duyệt hàng tuần: thêm mã POS bỏ sót, tăng mã đặt thiếu, bỏ mã đặt dư/mã dừng${allOut.length ? "; ưu tiên " + allOut.map(p=>lrEsc(p.name)).join(", ") : ""}.`,"Tất cả","Nhà thuốc trưởng",lrDM(lrAdd(W1,1)),"0 mã bán chạy bị POS bỏ sót"],
     ["p-amb","Hàng hoá","Chọn 20 mã tồn lâu không bán/nhà thuốc để trưng bày, tư vấn đẩy bán hoặc trả hàng.","Tất cả","Nhà thuốc trưởng",lrDM(W2),`${shops.length*20} mã có phương án`],
   ];
   if (hireN) actions.push(["p-v","Nhân sự",`Đăng tuyển ${hireN} vị trí, sàng lọc và phỏng vấn.`, hires.map(x=>lrShop(x.s)).join(", "),"QLKV + Phòng nhân sự",lrDM(W2),`≥ ${hireN*2} ứng viên phỏng vấn`]);
@@ -15308,7 +15345,7 @@ function buildLeaderReportHtml(D, M){
   h += H(`Mục tiêu trọng tâm tuần ${lrDM(W1)} – ${lrDM(W2)}`) + `<div class="grid g2">`;
   h += `<div class="pillar" style="border-top:4px solid var(--g)"><h4>💰 Doanh số</h4><ul><li>Doanh thu khu vực tuần tới <b>≥ ${lrTr(needDay*7)}</b> (${lrTr(needDay)}/ngày) để quay lại đúng nhịp target tháng.</li><li>Hàng hệ số <b>≥ ${lrTr(hNeed*7)}/tuần</b>.</li><li>TB bill khu vực từ ${lrK(chainObj.tbb.actual)} lên <b>≥ ${lrK(chainObj.tbb.target)}</b>${tbbLow.length ? `. Ưu tiên ${tbbLow.map(s => `${lrShop(s)} (${lrK(by[s].tbb.actual)})`).join(", ")}` : ""}.</li><li>Giảm một nửa số đơn bỏ lỡ khuyến mại: <b>≤ ${lrInt(pmT)} đơn/tuần</b>.</li></ul></div>`;
   h += `<div class="pillar" style="border-top:4px solid var(--blue)"><h4>🤝 Khách hàng</h4><ul><li>Liên hệ <b>100% trong ${lrInt(csAll.silentVip)} khách VIP</b> lâu chưa quay lại${vipTop ? ` (${vipTop})` : ""}.</li><li>Chăm sóc <b>≥ 25% khách nguy cơ rời bỏ</b>, khoảng ${lrInt(careT)} khách, ưu tiên ${custRows.slice(0,3).map(r => lrShop(r.s)).join(", ")}.</li><li>Ghi nhận lượt chăm sóc khách hàng trên app đầy đủ 100%.</li></ul></div>`;
-  h += `<div class="pillar" style="border-top:4px solid var(--amb)"><h4>📦 Hàng hoá</h4><ul><li>Giảm mất doanh thu do hết hàng từ ${lrTr(lostDay)} xuống <b>≤ ${lrTr(lostDay/2)}/ngày</b>.</li><li>Xử lý <b>100% trong ${lrInt(urgentAll)} mã cần gọi hàng gấp</b>: đặt hàng bổ sung ngay.</li>${allOut.length ? `<li>${allOut.map(p => lrEsc(p.name)).join(", ")}: đang hết, không còn hàng để điều chuyển → cần mua hàng.</li>` : ""}<li>Mỗi nhà thuốc chọn 20 mã tồn lâu không bán để đẩy bán hoặc trả hàng.</li></ul></div>`;
+  h += `<div class="pillar" style="border-top:4px solid var(--amb)"><h4>📦 Hàng hoá</h4><ul><li>Giảm mất doanh thu do hết hàng từ ${lrTr(lostDay)} xuống <b>≤ ${lrTr(lostDay/2)}/ngày</b>.</li><li>POS đã tự dự trù theo tốc độ bán, POS tự duyệt đi hàng 1 lần/tuần — trước lượt tự duyệt, nhà thuốc <b>chỉnh dự trù POS</b>: thêm mã POS bỏ sót, tăng mã đặt thiếu, bỏ mã đặt dư/mã dừng (danh sách ở màn Hôm nay).</li>${allOut.length ? `<li>${allOut.map(p => lrEsc(p.name)).join(", ")}: đang hết, không còn hàng để điều chuyển → cần mua hàng.</li>` : ""}<li>Mỗi nhà thuốc chọn 20 mã tồn lâu không bán để đẩy bán hoặc trả hàng.</li></ul></div>`;
   h += `<div class="pillar" style="border-top:4px solid #7a4cc2"><h4>👥 Nhân sự</h4><ul>${hireN ? `<li>Tuyển <b>${hireN} vị trí</b> (chi tiết mục ${n+1}).</li>` : ""}${ovAll ? `<li>Xử lý dứt điểm <b>${ovAll} việc quá hạn</b>${ovTop.length ? `. Nhiều nhất ở ${ovTop.map(s => `${lrShop(s)} (${D.overdue[s]})`).join(", ")}` : ""}.</li>` : ""}<li>Mỗi nhân viên làm <b>≥ 5 bài luyện tình huống tư vấn</b> trên app trong tuần.</li><li>Kèm riêng nhân viên đang chậm KPI tháng.</li></ul></div></div>`;
   h += `<h3>Mục tiêu tuần tới theo từng nhà thuốc</h3><div class="scroll"><table class="tbl"><thead><tr><th>Nhà thuốc</th><th class="num">Đã đạt từ ${lrDM(monthStart)}</th><th class="num">Mục tiêu DT tuần</th><th class="num">HHS đã đạt</th><th class="num">Mục tiêu HHS tuần</th><th>Mức độ</th></tr></thead><tbody>`;
   h += shopsByRev.map(s => { const o = by[s]; return `<tr><td>${lrShop(s)}</td><td class="num">${lrTr(o.revenue.actual)}</td><td class="num"><b>${lrTr((o.revenue.target-o.revenue.actual)/left*7)}</b></td><td class="num">${lrTr(o.hangHeSo.actual)}</td><td class="num"><b>${lrTr((o.hangHeSo.target-o.hangHeSo.actual)/left*7)}</b></td><td>${pill(s)} cần +${D.paceUp[s]||0}%/ngày</td></tr>`; }).join("");
@@ -15335,6 +15372,11 @@ function buildLeaderReportHtml(D, M){
   h += shops.slice().sort((a,b)=>((lsBy[b]||{}).perDay||0)-((lsBy[a]||{}).perDay||0)).map(s => { const l = lsBy[s]||{}, c = ic[s]||{}; return `<tr><td>${lrShop(s)}</td><td class="num">${lrTr(l.perDay)}/ngày</td><td class="num">${lrTr(l.transferable)}</td><td class="num">${lrInt(l.skuCount)}</td><td class="num">${lrInt(c.urgent)}</td><td class="num">${lrInt(c.soon)}</td><td class="num">${lrInt(c.dead)}</td><td class="num">${lrInt(c.overstock)}</td></tr>`; }).join("");
   h += `<tr class="total"><td>Toàn khu vực</td><td class="num">${lrTr(lostDay)}/ngày</td><td class="num">${lrTr(lostTr)}</td><td class="num">${lrInt(sum(s => (lsBy[s]||{}).skuCount))}</td><td class="num">${lrInt(urgentAll)}</td><td class="num">${lrInt(sum(s => (ic[s]||{}).soon))}</td><td class="num">${lrInt(sum(s => (ic[s]||{}).dead))}</td><td class="num">${lrInt(sum(s => (ic[s]||{}).overstock))}</td></tr></tbody></table></div>`;
   h += `<p class="sub">${lostTrend.length >= 2 ? `Mức mất doanh thu từ đầu tháng: ${lrTr(lostTrend[0].perDay)}/ngày (${lrDM(lostTrend[0].date)}) → ${lrTr(lostDay)}/ngày hiện tại. ` : ""}${lostDay ? `Khoảng ${Math.round(lostTr/lostDay*100)}% xử lý được ngay bằng điều chuyển. ` : ""}Đã loại hàng thiết bị y tế bán lẻ tẻ, mã ngừng kinh doanh và hàng điều chuyển khỏi cách tính.</p>`;
+  if (D.posd && D.posd.byShop) { const pb = D.posd.byShop; const ks = shops.filter(s => pb[s]); const sm = (f) => ks.reduce((a, s) => a + (f(pb[s])||0), 0);
+    h += `<h3>Đối chiếu dự trù tự động POS (${lrDM(D.posd.date)})</h3><div class="scroll"><table class="tbl"><thead><tr><th>Nhà thuốc</th><th class="num">Mã POS dự trù</th><th class="num">POS bỏ sót</th><th class="num">POS đặt thiếu</th><th class="num">POS đặt dư / mã dừng</th><th class="num">DT mất ở mã bỏ sót</th></tr></thead><tbody>`
+      + ks.map(s => { const v = pb[s], c = v.counts || {}; return `<tr><td>${lrShop(s)}</td><td class="num">${lrInt(v.posLines)}</td><td class="num">${lrInt(c.missed)}</td><td class="num">${lrInt(c.under)}</td><td class="num">${lrInt(c.over)}</td><td class="num">${lrTr(v.missedPerDay)}/ngày</td></tr>`; }).join("")
+      + `<tr class="total"><td>Toàn khu vực</td><td class="num">${lrInt(sm(v => v.posLines))}</td><td class="num">${lrInt(sm(v => (v.counts||{}).missed))}</td><td class="num">${lrInt(sm(v => (v.counts||{}).under))}</td><td class="num">${lrInt(sm(v => (v.counts||{}).over))}</td><td class="num">${lrTr(sm(v => v.missedPerDay))}/ngày</td></tr></tbody></table></div><p class="sub">POS tự dự trù theo tốc độ bán và tự duyệt đi hàng 1 lần/tuần; bảng này chỉ nêu phần POS chưa đúng để nhà thuốc chỉnh trước lượt tự duyệt — không đặt hàng trùng.</p>`;
+  }
   if (allOut.length || trf.length) h += `<h3>Mã cần xử lý ngay</h3><div class="grid g3">` + allOut.map(p => `<div class="card"><span class="pill p-red">Hết, không còn hàng điều chuyển</span><p><b>${lrEsc(p.name)}</b><br><span class="sub">Hết ở ${p.shopCount} nhà thuốc (${(p.shops||[]).slice(0,3).map(lrShop).join(", ")}…) · mất ~${lrK(p.perDay)}/ngày → cần mua hàng.</span></p></div>`).join("") + trf.map(p => `<div class="card"><span class="pill p-amb">Điều chuyển</span><p><b>${lrEsc(p.name)}</b><br><span class="sub">Hết ở ${p.shopCount} nhà thuốc (${(p.shops||[]).slice(0,3).map(lrShop).join(", ")}…), nhà thuốc khác còn hàng để điều chuyển.</span></p></div>`).join("") + `</div>`;
   // kế hoạch hành động
   h += H("Kế hoạch hành động chi tiết") + `<div class="scroll"><table class="tbl"><thead><tr><th>#</th><th>Hạng mục</th><th>Việc cần làm</th><th>Nhà thuốc</th><th>Phụ trách</th><th>Hạn</th><th>Đo kết quả</th></tr></thead><tbody>`;
@@ -15387,7 +15429,8 @@ function LeaderReportView({ isAdmin }){
       let prevWeek = null; try { const pw = await db.collection("weeklyTargets").doc(lrAdd(mondayOf(today), -7)).get(); prevWeek = pw.exists ? pw.data() : null; } catch(e) {}
       let care = null; try { const cs = await db.collection("opsConfig").doc("careDailyStats").get(); care = cs.exists ? cs.data() : null; } catch(e) {}
       let trf = null; try { const ts = await db.collection("opsConfig").doc("transferFlowStats").get(); trf = ts.exists ? ts.data() : null; } catch(e) {}
-      setD({ mt, shops, staffByShop, overdue, paceUp, cust, inv, lost, promo, promoDays: promoDays || 1, cutoff, today, prevWeek, care, trf });
+      let posd = null; try { const pd = await db.collection("opsConfig").doc("posDraftReview").get(); posd = pd.exists ? pd.data() : null; } catch(e) {}
+      setD({ mt, shops, staffByShop, overdue, paceUp, cust, inv, lost, promo, promoDays: promoDays || 1, cutoff, today, prevWeek, care, trf, posd });
     } catch (e) { setErr(e.message || String(e)); }
   })(); }, []);
   React.useEffect(() => {
