@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261007-20";
+window.__APP_BUILD = "20261007-21";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -14484,14 +14484,16 @@ function PromoOrderList({ od, listF, shopF, q, setQ, lim, setLim, onClose, fm, s
 // nhưng không tư vấn) và HỆ THỐNG ĐÁNH GIÁ CTKM (chấm điểm + gợi ý đợt tiếp theo). Dữ liệu: promoOrderDaily, promoMissDaily, promoOrderAnalytics/_programs.
 const PR_KIND = { gift:"Quà tặng theo HĐ", voucher:"Voucher theo HĐ (hàng ngoài thuốc)", addon:"HĐ đủ mức mua SP giá 1k", combo:"Combo" };
 const PR_MISS = { near:"Sát ngưỡng — thiếu ít là được KM", skip:"Đủ điều kiện nhưng không áp", combo:"Mua thiếu combo" };
-function PromoRangeView(){
+function PromoRangeView({ mode } = {}){
   const h = React.createElement;
+  const todoMode = mode === "todo"; // 7/10/2026: tab "Việc cần làm" — mặc định 7 ngày gần nhất, so với 7 ngày trước
   const iso = (d) => d.toISOString().slice(0,10);
   const addD = (s, n) => { const d = new Date(s+"T00:00:00Z"); d.setUTCDate(d.getUTCDate()+n); return iso(d); };
   const today = todayISO(); const DATA_FROM = "2026-09-01";
   const [idx, setIdx] = useState(null);
-  const [rng, setRng] = useState([addD(today,-29) < DATA_FROM ? DATA_FROM : addD(today,-29), today]);
-  const [pid, setPid] = useState("d30");
+  const [rng, setRng] = useState(todoMode ? [addD(today,-7) < DATA_FROM ? DATA_FROM : addD(today,-7), addD(today,-1)] : [addD(today,-29) < DATA_FROM ? DATA_FROM : addD(today,-29), today]);
+  const [pid, setPid] = useState(todoMode ? "d7" : "d30");
+  const [baseDaily, setBaseDaily] = useState(null); const [showThin, setShowThin] = useState(false);
   const [shopF, setShopF] = useState("all");
   const [decide, setDecide] = useState(null); // 7/10/2026: ra quyết định từ CTKM
   const [daily, setDaily] = useState(null); const [miss, setMiss] = useState(null); const [base, setBase] = useState(null); const [rules, setRules] = useState(null);
@@ -14504,10 +14506,10 @@ function PromoRangeView(){
     db.collection("promoOrderAnalytics").doc("_suggest").get().then(s => s.exists && setSug(s.data())).catch(()=>{}); }, []);
   const days = Math.max(1, Math.round((new Date(rng[1]) - new Date(rng[0]))/86400000) + 1);
   const baseRng = [addD(rng[0], -days), addD(rng[0], -1)];
-  useEffect(()=>{ let off = false; setDaily(null); setMiss(null); setBase(null); setErr("");
+  useEffect(()=>{ let off = false; setDaily(null); setMiss(null); setBase(null); setBaseDaily(null); setErr("");
     const get = (col, a, b) => db.collection(col).where("date", ">=", a).where("date", "<=", b).get().then(s => { const m = []; s.forEach(d => m.push(d.data())); return m; });
-    Promise.all([get("promoOrderDaily", rng[0], rng[1]), get("promoMissDaily", rng[0], rng[1]), get("promoMissDaily", baseRng[0], baseRng[1])])
-      .then(([a, b, c]) => { if(off) return; setDaily(a); setMiss(b); setBase(c); }).catch(e => !off && setErr(e.message));
+    Promise.all([get("promoOrderDaily", rng[0], rng[1]), get("promoMissDaily", rng[0], rng[1]), get("promoMissDaily", baseRng[0], baseRng[1]), get("promoOrderDaily", baseRng[0], baseRng[1])])
+      .then(([a, b, c, e]) => { if(off) return; setDaily(a); setMiss(b); setBase(c); setBaseDaily(e); }).catch(e => !off && setErr(e.message));
     return () => { off = true; }; }, [rng[0], rng[1]]);
   const fm = (v) => v==null ? "—" : Math.abs(v)>=1e9 ? (v/1e9).toLocaleString("vi-VN",{maximumFractionDigits:2})+" tỷ" : Math.abs(v)>=1e6 ? (v/1e6).toLocaleString("vi-VN",{maximumFractionDigits:1})+" tr" : Math.abs(v)>=1e3 ? Math.round(v/1e3).toLocaleString("vi-VN")+"k" : String(Math.round(v));
   const pct = (a, b) => b ? Math.round(a/b*1000)/10 : null;
@@ -14539,6 +14541,8 @@ function PromoRangeView(){
     rows.forEach(r => { const [, , , , , , mkind, rk, T, gap, opts] = r; const key = rk==="combo" ? "giamgia|" + (opts||[])[0] : `${rk}|${T}`;
       const u = U[key] || (U[key] = { key, kind: rk, T: rk==="combo" ? 0 : T, type: rk==="combo" ? "giamgia" : rk, name: rk==="combo" ? (opts||[])[0] : `${PR_KIND[rk]} ≥ ${fm(T)}`, opts: [], n:0, c:0, r:0, days:new Set(), skip:0, near:0, short:0, gapSum:0 });
       if(mkind==="skip") u.skip++; else if(mkind==="near"){ u.near++; u.gapSum += gap||0; } else if(mkind==="combo") u.short++; });
+    const benchC = Object.values(U).reduce((s, u) => s + u.c, 0), benchR = Object.values(U).reduce((s, u) => s + u.r, 0);
+    const benchCpr = benchR ? benchC / benchR * 100 : 4;
     const units = Object.values(U).map(u => {
       const dn = Math.max(1, u.days.size || days);
       const cpr = u.r ? u.c/u.r*100 : null;
@@ -14564,16 +14568,48 @@ function PromoRangeView(){
       if(below!=null && ratio!=null && ratio<0.6 && below>=30) tips.push(`Nhiều đơn dừng ngay dưới ngưỡng (${below} đơn từ ${fm(u.T*0.8)}–${fm(u.T)}) — có thể hạ ngưỡng xuống ~${fm(Math.round(u.T*0.9/10000)*10000)} hoặc tăng tư vấn upsell`);
       if(cpr!=null && cpr>8) tips.push(`Chi phí ${ps(Math.round(cpr*10)/10)} doanh thu đơn KM — cao, nên giảm giá trị quà/voucher`);
       if(u.n<5 && !u.skip && !u.near && !u.short) tips.push("Rất ít khách dùng — xem lại truyền thông hoặc bỏ");
-      return { ...u, dn, cpr, reach, uptake, lift, ratio, bRatio, score, grade, tips, sEff, sReach, sExec, sLift };
+      // 7/10/2026 (Phương): thay hạng A–D bằng NHÃN VẤN ĐỀ + số tiền bị ảnh hưởng → biết làm gì, làm cái nào trước
+      const insufficient = (u.n + u.skip + u.near + u.short) < 10 || u.days.size < Math.min(5, days);
+      const perOrderC = u.n ? u.c / u.n : 0, perOrderR = u.n ? u.r / u.n : 0;
+      const iss = [];
+      if(!insufficient){
+        if(cpr!=null && u.c >= 300000 && (cpr > 8 || (cpr > 5 && cpr > benchCpr * 1.8)))
+          iss.push({ k:"tonkem", label:"Tốn kém", impact:Math.max(0, u.c - u.r * 0.04), type: cpr > 12 ? "promo_stop" : "promo_adjust", metric:"rev",
+            act: cpr > 12 ? `Chi phí ${ps(Math.round(cpr*10)/10)} doanh thu đơn KM (chuỗi ${ps(Math.round(benchCpr*10)/10)}) — cân nhắc dừng hoặc giảm mạnh giá trị quà/voucher` : `Chi phí ${ps(Math.round(cpr*10)/10)} doanh thu đơn KM, cao hơn mặt bằng ${ps(Math.round(benchCpr*10)/10)} — giảm giá trị quà/voucher hoặc nâng ngưỡng` });
+        if(lift!=null && lift < 1.05 && u.c >= 300000)
+          iss.push({ k:"khongkeo", label:"Không kéo khách mua lên ngưỡng", impact:u.c * 0.5, type:"pilot", metric:"tbb",
+            act:"Khách không mua nhiều hơn để đạt ngưỡng so với kỳ trước — đổi quà hấp dẫn hơn hoặc đổi mức ngưỡng, thử trước ở 1–2 nhà thuốc" });
+        if(uptake!=null && uptake < 75 && u.skip >= 10)
+          iss.push({ k:"chuaap", label:"Nhân viên chưa áp", impact:u.skip * Math.max(perOrderC, 5000), type:"action", metric:"tbb",
+            act:`Chỉ ${Math.round(uptake)}% đơn đủ điều kiện được áp (${u.skip} đơn bỏ quên) — lỗi tại quầy, GIỮ chương trình; CHT kèm nhân viên kiểm tra màn hình KM trên POS trước khi thanh toán` });
+        if(u.kind==="combo" && u.short >= 10)
+          iss.push({ k:"thieucombo", label:"Khách mua thiếu combo", impact:u.short * Math.max(perOrderR * 0.3, 10000), type:"action", metric:"tbb",
+            act:`${u.short} đơn chỉ mua 1 món trong combo — nhân viên gợi ý mua đủ combo` });
+        if(u.near >= 20)
+          iss.push({ k:"satnguong", label:"Nhiều đơn sát ngưỡng", impact:u.gapSum || 0, type:"action", metric:"tbb",
+            act:`${u.near} đơn chỉ thiếu trung bình ${fm(u.gapSum/u.near)} là đạt — tư vấn thêm 1 món` });
+        if(reach < 0.3 && !iss.some(x => x.k==="chuaap"))
+          iss.push({ k:"itkhach", label:"Ít khách dùng", impact:Math.min(u.c, 200000), type:"action", metric:"rev",
+            act:"Ít khách biết / dùng — tăng truyền thông, POSM tại quầy, nhắc nhân viên giới thiệu; vẫn ít thì bỏ cho gọn" });
+      }
+      iss.sort((a,b) => b.impact - a.impact);
+      const status = insufficient ? "thieu" : iss.length ? "van_de" : "tot";
+      const priority = iss.reduce((s, x) => s + x.impact, 0);
+      return { ...u, dn, cpr, reach, uptake, lift, ratio, bRatio, score, grade, tips, sEff, sReach, sExec, sLift, iss, status, priority };
     }).sort((a,b) => b.c - a.c || b.n - a.n);
+    // ---- tổng hợp theo nhà thuốc & loại KM: kỳ này vs kỳ trước (cùng số ngày) ----
+    const aggShop = (arr) => { const T = {}; (arr||[]).forEach(d => Object.entries(d.shop||{}).forEach(([s, x]) => { if(!s || !shopOk(s)) return; const t = T[s] || (T[s] = { n:0, rev:0, c:0 }); t.n += x.n||0; t.rev += x.rev||0; t.c += x.c||0; })); return T; };
+    const aggType = (arr) => { const T = {}; (arr||[]).forEach(d => Object.entries(d.shop||{}).forEach(([s, x]) => { if(!s || !shopOk(s)) return; Object.entries(x.prog||{}).forEach(([gk, y]) => { const tp = gk.split("|")[0]; const t = T[tp] || (T[tp] = { c:0, r:0, n:0 }); t.n += y[0]||0; t.c += y[1]||0; t.r += y[2]||0; }); })); return T; };
+    const aggMiss = (docs) => { const T = {}; (docs||[]).forEach(d => { try{ JSON.parse(d.rowsJson||"[]").forEach(r => { if(!shopOk(r[1])) return; const t = T[r[1]] || (T[r[1]] = { skip:0, near:0, combo:0, gap:0 }); if(r[6]==="skip") t.skip++; else if(r[6]==="near"){ t.near++; t.gap += r[9]||0; } else if(r[6]==="combo") t.combo++; }); }catch(e){} }); return T; };
+    const shopNow = aggShop(daily), shopPrev = aggShop(baseDaily), typeNow = aggType(daily), typePrev = aggType(baseDaily), missNow = aggMiss(miss), missPrev = aggMiss(base);
     const byKind = { near:0, skip:0, combo:0 }; const gapNear = { n:0, g:0 }; const kSet = { near:new Set(), skip:new Set(), combo:new Set() }; const allInv = new Set();
     const ST = {}; rows.forEach(r => { if(kSet[r[6]]) kSet[r[6]].add(r[0]); allInv.add(r[0]); if(r[6]==="near"){ gapNear.n++; gapNear.g += r[9]||0; }
       const k = r[1]+"|"+r[2]; const x = ST[k] || (ST[k] = { s:r[1], nv:r[2], near:0, skip:0, combo:0, inv:new Set() }); x[r[6]]++; x.inv.add(r[0]); });
     Object.keys(kSet).forEach(k => { byKind[k] = kSet[k].size; }); byKind.total = allInv.size;
     const staff = Object.values(ST).map(x => ({ ...x, tot: staffN[x.s+"|"+x.nv] || 0, orders: x.inv.size })).map(x => ({ ...x, rate: x.tot ? x.orders/x.tot*100 : null })).sort((a,b) => b.orders - a.orders);
-    return { tot, units, rows, byKind, gapNear, staff, nShops, shops:[...shopsSeen].sort() };
-  }, [daily, miss, base, rules, shopF]);
-  const presets = (() => { const out = [{ id:"d7", label:"7 ngày", r:[addD(today,-6), today] }, { id:"d30", label:"30 ngày", r:[addD(today,-29), today] }, { id:"m", label:"Tháng này", r:[today.slice(0,7)+"-01", today] }];
+    return { tot, units, rows, byKind, gapNear, staff, nShops, shops:[...shopsSeen].sort(), benchCpr, shopNow, shopPrev, typeNow, typePrev, missNow, missPrev };
+  }, [daily, miss, base, baseDaily, rules, shopF]);
+  const presets = (() => { const out = [{ id:"d7", label:"7 ngày", r: todoMode ? [addD(today,-7), addD(today,-1)] : [addD(today,-6), today] }, { id:"d30", label:"30 ngày", r:[addD(today,-29), today] }, { id:"m", label:"Tháng này", r:[today.slice(0,7)+"-01", today] }];
     ((idx && idx.campaigns) || []).filter(c => c.kind==="campaign").forEach(c => out.push({ id:c.key, label:"Khoảng ngày " + c.label.replace("Chiến dịch ","đợt "), r:[c.from, c.to > today ? today : c.to] }));
     return out.map(p => ({ ...p, r:[p.r[0] < DATA_FROM ? DATA_FROM : p.r[0], p.r[1]] })); })();
   const card = (label, val, sub, color) => h("div", { style:{ flex:"1 1 150px", background:"#fff", border:"1px solid var(--line)", borderRadius:12, padding:"10px 12px" } },
@@ -14584,8 +14620,8 @@ function PromoRangeView(){
   const gText = { A:"Giữ & nhân rộng", B:"Giữ, điều chỉnh nhẹ", C:"Cần thay đổi", D:"Nên dừng / thay" };
   async function askAI(){
     if(!M) return; setSugBusy(true);
-    const lines = M.units.filter(u => u.n>0 || u.skip || u.near || u.short).slice(0, 60).map(u => `- ${u.name}${u.opts.length ? ` [${u.opts.length} lựa chọn quà]` : ""}: ${u.n} đơn dùng, chi phí ${fm(u.c)}, DT đơn KM ${fm(u.r)}, CP/DT ${u.cpr==null ? "—" : u.cpr.toFixed(1)+"%"}, tỉ lệ áp ${u.uptake==null ? "—" : Math.round(u.uptake)+"%"}, đơn sát ngưỡng ${u.near}, đủ ĐK không áp ${u.skip}, thiếu combo ${u.short}, tác động hoá đơn ${u.lift==null ? "—" : "×"+u.lift.toFixed(2)}, điểm ${u.score}/100 (${u.grade})`);
-    const brief = `KHOẢNG NGÀY ${rng[0]} → ${rng[1]} (${days} ngày) · ${shopF==="all" ? "toàn chuỗi " + M.nShops + " nhà thuốc" : "nhà thuốc " + shopLabel(shopF)}\nTổng: ${M.tot.n} hoá đơn, ${M.tot.pn} đơn có KM (${ps(pct(M.tot.pn, M.tot.n))}), doanh thu ${fm(M.tot.rev)}, chi phí KM ${fm(M.tot.c)} (${ps(pct(M.tot.c, M.tot.rev))} doanh thu).\nĐơn bỏ lỡ: sát ngưỡng ${M.byKind.near}, đủ điều kiện không áp ${M.byKind.skip}, mua thiếu combo ${M.byKind.combo}.\nCÁCH CHẤM: hiệu quả chi phí 35 · độ phủ 25 · thực thi (tỉ lệ áp) 20 · tác động lên giá trị hoá đơn quanh ngưỡng 20.\nBẢNG ĐÁNH GIÁ:\n${lines.join("\n")}`;
+    const lines = M.units.filter(u => u.n>0 || u.skip || u.near || u.short).slice(0, 60).map(u => `- ${u.name}${u.opts.length ? ` [${u.opts.length} lựa chọn quà]` : ""}: ${u.n} đơn dùng, chi phí ${fm(u.c)}, DT đơn KM ${fm(u.r)}, CP/DT ${u.cpr==null ? "—" : u.cpr.toFixed(1)+"%"}, tỉ lệ áp ${u.uptake==null ? "—" : Math.round(u.uptake)+"%"}, đơn sát ngưỡng ${u.near}, đủ ĐK không áp ${u.skip}, thiếu combo ${u.short}, tác động hoá đơn ${u.lift==null ? "—" : "×"+u.lift.toFixed(2)}, nhãn: ${u.status==="thieu" ? "chưa đủ dữ liệu" : u.status==="tot" ? "tốt" : u.iss.map(x => x.label).join(", ")}`);
+    const brief = `KHOẢNG NGÀY ${rng[0]} → ${rng[1]} (${days} ngày) · ${shopF==="all" ? "toàn chuỗi " + M.nShops + " nhà thuốc" : "nhà thuốc " + shopLabel(shopF)}\nTổng: ${M.tot.n} hoá đơn, ${M.tot.pn} đơn có KM (${ps(pct(M.tot.pn, M.tot.n))}), doanh thu ${fm(M.tot.rev)}, chi phí KM ${fm(M.tot.c)} (${ps(pct(M.tot.c, M.tot.rev))} doanh thu).\nĐơn bỏ lỡ: sát ngưỡng ${M.byKind.near}, đủ điều kiện không áp ${M.byKind.skip}, mua thiếu combo ${M.byKind.combo}.\nNHÃN: Tốn kém (CP/DT cao) · Không kéo khách mua lên ngưỡng · Nhân viên chưa áp (lỗi tại quầy, giữ chương trình) · Khách mua thiếu combo · Nhiều đơn sát ngưỡng · Ít khách dùng · Tốt · chưa đủ dữ liệu.\nBẢNG ĐÁNH GIÁ:\n${lines.join("\n")}`;
     try{ const r = await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/runJobNow?job=promoSuggestNow", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ brief, from:rng[0], to:rng[1] }) }, 170000);
       setSug({ text:r.text, at:r.at, from:rng[0], to:rng[1] }); } catch(e){ window.alert("Lỗi: " + (e.message||e)); }
     setSugBusy(false);
@@ -14609,7 +14645,67 @@ function PromoRangeView(){
       card("Chi phí KM", fm(M.tot.c), `${ps(pct(M.tot.c, M.tot.rev))} doanh thu ${fm(M.tot.rev)}`),
       card("Số CTKM chạy", M.units.filter(u=>u.n>0).length, "đã có khách dùng trong khoảng"),
       card("Đơn bỏ lỡ KM", (M.byKind.total||0).toLocaleString("vi-VN"), `sát ngưỡng ${M.byKind.near} · không áp ${M.byKind.skip} · thiếu combo ${M.byKind.combo} (1 đơn có thể thuộc nhiều loại)`, "#B91C1C")),
-    M && h(SubTabBar, { tabs:[{ id:"eval", label:"Đánh giá & gợi ý CTKM" }, { id:"all", label:"Tất cả CTKM trong khoảng" }, { id:"miss", label:"Đơn bỏ lỡ KM" }], active:tab, onChange:setTab }),
+    // ===== 7/10/2026 (Phương): CTKM — VIỆC CẦN LÀM (vấn đề → giao việc → app đo lại sau 7/14 ngày) =====
+    M && (() => {
+      const TYPE_VI = { voucher:"Voucher", giamgia:"Giảm giá", quatang:"Quà tặng", doidiem:"Đổi điểm", combo:"Combo bán sẵn" };
+      const arrow = (now, prev) => prev==null || now==null ? "" : now > prev * 1.05 ? " ↑ xấu hơn" : now < prev * 0.95 ? " ↓ tốt hơn" : " → như cũ";
+      const shops = Object.keys(M.shopNow);
+      const totC = shops.reduce((s, x) => s + M.shopNow[x].c, 0), totRev = shops.reduce((s, x) => s + M.shopNow[x].rev, 0);
+      const totN = shops.reduce((s, x) => s + M.shopNow[x].n, 0), totNPrev = Object.values(M.shopPrev).reduce((s, x) => s + x.n, 0), totCPrev = Object.values(M.shopPrev).reduce((s, x) => s + x.c, 0);
+      const skipAll = Object.values(M.missNow).reduce((s, x) => s + x.skip, 0), skipAllPrev = Object.values(M.missPrev).reduce((s, x) => s + x.skip, 0);
+      const rateNow = totN ? skipAll / totN * 100 : null, ratePrev = totNPrev ? skipAllPrev / totNPrev * 100 : null;
+      const r1 = v => v==null ? "—" : ps(Math.round(v * 10) / 10);
+      const staffOf = (s, key) => M.staff.filter(x => x.s === s && x[key] > 0).sort((a, b) => b[key] - a[key]).slice(0, 3);
+      // A. áp KM tại quầy
+      const A = shops.map(s => { const m = M.missNow[s] || { skip:0 }, mp = M.missPrev[s] || { skip:0 }, n = M.shopNow[s].n, np = (M.shopPrev[s] || {}).n;
+        return { s, skip:m.skip, rate:n ? m.skip / n * 100 : null, ratePrev:np ? mp.skip / np * 100 : null }; }).filter(x => x.skip >= 10).sort((a, b) => b.skip - a.skip).slice(0, 3);
+      // B. đơn sát ngưỡng
+      const B = shops.map(s => { const m = M.missNow[s] || { near:0, gap:0 }, mp = M.missPrev[s] || { near:0 }, n = M.shopNow[s].n, np = (M.shopPrev[s] || {}).n;
+        return { s, near:m.near, gap:m.near ? m.gap / m.near : 0, rate:n ? m.near / n * 100 : null, ratePrev:np ? mp.near / np * 100 : null }; })
+        .filter(x => x.near >= 10).sort((a, b) => b.near - a.near).slice(0, 3);
+      // C. CTKM tốn kém / không kéo khách / ít khách dùng
+      const C = M.units.filter(u => u.status === "van_de" && u.iss.some(x => ["tonkem", "khongkeo", "itkhach"].includes(x.k)))
+        .map(u => ({ u, main:u.iss.find(x => ["tonkem", "khongkeo", "itkhach"].includes(x.k)) })).sort((a, b) => b.main.impact - a.main.impact).slice(0, 4);
+      // D. bất thường chi phí: nhà thuốc chiếm phần chi phí lớn hơn hẳn phần doanh thu; loại KM có CP/DT tăng mạnh so với kỳ trước
+      const D = [];
+      if(shopF === "all") shops.forEach(s => { const x = M.shopNow[s]; const cs = totC ? x.c / totC : 0, rs = totRev ? x.rev / totRev : 0;
+        if(cs >= 0.15 && cs > rs * 1.4) D.push({ k:"shop_" + s, s, text:`${shopLabel(s)} chiếm ${Math.round(cs * 100)}% chi phí KM nhưng chỉ ${Math.round(rs * 100)}% doanh thu (chi phí/doanh thu ${r1(x.rev ? x.c / x.rev * 100 : null)}, chuỗi ${r1(totRev ? totC / totRev * 100 : null)})`, impact:x.c - rs * totC,
+          preset:{ type:"action", shops:[s], metric:"rev", targetPct:0, title:`Rà soát chi phí KM — ${shopLabel(s)}`, hypothesis:`Chi phí KM chiếm ${Math.round(cs * 100)}% toàn chuỗi trong khi doanh thu chỉ ${Math.round(rs * 100)}%`, taskNote:"Kiểm tra: CTKM nào dùng nhiều nhất ở nhà thuốc, có áp sai đối tượng / áp chồng nhiều KM trên 1 đơn không, quà tặng có xuất đúng không. Báo lại nguyên nhân và cách điều chỉnh.", source:{ kind:"promo_cost", shop:s } } }); });
+      Object.entries(M.typeNow).forEach(([tp, x]) => { const pv = M.typePrev[tp]; if(!pv || !pv.r || !x.r || x.c < 1000000) return; const now = x.c / x.r * 100, prev = pv.c / pv.r * 100;
+        if(now > prev * 1.25 && now - prev >= 1) D.push({ k:"type_" + tp, text:`${TYPE_VI[tp] || tp}: chi phí/doanh thu ${r1(now)} (kỳ trước ${r1(prev)}), chi phí ${fm(x.c)}`, impact:x.c - x.r * prev / 100,
+          preset:{ type:"promo_adjust", shops: shopF==="all" ? [...DEFAULT_SHOPS] : [shopF], metric:"rev", title:`Điều chỉnh nhóm KM ${TYPE_VI[tp] || tp} — chi phí tăng`, hypothesis:`Chi phí/doanh thu tăng từ ${r1(prev)} lên ${r1(now)}`, assignTask:false, source:{ kind:"promo_type", type:tp } } }); });
+      D.sort((a, b) => b.impact - a.impact);
+      const btn = (preset) => h("button", { type:"button", className:"btn btnPrimary", style:{ fontSize:11.5, padding:"3px 10px", whiteSpace:"nowrap" }, onClick:()=>setDecide(preset) }, "Giao việc & theo dõi");
+      const row = (k, main, sub, preset) => h("div", { key:k, style:{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"center", padding:"6px 0", borderTop:"1px solid #F0EEE2", flexWrap:"wrap" } },
+        h("div", { style:{ flex:"1 1 320px", fontSize:13 } }, h("div", { style:{ fontWeight:700 } }, main), sub && h("div", { style:{ fontSize:12, color:"var(--inkSoft)" } }, sub)), preset && btn(preset));
+      const sec = (k, title, hint, items, empty) => h("div", { key:k, style:{ marginTop:10 } },
+        h("div", { style:{ fontWeight:800, fontSize:13.5 } }, title), h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:2 } }, hint),
+        items.length ? items : h("div", { style:{ fontSize:12.5, color:CL360.good, padding:"4px 0" } }, empty));
+      return h("div", { className:"card", style:{ padding:14, marginBottom:12, borderLeft:"4px solid var(--pine)" } },
+        h("div", { style:{ fontWeight:800, fontSize:16 } }, `CTKM — việc cần làm (${days} ngày gần nhất, so với ${days} ngày trước)`),
+        h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", marginTop:2 } },
+          `Chi phí KM ${fm(totC)} = ${r1(totRev ? totC / totRev * 100 : null)} doanh thu${totCPrev ? ` (kỳ trước ${fm(totCPrev)})` : ""} · đơn đủ điều kiện mà không áp: ${skipAll.toLocaleString("vi-VN")} = ${r1(rateNow)} hoá đơn${ratePrev!=null ? ` (kỳ trước ${r1(ratePrev)}${arrow(rateNow, ratePrev)})` : ""}. Bấm "Giao việc & theo dõi" để giao cho nhà thuốc — app tự so kết quả sau 7 và 14 ngày.`),
+        sec("a", "1. Áp đúng KM tại quầy", "Khách đủ điều kiện nhưng nhân viên không áp quà/voucher/giá KM — lỗi thực thi, giữ chương trình, kèm nhân viên.",
+          A.map(x => row("a" + x.s, `${shopLabel(x.s)}: ${x.skip.toLocaleString("vi-VN")} đơn đủ ĐK không áp (${r1(x.rate)} hoá đơn${x.ratePrev!=null ? `, kỳ trước ${r1(x.ratePrev)}${arrow(x.rate, x.ratePrev)}` : ""})`,
+            "Nhân viên bỏ quên nhiều nhất: " + (staffOf(x.s, "skip").map(st => `${st.nv || "(không rõ)"} ${st.skip}`).join(" · ") || "—"),
+            { type:"action", shops:[x.s], metric:"tbb", targetPct:5, title:`Áp đúng KM tại quầy — ${shopLabel(x.s)}`, hypothesis:`${x.skip} đơn đủ điều kiện KM nhưng không được áp trong ${days} ngày (${r1(x.rate)} hoá đơn)`,
+              taskNote:`Nhân viên bỏ quên nhiều nhất: ${staffOf(x.s, "skip").map(st => `${st.nv || "(không rõ)"} (${st.skip} đơn)`).join(", ")}.\nViệc cần làm: (1) mở Khuyến mại › Đơn bỏ lỡ KM, lọc tên từng nhân viên xem hoá đơn mẫu; (2) kèm từng người kiểm tra màn hình KM trên POS trước khi thanh toán; (3) cuối tuần xem lại tỉ lệ đơn không áp ở mục Việc cần làm.`, source:{ kind:"promo_exec", shop:x.s } })),
+          "Không có nhà thuốc nào bỏ quên KM đáng kể."),
+        sec("b", "2. Đơn sát ngưỡng — tư vấn thêm 1 món", "Khách chỉ thiếu ≤ 20% là đạt mức quà/voucher theo hoá đơn — cơ hội tăng giá trị bill.",
+          B.map(x => row("b" + x.s, `${shopLabel(x.s)}: ${x.near.toLocaleString("vi-VN")} đơn sát ngưỡng (${r1(x.rate)} hoá đơn${x.ratePrev!=null ? `, kỳ trước ${r1(x.ratePrev)}${arrow(x.rate, x.ratePrev)}` : ""}), thiếu trung bình ${fm(x.gap)}`,
+            "Nhân viên nhiều đơn sát ngưỡng: " + (staffOf(x.s, "near").map(st => `${st.nv || "(không rõ)"} ${st.near}`).join(" · ") || "—"),
+            { type:"action", shops:[x.s], metric:"tbb", targetPct:5, title:`Tư vấn thêm 1 món cho đơn sát ngưỡng KM — ${shopLabel(x.s)}`, hypothesis:`${x.near} đơn chỉ thiếu trung bình ${fm(x.gap)} là đạt KM`,
+              taskNote:"Khi hoá đơn gần đạt mức quà/voucher: báo khách mức còn thiếu và gợi ý 1 sản phẩm phù hợp (vitamin, TPCN, vật tư y tế…). Áp dụng cho cả ca, theo dõi giá trị bill trung bình.", source:{ kind:"promo_near", shop:x.s } })),
+          "Không có nhà thuốc nhiều đơn sát ngưỡng."),
+        sec("c", "3. Chương trình tốn tiền mà chưa hiệu quả", "Xếp theo số tiền bị ảnh hưởng — quyết định dừng, điều chỉnh hoặc thử nhỏ trước.",
+          C.map(({ u, main }) => row("c" + u.key, `${u.name.replace(/^\[[^\]]*\]\s*/, "")} — ${main.label}`, `${main.act} · chi phí ${fm(u.c)}, ${u.n} đơn`,
+            { type:main.type, shops: shopF==="all" ? [...DEFAULT_SHOPS] : [shopF], campaignName:u.name.replace(/^\[[^\]]*\]\s*/, ""), metric:main.metric, assignTask:false,
+              title:`${main.label}: ${u.name.replace(/^\[[^\]]*\]\s*/, "")}`, hypothesis:main.act, source:{ kind:"promo", key:u.key } })),
+          "Chưa có chương trình nào tốn kém bất thường."),
+        sec("d", "4. Bất thường chi phí", "Nhà thuốc chiếm phần chi phí KM lớn hơn hẳn phần doanh thu, hoặc loại KM có chi phí/doanh thu tăng mạnh so với kỳ trước.",
+          D.slice(0, 4).map(x => row(x.k, x.text, null, x.preset)), "Không có bất thường chi phí."));
+    })(),
+    M && h(SubTabBar, { tabs:[{ id:"eval", label:"Đánh giá từng CTKM" }, { id:"all", label:"Tất cả CTKM trong khoảng" }, { id:"miss", label:"Đơn bỏ lỡ KM" }], active:tab, onChange:setTab }),
     M && !hasMissData && h("div", { style:{ fontSize:12.5, color:"#B45309", margin:"8px 0", padding:"8px 10px", background:"#FFFBEB", borderRadius:8 } }, "Chưa có dữ liệu đơn bỏ lỡ cho khoảng ngày này — bấm \"Tính lại\" ở tab Theo đợt chiến dịch (hoặc chờ lần tính tự động sáng mai)."),
     // ===== Tất cả CTKM =====
     M && tab==="all" && h("div", { className:"card", style:{ padding:0, overflow:"auto", maxHeight:640 } },
@@ -14647,44 +14743,63 @@ function PromoRangeView(){
               h("td", { style:{ ...td, color: mkind==="near" ? "#B45309" : "#B91C1C", fontWeight:700 } }, what),
               h("td", { style:{ ...td, fontSize:11.5, color:"var(--inkSoft)" } }, (opts||[]).slice(0,3).map(o => String(o).replace(/^\[[^\]]*\]\s*/,"").slice(0,70)).join(" · "))); })))),
       fRows.length>lim && h("button", { className:"btn btnGhost", style:{ fontSize:12, marginTop:6 }, onClick:()=>setLim(lim+200) }, `Xem thêm (${fRows.length-lim} đơn)`)),
-    // ===== Đánh giá & gợi ý =====
-    M && tab==="eval" && h("div", null,
-      h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", margin:"8px 0", lineHeight:1.5 } }, "Điểm 0–100 mỗi CTKM: ", h("b", null, "hiệu quả chi phí 35"), " (chi phí/doanh thu đơn KM, ≤ 2% đạt tối đa) · ", h("b", null, "độ phủ 25"), " (đơn dùng/ngày/nhà thuốc) · ", h("b", null, "thực thi 20"), " (tỉ lệ đơn đủ điều kiện được áp) · ", h("b", null, "tác động hoá đơn 20"), " (khách có mua lên ngưỡng hơn kỳ trước không). Xếp loại A ≥ 75 · B ≥ 55 · C ≥ 35 · D."),
-      h("div", { className:"card", style:{ padding:12, marginBottom:12, background:"#F5F3FF" } },
-        h("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, flexWrap:"wrap" } },
-          h("div", { style:{ fontWeight:800 } }, "Gợi ý CTKM đợt tiếp theo"),
-          h("button", { className:"btn btnPrimary", disabled:sugBusy, onClick:askAI }, sugBusy ? "AI đang phân tích…" : "Phân tích khoảng ngày này")),
-        sug ? h("div", { style:{ marginTop:8 } }, h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, `Phân tích ${sug.from||""} → ${sug.to||""} · ${sug.at ? new Date(sug.at).toLocaleString("vi-VN") : ""}`),
-          h("div", { style:{ whiteSpace:"pre-wrap", fontSize:13, lineHeight:1.55, marginTop:6 } }, sug.text))
-          : h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", marginTop:6 } }, "AI đọc bảng điểm bên dưới và đề xuất: giữ/nhân rộng, điều chỉnh ngưỡng/quà/combo, nên dừng, việc cần làm với nhân viên. Mỗi lần bấm tốn vài nghìn đồng.")),
-      M.units.filter(u => u.n>0 || u.skip || u.near || u.short).sort((a,b) => b.score - a.score).map(u => h("div", { key:u.key, className:"card", style:{ padding:"10px 12px", marginBottom:8, borderLeft:`4px solid ${gColor(u.grade)}` } },
-        h("div", { style:{ display:"flex", gap:10, alignItems:"flex-start" } },
-          h("div", { style:{ textAlign:"center", minWidth:54 } }, h("div", { style:{ fontSize:22, fontWeight:900, color:gColor(u.grade) } }, u.score), h("div", { style:{ fontSize:11, fontWeight:800, color:gColor(u.grade) } }, u.grade)),
-          h("div", { style:{ flex:1, minWidth:0 } },
-            h("div", { style:{ fontWeight:800, fontSize:13.5 } }, u.name.replace(/^\[[^\]]*\]\s*/,""), h("span", { style:{ fontWeight:600, fontSize:11.5, color:gColor(u.grade), marginLeft:6 } }, gText[u.grade])),
-            h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:2 } },
-              `${u.n} đơn · chi phí ${fm(u.c)} · CP/DT ${u.cpr==null ? "—" : ps(Math.round(u.cpr*10)/10)} · ${u.reach.toFixed(2).replace(".",",")} đơn/ngày/NT`
-              + (u.uptake!=null ? ` · áp ${Math.round(u.uptake)}% đơn đủ ĐK` : "") + (u.lift!=null ? ` · tác động ×${u.lift.toFixed(2).replace(".",",")}` : "")
-              + (u.near||u.skip||u.short ? ` · bỏ lỡ: sát ngưỡng ${u.near}, không áp ${u.skip}${u.short ? ", thiếu combo " + u.short : ""}` : "")),
-            u.tips.length>0 && h("ul", { style:{ margin:"5px 0 0 16px", padding:0, fontSize:12.5 } }, u.tips.map((t,i) => h("li", { key:i }, t))),
-            // 7/10/2026: CTKM → quyết định (tiếp tục / điều chỉnh / thử nhỏ / dừng) → app tự đo kết quả sau 7–14 ngày
-            h("button", { type:"button", className:"btn btnGhost", style:{ fontSize:12, padding:"3px 10px", marginTop:6 }, onClick:()=>setDecide({
-              type:{ A:"promo_continue", B:"promo_adjust", C:"pilot", D:"promo_stop" }[u.grade] || "promo_adjust",
-              shops: shopF==="all" ? [...DEFAULT_SHOPS] : [shopF], campaignName:u.name.replace(/^\[[^\]]*\]\s*/,""),
-              title:`${gText[u.grade]}: ${u.name.replace(/^\[[^\]]*\]\s*/,"")}`, hypothesis:(u.tips||[])[0] || "",
-              metric:/voucher|qua|combo/.test(String(u.kind||"")) ? "tbb" : "rev", assignTask:u.grade!=="A", source:{ kind:"promo", key:u.key } }) }, "Ra quyết định & theo dõi")))))),
+    // ===== Đánh giá từng CTKM — 7/10/2026: nhãn vấn đề thay cho hạng A–D, xếp theo số tiền bị ảnh hưởng =====
+    M && tab==="eval" && (() => {
+      const ISS_COLOR = { tonkem:"#B91C1C", khongkeo:"#B91C1C", chuaap:"#B45309", thieucombo:"#B45309", satnguong:"#B45309", itkhach:"#6B7A70" };
+      const list = M.units.filter(u => u.n>0 || u.skip || u.near || u.short);
+      const bad = list.filter(u => u.status==="van_de").sort((a,b) => b.priority - a.priority);
+      const good = list.filter(u => u.status==="tot").sort((a,b) => b.c - a.c);
+      const thin = list.filter(u => u.status==="thieu").sort((a,b) => b.c - a.c);
+      const chip = (text, color, k) => h("span", { key:k, style:{ display:"inline-block", fontSize:11.5, fontWeight:700, color, border:"1px solid " + color, borderRadius:999, padding:"1px 8px", marginRight:4, marginTop:3 } }, text);
+      const nm = u => u.name.replace(/^\[[^\]]*\]\s*/, "");
+      const card = u => { const main = u.iss[0]; const color = u.status==="tot" ? "#15803D" : u.status==="thieu" ? "#94A3B8" : (ISS_COLOR[main.k] || "#B45309");
+        const preset = u.status==="van_de" ? { type:main.type, metric:main.metric, title:`${main.label}: ${nm(u)}`, hypothesis:main.act, assignTask: ["chuaap","satnguong","thieucombo"].includes(main.k) }
+          : u.status==="tot" ? { type:"promo_continue", metric:/voucher|qua|combo/.test(String(u.kind||"")) ? "tbb" : "rev", title:`Tiếp tục / nhân rộng: ${nm(u)}`, hypothesis:"Chi phí hợp lý, khách dùng đều, nhân viên áp đầy đủ", assignTask:false }
+          : { type:"action", metric:"rev", title:`Theo dõi thêm: ${nm(u)}`, hypothesis:"Chưa đủ dữ liệu để kết luận", assignTask:false };
+        return h("div", { key:u.key, className:"card", style:{ padding:"10px 12px", marginBottom:8, borderLeft:`4px solid ${color}` } },
+          h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap" } },
+            h("div", { style:{ fontWeight:800, fontSize:13.5, flex:"1 1 300px" } }, nm(u)),
+            u.status==="van_de" && h("div", { style:{ fontSize:12, fontWeight:700, color } }, `Ảnh hưởng ~${fm(u.priority)}`)),
+          h("div", null, u.status==="van_de" ? u.iss.map((x, i) => chip(x.label, ISS_COLOR[x.k] || "#B45309", i)) : u.status==="tot" ? chip("Tốt — giữ / nhân rộng", "#15803D", "g") : chip("Chưa đủ dữ liệu", "#94A3B8", "t")),
+          h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:4 } },
+            `${u.n} đơn · chi phí ${fm(u.c)} · CP/DT ${u.cpr==null ? "—" : ps(Math.round(u.cpr*10)/10)} · ${u.reach.toFixed(2).replace(".",",")} đơn/ngày/NT`
+            + (u.uptake!=null ? ` · áp ${Math.round(u.uptake)}% đơn đủ ĐK` : "") + (u.lift!=null ? ` · tác động ×${u.lift.toFixed(2).replace(".",",")}` : "")
+            + (u.near||u.skip||u.short ? ` · bỏ lỡ: sát ngưỡng ${u.near}, không áp ${u.skip}${u.short ? ", thiếu combo " + u.short : ""}` : "") + ` · điểm ${u.score}/100`),
+          u.status==="van_de" && h("ul", { style:{ margin:"5px 0 0 16px", padding:0, fontSize:12.5 } }, u.iss.map((x, i) => h("li", { key:i }, h("b", null, x.label + ": "), x.act))),
+          u.status!=="thieu" && h("button", { type:"button", className:"btn btnGhost", style:{ fontSize:12, padding:"3px 10px", marginTop:6 }, onClick:()=>setDecide({
+            ...preset, shops: shopF==="all" ? [...DEFAULT_SHOPS] : [shopF], campaignName:nm(u), source:{ kind:"promo", key:u.key } }) }, "Ra quyết định & theo dõi")); };
+      return h("div", null,
+        h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", margin:"8px 0", lineHeight:1.55 } }, "Mỗi CTKM được gắn ", h("b", null, "nhãn vấn đề"), " (thay cho hạng A–D): ",
+          h("b", null, "Tốn kém"), " (chi phí/doanh thu đơn KM > 8% hoặc gần gấp đôi mặt bằng chuỗi " + ps(Math.round(M.benchCpr*10)/10) + ") · ",
+          h("b", null, "Không kéo khách mua lên ngưỡng"), " · ", h("b", null, "Nhân viên chưa áp"), " (< 75% đơn đủ điều kiện được áp — lỗi tại quầy, giữ chương trình) · ",
+          h("b", null, "Khách mua thiếu combo"), " · ", h("b", null, "Nhiều đơn sát ngưỡng"), " · ", h("b", null, "Ít khách dùng"), " (< 0,3 đơn/ngày/nhà thuốc). ",
+          "Xếp theo số tiền bị ảnh hưởng (ước tính). Chương trình < 10 đơn hoặc chạy < 5 ngày: chưa đủ dữ liệu, chưa kết luận."),
+        h("div", { className:"card", style:{ padding:12, marginBottom:12, background:"#F5F3FF" } },
+          h("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, flexWrap:"wrap" } },
+            h("div", { style:{ fontWeight:800 } }, "Gợi ý CTKM đợt tiếp theo"),
+            h("button", { className:"btn btnPrimary", disabled:sugBusy, onClick:askAI }, sugBusy ? "AI đang phân tích…" : "Phân tích khoảng ngày này")),
+          sug ? h("div", { style:{ marginTop:8 } }, h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, `Phân tích ${sug.from||""} → ${sug.to||""} · ${sug.at ? new Date(sug.at).toLocaleString("vi-VN") : ""}`),
+            h("div", { style:{ whiteSpace:"pre-wrap", fontSize:13, lineHeight:1.55, marginTop:6 } }, sug.text))
+            : h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", marginTop:6 } }, "AI đọc bảng nhãn bên dưới và đề xuất: giữ/nhân rộng, điều chỉnh ngưỡng/quà/combo, nên dừng, việc cần làm với nhân viên. Mỗi lần bấm tốn vài nghìn đồng.")),
+        h("div", { style:{ fontWeight:800, fontSize:14, margin:"6px 0" } }, `Có vấn đề (${bad.length}) — xếp theo số tiền bị ảnh hưởng`),
+        bad.length ? bad.map(card) : h("div", { className:"emptyState" }, "Không có chương trình nào có vấn đề."),
+        h("div", { style:{ fontWeight:800, fontSize:14, margin:"12px 0 6px" } }, `Tốt — giữ / nhân rộng (${good.length})`),
+        good.map(card),
+        thin.length > 0 && h("button", { type:"button", className:"btn btnGhost", style:{ fontSize:12, margin:"8px 0" }, onClick:()=>setShowThin(!showThin) }, showThin ? "Ẩn chương trình chưa đủ dữ liệu" : `Xem ${thin.length} chương trình chưa đủ dữ liệu (ít đơn / mới chạy)`),
+        showThin && thin.map(card));
+    })(),
     decide && h(DecisionModal, { preset:decide, onClose:()=>setDecide(null) }));
 }
 function PromoAnalyticsView({ isAdmin, myStaff }){
   // 1/10/2026 (Phương): bỏ "Báo cáo hiệu quả", "Hiệu quả thật" và "Nhập dữ liệu" (theo dõi CTKM thủ công theo tháng) —
   // thay hẳn bằng phân tích tự động từ hoá đơn POS theo từng đợt chiến dịch (PromoOrderView).
-  const [sub, setSub] = useState("camp");
+  const [sub, setSub] = useState("todo"); // 7/10/2026: mở sẵn "Việc cần làm"
   return React.createElement("div", { style:{ maxWidth:1100, margin:"0 auto", padding:16 } }, [
     React.createElement(PageTitle, { key:"title" }, "Khuyến Mại"),
     React.createElement("div", { key:"src", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8, padding:"6px 10px", background:"var(--paper)", borderRadius:8, border:"1px solid var(--line)" } },
       "Hiệu quả từng đợt chiến dịch, tính tự động từ hoá đơn bán trên POS (voucher, giảm giá, quà tặng, đổi điểm, combo) — tên chương trình lấy từ POS, không cần nhập tay."),
-    isAdmin && React.createElement(SubTabBar, { key:"bar", tabs:[{ id:"camp", label:"Theo dõi chiến dịch" }, { id:"cmp", label:"So sánh theo kỳ" }], active:sub, onChange:setSub }),
-    !isAdmin ? React.createElement(PromoMyView, { key:"my", myStaff }) : sub==="cmp" ? React.createElement(PromoPeriodCompare, { key:"cmp" }) : sub==="range" ? React.createElement(PromoRangeView, { key:"rg" }) : React.createElement(PromoOrderView, { key:"po", isAdmin }),
+    isAdmin && React.createElement(SubTabBar, { key:"bar", tabs:[{ id:"todo", label:"Việc cần làm" }, { id:"camp", label:"Theo dõi chiến dịch" }, { id:"cmp", label:"So sánh theo kỳ" }], active:sub, onChange:setSub }),
+    !isAdmin ? React.createElement(PromoMyView, { key:"my", myStaff }) : sub==="cmp" ? React.createElement(PromoPeriodCompare, { key:"cmp" }) : sub==="todo" ? React.createElement(PromoRangeView, { key:"todo", mode:"todo" }) : sub==="range" ? React.createElement(PromoRangeView, { key:"rg" }) : React.createElement(PromoOrderView, { key:"po", isAdmin }),
   ]);
 }
 // ===== Làm lại giao diện phần "Ước tính tự động theo tên hàng" giống mẫu app Dashboard
