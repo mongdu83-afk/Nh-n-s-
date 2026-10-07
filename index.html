@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261007-21";
+window.__APP_BUILD = "20261007-23";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -14484,7 +14484,9 @@ function PromoOrderList({ od, listF, shopF, q, setQ, lim, setLim, onClose, fm, s
 // nhưng không tư vấn) và HỆ THỐNG ĐÁNH GIÁ CTKM (chấm điểm + gợi ý đợt tiếp theo). Dữ liệu: promoOrderDaily, promoMissDaily, promoOrderAnalytics/_programs.
 const PR_KIND = { gift:"Quà tặng theo HĐ", voucher:"Voucher theo HĐ (hàng ngoài thuốc)", addon:"HĐ đủ mức mua SP giá 1k", combo:"Combo" };
 const PR_MISS = { near:"Sát ngưỡng — thiếu ít là được KM", skip:"Đủ điều kiện nhưng không áp", combo:"Mua thiếu combo" };
-function PromoRangeView({ mode } = {}){
+function PromoRangeView({ mode, lockShop } = {}){
+  // 7/10/2026: lockShop = mã nhà thuốc của nhân viên/CHT → chỉ xem số liệu nhà thuốc mình (không đổi được nhà thuốc, không giao việc / gọi AI)
+  const locked = !!lockShop;
   const h = React.createElement;
   const todoMode = mode === "todo"; // 7/10/2026: tab "Việc cần làm" — mặc định 7 ngày gần nhất, so với 7 ngày trước
   const iso = (d) => d.toISOString().slice(0,10);
@@ -14494,7 +14496,7 @@ function PromoRangeView({ mode } = {}){
   const [rng, setRng] = useState(todoMode ? [addD(today,-7) < DATA_FROM ? DATA_FROM : addD(today,-7), addD(today,-1)] : [addD(today,-29) < DATA_FROM ? DATA_FROM : addD(today,-29), today]);
   const [pid, setPid] = useState(todoMode ? "d7" : "d30");
   const [baseDaily, setBaseDaily] = useState(null); const [showThin, setShowThin] = useState(false);
-  const [shopF, setShopF] = useState("all");
+  const [shopF, setShopF] = useState(lockShop || "all");
   const [decide, setDecide] = useState(null); // 7/10/2026: ra quyết định từ CTKM
   const [daily, setDaily] = useState(null); const [miss, setMiss] = useState(null); const [base, setBase] = useState(null); const [rules, setRules] = useState(null);
   const [err, setErr] = useState("");
@@ -14627,7 +14629,8 @@ function PromoRangeView({ mode } = {}){
     setSugBusy(false);
   }
   const loading = !M && !err;
-  const fRows = M ? M.rows.filter(r => (mk==="all" || r[6]===mk) && (!nvF || r[2]===nvF) && (!q || String(r[0]).toLowerCase().includes(q.toLowerCase()))) : [];
+  const qN = q.trim().toLowerCase(), qD = q.replace(/\D/g, "");
+  const fRows = M ? M.rows.filter(r => (mk==="all" || r[6]===mk) && (!nvF || r[2]===nvF) && (!qN || String(r[0]).toLowerCase().includes(qN) || String(r[13]||"").toLowerCase().includes(qN) || (qD.length >= 3 && String(r[14]||"").includes(qD)))) : [];
   const hasMissData = miss && miss.length > 0;
   return h("div", null,
     // Bộ chọn khoảng ngày
@@ -14636,7 +14639,7 @@ function PromoRangeView({ mode } = {}){
       h("div", { style:{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center", fontSize:13 } },
         "Từ", h("input", { type:"date", value:rng[0], min:DATA_FROM, max:rng[1], onChange:e=>{ if(e.target.value){ setPid("custom"); setRng([e.target.value < DATA_FROM ? DATA_FROM : e.target.value, rng[1]]); } } }),
         "đến", h("input", { type:"date", value:rng[1], min:rng[0], max:today, onChange:e=>{ if(e.target.value){ setPid("custom"); setRng([rng[0], e.target.value]); } } }),
-        h("select", { value:shopF, onChange:e=>setShopF(e.target.value) }, h("option", { value:"all" }, "Toàn chuỗi"), (M ? M.shops : []).map(s => h("option", { key:s, value:s }, shopLabel(s)))),
+        locked ? h("b", null, shopLabel(lockShop)) : h("select", { value:shopF, onChange:e=>setShopF(e.target.value) }, h("option", { value:"all" }, "Toàn chuỗi"), (M ? M.shops : []).map(s => h("option", { key:s, value:s }, shopLabel(s)))),
         h("span", { style:{ color:"var(--inkSoft)", fontSize:12 } }, `${days} ngày · dữ liệu từ 01/09/2026`))),
     err && h("div", { style:{ color:"#B91C1C" } }, err),
     loading && h("div", { style:{ color:"var(--inkSoft)", fontSize:13 } }, "Đang tải…"),
@@ -14675,7 +14678,7 @@ function PromoRangeView({ mode } = {}){
         if(now > prev * 1.25 && now - prev >= 1) D.push({ k:"type_" + tp, text:`${TYPE_VI[tp] || tp}: chi phí/doanh thu ${r1(now)} (kỳ trước ${r1(prev)}), chi phí ${fm(x.c)}`, impact:x.c - x.r * prev / 100,
           preset:{ type:"promo_adjust", shops: shopF==="all" ? [...DEFAULT_SHOPS] : [shopF], metric:"rev", title:`Điều chỉnh nhóm KM ${TYPE_VI[tp] || tp} — chi phí tăng`, hypothesis:`Chi phí/doanh thu tăng từ ${r1(prev)} lên ${r1(now)}`, assignTask:false, source:{ kind:"promo_type", type:tp } } }); });
       D.sort((a, b) => b.impact - a.impact);
-      const btn = (preset) => h("button", { type:"button", className:"btn btnPrimary", style:{ fontSize:11.5, padding:"3px 10px", whiteSpace:"nowrap" }, onClick:()=>setDecide(preset) }, "Giao việc & theo dõi");
+      const btn = (preset) => locked ? null : h("button", { type:"button", className:"btn btnPrimary", style:{ fontSize:11.5, padding:"3px 10px", whiteSpace:"nowrap" }, onClick:()=>setDecide(preset) }, "Giao việc & theo dõi");
       const row = (k, main, sub, preset) => h("div", { key:k, style:{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"center", padding:"6px 0", borderTop:"1px solid #F0EEE2", flexWrap:"wrap" } },
         h("div", { style:{ flex:"1 1 320px", fontSize:13 } }, h("div", { style:{ fontWeight:700 } }, main), sub && h("div", { style:{ fontSize:12, color:"var(--inkSoft)" } }, sub)), preset && btn(preset));
       const sec = (k, title, hint, items, empty) => h("div", { key:k, style:{ marginTop:10 } },
@@ -14728,16 +14731,20 @@ function PromoRangeView({ mode } = {}){
             h("td", { style:{ ...td, fontWeight:700 } }, x.nv || "(không rõ)"), h("td", { style:td }, shopLabel(x.s)), h("td", { style:{ ...td, textAlign:"right", fontWeight:700, color:"#B91C1C" } }, x.orders),
             h("td", { style:{ ...td, textAlign:"right" } }, x.tot ? `${x.tot} (${ps(Math.round(x.rate*10)/10)})` : "—"), h("td", { style:{ ...td, textAlign:"right" } }, x.near), h("td", { style:{ ...td, textAlign:"right" } }, x.skip), h("td", { style:{ ...td, textAlign:"right" } }, x.combo)))))),
       h("div", { style:{ display:"flex", gap:8, alignItems:"center", marginBottom:6, flexWrap:"wrap" } },
-        h("input", { placeholder:"Tìm số hoá đơn…", value:q, onChange:e=>setQ(e.target.value), style:{ maxWidth:220 } }),
+        !locked && h("select", { value:shopF, onChange:e=>{ setShopF(e.target.value); setNvF(""); setLim(100); }, style:{ fontSize:12.5 } }, h("option", { value:"all" }, "Tất cả nhà thuốc"), [...DEFAULT_SHOPS].sort().map(s => h("option", { key:s, value:s }, shopLabel(s)))),
+        h("input", { placeholder:"Tìm số HĐ, tên hoặc SĐT khách…", value:q, onChange:e=>{ setQ(e.target.value); setLim(100); }, style:{ maxWidth:260 } }),
         nvF && h("button", { className:"btn", style:{ fontSize:12 }, onClick:()=>setNvF("") }, `✕ ${nvF}`),
         h("span", { style:{ fontSize:12, color:"var(--inkSoft)" } }, `${fRows.length} đơn`)),
       h("div", { className:"card", style:{ padding:0, overflow:"auto", maxHeight:640 } },
         h("table", { style:{ width:"100%", borderCollapse:"collapse" } },
-          h("thead", null, h("tr", null, ["Thời gian","Hoá đơn","NT · Nhân viên","Giá trị HĐ","Bỏ lỡ","CTKM có thể hưởng"].map(x => h("th", { key:x, style:th }, x)))),
-          h("tbody", null, fRows.slice(0, lim).map((r, i) => { const [inv, s, nv, t, g, nd, mkind, rk, T, gap, opts, appT, cm] = r;
+          h("thead", null, h("tr", null, ["Thời gian","Hoá đơn","Khách hàng","NT · Nhân viên","Giá trị HĐ","Bỏ lỡ","CTKM có thể hưởng"].map(x => h("th", { key:x, style:th }, x)))),
+          h("tbody", null, fRows.slice(0, lim).map((r, i) => { const [inv, s, nv, t, g, nd, mkind, rk, T, gap, opts, appT, cm, kn, kp] = r;
             const what = mkind==="near" ? `Thiếu ${fm(gap)} để đạt ${PR_KIND[rk]} ≥ ${fm(T)}` : mkind==="skip" ? (rk==="combo" ? "Đã mua đủ combo nhưng không áp giảm giá" : `Đủ ${PR_KIND[rk]} ≥ ${fm(T)} nhưng ${appT ? "chỉ áp mức " + fm(appT) : "không áp"}`) : `Thiếu ${(cm||[]).join(", ")}`;
             return h("tr", { key:i },
               h("td", { style:{ ...td, whiteSpace:"nowrap" } }, String(t).replace("T"," ").slice(5,16)), h("td", { style:{ ...td, whiteSpace:"nowrap" } }, inv),
+              h("td", { style:{ ...td, minWidth:120 } }, kn || kp ? [h("div", { key:"n", style:{ fontWeight:700 } }, kn || "(chưa có tên)"),
+                kp && h("div", { key:"p", title:"Bấm để sao chép SĐT", style:{ fontSize:11.5, color:"var(--pine)", cursor:"pointer" }, onClick:()=>{ try{ navigator.clipboard.writeText(kp); }catch(e){} } }, kp)]
+                : r.length > 13 ? h("span", { style:{ color:"var(--inkSoft)", fontSize:11.5 } }, "Khách lẻ") : h("span", { style:{ color:"var(--inkSoft)", fontSize:11.5 } }, "—")),
               h("td", { style:td }, shopLabel(s), " · ", nv || "—"),
               h("td", { style:{ ...td, textAlign:"right", whiteSpace:"nowrap" } }, fm(g), rk==="voucher" && h("div", { style:{ fontSize:11, color:"var(--inkSoft)" } }, "ngoài thuốc " + fm(nd))),
               h("td", { style:{ ...td, color: mkind==="near" ? "#B45309" : "#B91C1C", fontWeight:700 } }, what),
@@ -14766,7 +14773,7 @@ function PromoRangeView({ mode } = {}){
             + (u.uptake!=null ? ` · áp ${Math.round(u.uptake)}% đơn đủ ĐK` : "") + (u.lift!=null ? ` · tác động ×${u.lift.toFixed(2).replace(".",",")}` : "")
             + (u.near||u.skip||u.short ? ` · bỏ lỡ: sát ngưỡng ${u.near}, không áp ${u.skip}${u.short ? ", thiếu combo " + u.short : ""}` : "") + ` · điểm ${u.score}/100`),
           u.status==="van_de" && h("ul", { style:{ margin:"5px 0 0 16px", padding:0, fontSize:12.5 } }, u.iss.map((x, i) => h("li", { key:i }, h("b", null, x.label + ": "), x.act))),
-          u.status!=="thieu" && h("button", { type:"button", className:"btn btnGhost", style:{ fontSize:12, padding:"3px 10px", marginTop:6 }, onClick:()=>setDecide({
+          !locked && u.status!=="thieu" && h("button", { type:"button", className:"btn btnGhost", style:{ fontSize:12, padding:"3px 10px", marginTop:6 }, onClick:()=>setDecide({
             ...preset, shops: shopF==="all" ? [...DEFAULT_SHOPS] : [shopF], campaignName:nm(u), source:{ kind:"promo", key:u.key } }) }, "Ra quyết định & theo dõi")); };
       return h("div", null,
         h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", margin:"8px 0", lineHeight:1.55 } }, "Mỗi CTKM được gắn ", h("b", null, "nhãn vấn đề"), " (thay cho hạng A–D): ",
@@ -14774,7 +14781,7 @@ function PromoRangeView({ mode } = {}){
           h("b", null, "Không kéo khách mua lên ngưỡng"), " · ", h("b", null, "Nhân viên chưa áp"), " (< 75% đơn đủ điều kiện được áp — lỗi tại quầy, giữ chương trình) · ",
           h("b", null, "Khách mua thiếu combo"), " · ", h("b", null, "Nhiều đơn sát ngưỡng"), " · ", h("b", null, "Ít khách dùng"), " (< 0,3 đơn/ngày/nhà thuốc). ",
           "Xếp theo số tiền bị ảnh hưởng (ước tính). Chương trình < 10 đơn hoặc chạy < 5 ngày: chưa đủ dữ liệu, chưa kết luận."),
-        h("div", { className:"card", style:{ padding:12, marginBottom:12, background:"#F5F3FF" } },
+        !locked && h("div", { className:"card", style:{ padding:12, marginBottom:12, background:"#F5F3FF" } },
           h("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, flexWrap:"wrap" } },
             h("div", { style:{ fontWeight:800 } }, "Gợi ý CTKM đợt tiếp theo"),
             h("button", { className:"btn btnPrimary", disabled:sugBusy, onClick:askAI }, sugBusy ? "AI đang phân tích…" : "Phân tích khoảng ngày này")),
@@ -14799,7 +14806,9 @@ function PromoAnalyticsView({ isAdmin, myStaff }){
     React.createElement("div", { key:"src", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8, padding:"6px 10px", background:"var(--paper)", borderRadius:8, border:"1px solid var(--line)" } },
       "Hiệu quả từng đợt chiến dịch, tính tự động từ hoá đơn bán trên POS (voucher, giảm giá, quà tặng, đổi điểm, combo) — tên chương trình lấy từ POS, không cần nhập tay."),
     isAdmin && React.createElement(SubTabBar, { key:"bar", tabs:[{ id:"todo", label:"Việc cần làm" }, { id:"camp", label:"Theo dõi chiến dịch" }, { id:"cmp", label:"So sánh theo kỳ" }], active:sub, onChange:setSub }),
-    !isAdmin ? React.createElement(PromoMyView, { key:"my", myStaff }) : sub==="cmp" ? React.createElement(PromoPeriodCompare, { key:"cmp" }) : sub==="todo" ? React.createElement(PromoRangeView, { key:"todo", mode:"todo" }) : sub==="range" ? React.createElement(PromoRangeView, { key:"rg" }) : React.createElement(PromoOrderView, { key:"po", isAdmin }),
+    // 7/10/2026: nhân viên / CHT xem "Việc cần làm" + "Đơn bỏ lỡ KM" nhưng CHỈ nhà thuốc của mình
+    !isAdmin && myStaff && myStaff.shop && React.createElement(SubTabBar, { key:"sbar", tabs:[{ id:"todo", label:"Việc cần làm & đơn bỏ lỡ" }, { id:"my", label:"Khuyến mại của tôi" }], active: sub==="my" ? "my" : "todo", onChange:setSub }),
+    !isAdmin ? (sub==="my" || !(myStaff && myStaff.shop) ? React.createElement(PromoMyView, { key:"my", myStaff }) : React.createElement(PromoRangeView, { key:"todo_"+myStaff.shop, mode:"todo", lockShop:myStaff.shop })) : sub==="cmp" ? React.createElement(PromoPeriodCompare, { key:"cmp" }) : sub==="todo" ? React.createElement(PromoRangeView, { key:"todo", mode:"todo" }) : sub==="range" ? React.createElement(PromoRangeView, { key:"rg" }) : React.createElement(PromoOrderView, { key:"po", isAdmin }),
   ]);
 }
 // ===== Làm lại giao diện phần "Ước tính tự động theo tên hàng" giống mẫu app Dashboard
