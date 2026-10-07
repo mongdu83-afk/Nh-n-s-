@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261007-27";
+window.__APP_BUILD = "20261007-29";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -4468,7 +4468,12 @@ function MyDayCard({ isAdmin, myStaff, onNavigate }){
   const [tasks, setTasks] = useState(null); const [care, setCare] = useState(null); const [pd, setPd] = useState(null); const [pend, setPend] = useState(null); const [goal, setGoal] = useState(null);
   const me = myStaff && myStaff.id, myShop = myStaff && myStaff.shop;
   useEffect(() => {
-    const u1 = db.collection("tasks").where("trangThai", "==", "Đang giao").onSnapshot(s => setTasks(s.docs.map(d => ({ id:d.id, ...d.data() }))), () => setTasks([]));
+    // 7/10/2026 (kiểm định BUG-03): nhân viên phải lọc theo nhà thuốc — truy vấn không lọc bị luật Firestore từ chối nên trước đây hộp việc luôn trống
+    const tq = isAdmin ? db.collection("tasks").where("trangThai", "==", "Đang giao") : db.collection("tasks").where("shop", "==", myShop || "__none__").where("trangThai", "==", "Đang giao");
+    const T = { a:null, b:[] }; const merge = () => { const m = {}; [...(T.a||[]), ...T.b].forEach(x => { m[x.id] = x; }); setTasks(T.a == null ? null : Object.values(m)); };
+    const u1a = tq.onSnapshot(s => { T.a = s.docs.map(d => ({ id:d.id, ...d.data() })); merge(); }, (e) => { logSystemError("MyDayCard.tasks", e); T.a = []; merge(); });
+    const u1b = (!isAdmin && me) ? db.collection("tasks").where("staffId", "==", me).where("trangThai", "==", "Đang giao").onSnapshot(s => { T.b = s.docs.map(d => ({ id:d.id, ...d.data() })); merge(); }, () => {}) : null;
+    const u1 = () => { u1a(); u1b && u1b(); };
     const u2 = db.collection("careDaily").where("date", "==", today).onSnapshot(s => setCare(s.docs.map(d => d.data())), () => setCare([]));
     const u3 = db.collection("opsConfig").doc("posDraftConfig").onSnapshot(d => setPd(d.exists ? d.data() : {}), () => setPd({}));
     const u4 = isAdmin ? db.collection("opsProposals").where("status", "==", "pending").onSnapshot(s => setPend(s.size), () => {}) : () => {};
@@ -6724,7 +6729,7 @@ function CustomerUpgradeDetail({ upgrades, staff, thang, isAdmin, myStaff, forSt
       let st = u.salesName ? staffByNorm[normalizeStaffName(u.salesName)] : null;
       if(!st && forStaff && normalizeStaffName(u.salesName)===normalizeStaffName(forStaff.name)) st = forStaff;
       if(!st && myStaff && normalizeStaffName(u.salesName)===normalizeStaffName(myStaff.name)) st = myStaff;
-      return { ...u, staffObj:st||null, staffLabel: st ? st.name : (u.salesName ? `${u.salesName} (chưa khớp nhân viên)` : "(không rõ người bán)") };
+      return { ...u, staffObj:st||null, staffLabel: st ? st.name : (u.salesName ? `${u.salesName} (chưa khớp nhân viên)` : u.noRecentOrder ? `Không do đơn mới${u.lastPurchaseAt ? " — mua gần nhất " + String(u.lastPurchaseAt).slice(8,10) + "/" + String(u.lastPurchaseAt).slice(5,7) + (u.lastPurchaseSalesName ? " (" + u.lastPurchaseSalesName + ")" : "") : ""}` : "(không rõ người bán)") };
     }).filter(u => {
       if(forStaff){
         if(forStaff.role==="Cửa hàng trưởng") return u.shopCode===forStaff.shop;
@@ -6779,7 +6784,7 @@ function CustomerUpgradeDetail({ upgrades, staff, thang, isAdmin, myStaff, forSt
             React.createElement("td",{key:"t", style:{ whiteSpace:"nowrap" }}, [ tierPill(r.oldTierName,"o"), React.createElement("span",{key:"x"}," → "), tierPill(r.newTierName,"n") ]),
             React.createElement("td",{key:"a"}, fmtVND(r.amountRank||0)),
             React.createElement("td",{key:"o"}, fmtNum(r.invoiceRank||0)),
-            React.createElement("td",{key:"st", style:{ color: r.staffObj ? "inherit" : "var(--clay)", fontWeight: r.staffObj ? 400 : 600 }}, r.staffLabel),
+            React.createElement("td",{key:"st", title: r.noRecentOrder && !r.salesName ? "POS tự xét lại hạng, khách không có đơn mua trong 45 ngày trước đó — không tính KPI cho nhân viên nào" : undefined, style:{ color: r.staffObj ? "inherit" : r.noRecentOrder && !r.salesName ? "var(--inkSoft)" : "var(--clay)", fontWeight: r.staffObj ? 400 : 600, fontStyle: r.noRecentOrder && !r.salesName ? "italic" : "normal" }}, r.staffLabel),
             React.createElement("td",{key:"h", style:{ fontSize:11.5, color:"var(--inkSoft)" }}, r.orderHeaderID || "—"),
           ]))),
         ])),
@@ -15435,6 +15440,11 @@ function OpsPulseView({ isAdmin, myStaff }){
         days.length > 1 && h("div", { style:{ display:"flex", gap:3, alignItems:"flex-end", height:36, marginTop:6 } }, days.map(([dd, v]) => h("div", { key:dd, title:`${dd}: ${v.score}`, style:{ width:14, height: Math.max(3, (v.score||0) * 0.36), background: col(v.score, 80, 60), borderRadius:3 } })))),
       h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap" } }, btn("pulse", "opsPulseNow", "", "↻ Cập nhật"), btn("dh", "dataHealthNow", "", "Kiểm tra & vá dữ liệu"), btn("care", "careDailyNow", "", "Dựng danh sách gọi khách"), btn("promo", "promoIntradayNow", "", "Nhắc KM trong ngày"), btn("wk", "weeklyTargetsNow", "", "Chốt mục tiêu tuần"))),
     msg && h("div", { className:"card", style:{ fontSize:13, marginBottom:10 } }, msg),
+    // 7/10/2026 (kiểm định BUG-06/TH8): số liệu quá 3 giờ chưa cập nhật → báo rõ là SỐ CŨ; hoá đơn lệch POS → báo rõ
+    P.computedAt && (Date.now() - new Date(P.computedAt).getTime()) > 3 * 3600000 && h("div", { className:"card", style:{ marginBottom:10, background:"#FEF2F2", borderLeft:"4px solid #B91C1C", fontSize:13 } },
+      h("b", null, "Số liệu cũ: "), `cập nhật lần cuối ${new Date(P.computedAt).toLocaleString("vi-VN")} (${Math.round((Date.now() - new Date(P.computedAt).getTime()) / 3600000)} giờ trước). Việc cập nhật tự động có thể đang lỗi — bấm "↻ Cập nhật" hoặc xem Hệ thống › tình trạng job.`),
+    d.partial && d.partial.length > 0 && h("div", { className:"card", style:{ marginBottom:10, background:"#FFFBEB", borderLeft:"4px solid #B45309", fontSize:13 } },
+      h("b", null, "Hoá đơn đồng bộ lệch POS: "), d.partial.map(x => `${String(x.shop).replace(/^SHOP0*/, "NT")} thiếu ${x.missing} HĐ (${x.pct}%)`).join(" · "), ". Báo cáo khuyến mại, khách hàng, nâng hạng có thể thiếu các đơn này."),
     // 7/10/2026 (chị Hà): BẢNG THEO DÕI TUẦN — 5 chỉ số đưa app thành vận hành thật (mỗi tuần lấy số của ngày cuối tuần đó)
     (() => { const all = H && H.days ? Object.entries(H.days).sort() : []; if (!all.length) return null;
       const monOf = (ds) => { const t = new Date(ds + "T00:00:00Z"); const k = (t.getUTCDay() + 6) % 7; t.setUTCDate(t.getUTCDate() - k); return t.toISOString().slice(0,10); };
