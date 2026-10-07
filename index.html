@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261007-23";
+window.__APP_BUILD = "20261007-24";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -4342,16 +4342,27 @@ function zaloItemsPhrase(items){
   const when = !dates.length ? "" : dates.length === 1 ? ` (mua hôm ${dd(dates[0])})` : ` (mua ${dd(dates[0])}–${dd(dates[dates.length - 1])})`;
   return { what, when };
 }
+// 7/10/2026 (chị Hà): tin nhắc voucher nhấn mạnh VOUCHER GIÁ TRỊ CAO NHẤT + TỔNG SỐ LƯỢNG + TỔNG GIÁ TRỊ
+function zaloMoney(v){ v = Number(v)||0; if(v >= 1e6) return (Math.round(v/1e5)/10).toLocaleString("vi-VN") + " triệu"; if(v >= 1000) return Math.round(v/1000) + "k"; return v + "đ"; }
+function zaloVoucherSum(vouchers){
+  const vs = (vouchers||[]).filter(v => v && (v.value || v.name)).slice().sort((a, b) => (Number(b.value)||0) - (Number(a.value)||0));
+  const total = vs.reduce((s, v) => s + (Number(v.value)||0), 0);
+  return { vs, n: vs.length, total, top: vs[0] || null };
+}
 function zaloPerks(o, p){
   const P = p.charAt(0).toUpperCase()+p.slice(1);
-  const vs = (o.vouchers||[]).filter(v => v && (v.value || v.name));
-  if(vs.length){ // có voucher thật trên POS → nói cụ thể (bỏ câu hạng thẻ để tin ngắn)
-    const v = vs[0]; const val = v.value ? (v.value >= 1000 ? Math.round(v.value/1000) + "k" : v.value + "đ") : "";
-    const more = vs.length > 1 ? ` và ${vs.length - 1} voucher khác` : "";
-    return `${P} đang có voucher ${val ? val + " " : ""}chưa dùng${more}${v.min ? ` (đơn từ ${Math.round(v.min/1000)}k)` : ""}${v.exp ? `, hạn ${v.exp.slice(8,10)}/${v.exp.slice(5,7)}` : ""}, ghé là trừ luôn ạ.`;
+  const { vs, n, total, top } = zaloVoucherSum(o.vouchers);
+  if(n){ // có voucher thật trên POS → nói cụ thể (bỏ câu hạng thẻ để tin ngắn)
+    const dd = (x) => `${x.slice(8,10)}/${x.slice(5,7)}`;
+    const soon = top.exp && (new Date(top.exp.slice(0,10)) - new Date(todayISO())) / 86400000 <= 7;
+    const cond = [top.min ? `đơn từ ${zaloMoney(top.min)}` : "", top.exp ? `${soon ? "sắp hết hạn, chỉ tới" : "hạn"} ${dd(top.exp)}` : ""].filter(Boolean).join(", ");
+    const topTxt = `voucher ${top.value ? zaloMoney(top.value) : ""}`.trim() + (cond ? ` (${cond})` : "");
+    if(n === 1) return `${P} đang có 1 ${topTxt} chưa dùng, ghé là trừ thẳng vào hoá đơn luôn ạ.`;
+    return `${P} đang có ${n} voucher chưa dùng${total ? `, tổng trị giá ${zaloMoney(total)}` : ""} — cao nhất là ${topTxt}. Ghé là ${me0(p)} áp luôn cho ${p} ạ.`;
   }
   const tier = ZALO_TIER_VI[o.level]; return tier ? `Thẻ ${tier} của ${p} đang có ưu đãi khi mua lại ạ.` : "";
 }
+function me0(p){ try { return zaloSelf(p); } catch(e){ return "em"; } }
 // Tra voucher còn dùng được của khách trên POS (PolicyVoucher/GetVoucherOfCustomer qua Cloud Function) — có cache 30 phút
 const _vchCacheUi = {};
 async function fetchCustVouchers(phone, shop){
@@ -4441,7 +4452,7 @@ function ZaloOptionsModal({ o, phone, onClose }){
       h("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 } },
         h("div", { style:{ fontWeight:800, fontSize:16 } }, `Tin Zalo — ${o.name || phone}`),
         h("button", { className:"btn btnGhost", onClick:onClose }, "Đóng")),
-      h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:8 } }, vs == null ? "Đang tra voucher của khách trên POS…" : vs.length ? `Khách đang có ${vs.length} voucher chưa dùng — đã đưa vào tin.` : "Khách chưa có voucher nào còn dùng được."),
+      h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:8 } }, vs == null ? "Đang tra voucher của khách trên POS…" : vs.length ? (() => { const z = zaloVoucherSum(vs); return `Khách đang có ${z.n} voucher chưa dùng${z.total ? ` · tổng ${zaloMoney(z.total)}` : ""}${z.top && z.top.value ? ` · cao nhất ${zaloMoney(z.top.value)}` : ""} — đã đưa vào tin.`; })() : "Khách chưa có voucher nào còn dùng được."),
       h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:8 } }, opts.map((x, i) => h("button", { key:x.k, onClick:()=>{ setEdited(false); setSel(i); },
         style:{ padding:"5px 11px", borderRadius:16, fontSize:12.5, fontWeight:700, cursor:"pointer", border: sel===i ? "1px solid var(--pine, #178a43)" : "1px solid var(--line)", background: sel===i ? "var(--pine, #178a43)" : "#fff", color: sel===i ? "#fff" : "inherit" } }, x.label))),
       h("textarea", { value:txt, onChange:e=>{ setTxt(e.target.value); setEdited(true); }, rows:7, style:{ width:"100%", fontSize:14, lineHeight:1.55, padding:10, borderRadius:10, border:"1px solid var(--line)", fontFamily:"inherit" } }),
