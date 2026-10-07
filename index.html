@@ -23508,6 +23508,7 @@ function PeerCompareCard({ me, thang, staffList, assign }){
 }
 function Employee360View({ isAdmin, myStaff, navParam, onNavigate }){
   const [staffList, setStaffList] = useState([]);
+  const [showLeft360, setShowLeft360] = useState(false); // 7/10/2026: mặc định ẩn người đã nghỉ
   const [paceList, setPaceList] = useState([]);
   const [pickedId, setPickedId] = useState("");
   const [shopFilter, setShopFilter] = useState("Tất cả");
@@ -23619,9 +23620,10 @@ function Employee360View({ isAdmin, myStaff, navParam, onNavigate }){
   // CÒN trong danh sách, chưa nghỉ việc trước kỳ. Trước đây doc dailyKpiPace cũ (tháng trước / nhân
   // viên đã xoá hoặc hôm nay không có ca nên không được ghi đè) vẫn được đếm vào "cần chú ý".
   const monthStartIso = `${thang}-01`;
-  const activeStaffIds = new Set(staffList.filter(s => !s.ngayNghiViec || s.ngayNghiViec >= monthStartIso).map(s => s.id));
-  // 7/10/2026 (Phương: "nghỉ việc vẫn thấy trong báo cáo đánh giá"): danh sách / ô chọn / so sánh chỉ gồm người còn làm
-  // + người nghỉ TRONG tháng đang xem (đánh giá tới ngày nghỉ, có ghi chú). Người nghỉ từ trước tháng không hiện nữa.
+  // 7/10/2026 (Phương: "nghỉ việc vẫn thấy trong báo cáo đánh giá"): MẶC ĐỊNH chỉ người đang làm. Tick "Hiện người nghỉ
+  // trong tháng" để xem lại hồ sơ người nghỉ trong tháng đang xem (ghi chú ngày nghỉ). Người nghỉ trước tháng không bao giờ hiện.
+  const activeStaffIds = new Set(staffList.filter(s => showLeft360 ? (!s.ngayNghiViec || s.ngayNghiViec >= monthStartIso) : !isStaffResigned(s)).map(s => s.id));
+  const leftInMonthCount = staffList.filter(s => isStaffResigned(s) && s.ngayNghiViec >= monthStartIso).length;
   const staffInMonth = staffList.filter(s => activeStaffIds.has(s.id));
   const staffWorking = staffList.filter(s => !isStaffResigned(s));
   const paceCur = paceList.filter(p => p.thang===thang && activeStaffIds.has(p.staffId));
@@ -23730,6 +23732,8 @@ function Employee360View({ isAdmin, myStaff, navParam, onNavigate }){
       pickedId && rc("button", { key:"back", type:"button", className:"btn btnGhost", style:{ fontSize:12, padding:"6px 10px" }, onClick:()=>setPickedId("") }, "← Danh sách"),
       rc("select", { key:"shop", value:shopFilter, onChange:e=>setShopFilter(e.target.value), style:{ padding:"6px 10px", fontSize:12.5, border:"1px solid var(--line)", borderRadius:8 } },
         ["Tất cả", ...DEFAULT_SHOPS].map(s => rc("option", { key:s, value:s }, s))),
+      leftInMonthCount > 0 && rc("label", { key:"left", style:{ fontSize:12.5, display:"flex", gap:5, alignItems:"center", color:"var(--inkSoft)" } }, [
+        rc("input", { key:"i", type:"checkbox", checked:showLeft360, onChange:e=>setShowLeft360(e.target.checked) }), `Hiện người nghỉ trong tháng (${leftInMonthCount})`]),
       rc("div", { key:"np", style:{ minWidth:240 } }, rc(NamePicker, { options:staffOptions, value:pickedId, onChange:v=>{ setPickedId(v); setTab("overview"); }, placeholder:"Tìm nhân viên..." })),
     ]),
   ]);
