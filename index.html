@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261007-29";
+window.__APP_BUILD = "20261007-30";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -27270,9 +27270,31 @@ function UsagePanel(){
     ]),
   ]);
 }
+// 7/10/2026 (kiểm định BUG-01): đổi tài khoản đồng bộ POS — chỉ quản lý; máy chủ thử đăng nhập POS trước khi lưu; mật khẩu không bao giờ hiện lại
+function PosCredsCard(){
+  const h = React.createElement;
+  const [st, setSt] = useState(null); const [u, setU] = useState(""); const [p, setP] = useState(""); const [busy, setBusy] = useState(false); const [msg, setMsg] = useState("");
+  const load = () => pdCall("posCredStatus", {}, 30000).then(setSt).catch(e => setSt({ err:e.message }));
+  useEffect(() => { load(); }, []);
+  const save = async () => { setBusy(true); setMsg("");
+    try { await pdCall("posCredSave", { username:u.trim() || undefined, password:p }, 60000); setP(""); setU(""); setMsg("Đã kiểm tra đăng nhập POS thành công và lưu. Các lần đồng bộ sau dùng tài khoản mới."); load(); }
+    catch(e){ setMsg("Lỗi: " + (e.message || e)); }
+    setBusy(false); };
+  return h("div", { className:"card", style:{ marginBottom:14, borderLeft:"4px solid #B91C1C" } },
+    h("div", { style:{ fontWeight:800, fontSize:15 } }, "Tài khoản đồng bộ POS"),
+    h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", margin:"4px 0 8px", lineHeight:1.5 } }, "Lưu ở kho bí mật chỉ máy chủ đọc được — nhân viên và cả giao diện quản lý không xem được mật khẩu. Khi bấm lưu, máy chủ thử đăng nhập POS trước; sai thì giữ nguyên tài khoản cũ."),
+    st && (st.err ? h("div", { style:{ fontSize:12.5, color:"#B91C1C" } }, st.err) : h("div", { style:{ fontSize:13, marginBottom:8 } },
+      st.has ? `Đang dùng tài khoản ${st.usernameHint}` : "Chưa có tài khoản", st.updatedAt ? ` · cập nhật ${new Date(st.updatedAt).toLocaleString("vi-VN")}${st.updatedBy ? " bởi " + st.updatedBy : ""}` : "")),
+    h("div", { style:{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" } },
+      h("input", { placeholder:"Tên đăng nhập POS (để trống = giữ nguyên)", value:u, onChange:e=>setU(e.target.value), autoComplete:"off", style:{ minWidth:240 } }),
+      h("input", { type:"password", placeholder:"Mật khẩu POS mới", value:p, onChange:e=>setP(e.target.value), autoComplete:"new-password", style:{ minWidth:200 } }),
+      h("button", { className:"btn btnPrimary", disabled:busy || p.length < 4, onClick:save }, busy ? "Đang thử đăng nhập POS…" : "Kiểm tra & lưu")),
+    msg && h("div", { style:{ fontSize:12.5, marginTop:8, color: msg.startsWith("Lỗi") ? "#B91C1C" : "#15803D" } }, msg));
+}
 function SystemHubView(){
   return React.createElement("div", { style:{ maxWidth:900, margin:"0 auto", padding:16 } }, [
     React.createElement(PageTitle, { key:"title" }, "Hệ thống"),
+    React.createElement(PosCredsCard, { key:"poscreds" }),
     React.createElement(ShopListEditor, { key:"shoplist" }),
     React.createElement(AlertRulesConfigView, { key:"rules" }),
     React.createElement(ShopHealthWeightsEditor, { key:"healthweights" }),
