@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261007-18";
+window.__APP_BUILD = "20261007-20";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -4359,13 +4359,13 @@ async function fetchCustVouchers(phone, shop){
   try { const r = await callCf(`https://asia-southeast1-upharma-176d5.cloudfunctions.net/runJobNow?job=customerVouchersNow&phone=${encodeURIComponent(phone)}&shop=${encodeURIComponent(shop||"")}`, {}, 20000);
     const v = (r && r.vouchers) || []; _vchCacheUi[k] = { t: Date.now(), v }; return v; } catch(e){ return []; }
 }
-function zaloSign(o){ const nt = o.shop ? " " + String(o.shop).replace(/^SHOP0*/,"NT") : ""; return o.staffName ? `${o.staffName} – Nhà thuốc Upharma${nt}` : `Nhà thuốc Upharma${nt}`; }
+function zaloSign(o){ const nt = o.shop ? " " + String(o.shop).replace(/^SHOP0*/,"NT") : ""; return o.staffName ? `${o.staffName} – Nhà thuốc Upharma${nt}` : `nhân viên Nhà thuốc Upharma${nt}`; }
 // kind: "refill" (thuốc sắp hết) · "vip" (lâu chưa ghé) · "risk" (nguy cơ rời bỏ) · "bday" · "care" (hỏi thăm sau mua)
 function zaloCareMsg(o){
   const N = zaloCallName(o.name, o.tone); const p = N.p; const P = p.charAt(0).toUpperCase() + p.slice(1);
   const me = zaloSelf(p); const Me = me.charAt(0).toUpperCase() + me.slice(1);
   const perk = zaloPerks(o, p); const pk = perk ? " " + perk : "";
-  const hi0 = `Dạ ${me} chào ${N.full}, ${me} là ${zaloSign(o)} ạ`; const hi = hi0 + (o.tone === "than" ? " " : ".");
+  const hi0 = `Dạ ${me} chào ${N.full}, ${me} là ${zaloSign(o)} ạ`; const hi = hi0 + ".";
   const items = o.items || [];
   if(o.kind === "refill"){
     const ph = zaloItemsPhrase(items); const what = ph.what + ph.when;
@@ -4384,7 +4384,7 @@ function zaloOptions(o){
   const N = zaloCallName(o.name, ""), O = zaloCallName(o.name, "caotuoi");
   const p = N.p, P = p.charAt(0).toUpperCase() + p.slice(1); const F = N.full.charAt(0).toUpperCase() + N.full.slice(1);
   const me = zaloSelf(p), Me = me.charAt(0).toUpperCase() + me.slice(1);
-  const sign = zaloSign(o); const who = o.staffName ? `${o.staffName} bên Upharma${o.shop ? " " + String(o.shop).replace(/^SHOP0*/,"NT") : ""}` : `Nhà thuốc Upharma${o.shop ? " " + String(o.shop).replace(/^SHOP0*/,"NT") : ""}`;
+  const sign = zaloSign(o); const who = o.staffName ? `${o.staffName} bên Upharma${o.shop ? " " + String(o.shop).replace(/^SHOP0*/,"NT") : ""}` : `bên Nhà thuốc Upharma${o.shop ? " " + String(o.shop).replace(/^SHOP0*/,"NT") : ""}`;
   const perk = zaloPerks(o, p), pk = perk ? " " + perk : "";
   const perkO = zaloPerks(o, O.p), pkO = perkO ? " " + perkO.replace(/ ạ\.$/, " ạ.") : "";
   const its = o.items || [];
@@ -4392,13 +4392,13 @@ function zaloOptions(o){
   const out = its.filter(it => !zaloIsPromoLine(it)).some(it => (it.daysLeft ?? 1) <= 0);
   const L = [];
   if(o.kind === "refill"){
-    L.push({ k:"v1", label:"Nhắc nhẹ", text:`Dạ ${me} chào ${N.full}, ${me} là ${sign} ạ \n${What} ${p} đang dùng ${out ? "chắc đã hết rồi" : "cũng sắp hết rồi"}, ${me} nhắn nhắc ${p} để ${p} dùng không bị ngắt quãng nha.${pk}\n${P} cần ${me} để sẵn hay gửi qua nhà luôn ạ?` });
+    L.push({ k:"v1", label:"Nhắc nhẹ", text:`Dạ ${me} chào ${N.full}, ${me} là ${sign} ạ.\n${What} ${p} đang dùng ${out ? "chắc đã hết rồi" : "cũng sắp hết rồi"}, ${me} nhắn nhắc ${p} để ${p} dùng không bị ngắt quãng nha.${pk}\n${P} cần ${me} để sẵn hay gửi qua nhà luôn ạ?` });
     L.push({ k:"v2", label:"Hỏi thăm trước", text:`${F} ơi, ${me} ${who} đây ạ. Dạo này ${p} dùng ${what} thấy đỡ hơn chưa ạ?\nTheo lịch thì thuốc ${out ? "đã hết rồi" : "cũng sắp hết"}, ${p} cần thì nhắn ${me} một tiếng, ${me} chuẩn bị sẵn cho ạ.${pk}` });
-    L.push({ k:"v3", label:"Giao tận nhà", text:`Dạ ${N.full} ơi, ${what} của ${p} ${out ? "hết rồi" : "sắp hết rồi"} ạ. ${P} bận không ghé được thì ${me} gửi tận nhà cho tiện nha.${pk}\n${P} chỉ cần nhắn "OK" là ${me} lo ạ \n— ${sign}` });
+    L.push({ k:"v3", label:"Giao tận nhà", text:`Dạ ${N.full} ơi, ${what} của ${p} ${out ? "hết rồi" : "sắp hết rồi"} ạ. ${P} bận không ghé được thì ${me} gửi tận nhà cho tiện nha.${pk}\n${P} chỉ cần nhắn "OK" là ${me} lo ạ.\n— ${sign}` });
     L.push({ k:"ngan", label:"Ngắn gọn", text:`${F} ơi, ${what} ${out ? "hết rồi" : "sắp hết rồi"} ạ, ${me} giữ sẵn hay gửi nhà cho ${p} nha?${pk} — ${sign}` });
     L.push({ k:"caotuoi", label:"Khách lớn tuổi", text:`Dạ con chào ${O.full}, con là ${sign} ạ.\nCon nhắc ${O.p}: ${what} ${out ? "chắc hết rồi" : "sắp hết rồi"}, ${O.p} nhớ uống đều cho khoẻ nha.${pkO}\n${O.p.charAt(0).toUpperCase()+O.p.slice(1)} ngại đi lại thì con gửi tận nhà, ${O.p} chỉ cần nhắn con một tiếng ạ.` });
   } else if(o.kind === "vip"){
-    L.push({ k:"v1", label:"Hỏi thăm", text:`Dạ ${me} chào ${N.full}, ${me} là ${sign} ạ \nLâu rồi không thấy ${p} ghé, ${me} nhắn hỏi thăm ${p} và gia đình dạo này khoẻ không ạ?${pk}` });
+    L.push({ k:"v1", label:"Hỏi thăm", text:`Dạ ${me} chào ${N.full}, ${me} là ${sign} ạ.\nLâu rồi không thấy ${p} ghé, ${me} nhắn hỏi thăm ${p} và gia đình dạo này khoẻ không ạ?${pk}` });
     L.push({ k:"v2", label:"Chuẩn bị sẵn", text:`${F} ơi, ${me} ${who} đây ạ. Thuốc ${p} hay dùng bên ${me} vẫn có sẵn, ${p} cần ${me} để riêng hoặc gửi qua nhà cho ${p} nha.${pk}` });
     L.push({ k:"v3", label:"Báo ưu đãi", text: perk ? `Dạ ${N.full} ơi, ${me} báo ${p} tin vui ạ: ${perk.charAt(0).toLowerCase() + perk.slice(1)}\nHẹn gặp ${p} ở nhà thuốc nha — ${sign}` : `Dạ ${N.full} ơi, nhà thuốc mới về thêm nhiều sản phẩm chăm sóc sức khoẻ, ${p} ghé chơi ${me} tư vấn kỹ cho ạ — ${sign}` });
     L.push({ k:"ngan", label:"Ngắn gọn", text:`${F} ơi, lâu rồi chưa gặp, ${p} khoẻ không ạ? Cần gì cứ nhắn ${me} nha.${pk} — ${sign}` });
@@ -25092,11 +25092,15 @@ function replTimeOk(d, f){ return f==="all" || (f==="now" && d>=-3 && d<=3) || (
 // 7/10/2026: tài khoản chung cho khách lẻ không để lại số ("Khách Không Cho Số" · 0000000000) — không có ai để liên hệ,
 // không đưa vào danh sách chăm sóc / nhắc tái mua.
 function isPlaceholderCustomer(phone, name){
+  if(/^\s*nv\s*[-–.:]/i.test(String(name || ""))) return true; // tài khoản nhân viên tự mua ("Nv - Chị Oanh") — không phải khách cần chăm sóc
   const d = String(phone || "").replace(/\D/g, "");
   return !d || /^0+$/.test(d) || d.length < 9 || /không cho số|khong cho so|khách lẻ|khach le|khách vãng lai/i.test(String(name || ""));
 }
 const CARE_KINDS = {
-  churn: { segs:["Có nguy cơ rời bỏ","Giảm tần suất mua","Giảm giá trị mua"], title:"Khách có nguy cơ rời bỏ", hint:"Khách từng mua đều nhưng đang thưa dần / giảm giá trị — gọi hỏi thăm, mời quay lại trước khi mất hẳn.", minDays:0 },
+  // 7/10/2026 (Phương: "khách mới mua gần đây lại thành nguy cơ rời bỏ"): trước đây gộp cả "Giảm tần suất/giá trị mua"
+  // (khách VẪN đang mua) vào đây. Nay "Sắp rời bỏ" = chỉ nguy cơ thật, bỏ khách đã mua trong 14 ngày (nhãn tính lúc 5h sáng có thể chưa kịp cập nhật).
+  churn: { segs:["Có nguy cơ rời bỏ"], title:"Khách có nguy cơ rời bỏ", hint:"Khách lâu chưa quay lại so với chu kỳ mua quen của chính họ — gọi hỏi thăm, mời quay lại trước khi mất hẳn.", minDays:14 },
+  giam: { segs:["Giảm tần suất mua","Giảm giá trị mua"], title:"Khách mua giảm", hint:"Khách VIP / thân thiết vẫn mua nhưng 90 ngày gần đây mua thưa hơn hoặc bill nhỏ hơn 90 ngày trước — tư vấn combo, nhắc đủ liệu trình, giới thiệu ưu đãi hạng thẻ.", minDays:0 },
   vip: { segs:["Khách VIP","Giá trị cao im lặng","VIP (chăm sóc tự động)"], title:"VIP / giá trị cao lâu chưa quay lại", hint:"Khách giá trị cao nhưng ≥ 21 ngày chưa mua — ưu tiên gọi trước.", minDays:21 },
   bday: { segs:["Sinh nhật hôm nay"], title:"Sinh nhật hôm nay", hint:"Gửi lời chúc + ưu đãi sinh nhật (nếu có).", minDays:0 },
 };
@@ -25170,7 +25174,7 @@ function CareTodayList({ kind, isAdmin, myStaff, shop, onNavigate }){
   const list = (rows||[]).filter(r => !(hideDone && r.interDays!=null && r.interDays <= 7) && !(mineOnly && !(myStaff && r.assignedStaffId===myStaff.id)));
   const paged = usePagedRows(list, 25);
   function msg(r){
-    return zaloCareMsg({ kind: kind==="bday" ? "bday" : kind==="vip" ? "vip" : "risk", tone:"than", name:r.name, shop:r.shop, level:r.levelName || r.level, vouchers:r.vouchers, staffName: isAdmin ? "" : ((myStaff && myStaff.name) || "") });
+    return zaloCareMsg({ kind: kind==="bday" ? "bday" : kind==="vip" ? "vip" : "risk", tone:"than", name:r.name, shop:r.shop, level:r.levelName || r.level, vouchers:r.vouchers, staffName: isAdmin ? (r.assignedStaffName || "") : ((myStaff && myStaff.name) || "") });
   }
 
   async function copy(r){ const vs = await fetchCustVouchers(r.phone || r.id, r.shop); const t = msg({ ...r, vouchers: vs }); try{ await navigator.clipboard.writeText(t); setCopied(r.id); setTimeout(()=>setCopied(null), 2000); } catch(e){ window.prompt("Sao chép tin nhắn:", t); } }
@@ -25213,7 +25217,7 @@ function CareTodayList({ kind, isAdmin, myStaff, shop, onNavigate }){
           rc("td", { key:"p", style:{ fontSize:12, whiteSpace:"nowrap" } }, ownerCell(r)),
           rc("td", { key:"i", className:"nw", style:{ fontSize:12 } }, r.interDays==null ? "—" : r.interDays===0 ? "Hôm nay" : `${r.interDays} ngày trước`),
           rc("td", { key:"x", style:{ whiteSpace:"nowrap" } }, [
-            rc("button", { key:"c", type:"button", className:"btn btnGhost", style:{ fontSize:11.5, padding:"3px 8px", marginRight:4 }, onClick:()=>setZf({ phone: r.phone || r.id, o:{ kind: kind==="bday" ? "bday" : kind==="vip" ? "vip" : "risk", name:r.name, shop:r.shop, level:r.levelName || r.level, staffName: isAdmin ? "" : ((myStaff && myStaff.name) || "") } }) }, "Tin Zalo"),
+            rc("button", { key:"c", type:"button", className:"btn btnGhost", style:{ fontSize:11.5, padding:"3px 8px", marginRight:4 }, onClick:()=>setZf({ phone: r.phone || r.id, o:{ kind: kind==="bday" ? "bday" : kind==="vip" ? "vip" : "risk", name:r.name, shop:r.shop, level:r.levelName || r.level, staffName: isAdmin ? (r.assignedStaffName || "") : ((myStaff && myStaff.name) || "") } }) }, "Tin Zalo"),
             rc("button", { key:"k", type:"button", className:"btn btnPrimary", style:{ fontSize:11.5, padding:"3px 8px" }, onClick:()=>{ setNoteFor(r); setResult(RESULTS[0]); setNote(""); } }, "Ghi kết quả"),
           ]),
         ]))),
@@ -25327,7 +25331,7 @@ function ReplenishView({ isAdmin, myStaff, onNavigate }){
     setSaving(false);
   }
   function script(c, it){
-    const opts = zaloOptions({ kind:"refill", name:c.name, shop:c.shop, level:c.levelName || c.level, vouchers:c.vouchers, staffName: isAdmin ? "" : ((myStaff && myStaff.name) || ""), items:[it] });
+    const opts = zaloOptions({ kind:"refill", name:c.name, shop:c.shop, level:c.levelName || c.level, vouchers:c.vouchers, staffName: isAdmin ? (c.assignedStaffName || "") : ((myStaff && myStaff.name) || ""), items:[it] });
     return (opts.find(x => x.k === "v1") || opts[0]).text;
   }
 
@@ -25335,7 +25339,7 @@ function ReplenishView({ isAdmin, myStaff, onNavigate }){
   // 3/10/2026: tin nhắn Zalo GỘP mọi sản phẩm sắp hết của 1 khách — 3 giọng văn, sửa được trước khi gửi
   const ZALO_TONES = [["v1","Nhắc nhẹ"],["v2","Hỏi thăm trước"],["v3","Giao tận nhà"],["ngan","Ngắn gọn"],["caotuoi","Khách lớn tuổi"]]; // 6/10/2026: các lựa chọn tin tự nhiên (zaloOptions)
   function zaloScript(c, its, tone){
-    const opts = zaloOptions({ kind:"refill", name:c.name, shop:c.shop, level:c.levelName || c.level, vouchers:c.vouchers, staffName: isAdmin ? "" : ((myStaff && myStaff.name) || ""), items: its });
+    const opts = zaloOptions({ kind:"refill", name:c.name, shop:c.shop, level:c.levelName || c.level, vouchers:c.vouchers, staffName: isAdmin ? (c.assignedStaffName || "") : ((myStaff && myStaff.name) || ""), items: its });
     return (opts.find(x => x.k === tone) || opts[0]).text;
   }
   function openZalo(c, its){ setZaloFor({ c, its }); setZaloText(zaloScript(c, its, zaloTone));
@@ -25442,7 +25446,7 @@ function ReplenishView({ isAdmin, myStaff, onNavigate }){
 
   const shopOpts = ["all", ...DEFAULT_SHOPS];
   const filters = rc("div", { key:"flt", style:{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12, alignItems:"center" } }, [
-    rc("div", { key:"v", style:{ display:"flex", border:"1px solid var(--line)", borderRadius:9, overflow:"hidden" } }, [["cust","Tái mua"],["churn","Sắp rời bỏ"],["vip","VIP lâu chưa quay lại"],["bday","Sinh nhật"],["prod","Theo sản phẩm"],["eff","Hiệu quả"]].map(([id,l]) =>
+    rc("div", { key:"v", style:{ display:"flex", border:"1px solid var(--line)", borderRadius:9, overflow:"hidden" } }, [["cust","Tái mua"],["churn","Sắp rời bỏ"],["giam","Mua giảm"],["vip","VIP lâu chưa quay lại"],["bday","Sinh nhật"],["prod","Theo sản phẩm"],["eff","Hiệu quả"]].map(([id,l]) =>
       rc("button", { key:id, type:"button", onClick:()=>setView(id), style:{ padding:"7px 12px", fontSize:12.5, fontWeight:700, border:"none", cursor:"pointer", background: view===id ? "var(--pine)" : "#fff", color: view===id ? "#fff" : "var(--ink)" } }, l))),
     !CARE_KINDS[view] && rc("select", { key:"t", value:timeF, onChange:e=>setTimeF(e.target.value), style:selStyle }, [["now","Cần nhắc ngay (±3 ngày)"],["soon","Sắp hết (4–14 ngày)"],["overdue","Quá hạn chưa mua lại"],["all","Tất cả mốc"]].map(o => rc("option", { key:o[0], value:o[0] }, o[1]))),
     !CARE_KINDS[view] && rc("select", { key:"st", value:staffF, onChange:e=>setStaffF(e.target.value), style:selStyle }, [["all","Mọi khách"],["todo","Chưa liên hệ"],...(!isAdmin ? [["mine","Khách tôi phụ trách"]] : []),["unassigned","Chưa ai nhận chăm sóc"],["notask","Chưa có công việc"]].map(o => rc("option", { key:o[0], value:o[0] }, o[1]))),
@@ -27280,6 +27284,8 @@ const PUSH_CAT_LABELS_UI = { viec:"Việc được giao", ruiro:"Rủi ro & cả
   daotao:"Đào tạo & thử việc", kinhdoanh:"Chỉ tiêu & doanh số", khachhang:"Chăm sóc khách hàng", hanghoa:"Hàng hoá & điều chuyển",
   hethong:"Hệ thống & dữ liệu", nhip:"Nhịp điều hành", khac:"Khác" };
 const PUSH_UNMUTABLE_UI = ["viec", "ruiro"];
+// 7/10/2026: app không dùng emoji — bỏ hình trong dữ liệu cũ khi hiển thị
+function noEmoji(s){ return String(s == null ? "" : s).replace(/(?:\p{Extended_Pictographic}|\p{Regional_Indicator})[\uFE0E\uFE0F]?\u20E3?(?:\u200D\p{Extended_Pictographic}[\uFE0E\uFE0F]?)*\s?/gu, m => /^[↔↗]/.test(m) ? m : "").trim(); }
 function notifKeyOf(isAdmin, myStaff){ return myStaff ? myStaff.id : (isAdmin ? "admin" : null); }
 function NotifPrefsModal({ notifKey, onClose }){
   const [muted, setMuted] = useState(null);
@@ -27327,8 +27333,8 @@ function NewsFeedCard({ isAdmin, myStaff, defaultOpen }){
     doc === null ? React.createElement("div", { key:"l", className:"emptyState" }, "Đang tải…")
     : all.length === 0 ? React.createElement("div", { key:"e", style:{ fontSize:12.5, color:"var(--inkSoft)" } }, "Chưa có tin. Các cập nhật không gấp (duyệt báo cáo, ghi nhận, tiến độ, chăm sóc khách…) sẽ gom ở đây và gửi 1 bản tin lúc 8h10 · 12h10 · 17h10.")
     : React.createElement("div", { key:"list" }, shown.map((x, i) => React.createElement("div", { key:i, onClick:()=>open(x.l), style:{ padding:"6px 0", borderTop:i ? "1px solid #F0EEE2" : "none", cursor:x.l ? "pointer" : undefined } }, [
-        React.createElement("div", { key:"t", style:{ fontSize:13, fontWeight:x._new ? 700 : 500 } }, [x._new && React.createElement("span", { key:"d", style:{ color:CL360.warn } }, "● "), x.t]),
-        React.createElement("div", { key:"b", style:{ fontSize:12, color:"var(--inkSoft)" } }, `${fmt(x.at)} · ${PUSH_CAT_LABELS_UI[x.c] || ""}${x.b ? " · " + String(x.b).slice(0, 140) : ""}`),
+        React.createElement("div", { key:"t", style:{ fontSize:13, fontWeight:x._new ? 700 : 500 } }, [x._new && React.createElement("span", { key:"d", style:{ color:CL360.warn } }, "● "), noEmoji(x.t)]),
+        React.createElement("div", { key:"b", style:{ fontSize:12, color:"var(--inkSoft)" } }, `${fmt(x.at)} · ${PUSH_CAT_LABELS_UI[x.c] || ""}${x.b ? " · " + noEmoji(String(x.b)).slice(0, 140) : ""}`),
       ]))),
     all.length > 4 && React.createElement("button", { key:"m", type:"button", className:"btn btnGhost", style:{ marginTop:6, fontSize:12 }, onClick:()=>setShowAll(!showAll) }, showAll ? "Thu gọn" : `Xem tất cả (${Math.min(all.length, 40)})`),
     prefs && React.createElement(NotifPrefsModal, { key:"pm", notifKey:key, onClose:()=>setPrefs(false) }),
