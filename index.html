@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261007-26";
+window.__APP_BUILD = "20261007-27";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -15460,7 +15460,7 @@ function OpsPulseView({ isAdmin, myStaff }){
             weeks.map(([w, v]) => h("td", { key:w, style:td }, cell(m, v[m.k] ?? null))))))));
     })(),
     h("div", { style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(210px, 1fr))", gap:10, marginBottom:12 } },
-      tile("① Dữ liệu", (d.score ?? "—") + "/100", [d.syncFail && d.syncFail.length ? "Đồng bộ lỗi: " + d.syncFail.join(", ") : "Đồng bộ ổn", d.gaps ? `${d.gaps} ngày-nhà thuốc thiếu hoá đơn` : "Hoá đơn đủ 14 ngày", (d.planMissing||[]).length ? `Chỉ tiêu POS chưa có thực đạt: ${d.planMissing.length} shop` : null, (d.jobsFailing||[]).length ? `Việc tự động lỗi: ${d.jobsFailing.map(x=>x.k).join(", ")}` : (d.jobsTracked ? `${d.jobsTracked} việc tự động chạy ổn` : null), d.errors24h ? `${d.errors24h} lỗi app 24h (${(d.errorTop||[]).slice(0,2).map(x=>x[0]+" "+x[1]).join(", ")})` : "Không có lỗi app 24h"].filter(Boolean).join(" · "), col(d.score, 85, 60)),
+      tile("① Dữ liệu", (d.score ?? "—") + "/100", [d.syncFail && d.syncFail.length ? "Đồng bộ lỗi: " + d.syncFail.join(", ") : "Đồng bộ ổn", d.gaps ? `${d.gaps} ngày-nhà thuốc thiếu hoá đơn` : "Hoá đơn đủ 14 ngày", (d.planMissing||[]).length ? `Chỉ tiêu POS chưa có thực đạt: ${d.planMissing.length} shop` : null, (d.jobsFailing||[]).length ? `Việc tự động lỗi: ${d.jobsFailing.map(x=>x.k).join(", ")}` : (d.jobsTracked ? `${d.jobsTracked} việc tự động chạy ổn` : null), d.errors24h ? `${d.errors24h} lỗi app 24h (${(d.errorTop||[]).slice(0,2).map(x=>Array.isArray(x) ? x[0]+" "+x[1] : x.k+" "+x.n).join(", ")})` : "Không có lỗi app 24h"].filter(Boolean).join(" · "), col(d.score, 85, 60)),
       tile("② AI tự xử lý (7 ngày)", dec.autoPct == null ? "—" : dec.autoPct + "%", `${dec.preventivePct != null ? "phòng ngừa " + dec.preventivePct + "% · " : ""}${dec.total||0} đề xuất · tự giao ${dec.auto||0} · quản lý duyệt ${dec.manual||0} · từ chối ${dec.rejected||0} · hết hạn ${dec.expired||0} · đang chờ ${dec.pending||0}`, col(dec.autoPct, 60, 30)),
       tile("③ Việc đúng hạn (14 ngày)", ex.onTimeRate == null ? "—" : ex.onTimeRate + "%", `${ex.assigned||0} việc giao · xong ${ex.done||0} (${ex.doneRate ?? "—"}%) · đang quá hạn ${ex.overdue||0}`, col(ex.onTimeRate, 85, 65)),
       tile("④ Rủi ro cần xử lý", rk.actionable ?? "—", `quá hạn ${rk.overdue ?? "—"} · chưa ai nhận ${rk.unacked ?? "—"} · lượt quét gần nhất tự đóng ${rk.autoClosed ?? 0}`, col(rk.actionable == null ? null : 100 - rk.actionable * 2, 60, 30)),
