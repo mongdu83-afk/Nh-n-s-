@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261007-24";
+window.__APP_BUILD = "20261007-25";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -15434,6 +15434,30 @@ function OpsPulseView({ isAdmin, myStaff }){
         days.length > 1 && h("div", { style:{ display:"flex", gap:3, alignItems:"flex-end", height:36, marginTop:6 } }, days.map(([dd, v]) => h("div", { key:dd, title:`${dd}: ${v.score}`, style:{ width:14, height: Math.max(3, (v.score||0) * 0.36), background: col(v.score, 80, 60), borderRadius:3 } })))),
       h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap" } }, btn("pulse", "opsPulseNow", "", "↻ Cập nhật"), btn("dh", "dataHealthNow", "", "Kiểm tra & vá dữ liệu"), btn("care", "careDailyNow", "", "Dựng danh sách gọi khách"), btn("promo", "promoIntradayNow", "", "Nhắc KM trong ngày"), btn("wk", "weeklyTargetsNow", "", "Chốt mục tiêu tuần"))),
     msg && h("div", { className:"card", style:{ fontSize:13, marginBottom:10 } }, msg),
+    // 7/10/2026 (chị Hà): BẢNG THEO DÕI TUẦN — 5 chỉ số đưa app thành vận hành thật (mỗi tuần lấy số của ngày cuối tuần đó)
+    (() => { const all = H && H.days ? Object.entries(H.days).sort() : []; if (!all.length) return null;
+      const monOf = (ds) => { const t = new Date(ds + "T00:00:00Z"); const k = (t.getUTCDay() + 6) % 7; t.setUTCDate(t.getUTCDate() - k); return t.toISOString().slice(0,10); };
+      const W = {}; all.forEach(([dd, v]) => { W[monOf(dd)] = { ...v, _d: dd }; });
+      const weeks = Object.entries(W).sort().slice(-6);
+      const M = [
+        { k:"onTime", label:"Việc làm đúng hạn", unit:"%", ok:(v) => v >= 80, goal:"≥ 80%" },
+        { k:"expiredPct", label:"Đề xuất AI hết hạn không ai duyệt", unit:"%", ok:(v) => v < 15, goal:"< 15%" },
+        { k:"unacked", label:"Rủi ro mở chưa ai nhận", unit:"", ok:(v) => v < 15, goal:"< 15" },
+        { k:"preventivePct", label:"Việc phòng ngừa (dự báo, dự trù trước)", unit:"%", ok:(v) => v >= 30, goal:"≥ 30%" },
+        { k:"care", label:"Gọi khách theo danh sách (7 ngày)", unit:"%", ok:(v) => v >= 80, goal:"≥ 80%" },
+        { k:"score", label:"Điểm khép kín", unit:"", ok:(v) => v >= 80, goal:"≥ 80" } ];
+      const cell = (m, v) => v == null ? h("span", { style:{ color:"var(--inkSoft)" } }, "—") : h("span", { style:{ fontWeight:800, color: m.ok(v) ? "#15803D" : "#B91C1C" } }, v + m.unit);
+      const th = { textAlign:"right", fontSize:11.5, color:"var(--inkSoft)", padding:"5px 8px", borderBottom:"1px solid var(--line)", whiteSpace:"nowrap" };
+      const td = { textAlign:"right", padding:"6px 8px", borderBottom:"1px solid #F0EEE2", fontSize:13 };
+      return h("div", { className:"card", style:{ marginBottom:12, overflowX:"auto" } },
+        h("div", { style:{ fontWeight:800 } }, "Theo dõi tuần — mức vận hành thật"),
+        h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:6 } }, "Xanh = đạt mục tiêu, đỏ = chưa đạt. Mỗi tuần lấy số của ngày cuối cùng có dữ liệu trong tuần."),
+        h("table", { style:{ width:"100%", borderCollapse:"collapse" } },
+          h("thead", null, h("tr", null, h("th", { style:{ ...th, textAlign:"left" } }, "Chỉ số"), h("th", { style:th }, "Mục tiêu"),
+            weeks.map(([w, v]) => h("th", { key:w, style:th }, `Tuần ${w.slice(8,10)}/${w.slice(5,7)}`)))),
+          h("tbody", null, M.map(m => h("tr", { key:m.k }, h("td", { style:{ ...td, textAlign:"left" } }, m.label), h("td", { style:{ ...td, color:"var(--inkSoft)" } }, m.goal),
+            weeks.map(([w, v]) => h("td", { key:w, style:td }, cell(m, v[m.k] ?? null))))))));
+    })(),
     h("div", { style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(210px, 1fr))", gap:10, marginBottom:12 } },
       tile("① Dữ liệu", (d.score ?? "—") + "/100", [d.syncFail && d.syncFail.length ? "Đồng bộ lỗi: " + d.syncFail.join(", ") : "Đồng bộ ổn", d.gaps ? `${d.gaps} ngày-nhà thuốc thiếu hoá đơn` : "Hoá đơn đủ 14 ngày", (d.planMissing||[]).length ? `Chỉ tiêu POS chưa có thực đạt: ${d.planMissing.length} shop` : null, (d.jobsFailing||[]).length ? `Việc tự động lỗi: ${d.jobsFailing.map(x=>x.k).join(", ")}` : (d.jobsTracked ? `${d.jobsTracked} việc tự động chạy ổn` : null), d.errors24h ? `${d.errors24h} lỗi app 24h (${(d.errorTop||[]).slice(0,2).map(x=>x[0]+" "+x[1]).join(", ")})` : "Không có lỗi app 24h"].filter(Boolean).join(" · "), col(d.score, 85, 60)),
       tile("② AI tự xử lý (7 ngày)", dec.autoPct == null ? "—" : dec.autoPct + "%", `${dec.preventivePct != null ? "phòng ngừa " + dec.preventivePct + "% · " : ""}${dec.total||0} đề xuất · tự giao ${dec.auto||0} · quản lý duyệt ${dec.manual||0} · từ chối ${dec.rejected||0} · hết hạn ${dec.expired||0} · đang chờ ${dec.pending||0}`, col(dec.autoPct, 60, 30)),
@@ -26219,6 +26243,38 @@ function GlobalSearch360({ onClose, onNavigate }){
 // 5/10/2026 (Phương): AI ĐIỀU HÀNH — AI soạn việc cần giao từ số liệu, quản lý duyệt, AI nhắc & theo dõi đến khi xong, báo cáo kết quả.
 const OPS_DOM = { sales:"Doanh số & KPI", stock:"Hàng hoá & tồn kho", cust:"Khách hàng & CSKH", people:"Nhân sự & đào tạo", task:"Công việc & tuân thủ" };
 const OPS_ST = { pending:"Chờ duyệt", approved:"Đã giao", overdue:"Quá hạn", done:"Đã xong", rejected:"Từ chối", expired:"Hết hạn duyệt", cancelled:"Đã huỷ" };
+// 7/10/2026 (chị Hà): TRỢ LÝ AI THAY CỬA HÀNG TRƯỞNG — nhà thuốc chưa có CHT: quản lý khu vực là người phụ trách, trợ lý AI làm thay việc hằng ngày
+function AiShopLeadCard({ onMsg }){
+  const h = React.createElement;
+  const [cfg, setCfg] = useState(null); const [log, setLog] = useState(null); const [info, setInfo] = useState(null); const [busy, setBusy] = useState(false);
+  useEffect(() => { const u1 = db.collection("opsConfig").doc("aiShopLead").onSnapshot(d => setCfg({ enabled:true, approveAfterH:20, careNudgePct:50, ...(d.exists ? d.data() : {}) }), () => setCfg({ enabled:true, approveAfterH:20, careNudgePct:50 }));
+    const u2 = db.collection("opsConfig").doc("aiShopLeadLog").onSnapshot(d => setLog(d.exists ? d.data() : null), () => {});
+    callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/runJobNow?job=aiShopLeadNow&info=1", {}, 60000).then(setInfo).catch(() => setInfo({ noLead:[], lead:{} }));
+    return () => { u1(); u2(); }; }, []);
+  if (!cfg) return null;
+  const save = async (patch) => { try { await db.collection("opsConfig").doc("aiShopLead").set(patch, { merge:true }); } catch(e){ onMsg && onMsg("Lỗi: " + e.message); } };
+  const run = async () => { setBusy(true); try { const r = await callCf("https://asia-southeast1-upharma-176d5.cloudfunctions.net/runJobNow?job=aiShopLeadNow&care=1&notify=1", {}, 300000);
+    onMsg && onMsg(`Trợ lý AI: đã giao ${r.approved || 0} việc chờ lâu${r.care && r.care.low ? ` · nhắc gọi khách ${r.care.low.length} nhà thuốc` : ""}.`); } catch(e){ onMsg && onMsg("Lỗi: " + e.message); } setBusy(false); };
+  const nl = (info && info.noLead) || []; const ld = (info && info.lead) || {};
+  const nt = (sc) => String(sc).replace(/^SHOP0*/, "NT");
+  return h("div", { className:"card", style:{ padding:12, marginBottom:12, borderLeft:"4px solid var(--pine)" } },
+    h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap", alignItems:"center" } },
+      h("div", { style:{ fontWeight:800, fontSize:14.5 } }, "Trợ lý AI thay cửa hàng trưởng"),
+      h("label", { style:{ display:"inline-flex", gap:6, alignItems:"center", fontSize:13 } }, h("input", { type:"checkbox", checked:cfg.enabled !== false, onChange:e=>save({ enabled:e.target.checked }) }), "Bật")),
+    h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", margin:"4px 0 8px", lineHeight:1.55 } },
+      "Nhà thuốc chưa có cửa hàng trưởng: quản lý khu vực đứng tên phụ trách (nhận rủi ro, việc quá hạn từ 2 ngày). Trợ lý AI làm thay việc hằng ngày: ",
+      h("b", null, "9h20 & 15h20"), " tự giao các đề xuất AI đã chờ quá số giờ bên dưới (trừ việc nhân sự, tiền, trả hàng, kiểm kê — vẫn chờ quản lý duyệt); ",
+      h("b", null, "15h20"), " kiểm tra tiến độ gọi khách, nhà thuốc nào chưa gọi đủ thì nhắc cả ca; sau đó gửi quản lý 1 tin tóm tắt."),
+    h("div", { style:{ fontSize:13, marginBottom:6 } }, h("b", null, "Đang thay CHT: "), info ? (nl.length ? nl.map(nt).join(", ") : "không có (mọi nhà thuốc đã có CHT)") : "đang tải…",
+      info && Object.keys(ld).length > 0 && h("span", { style:{ color:"var(--inkSoft)" } }, " · Đã có CHT: " + Object.entries(ld).filter(([sc]) => /^SHOP/.test(sc)).map(([sc, a]) => `${nt(sc)} (${a.map(x => x.name).join(", ")})`).join(", "))),
+    h("div", { style:{ display:"flex", gap:12, flexWrap:"wrap", alignItems:"center", fontSize:13 } },
+      "Tự giao đề xuất đã chờ quá", h("select", { value:String(cfg.approveAfterH), onChange:e=>save({ approveAfterH:Number(e.target.value) }) }, [4, 8, 12, 20, 24, 36, 48].map(x => h("option", { key:x, value:String(x) }, x + " giờ"))),
+      "· nhắc gọi khách khi dưới", h("select", { value:String(cfg.careNudgePct), onChange:e=>save({ careNudgePct:Number(e.target.value) }) }, [30, 50, 70, 80].map(x => h("option", { key:x, value:String(x) }, x + "%"))),
+      h("button", { className:"btn btnGhost", disabled:busy, style:{ fontSize:12.5 }, onClick:run }, busy ? "Đang chạy…" : "Chạy ngay")),
+    log && log.lastRunAt && h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:6 } }, `Lần chạy gần nhất ${new Date(log.lastRunAt).toLocaleString("vi-VN")}: giao ${(log.last && log.last.approved) || 0} việc`,
+      log.last && log.last.titles && log.last.titles.length ? " (" + log.last.titles.slice(0, 3).join(" · ") + ")" : "",
+      log.last && log.last.careLow && log.last.careLow.length ? ` · nhắc gọi khách: ${log.last.careLow.map(x => `${nt(x.shop)} ${x.done}/${x.quota}`).join(", ")}` : ""));
+}
 // 5/10/2026: Cấu hình AI điều hành — loại đơn loại trừ, mã dừng, ngưỡng bán đều, cảnh báo trong ngày, tự giao; cách xử lý chuẩn; hiệu quả theo loại việc
 function OpsOperatorConfig({ onMsg }){
   const h = React.createElement;
@@ -26236,6 +26292,7 @@ function OpsOperatorConfig({ onMsg }){
   const types = Object.keys(d.typeLabels || {});
   const aa = s.autoApprove || {};
   return h("div", { style:{ marginTop:8 } },
+    h(AiShopLeadCard, { onMsg }),
     sec("Tính tiền trong đề xuất", "Tiền/ngày chỉ tính hàng bán ĐỀU; không tính thiết bị y tế, dụng cụ, vật tư (bán lẻ tẻ); không tính mã dừng kinh doanh; không tính đơn thuộc loại bán bị loại trừ. Hàng chuyển kho không nằm trong hoá đơn bán nên không bị tính.",
       h("div", { style:{ fontSize:13, marginBottom:6 } }, "Hàng bán đều = có bán ít nhất ", h("input", { type:"number", min:1, max:30, value:s.sellDaysMin, onChange:e=>setS({ ...s, sellDaysMin:Number(e.target.value) }), style:{ width:60 } }), " ngày trong 30 ngày."),
       h("div", { style:{ fontSize:13, marginBottom:4 } }, "Loại trừ \"Loại bán hàng\" trên POS (không phải bán lẻ):"),
