@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261007-14";
+window.__APP_BUILD = "20261007-15";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -4297,10 +4297,20 @@ function zaloCallName(name, tone){
   const ten = String(name||"").trim(); const last = ten ? ten.split(/\s+/).slice(-1)[0] : "";
   const m = ten.match(/^(anh|chị|chi|cô|co|chú|chu|bác|bac|em|ông|ong|bà|ba)\s+/i);
   const fix = { chi:"chị", co:"cô", chu:"chú", bac:"bác", ong:"ông", ba:"bà" };
-  if(tone === "caotuoi"){ const p = m ? (fix[m[1].toLowerCase()] || m[1].toLowerCase()) : "cô/chú"; return { full: last && !/^\d+$/.test(last) ? `${p} ${last}` : p, p }; }
+  // 7/10/2026: mẫu "Khách lớn tuổi" — tên lưu kèm anh/chị/em thì đổi sang chú/cô (người lớn tuổi không gọi anh/chị/em)
+  const elderOf = { anh:"chú", "chị":"cô", em:"cô/chú" };
+  if(tone === "caotuoi"){ const p0 = m ? (fix[m[1].toLowerCase()] || m[1].toLowerCase()) : "cô/chú"; const p = elderOf[p0] || p0; return { full: last && !/^\d+$/.test(last) ? `${p} ${last}` : p, p }; }
   if(m){ const p = fix[m[1].toLowerCase()] || m[1].toLowerCase(); return { full: `${p} ${ten.slice(m[0].length)}`.trim(), p }; }
   if(!ten || /^\d+$/.test(ten)) return { full:"anh/chị", p:"anh/chị" };
   return { full:`anh/chị ${last}`, p:"anh/chị" };
+}
+// 7/10/2026 (Phương: "đã là ông còn xưng em"): nhân viên tự xưng theo cách gọi khách — ông/bà/bác/cô/chú/dì → "con",
+// anh/chị → "em", khách là "em" → "mình" (tránh "em hỏi thăm em").
+function zaloSelf(p){
+  const x = String(p || "").toLowerCase();
+  if(/^(ông|bà|bác|cô|chú|dì|dượng|cô\/chú)$/.test(x)) return "con";
+  if(x === "em") return "mình";
+  return "em";
 }
 function zaloPerks(o, p){
   const P = p.charAt(0).toUpperCase()+p.slice(1);
@@ -4323,7 +4333,7 @@ function zaloSign(o){ const nt = o.shop ? " " + String(o.shop).replace(/^SHOP0*/
 // kind: "refill" (thuốc sắp hết) · "vip" (lâu chưa ghé) · "risk" (nguy cơ rời bỏ) · "bday" · "care" (hỏi thăm sau mua)
 function zaloCareMsg(o){
   const N = zaloCallName(o.name, o.tone); const p = N.p; const P = p.charAt(0).toUpperCase() + p.slice(1);
-  const me = o.tone === "caotuoi" ? "con" : "em"; const Me = me.charAt(0).toUpperCase() + me.slice(1);
+  const me = zaloSelf(p); const Me = me.charAt(0).toUpperCase() + me.slice(1);
   const perk = zaloPerks(o, p); const pk = perk ? " " + perk : "";
   const hi0 = `Dạ ${me} chào ${N.full}, ${me} là ${zaloSign(o)} ạ`; const hi = hi0 + (o.tone === "than" ? " 😊" : ".");
   const items = o.items || [];
@@ -4331,7 +4341,7 @@ function zaloCareMsg(o){
     const what = items.length === 1 ? items[0].productName : items.length ? `${items[0].productName} và ${items.length - 1} sản phẩm khác` : "thuốc";
     const when = items.some(it => (it.daysLeft ?? 1) <= 0) ? "chắc đã hết rồi" : "sắp hết rồi";
     if(o.tone === "ngan") return `${hi} ${what} ${p} đang dùng ${when}, ${me} giữ sẵn hay gửi tận nhà cho ${p} ạ?${pk}`;
-    return `${hi}\n${Me} nhắc ${p}: ${what} ${when} ạ, mình dùng đều để thuốc phát huy tác dụng nhé.${pk}\n${P} muốn ${me} giữ sẵn để ghé lấy, hay gửi tận nhà ạ?`;
+    return `${hi}\n${Me} nhắc ${p}: ${what} ${when} ạ, ${p} dùng đều để thuốc phát huy tác dụng nhé.${pk}\n${P} muốn ${me} giữ sẵn để ghé lấy, hay gửi tận nhà ạ?`;
   }
   if(o.kind === "bday") return `${hi}\nChúc ${p} sinh nhật vui, thật nhiều sức khoẻ ạ 🎂 Nhà thuốc có quà sinh nhật dành riêng cho ${p}, ghé trong tuần này nhận nha.${pk}`;
   if(o.kind === "vip") return `${hi}\nLâu rồi chưa gặp, ${me} hỏi thăm sức khoẻ ${p} và gia đình ạ.${pk}\n${P} có cần ${me} chuẩn bị sẵn thuốc quen dùng không ạ?`;
@@ -4343,6 +4353,7 @@ function zaloCareMsg(o){
 function zaloOptions(o){
   const N = zaloCallName(o.name, ""), O = zaloCallName(o.name, "caotuoi");
   const p = N.p, P = p.charAt(0).toUpperCase() + p.slice(1); const F = N.full.charAt(0).toUpperCase() + N.full.slice(1);
+  const me = zaloSelf(p), Me = me.charAt(0).toUpperCase() + me.slice(1);
   const sign = zaloSign(o); const who = o.staffName ? `${o.staffName} bên Upharma${o.shop ? " " + String(o.shop).replace(/^SHOP0*/,"NT") : ""}` : `Nhà thuốc Upharma${o.shop ? " " + String(o.shop).replace(/^SHOP0*/,"NT") : ""}`;
   const perk = zaloPerks(o, p), pk = perk ? " " + perk : "";
   const perkO = zaloPerks(o, O.p), pkO = perkO ? " " + perkO.replace(/ ạ\.$/, " ạ.") : "";
@@ -4351,31 +4362,31 @@ function zaloOptions(o){
   const out = its.some(it => (it.daysLeft ?? 1) <= 0);
   const L = [];
   if(o.kind === "refill"){
-    L.push({ k:"v1", label:"Nhắc nhẹ", text:`Dạ em chào ${N.full}, em là ${sign} ạ 😊\n${what} ${p} đang dùng ${out ? "chắc đã hết rồi" : "cũng sắp hết rồi"}, em nhắn nhắc ${p} để mình dùng không bị ngắt quãng nha.${pk}\n${P} cần em để sẵn hay gửi qua nhà luôn ạ?` });
-    L.push({ k:"v2", label:"Hỏi thăm trước", text:`${F} ơi, em ${who} đây ạ. Dạo này ${p} dùng ${what} thấy đỡ hơn chưa ạ?\nTheo lịch thì thuốc ${out ? "đã hết rồi" : "cũng sắp hết"}, ${p} cần thì nhắn em một tiếng, em chuẩn bị sẵn cho ạ.${pk}` });
-    L.push({ k:"v3", label:"Giao tận nhà", text:`Dạ ${N.full} ơi, ${what} của ${p} ${out ? "hết rồi" : "sắp hết rồi"} ạ. ${P} bận không ghé được thì em gửi tận nhà cho tiện nha.${pk}\n${P} chỉ cần nhắn "OK" là em lo ạ 😊\n— ${sign}` });
-    L.push({ k:"ngan", label:"Ngắn gọn", text:`${F} ơi, ${what} ${out ? "hết rồi" : "sắp hết rồi"} ạ, em giữ sẵn hay gửi nhà cho ${p} nha?${pk} — ${sign}` });
+    L.push({ k:"v1", label:"Nhắc nhẹ", text:`Dạ ${me} chào ${N.full}, ${me} là ${sign} ạ 😊\n${what} ${p} đang dùng ${out ? "chắc đã hết rồi" : "cũng sắp hết rồi"}, ${me} nhắn nhắc ${p} để ${p} dùng không bị ngắt quãng nha.${pk}\n${P} cần ${me} để sẵn hay gửi qua nhà luôn ạ?` });
+    L.push({ k:"v2", label:"Hỏi thăm trước", text:`${F} ơi, ${me} ${who} đây ạ. Dạo này ${p} dùng ${what} thấy đỡ hơn chưa ạ?\nTheo lịch thì thuốc ${out ? "đã hết rồi" : "cũng sắp hết"}, ${p} cần thì nhắn ${me} một tiếng, ${me} chuẩn bị sẵn cho ạ.${pk}` });
+    L.push({ k:"v3", label:"Giao tận nhà", text:`Dạ ${N.full} ơi, ${what} của ${p} ${out ? "hết rồi" : "sắp hết rồi"} ạ. ${P} bận không ghé được thì ${me} gửi tận nhà cho tiện nha.${pk}\n${P} chỉ cần nhắn "OK" là ${me} lo ạ 😊\n— ${sign}` });
+    L.push({ k:"ngan", label:"Ngắn gọn", text:`${F} ơi, ${what} ${out ? "hết rồi" : "sắp hết rồi"} ạ, ${me} giữ sẵn hay gửi nhà cho ${p} nha?${pk} — ${sign}` });
     L.push({ k:"caotuoi", label:"Khách lớn tuổi", text:`Dạ con chào ${O.full}, con là ${sign} ạ.\nCon nhắc ${O.p}: ${what} ${out ? "chắc hết rồi" : "sắp hết rồi"}, ${O.p} nhớ uống đều cho khoẻ nha.${pkO}\n${O.p.charAt(0).toUpperCase()+O.p.slice(1)} ngại đi lại thì con gửi tận nhà, ${O.p} chỉ cần nhắn con một tiếng ạ.` });
   } else if(o.kind === "vip"){
-    L.push({ k:"v1", label:"Hỏi thăm", text:`Dạ em chào ${N.full}, em là ${sign} ạ 😊\nLâu rồi không thấy ${p} ghé, em nhắn hỏi thăm ${p} và gia đình dạo này khoẻ không ạ?${pk}` });
-    L.push({ k:"v2", label:"Chuẩn bị sẵn", text:`${F} ơi, em ${who} đây ạ. Thuốc ${p} hay dùng bên em vẫn có sẵn, ${p} cần em để riêng hoặc gửi qua nhà cho ${p} nha.${pk}` });
-    L.push({ k:"v3", label:"Báo ưu đãi", text: perk ? `Dạ ${N.full} ơi, em báo ${p} tin vui ạ: ${perk.charAt(0).toLowerCase() + perk.slice(1)}\nHẹn gặp ${p} ở nhà thuốc nha 😊 — ${sign}` : `Dạ ${N.full} ơi, nhà thuốc mới về thêm nhiều sản phẩm chăm sóc sức khoẻ, ${p} ghé chơi em tư vấn kỹ cho ạ 😊 — ${sign}` });
-    L.push({ k:"ngan", label:"Ngắn gọn", text:`${F} ơi, lâu rồi chưa gặp, ${p} khoẻ không ạ? Cần gì cứ nhắn em nha.${pk} — ${sign}` });
+    L.push({ k:"v1", label:"Hỏi thăm", text:`Dạ ${me} chào ${N.full}, ${me} là ${sign} ạ 😊\nLâu rồi không thấy ${p} ghé, ${me} nhắn hỏi thăm ${p} và gia đình dạo này khoẻ không ạ?${pk}` });
+    L.push({ k:"v2", label:"Chuẩn bị sẵn", text:`${F} ơi, ${me} ${who} đây ạ. Thuốc ${p} hay dùng bên ${me} vẫn có sẵn, ${p} cần ${me} để riêng hoặc gửi qua nhà cho ${p} nha.${pk}` });
+    L.push({ k:"v3", label:"Báo ưu đãi", text: perk ? `Dạ ${N.full} ơi, ${me} báo ${p} tin vui ạ: ${perk.charAt(0).toLowerCase() + perk.slice(1)}\nHẹn gặp ${p} ở nhà thuốc nha 😊 — ${sign}` : `Dạ ${N.full} ơi, nhà thuốc mới về thêm nhiều sản phẩm chăm sóc sức khoẻ, ${p} ghé chơi ${me} tư vấn kỹ cho ạ 😊 — ${sign}` });
+    L.push({ k:"ngan", label:"Ngắn gọn", text:`${F} ơi, lâu rồi chưa gặp, ${p} khoẻ không ạ? Cần gì cứ nhắn ${me} nha.${pk} — ${sign}` });
     L.push({ k:"caotuoi", label:"Khách lớn tuổi", text:`Dạ con chào ${O.full}, con là ${sign} ạ. Lâu rồi không gặp, con hỏi thăm ${O.p} dạo này có khoẻ không ạ?${pkO} ${O.p.charAt(0).toUpperCase()+O.p.slice(1)} cần thuốc gì cứ gọi con, con mang tới tận nhà ạ.` });
   } else if(o.kind === "risk"){
-    L.push({ k:"v1", label:"Hỏi thăm sau dùng thuốc", text:`Dạ em chào ${N.full}, em là ${sign} ạ.\nEm hỏi thăm ${p} dùng thuốc lần trước thấy ổn không ạ? Có gì chưa yên tâm ${p} cứ nhắn, em tư vấn thêm cho ạ.${pk}` });
-    L.push({ k:"v2", label:"Quan tâm", text:`${F} ơi, em ${who} đây ạ 😊 Dạo này thời tiết thất thường, ${p} và gia đình giữ sức khoẻ nha.\nCần thuốc gì ${p} nhắn em, em gửi tận nhà cho tiện ạ.${pk}` });
-    L.push({ k:"v3", label:"Mời ghé lại", text:`Dạ ${N.full} ơi, lâu rồi chưa gặp ${p} ở nhà thuốc ạ.${pk}\n${P} ghé lúc nào báo em trước để em chuẩn bị sẵn nha 😊 — ${sign}` });
-    L.push({ k:"ngan", label:"Ngắn gọn", text:`${F} ơi, dạo này ${p} khoẻ không ạ? Cần gì cứ nhắn em nha.${pk} — ${sign}` });
+    L.push({ k:"v1", label:"Hỏi thăm sau dùng thuốc", text:`Dạ ${me} chào ${N.full}, ${me} là ${sign} ạ.\n${Me} hỏi thăm ${p} dùng thuốc lần trước thấy ổn không ạ? Có gì chưa yên tâm ${p} cứ nhắn, ${me} tư vấn thêm cho ạ.${pk}` });
+    L.push({ k:"v2", label:"Quan tâm", text:`${F} ơi, ${me} ${who} đây ạ 😊 Dạo này thời tiết thất thường, ${p} và gia đình giữ sức khoẻ nha.\nCần thuốc gì ${p} nhắn ${me}, ${me} gửi tận nhà cho tiện ạ.${pk}` });
+    L.push({ k:"v3", label:"Mời ghé lại", text:`Dạ ${N.full} ơi, lâu rồi chưa gặp ${p} ở nhà thuốc ạ.${pk}\n${P} ghé lúc nào báo ${me} trước để ${me} chuẩn bị sẵn nha 😊 — ${sign}` });
+    L.push({ k:"ngan", label:"Ngắn gọn", text:`${F} ơi, dạo này ${p} khoẻ không ạ? Cần gì cứ nhắn ${me} nha.${pk} — ${sign}` });
     L.push({ k:"caotuoi", label:"Khách lớn tuổi", text:`Dạ con chào ${O.full}, con là ${sign} ạ. Con hỏi thăm ${O.p} dạo này ăn ngủ có ổn không ạ?${pkO} Cần gì ${O.p} cứ gọi con, con gửi thuốc tới tận nhà ạ.` });
   } else if(o.kind === "bday"){
     L.push({ k:"v1", label:"Chúc mừng", text:`Chúc mừng sinh nhật ${N.full} ạ 🎂 Chúc ${p} tuổi mới thật khoẻ, nhiều niềm vui!\nNhà thuốc có món quà nhỏ tặng ${p}, tuần này ${p} ghé nhận nha ạ.${pk}\n— ${sign}` });
-    L.push({ k:"v2", label:"Ấm áp", text:`Dạ hôm nay sinh nhật ${p} phải không ạ? 🎉 Em ${who} chúc ${p} luôn mạnh khoẻ, bình an.\nEm có để dành quà sinh nhật cho ${p}, ghé lấy giúp em nha ạ.${pk}` });
+    L.push({ k:"v2", label:"Ấm áp", text:`Dạ hôm nay sinh nhật ${p} phải không ạ? 🎉 ${Me} ${who} chúc ${p} luôn mạnh khoẻ, bình an.\n${Me} có để dành quà sinh nhật cho ${p}, ghé lấy giúp ${me} nha ạ.${pk}` });
     L.push({ k:"ngan", label:"Ngắn gọn", text:`Sinh nhật vui vẻ ${N.full} ạ 🎂 Có quà nhỏ chờ ${p} ở nhà thuốc nha!${pk} — ${sign}` });
     L.push({ k:"caotuoi", label:"Khách lớn tuổi", text:`Dạ con chúc mừng sinh nhật ${O.full} ạ 🎂 Con chúc ${O.p} sống vui, sống khoẻ bên con cháu. Nhà thuốc có quà nhỏ biếu ${O.p}, ${O.p} ghé lấy giúp con nha ạ.${pkO} — ${sign}` });
   } else {
-    L.push({ k:"v1", label:"Hỏi thăm", text:`Dạ em chào ${N.full}, em là ${sign} ạ 😊 Em hỏi thăm ${p} dùng thuốc thấy đỡ chưa ạ? Có gì chưa rõ về cách dùng ${p} cứ nhắn em nhé.${pk}` });
-    L.push({ k:"ngan", label:"Ngắn gọn", text:`${F} ơi, ${p} dùng thuốc thấy ổn không ạ? Cần gì nhắn em nha.${pk} — ${sign}` });
+    L.push({ k:"v1", label:"Hỏi thăm", text:`Dạ ${me} chào ${N.full}, ${me} là ${sign} ạ 😊 ${Me} hỏi thăm ${p} dùng thuốc thấy đỡ chưa ạ? Có gì chưa rõ về cách dùng ${p} cứ nhắn ${me} nhé.${pk}` });
+    L.push({ k:"ngan", label:"Ngắn gọn", text:`${F} ơi, ${p} dùng thuốc thấy ổn không ạ? Cần gì nhắn ${me} nha.${pk} — ${sign}` });
   }
   return L;
 }
