@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261007-12";
+window.__APP_BUILD = "20261007-14";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -9775,7 +9775,7 @@ function KudosView({ isAdmin, myStaff }){
           React.createElement("td",{key:"n"}, s.name),
           React.createElement("td",{key:"r"}, fmtNum(s.received)+" ★"),
           React.createElement("td",{key:"b", style:{fontWeight:700,color:"var(--gold)"}}, fmtNum(s.balance)+" ★"),
-          React.createElement("td",{key:"redeem"}, React.createElement("select", { defaultValue:"", onChange:e=>{ const r = rewards.find(x=>x.id===e.target.value); if(r) redeem(s.id, r); e.target.value=""; }, style:{ padding:"5px 7px", borderRadius:6, border:"1px solid var(--line)", fontSize:12 } }, [
+          React.createElement("td",{key:"redeem"}, !(isAdmin || (myStaff && myStaff.id===s.id)) ? "—" : React.createElement("select", { defaultValue:"", onChange:e=>{ const r = rewards.find(x=>x.id===e.target.value); if(r) redeem(s.id, r); e.target.value=""; }, style:{ padding:"5px 7px", borderRadius:6, border:"1px solid var(--line)", fontSize:12 } }, [
             React.createElement("option",{key:"",value:""},"Chọn quà đổi..."),
             ...rewards.map(r=>React.createElement("option",{key:r.id,value:r.id,disabled:s.balance<r.stars,title:r.mota||undefined}, `${r.name} (${r.stars}★)`)),
           ])),
@@ -13064,13 +13064,19 @@ function StaffPerformanceView({ isAdmin, myStaff, onNavigate }){
   const [adminShop, setAdminShop] = useState("Tất cả");
   const shopFilter = isAdmin ? adminShop : (myStaff && myStaff.shop);
   const isAll = !shopFilter || shopFilter==="Tất cả";
-  const employeesRaw = stats
-    ? (isAll ? (stats.topEmployeesChain||[]) : ((stats.byShop && stats.byShop[shopFilter] && stats.byShop[shopFilter].employees) || []))
-    : [];
   // Nhà thuốc đang làm việc — lấy qua danh sách nhân viên "staff" (khớp theo tên đã chuẩn hoá), vì
   // dữ liệu doanh số chỉ có TÊN nhân viên trên đơn hàng, không có sẵn mã nhà thuốc gắn theo hồ sơ.
   const [staffList, setStaffList] = useState([]);
   useEffect(()=>{ const u = subscribeCol("staff", setStaffList); return u; }, []);
+  // 7/10/2026 (Phương): người ĐÃ NGHỈ vẫn có tên trên đơn POS 30 ngày gần nhất → trước đây vẫn nằm trong bảng xếp hạng /
+  // tính vào trung bình. Loại theo tên (trừ khi trùng tên một người đang làm).
+  const [allStaffRank, setAllStaffRank] = useState([]);
+  useEffect(()=>{ const u = subscribeCol("staff", setAllStaffRank, null, { all:true }); return u; }, []);
+  const activeNamesRank = new Set(staffList.map(s => normalizeName(s.name || "")));
+  const resignedNamesRank = new Set(allStaffRank.filter(s => isStaffResigned(s) && !activeNamesRank.has(normalizeName(s.name || ""))).map(s => normalizeName(s.name || "")));
+  const employeesRaw = (stats
+    ? (isAll ? (stats.topEmployeesChain||[]) : ((stats.byShop && stats.byShop[shopFilter] && stats.byShop[shopFilter].employees) || []))
+    : []).filter(e => !resignedNamesRank.has(normalizeName(e.name || "")));
   const shopsByName = {};
   staffList.forEach(s => { if(!s.name || !s.shop) return; const k = normalizeName(s.name); (shopsByName[k] = shopsByName[k] || new Set()).add(s.shop); });
   // Chỉ tiêu doanh số/hệ số theo nhân viên (externalEmployeePlan, đồng bộ 3 lần/ngày từ hệ thống
@@ -23614,6 +23620,10 @@ function Employee360View({ isAdmin, myStaff, navParam, onNavigate }){
   // viên đã xoá hoặc hôm nay không có ca nên không được ghi đè) vẫn được đếm vào "cần chú ý".
   const monthStartIso = `${thang}-01`;
   const activeStaffIds = new Set(staffList.filter(s => !s.ngayNghiViec || s.ngayNghiViec >= monthStartIso).map(s => s.id));
+  // 7/10/2026 (Phương: "nghỉ việc vẫn thấy trong báo cáo đánh giá"): danh sách / ô chọn / so sánh chỉ gồm người còn làm
+  // + người nghỉ TRONG tháng đang xem (đánh giá tới ngày nghỉ, có ghi chú). Người nghỉ từ trước tháng không hiện nữa.
+  const staffInMonth = staffList.filter(s => activeStaffIds.has(s.id));
+  const staffWorking = staffList.filter(s => !isStaffResigned(s));
   const paceCur = paceList.filter(p => p.thang===thang && activeStaffIds.has(p.staffId));
   const wfRowsById = {}; ((wfSummary && wfSummary.thang===thang && wfSummary.rows) || []).forEach(r => { wfRowsById[r.staffId] = r; });
   const wfLowThreshold = (wfSummary && wfSummary.config && wfSummary.config.lowIndexThreshold) || 70;
@@ -23707,8 +23717,8 @@ function Employee360View({ isAdmin, myStaff, navParam, onNavigate }){
     events.push({ date:t.ngayGiao, when:whenLabel360(t.ngayGiao), text:`Được giao việc "${t.title||"?"}" (hạn ${dmy360(t.deadline)})`, color:CL360.warn }));
   events.sort((a,b) => b.date.localeCompare(a.date));
 
-  const staffOptions = staffList.filter(s => shopFilter==="Tất cả" || s.shop===shopFilter)
-    .sort((a,b) => (a.name||"").localeCompare(b.name||"", "vi")).map(s => ({ value:s.id, label:`${s.name} · ${s.shop} · ${s.role}` }));
+  const staffOptions = staffInMonth.filter(s => shopFilter==="Tất cả" || s.shop===shopFilter)
+    .sort((a,b) => (a.name||"").localeCompare(b.name||"", "vi")).map(s => ({ value:s.id, label:`${s.name} · ${s.shop} · ${s.role}${isStaffResigned(s) ? ` · nghỉ ${String(s.ngayNghiViec).split("-").reverse().join("/")}` : ""}` }));
 
   const header = rc("div", { key:"head", style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", flexWrap:"wrap", gap:10, marginBottom:14 } }, [
     rc("div", { key:"t" }, [
@@ -23731,7 +23741,7 @@ function Employee360View({ isAdmin, myStaff, navParam, onNavigate }){
       .sort((a,b) => paceMinRatio(a) - paceMinRatio(b)).slice(0, 15);
     // 100% nhân sự (kể cả người đang ≥80%, không lọc theo pace) — ghép mọi nhân viên trong "staff"
     // (đúng theo shopFilter đang chọn) với dữ liệu pace nếu có; ai chưa có pace hiện "Chưa có dữ liệu".
-    const allRows = staffList.filter(s => shopFilter==="Tất cả" || s.shop===shopFilter)
+    const allRows = staffInMonth.filter(s => shopFilter==="Tất cả" || s.shop===shopFilter)
       .map(s => {
         const p = paceCur.find(pp => pp.staffId===s.id) || null;
         const minRatio = p ? paceMinRatio(p) : 9.5;
@@ -23756,7 +23766,7 @@ function Employee360View({ isAdmin, myStaff, navParam, onNavigate }){
     // 26/9/2026 (Workforce Intelligence): năng suất 4 lớp dưới ngưỡng — chỉ khi index CHÍNH THỨC tính
     // được (đủ 4 lớp, chất lượng tin cậy) và nhân viên trong phạm vi kỳ.
     const WF_LAYER_VI = { A:"Hiện diện", B:"Thực thi", C:"Kinh doanh", D:"Chất lượng" };
-    Object.values(wfRowsById).filter(r => r.inScope && r.index!=null && r.index < wfLowThreshold && (shopFilter==="Tất cả" || r.shop===shopFilter))
+    Object.values(wfRowsById).filter(r => r.inScope && activeStaffIds.has(r.staffId) && r.index!=null && r.index < wfLowThreshold && (shopFilter==="Tất cả" || r.shop===shopFilter))
       .filter(r => !detectedIssues.some(x => x.staffId===r.staffId))
       .forEach(r => {
         const low = ["A","B","C","D"].filter(k => r[k]!=null).sort((a,b) => r[a]-r[b])[0];
@@ -23857,7 +23867,7 @@ function Employee360View({ isAdmin, myStaff, navParam, onNavigate }){
         }) }, "Tạo coaching task")
       : rc("button", { type:"button", className:"btn", style:{ fontSize:12, padding:"6px 12px" }, onClick:()=>onNavigate && onNavigate("kudos") }, "Đi tới Ghi nhận & Quà"));
     body = rc("div", { key:"ov" }, [
-      me && rc(PeerCompareCard, { key:"peer", me, thang, staffList, assign }),
+      me && rc(PeerCompareCard, { key:"peer", me, thang, staffList:staffWorking, assign }),
       // P1-1 (mục XI): cảnh báo vấn đề nhân sự phát hiện được cho nhân viên này.
       staffIssues.length>0 && rc("div", { key:"issues", className:"card", style:{ marginBottom:12, borderColor:CL360.warn } }, [
         rc(Head360, { key:"h", title:`⚠ Vấn đề phát hiện (${staffIssues.length})` }),
@@ -26989,7 +26999,7 @@ function SystemHubView(){
 // (1) ShopDiagnosisCard: nhà thuốc nào đang thấp hơn KẾ HOẠCH tháng của công ty & vấn đề nằm ở đâu (shopDiagnosis/{ngày}, 7h30)
 // (2) DecisionModal: ra quyết định → giao việc cho nhà thuốc + chốt chỉ số theo dõi, mức nền 14 ngày trước, mục tiêu
 // (3) DecisionsCard: app tự đánh giá sau 7 & 14 ngày (thử nhỏ: so thêm với nhà thuốc đối chứng). Không dùng giá vốn / lợi nhuận.
-const DIAG_STATUS = { nang:{ text:"Thấp nhiều", color:"#B3261E" }, thap:{ text:"Thấp hơn kỳ vọng", color:"#D98A1F" }, giam:{ text:"Đang giảm", color:"#D98A1F" }, ok:{ text:"Đúng tiến độ", color:"#16A34A" }, chua_co_ke_hoach:{ text:"Chưa có kế hoạch", color:"#6B7A70" } };
+const DIAG_STATUS = { nang:{ text:"Thấp nhiều", color:"#B3261E" }, thap:{ text:"Thấp hơn kỳ vọng", color:"#D98A1F" }, giam:{ text:"Đang giảm", color:"#D98A1F" }, ok:{ text:"Đúng tiến độ", color:"#16A34A" }, dau_thang:{ text:"Đầu tháng", color:"#6B7A70" }, chua_co_ke_hoach:{ text:"Chưa có kế hoạch", color:"#6B7A70" } };
 const DECISION_TYPES_UI = { action:"Hành động cải thiện", promo_continue:"Tiếp tục CTKM", promo_adjust:"Điều chỉnh CTKM", pilot:"Thử nghiệm phạm vi nhỏ", promo_stop:"Dừng CTKM" };
 const DECISION_METRICS_UI = { rev:"Doanh thu/ngày", bills:"Số bill/ngày", tbb:"Giá trị bill TB", hhs:"Doanh thu hàng hệ số/ngày" };
 const DECISION_VERDICT_UI = { cai_thien:{ text:"✅ Cải thiện", color:"#16A34A" }, khong_doi:{ text:"➖ Không đổi", color:"#6B7A70" }, xau_di:{ text:"❌ Xấu đi", color:"#B3261E" }, chua_du_lieu:{ text:"Chưa đủ dữ liệu", color:"#6B7A70" } };
@@ -27070,7 +27080,7 @@ function ShopDiagnosisCard({ isAdmin, myStaff, onNavigate }){
     React.createElement("button", { key:"b", type:"button", className:"btn", disabled:busy, onClick:runNow }, busy ? "Đang chẩn đoán…" : "Chẩn đoán ngay")]) : null;
   const list = Object.values(d.shops || {}).filter(x => !myShop || x.shop===myShop)
     .sort((a, b) => ((a.plan && a.plan.projectedPct) ?? 999) - ((b.plan && b.plan.projectedPct) ?? 999));
-  const problems = list.filter(x => x.status!=="ok" && x.status!=="chua_co_ke_hoach");
+  const problems = list.filter(x => !["ok","chua_co_ke_hoach","dau_thang"].includes(x.status));
   const shown = showAll || myShop ? list : problems;
   const decideFrom = (x, sg) => setPreset({ type:"action", shops:[x.shop], metric:sg ? sg.metric : ((x.issues[0]||{}).key==="tbb" ? "tbb" : (x.issues[0]||{}).key==="hhs" ? "hhs" : (x.issues[0]||{}).key==="bills" ? "bills" : "rev"),
     title:sg ? sg.text.split(":")[0] : "", hypothesis:x.summary, taskNote:sg ? sg.text : (x.issues||[]).map(i=>"• " + i.text).join("\n"), source:{ kind:"diagnosis", date:d.date } });
