@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261013-7";
+window.__APP_BUILD = "20261013-9";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -15920,15 +15920,15 @@ function buildLeaderReportHtml(D, M){
     const tf = D.trf;
     if (q || (tf && tf.total)) h += `<div class="grid g3" style="margin-top:12px">${q ? `<div class="card tile ${dn/q >= 0.8 ? "good" : dn/q >= 0.5 ? "warn" : "bad"}"><div class="l">Gọi khách theo danh sách (7 ngày)</div><div class="v">${Math.round(dn/q*100)}%</div><div class="s">${lrInt(dn)}/${lrInt(q)} khách đã được liên hệ</div></div>` : ""}${tf && tf.total ? `<div class="card tile info"><div class="l">Phiếu điều chuyển (30 ngày)</div><div class="v">${tf.total} phiếu</div><div class="s">gửi TB ${tf.avgSendH ?? "—"}h · nhận TB ${tf.avgRecvH ?? "—"}h</div></div><div class="card tile ${tf.measured && tf.ok/tf.measured >= 0.7 ? "good" : "warn"}"><div class="l">Điều chuyển có hiệu quả</div><div class="v">${tf.measured ? Math.round(tf.ok/tf.measured*100) + "%" : "—"}</div><div class="s">mã có hàng lại sau 3 ngày (${tf.measured||0} phiếu đã đo)</div></div>` : ""}</div>`;
   }
-  // 4. mục tiêu tuần
-  h += H(`Mục tiêu trọng tâm tuần ${lrDM(W1)} – ${lrDM(W2)}`) + `<div class="grid g2">`;
-  h += `<div class="pillar" style="border-top:4px solid var(--g)"><h4>Doanh số</h4><ul><li>Doanh thu khu vực tuần tới <b>≥ ${lrTr(needDay*7)}</b> (${lrTr(needDay)}/ngày) để quay lại đúng nhịp target tháng.</li><li>Hàng hệ số <b>≥ ${lrTr(hNeed*7)}/tuần</b>.</li><li>TB bill khu vực từ ${lrK(chainObj.tbb.actual)} lên <b>≥ ${lrK(chainObj.tbb.target)}</b>${tbbLow.length ? `. Ưu tiên ${tbbLow.map(s => `${lrShop(s)} (${lrK(by[s].tbb.actual)})`).join(", ")}` : ""}.</li><li>Giảm một nửa số đơn bỏ lỡ khuyến mại: <b>≤ ${lrInt(pmT)} đơn/tuần</b>.</li></ul></div>`;
-  h += `<div class="pillar" style="border-top:4px solid var(--blue)"><h4>Khách hàng</h4><ul><li>Liên hệ <b>100% trong ${lrInt(csAll.silentVip)} khách VIP</b> lâu chưa quay lại${vipTop ? ` (${vipTop})` : ""}.</li><li>Chăm sóc <b>≥ 25% khách nguy cơ rời bỏ</b>, khoảng ${lrInt(careT)} khách, ưu tiên ${custRows.slice(0,3).map(r => lrShop(r.s)).join(", ")}.</li><li>Ghi nhận lượt chăm sóc khách hàng trên app đầy đủ 100%.</li></ul></div>`;
-  h += `<div class="pillar" style="border-top:4px solid var(--amb)"><h4>Hàng hoá</h4><ul><li>Giảm mất doanh thu do hết hàng từ ${lrTr(lostDay)} xuống <b>≤ ${lrTr(lostDay/2)}/ngày</b>.</li><li>POS đã tự dự trù theo tốc độ bán, POS tự duyệt đi hàng 1 lần/tuần — trước lượt tự duyệt, nhà thuốc <b>chỉnh dự trù POS</b>: thêm mã POS bỏ sót, tăng mã đặt thiếu, bỏ mã đặt dư/mã dừng (danh sách ở màn Hôm nay).</li>${allOut.length ? `<li>${allOut.map(p => lrEsc(p.name)).join(", ")}: đang hết, không còn hàng để điều chuyển → cần mua hàng.</li>` : ""}<li>Mỗi nhà thuốc chọn 20 mã tồn lâu không bán để đẩy bán hoặc trả hàng.</li></ul></div>`;
-  h += `<div class="pillar" style="border-top:4px solid #7a4cc2"><h4>Nhân sự</h4><ul>${hireN ? `<li>Tuyển <b>${hireN} vị trí</b> (chi tiết mục ${n+1}).</li>` : ""}${ovAll ? `<li>Xử lý dứt điểm <b>${ovAll} việc quá hạn</b>${ovTop.length ? `. Nhiều nhất ở ${ovTop.map(s => `${lrShop(s)} (${D.overdue[s]})`).join(", ")}` : ""}.</li>` : ""}<li>Mỗi nhân viên làm <b>≥ 5 bài luyện tình huống tư vấn</b> trên app trong tuần.</li><li>Kèm riêng nhân viên đang chậm KPI tháng.</li></ul></div></div>`;
-  h += `<h3>Mục tiêu tuần tới theo từng nhà thuốc</h3><div class="scroll"><table class="tbl"><thead><tr><th>Nhà thuốc</th><th class="num">Đã đạt từ ${lrDM(monthStart)}</th><th class="num">Mục tiêu DT tuần</th><th class="num">HHS đã đạt</th><th class="num">Mục tiêu HHS tuần</th><th>Mức độ</th></tr></thead><tbody>`;
-  h += shopsByRev.map(s => { const o = by[s]; return `<tr><td>${lrShop(s)}</td><td class="num">${lrTr(o.revenue.actual)}</td><td class="num"><b>${lrTr((o.revenue.target-o.revenue.actual)/left*7)}</b></td><td class="num">${lrTr(o.hangHeSo.actual)}</td><td class="num"><b>${lrTr((o.hangHeSo.target-o.hangHeSo.actual)/left*7)}</b></td><td>${pill(s)} cần +${D.paceUp[s]||0}%/ngày</td></tr>`; }).join("");
-  h += `<tr class="total"><td>Toàn khu vực</td><td class="num">${lrTr(revA)}</td><td class="num">${lrTr(needDay*7)}</td><td class="num">${lrTr(hA)}</td><td class="num">${lrTr(hNeed*7)}</td><td></td></tr></tbody></table></div><p class="sub">Mục tiêu tuần = (target tháng − số đã đạt) ÷ ${left} ngày còn lại × 7 ngày.</p>`;
+  // 4. mục tiêu tuần (13/10: dựng trước, đặt ở cuối báo cáo)
+  let goalH = `<div class="grid g2">`;
+  goalH += `<div class="pillar" style="border-top:4px solid var(--g)"><h4>Doanh số</h4><ul><li>Doanh thu khu vực tuần tới <b>≥ ${lrTr(needDay*7)}</b> (${lrTr(needDay)}/ngày) để quay lại đúng nhịp target tháng.</li><li>Hàng hệ số <b>≥ ${lrTr(hNeed*7)}/tuần</b>.</li><li>TB bill khu vực từ ${lrK(chainObj.tbb.actual)} lên <b>≥ ${lrK(chainObj.tbb.target)}</b>${tbbLow.length ? `. Ưu tiên ${tbbLow.map(s => `${lrShop(s)} (${lrK(by[s].tbb.actual)})`).join(", ")}` : ""}.</li><li>Giảm một nửa số đơn bỏ lỡ khuyến mại: <b>≤ ${lrInt(pmT)} đơn/tuần</b>.</li></ul></div>`;
+  goalH += `<div class="pillar" style="border-top:4px solid var(--blue)"><h4>Khách hàng</h4><ul><li>Liên hệ <b>100% trong ${lrInt(csAll.silentVip)} khách VIP</b> lâu chưa quay lại${vipTop ? ` (${vipTop})` : ""}.</li><li>Chăm sóc <b>≥ 25% khách nguy cơ rời bỏ</b>, khoảng ${lrInt(careT)} khách, ưu tiên ${custRows.slice(0,3).map(r => lrShop(r.s)).join(", ")}.</li><li>Ghi nhận lượt chăm sóc khách hàng trên app đầy đủ 100%.</li></ul></div>`;
+  goalH += `<div class="pillar" style="border-top:4px solid var(--amb)"><h4>Hàng hoá</h4><ul><li>Giảm mất doanh thu do hết hàng từ ${lrTr(lostDay)} xuống <b>≤ ${lrTr(lostDay/2)}/ngày</b>.</li><li>POS đã tự dự trù theo tốc độ bán, POS tự duyệt đi hàng 1 lần/tuần — trước lượt tự duyệt, nhà thuốc <b>chỉnh dự trù POS</b>: thêm mã POS bỏ sót, tăng mã đặt thiếu, bỏ mã đặt dư/mã dừng (danh sách ở màn Hôm nay).</li>${allOut.length ? `<li>${allOut.map(p => lrEsc(p.name)).join(", ")}: đang hết, không còn hàng để điều chuyển → cần mua hàng.</li>` : ""}<li>Mỗi nhà thuốc chọn 20 mã tồn lâu không bán để đẩy bán hoặc trả hàng.</li></ul></div>`;
+  goalH += `<div class="pillar" style="border-top:4px solid #7a4cc2"><h4>Nhân sự</h4><ul>${hireN ? `<li>Tuyển <b>${hireN} vị trí</b> (chi tiết ở mục Nhân sự – Kế hoạch tuyển dụng).</li>` : ""}${ovAll ? `<li>Xử lý dứt điểm <b>${ovAll} việc quá hạn</b>${ovTop.length ? `. Nhiều nhất ở ${ovTop.map(s => `${lrShop(s)} (${D.overdue[s]})`).join(", ")}` : ""}.</li>` : ""}<li>Mỗi nhân viên làm <b>≥ 5 bài luyện tình huống tư vấn</b> trên app trong tuần.</li><li>Kèm riêng nhân viên đang chậm KPI tháng.</li></ul></div></div>`;
+  goalH += `<h3>Mục tiêu tuần tới theo từng nhà thuốc</h3><div class="scroll"><table class="tbl"><thead><tr><th>Nhà thuốc</th><th class="num">Đã đạt từ ${lrDM(monthStart)}</th><th class="num">Mục tiêu DT tuần</th><th class="num">HHS đã đạt</th><th class="num">Mục tiêu HHS tuần</th><th>Mức độ</th></tr></thead><tbody>`;
+  goalH += shopsByRev.map(s => { const o = by[s]; return `<tr><td>${lrShop(s)}</td><td class="num">${lrTr(o.revenue.actual)}</td><td class="num"><b>${lrTr((o.revenue.target-o.revenue.actual)/left*7)}</b></td><td class="num">${lrTr(o.hangHeSo.actual)}</td><td class="num"><b>${lrTr((o.hangHeSo.target-o.hangHeSo.actual)/left*7)}</b></td><td>${pill(s)} cần +${D.paceUp[s]||0}%/ngày</td></tr>`; }).join("");
+  goalH += `<tr class="total"><td>Toàn khu vực</td><td class="num">${lrTr(revA)}</td><td class="num">${lrTr(needDay*7)}</td><td class="num">${lrTr(hA)}</td><td class="num">${lrTr(hNeed*7)}</td><td></td></tr></tbody></table></div><p class="sub">Mục tiêu tuần = (target tháng − số đã đạt) ÷ ${left} ngày còn lại × 7 ngày.</p>`;
   // nhân sự
   // 13/10/2026: đánh giá kết quả tuần, cam kết tuần trước, thẩm định kế hoạch tuần này
   const WK = lrWeekEval(M.wk);
@@ -15977,8 +15977,50 @@ function buildLeaderReportHtml(D, M){
   h += H("Đề xuất cần Ban lãnh đạo phê duyệt / hỗ trợ") + (askAll.length ? `<div class="ask"><ol>${askAll.map(a => `<li>${a}</li>`).join("")}</ol></div>` : `<p class="sub">Không có.</p>`);
   // ghi chú
   if (WK.concl) h += H("Kết luận điều hành") + WK.concl;
+  h += H(`Mục tiêu trọng tâm tuần ${lrDM(W1)} – ${lrDM(W2)}`) + goalH;
   h += H("Ghi chú") + `<div class="note"><p>• Nguồn: hệ thống Upharma Ops (hoá đơn POS, chỉ tiêu tháng từ upharma.com.vn, tồn kho, khách hàng, ca làm việc). Đã loại tài khoản đào tạo khỏi mọi số liệu.</p><p>• Doanh số, hàng hệ số, bill và khuyến mại tính từ ${lrDM(monthStart)}/${cut.slice(0,4)}, không cộng tháng trước. "Dự kiến cả tháng" là ngoại suy từ ${days} ngày đầu tháng.</p>${notes.map(x => `<p>• ${lrEsc(x)}</p>`).join("")}</div>`;
   h += `<footer>Upharma · Báo cáo tuần khu vực · Lập ngày ${lrDM(D.today)}/${D.today.slice(0,4)}</footer></div></body></html>`;
+  // 13/10/2026 (chị Hà): BẢN RÚT GỌN — báo cáo trong 15 phút (mặc định). Bản đầy đủ: bật "Bản đầy đủ" trên màn hình lập báo cáo.
+  if (!M.full) {
+    let n2 = 0; const H2 = (t) => `<h2><span class="n">${++n2}</span>${t}</h2>`;
+    const scS = (M.wk && M.wk.sc) ? M.wk.sc : null; const wkBy = {}; if (scS) scS.shops.forEach(x => { wkBy[x.shop] = x; });
+    const Aw = (M.wk && M.wk.ok && M.wk.A) || {};
+    const pc = (p) => p == null ? `<span class="sub">—</span>` : `<span class="pill ${p >= 100 ? "p-g" : p >= 85 ? "p-amb" : "p-red"}">${lrDec(p, 1)}%</span>`;
+    let c = `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Báo cáo tổng hợp tuần · ${lrDM(W1)}–${lrDM(W2)}/${W2.slice(0,4)}</title><style>${LR_CSS}</style></head><body><div class="wrap">`;
+    c += `<header class="top"><div class="k">Upharma · Báo cáo tổng hợp</div><h1>Báo cáo tuần &amp; Kế hoạch tuần ${lrDM(W1)} – ${lrDM(W2)}/${W2.slice(0,4)}</h1><div class="meta">Khu vực ${shops.length} nhà thuốc · Người lập: ${lrEsc(M.author || "Quản lý khu vực")} · Số liệu đến hết ${lrDM(cut)}/${cut.slice(0,4)}</div></header>`;
+    // 1. Tóm tắt: 4 ô số + 3-4 ý
+    const wR = scS && scS.chain ? scS.chain : null;
+    c += H2("Tóm tắt") + `<div class="grid g4">`
+      + `<div class="card tile ${projAll >= 95 ? "good" : projAll >= 85 ? "warn" : "bad"}"><div class="l">Doanh thu tháng</div><div class="v">${lrPct(revA, revT)}</div><div class="s">${lrTr(revA)} / ${lrTr(revT)} · dự kiến ${lrDec(projAll, 0)}%</div></div>`
+      + `<div class="card tile ${wR && wR.revPct >= 100 ? "good" : wR && wR.revPct >= 85 ? "warn" : "bad"}"><div class="l">Doanh thu tuần ${scS ? lrDM(scS.evalFrom) + "–" + lrDM(scS.evalTo) : "trước"}</div><div class="v">${wR && wR.revPct != null ? lrDec(wR.revPct, 1) + "%" : "—"}</div><div class="s">${wR ? lrTr(wR.revActual) + " / " + lrTr(wR.revTarget) : "chưa đánh giá tuần"}</div></div>`
+      + `<div class="card tile ${hProj >= 95 ? "good" : hProj >= 85 ? "warn" : "bad"}"><div class="l">Hàng hệ số tháng</div><div class="v">${lrPct(hA, hT)}</div><div class="s">dự kiến ${lrDec(hProj, 0)}%</div></div>`
+      + `<div class="card tile info"><div class="l">Cần mỗi ngày còn lại</div><div class="v">${lrTr(needDay)}</div><div class="s">đang ${lrTr(perDay)}/ngày · ${left} ngày</div></div></div>`;
+    const keys = (Aw.executive && Array.isArray(Aw.executive.criticalIssues) && Aw.executive.criticalIssues.length) ? Aw.executive.criticalIssues.slice(0, 3).map(x => lrEsc(lrNoAi(x))) : exec.slice(2, 5);
+    c += `<div class="exec" style="margin-top:10px"><b>Vấn đề chính</b><ol>${keys.map(x => `<li>${x}</li>`).join("")}</ol></div>`;
+    // 2. Bảng kết quả từng nhà thuốc (1 bảng)
+    const rows = shops.slice().sort((a, b) => (by[a].revenue.projectedPct || 0) - (by[b].revenue.projectedPct || 0));
+    c += H2("Kết quả từng nhà thuốc") + `<div class="scroll"><table class="tbl kpi"><thead><tr><th>Nhà thuốc</th><th class="num">DT tuần so mục tiêu</th><th class="num">DT tháng đạt</th><th class="num">Dự kiến tháng</th><th class="num">Cần/ngày</th><th class="num">HHS tháng</th><th class="num">TB bill</th></tr></thead><tbody>`
+      + rows.map(s => { const o = by[s]; const w = wkBy[s]; const wk0 = w && w.kpis[0];
+        const tb = o.tbb && o.tbb.actual ? lrK(o.tbb.actual) : (o.invoice && o.invoice.actual ? lrK(o.revenue.actual / o.invoice.actual) : "—");
+        return `<tr><td><b>${lrShop(s)}</b></td><td class="num">${wk0 && wk0.pct != null ? pc(wk0.pct) : `<span class="sub">—</span>`}</td><td class="num">${lrPct(o.revenue.actual, o.revenue.target)}</td><td class="num">${pc(o.revenue.projectedPct)}</td><td class="num"><b>${lrTr((o.revenue.target - o.revenue.actual) / left)}</b></td><td class="num">${pc(o.hangHeSo.target ? o.hangHeSo.actual / o.hangHeSo.target * 100 * P : null)}</td><td class="num">${tb}</td></tr>`; }).join("")
+      + `<tr class="total"><td>Toàn khu vực</td><td class="num">${wR && wR.revPct != null ? lrDec(wR.revPct, 1) + "%" : "—"}</td><td class="num">${lrPct(revA, revT)}</td><td class="num">${lrDec(projAll, 1)}%</td><td class="num">${lrTr(needDay)}</td><td class="num">${lrDec(hProj, 1)}%</td><td></td></tr></tbody></table></div>`
+      + `<p class="sub">Màu: <span class="pill p-g">≥ 100%</span> <span class="pill p-amb">85–100%</span> <span class="pill p-red">&lt; 85%</span> · HHS tháng = dự kiến cả tháng nếu giữ tốc độ.</p>`;
+    // 3. Hành động ưu tiên tuần này (tối đa 6)
+    const ap = (Array.isArray(Aw.actionPlan) ? Aw.actionPlan : []).filter(a => ["P0","P1"].includes(a.priority)).slice(0, 6);
+    c += H2(`Hành động ưu tiên tuần ${lrDM(W1)} – ${lrDM(W2)}`) + `<div class="scroll"><table class="tbl"><thead><tr><th>#</th><th>Nhóm</th><th>Việc cần làm</th><th>Nhà thuốc</th><th>Phụ trách</th><th>Hạn</th></tr></thead><tbody>`
+      + (ap.length ? ap.map((a, k) => `<tr><td>${lrPill(LR_PRI[a.priority] || "p-gr", a.priority)}</td><td>${LR_CAT[a.category] || lrT(a.category)}</td><td>${lrT(a.action)}</td><td>${(a.shops || []).map(x => lrT(x.shop)).join(", ")}</td><td>${lrT(a.owner) || "—"}</td><td>${/^\d{4}-\d{2}-\d{2}$/.test(a.deadline || "") ? lrDM(a.deadline) : (lrT(a.deadline) || "—")}</td></tr>`).join("")
+        : actions.slice(0, 6).map((a, k) => `<tr><td>${k + 1}</td><td><span class="pill ${a[0]}">${lrEsc(a[1])}</span></td><td>${a[2]}</td><td>${a[3]}</td><td>${lrEsc(a[4])}</td><td>${lrEsc(a[5])}</td></tr>`).join(""))
+      + `</tbody></table></div>`;
+    // 4. Đề xuất cần phê duyệt
+    c += H2("Đề xuất cần Ban lãnh đạo phê duyệt") + (askAll.length ? `<div class="ask"><ol>${askAll.map(a => `<li>${a}</li>`).join("")}</ol></div>` : `<p class="sub">Không có.</p>`);
+    // 5. Mục tiêu tuần tới
+    c += H2(`Mục tiêu tuần ${lrDM(W1)} – ${lrDM(W2)}`) + `<div class="scroll"><table class="tbl kpi"><thead><tr><th>Nhà thuốc</th><th class="num">Doanh thu tuần</th><th class="num">Hàng hệ số tuần</th><th>Mức độ</th></tr></thead><tbody>`
+      + shopsByRev.map(s => { const o = by[s]; return `<tr><td><b>${lrShop(s)}</b></td><td class="num"><b>${lrTr((o.revenue.target - o.revenue.actual) / left * 7)}</b></td><td class="num">${lrTr((o.hangHeSo.target - o.hangHeSo.actual) / left * 7)}</td><td>${pill(s)}</td></tr>`; }).join("")
+      + `<tr class="total"><td>Toàn khu vực</td><td class="num">${lrTr(needDay * 7)}</td><td class="num">${lrTr(hNeed * 7)}</td><td></td></tr></tbody></table></div>`;
+    c += `<p class="sub" style="margin-top:14px">Nguồn: hệ thống Upharma Ops (hoá đơn POS, chỉ tiêu tháng). Mục tiêu tuần = (target tháng − đã đạt) ÷ ${left} ngày còn lại × 7.</p>`;
+    c += `<footer>Upharma · Báo cáo tuần khu vực (bản rút gọn) · Lập ngày ${lrDM(D.today)}/${D.today.slice(0,4)}</footer></div></body></html>`;
+    return c;
+  }
   return h;
 }
 
@@ -15997,6 +16039,7 @@ function LeaderReportView({ isAdmin }){
   const [err, setErr] = React.useState("");
   const [saving, setSaving] = React.useState(false);
   const [msg, setMsg] = React.useState("");
+  const [full, setFull] = React.useState(false);
   // 13/10/2026: đánh giá tuần (bảng điểm + phân tích) và cam kết quản lý của tuần đang xem
   const [mw, setMw] = React.useState(null); const [mwCommits, setMwCommits] = React.useState([]); const [repMax, setRepMax] = React.useState(0); const [mwBusy, setMwBusy] = React.useState(false);
   React.useEffect(() => { setMw(null); return db.collection("opsConfig").doc("managerWeekAi_" + weekStart).onSnapshot(d => setMw(d.exists ? d.data() : null), () => setMw(null)); }, [weekStart]);
@@ -16055,7 +16098,7 @@ function LeaderReportView({ isAdmin }){
     }, e => setErr(e.message));
     return () => unsub();
   }, [weekStart]);
-  const html = React.useMemo(() => { try { return D && M ? buildLeaderReportHtml(lrWithStaff(D, M), { ...M, weekStart, wk }) : ""; } catch (e) { return `<p style="color:#b3261e;font:14px sans-serif">Lỗi dựng báo cáo: ${lrEsc(e.message)}</p>`; } }, [D, M, weekStart, wk]);
+  const html = React.useMemo(() => { try { return D && M ? buildLeaderReportHtml(lrWithStaff(D, M), { ...M, weekStart, wk, full }) : ""; } catch (e) { return `<p style="color:#b3261e;font:14px sans-serif">Lỗi dựng báo cáo: ${lrEsc(e.message)}</p>`; } }, [D, M, weekStart, wk, full]);
   if (!isAdmin) return h("div", { className:"emptyState" }, "Chỉ quản lý xem được báo cáo tổng hợp.");
   if (err) return h("div", { className:"card", style:{ color:"#b3261e" } }, "Lỗi tải số liệu: " + err);
   if (!D || !M) return h("div", { className:"emptyState" }, "Đang tổng hợp số liệu…");
@@ -16086,6 +16129,7 @@ function LeaderReportView({ isAdmin }){
       h("span", { style:{ color:"var(--inkSoft)", fontSize:12.5 } }, `${lrDM(weekStart)} – ${lrDM(lrAdd(weekStart,6))} · số liệu chốt đến ${lrDM(D.cutoff)}`),
       h("div", { style:{ flex:1 } }),
       h("button", { className:"btn btnGhost", onClick: () => runWeekEval(false), disabled: mwBusy, title:"Đánh giá kết quả tuần, cam kết, kế hoạch của các nhà thuốc từ báo cáo tuần" }, mwBusy ? "Đang đánh giá… (~1 phút)" : (mw && mw.scorecard ? "Cập nhật đánh giá tuần" : "Đánh giá tuần")),
+      h("label", { style:{ display:"flex", alignItems:"center", gap:4, fontSize:13, cursor:"pointer" }, title:"Mặc định là bản rút gọn để báo cáo trong 15 phút" }, h("input", { type:"checkbox", checked:full, onChange:e => setFull(e.target.checked) }), "Bản đầy đủ"),
       h("button", { className:"btn btnGhost", onClick: save, disabled: saving }, saving ? "Đang lưu…" : "Lưu"),
       h("button", { className:"btn btnPrimary", onClick: download }, "Tải file HTML"),
       h("button", { className:"btn btnGhost", onClick: printPdf }, "In / PDF"),
