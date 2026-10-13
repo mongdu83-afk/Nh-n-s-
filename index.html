@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261013-9";
+window.__APP_BUILD = "20261013-10";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -15869,7 +15869,7 @@ function buildLeaderReportHtml(D, M){
   const sgn = (x) => `<span class="${x <= 10 ? "up" : "down"}">${x >= 0 ? "+" : ""}${x}%</span>`;
   const pill = (s) => { const g = D.paceUp[s] || 0; return g >= 50 ? '<span class="pill p-red">Rủi ro cao</span>' : g >= 25 ? '<span class="pill p-amb">Tăng tốc</span>' : '<span class="pill p-g">Giữ nhịp</span>'; };
   const actions = [
-    ["p-g","Doanh số","Họp đầu tuần từng nhà thuốc: giao target tuần cho từng nhân viên theo bảng mục 4.","Tất cả","QLKV + nhà thuốc trưởng",lrDM(lrAdd(W1,1)),"100% nhân viên có target tuần"],
+    ["p-g","Doanh số","Họp đầu tuần từng nhà thuốc: giao target tuần cho từng nhân viên theo bảng Mục tiêu tuần.","Tất cả","QLKV + nhà thuốc trưởng",lrDM(lrAdd(W1,1)),"100% nhân viên có target tuần"],
     ["p-g","Doanh số","Dán bảng ngưỡng khuyến mại tại quầy; luyện câu tư vấn \"thêm 1 sản phẩm để nhận quà\".","Tất cả, ưu tiên " + shops.slice().sort((a,b)=>((pm[b]||{}).n||0)-((pm[a]||{}).n||0)).slice(0,3).map(lrShop).join(", "),"Nhà thuốc trưởng",lrDM(lrAdd(W1,2)),`Đơn bỏ lỡ ≤ ${lrInt(pmT)}/tuần`],
     ["p-g","Doanh số","Kèm bán hàng tăng TB bill: tư vấn trọn liệu trình và sản phẩm đi kèm, ưu tiên hàng hệ số.", tbbLow.map(lrShop).join(", ") || "Tất cả","QLKV",lrDM(W2), tbbLow.map(s => `${lrShop(s)} ≥ ${lrK(by[s].tbb.target*0.95)}`).join(" · ") || "TB bill đạt target"],
     ["p-b","Khách hàng",`Gọi lại ${lrInt(csAll.silentVip)} khách VIP lâu chưa quay lại; ghi kết quả trên app.`, vipTop ? vipTop.replace(/: \d+/g,"") + "…" : "Tất cả","Nhà thuốc trưởng",lrDM(lrAdd(W1,3)),"100% VIP được liên hệ"],
@@ -16005,12 +16005,16 @@ function buildLeaderReportHtml(D, M){
         return `<tr><td><b>${lrShop(s)}</b></td><td class="num">${wk0 && wk0.pct != null ? pc(wk0.pct) : `<span class="sub">—</span>`}</td><td class="num">${lrPct(o.revenue.actual, o.revenue.target)}</td><td class="num">${pc(o.revenue.projectedPct)}</td><td class="num"><b>${lrTr((o.revenue.target - o.revenue.actual) / left)}</b></td><td class="num">${pc(o.hangHeSo.target ? o.hangHeSo.actual / o.hangHeSo.target * 100 * P : null)}</td><td class="num">${tb}</td></tr>`; }).join("")
       + `<tr class="total"><td>Toàn khu vực</td><td class="num">${wR && wR.revPct != null ? lrDec(wR.revPct, 1) + "%" : "—"}</td><td class="num">${lrPct(revA, revT)}</td><td class="num">${lrDec(projAll, 1)}%</td><td class="num">${lrTr(needDay)}</td><td class="num">${lrDec(hProj, 1)}%</td><td></td></tr></tbody></table></div>`
       + `<p class="sub">Màu: <span class="pill p-g">≥ 100%</span> <span class="pill p-amb">85–100%</span> <span class="pill p-red">&lt; 85%</span> · HHS tháng = dự kiến cả tháng nếu giữ tốc độ.</p>`;
-    // 3. Hành động ưu tiên tuần này (tối đa 6)
-    const ap = (Array.isArray(Aw.actionPlan) ? Aw.actionPlan : []).filter(a => ["P0","P1"].includes(a.priority)).slice(0, 6);
-    c += H2(`Hành động ưu tiên tuần ${lrDM(W1)} – ${lrDM(W2)}`) + `<div class="scroll"><table class="tbl"><thead><tr><th>#</th><th>Nhóm</th><th>Việc cần làm</th><th>Nhà thuốc</th><th>Phụ trách</th><th>Hạn</th></tr></thead><tbody>`
-      + (ap.length ? ap.map((a, k) => `<tr><td>${lrPill(LR_PRI[a.priority] || "p-gr", a.priority)}</td><td>${LR_CAT[a.category] || lrT(a.category)}</td><td>${lrT(a.action)}</td><td>${(a.shops || []).map(x => lrT(x.shop)).join(", ")}</td><td>${lrT(a.owner) || "—"}</td><td>${/^\d{4}-\d{2}-\d{2}$/.test(a.deadline || "") ? lrDM(a.deadline) : (lrT(a.deadline) || "—")}</td></tr>`).join("")
-        : actions.slice(0, 6).map((a, k) => `<tr><td>${k + 1}</td><td><span class="pill ${a[0]}">${lrEsc(a[1])}</span></td><td>${a[2]}</td><td>${a[3]}</td><td>${lrEsc(a[4])}</td><td>${lrEsc(a[5])}</td></tr>`).join(""))
-      + `</tbody></table></div>`;
+    // 3. Kế hoạch hành động tuần tới: việc xử lý vấn đề tuần qua (theo mức ưu tiên) + việc theo chỉ tiêu tháng
+    const dl = (x) => /^\d{4}-\d{2}-\d{2}$/.test(x || "") ? lrDM(x) : (lrT(x) || "—");
+    const apAll = (Array.isArray(Aw.actionPlan) ? Aw.actionPlan : []).slice().sort((x, y) => String(x.priority).localeCompare(String(y.priority)));
+    const catPill = (cls, t) => `<span class="pill ${cls === "p-v" ? '" style="background:#f1eafb;color:#7a4cc2' : cls}">${lrEsc(t)}</span>`;
+    const CATC = { doanhThu:"p-g", khachHang:"p-b", hangHoa:"p-amb", nhanSu:"p-v", coSoVatChat:"p-red", matBang:"p-gr" };
+    let k = 0;
+    c += H2(`Kế hoạch hành động tuần ${lrDM(W1)} – ${lrDM(W2)}`) + `<div class="scroll"><table class="tbl"><thead><tr><th>#</th><th>Ưu tiên</th><th>Hạng mục</th><th>Việc cần làm</th><th>Nhà thuốc · mục tiêu</th><th>Phụ trách</th><th>Hạn</th><th>Đo kết quả</th></tr></thead><tbody>`
+      + apAll.map(a => `<tr><td>${++k}</td><td>${lrPill(LR_PRI[a.priority] || "p-gr", a.priority || "—")}</td><td>${catPill(CATC[a.category] || "p-gr", LR_CAT[a.category] || a.category || "Khác")}</td><td><b>${lrT(a.problem)}</b><br>${lrT(a.action)}</td><td>${(a.shops || []).map(x => `${lrT(x.shop)}${x.target ? ": " + lrT(x.target) : ""}`).join("<br>")}</td><td>${lrT(a.owner) || "—"}</td><td>${dl(a.deadline)}</td><td>${lrT(a.acceptance) || "—"}</td></tr>`).join("")
+      + actions.map(a => `<tr><td>${++k}</td><td>${lrPill("p-gr", "Thường kỳ")}</td><td>${catPill(a[0], a[1])}</td><td>${a[2]}</td><td>${lrEsc(a[3])}</td><td>${lrEsc(a[4])}</td><td>${lrEsc(a[5])}</td><td>${lrEsc(a[6])}</td></tr>`).join("")
+      + `</tbody></table></div><p class="sub">P0 làm ngay · P1 trong tuần · P2 theo dõi · P3 cải tiến dài hạn · "Thường kỳ" = việc theo chỉ tiêu tháng.</p>`;
     // 4. Đề xuất cần phê duyệt
     c += H2("Đề xuất cần Ban lãnh đạo phê duyệt") + (askAll.length ? `<div class="ask"><ol>${askAll.map(a => `<li>${a}</li>`).join("")}</ol></div>` : `<p class="sub">Không có.</p>`);
     // 5. Mục tiêu tuần tới
