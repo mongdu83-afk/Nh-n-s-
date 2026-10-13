@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261013-6";
+window.__APP_BUILD = "20261013-7";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -15716,44 +15716,69 @@ function lrWeekEval(wk){
   const evalBy = {}; (A.shopEval || []).forEach(x => { if (x && x.shop) evalBy[String(x.shop).replace(/\s/g, "")] = x; });
   const bs = (sc.chain && sc.chain.byStatus) || {};
   const ch = sc.chain || {};
-  // --- Đánh giá tuần
-  let t = `<p class="sub">Kỳ đánh giá ${lrDM(sc.evalFrom)} – ${lrDM(sc.evalTo)}/${sc.evalTo.slice(0,4)} so với mục tiêu tuần. Ngưỡng ${sc.thresholdsConfigured ? "do quản lý cấu hình" : "đề xuất"}: vượt ≥ ${sc.thresholds.over}%, đạt ≥ ${sc.thresholds.ok}%, có nguy cơ ≥ ${sc.thresholds.risk}%, dưới mức đó là chưa đạt.</p>`;
-  t += `<div class="grid g4" style="margin:10px 0"><div class="card tile ${ch.revPct >= sc.thresholds.ok ? "good" : ch.revPct >= sc.thresholds.risk ? "warn" : "bad"}"><div class="l">Doanh thu tuần toàn khu vực</div><div class="v">${ch.revPct != null ? lrDec(ch.revPct, 1) + "%" : "—"}</div><div class="s">${lrTr(ch.revActual)} / ${lrTr(ch.revTarget)}</div></div>`
-    + `<div class="card tile good"><div class="l">Đạt / vượt mục tiêu</div><div class="v">${(bs.over || 0) + (bs.ok || 0)}</div><div class="s">nhà thuốc</div></div>`
-    + `<div class="card tile warn"><div class="l">Có nguy cơ không đạt</div><div class="v">${bs.risk || 0}</div><div class="s">nhà thuốc</div></div>`
-    + `<div class="card tile bad"><div class="l">Chưa đạt</div><div class="v">${bs.under || 0}</div><div class="s">nhà thuốc${bs.nodata ? ` · ${bs.nodata} chưa đủ dữ liệu` : ""}</div></div>`
-    + `</div>`;
-  if (A.executive) {
-    const E = A.executive;
-    t += `<div class="exec" style="margin-top:10px">${E.summary ? `<p>${lrT(E.summary)}</p>` : ""}<div class="grid g2" style="margin-top:6px">`
-      + `<div><b class="up">Điểm tích cực</b>${list(E.positives)}</div><div><b class="down">Vấn đề nghiêm trọng nhất</b>${list(E.criticalIssues)}</div>`
-      + `<div><b>Nhà thuốc cần ưu tiên hỗ trợ</b>${list(E.priorityShops)}</div><div><b>Quyết định cần làm ngay</b>${list(E.decisionsNow)}</div></div></div>`;
+  // --- Đánh giá tuần (13/10: dạng bảng, hạn chế chữ)
+  const clip = (x, n) => { x = lrNoAi(x); return x.length > n ? x.slice(0, n - 1).replace(/\s+\S*$/, "") + "…" : x; };
+  const pctB = (k) => { if (k.status === "na") return `<span class="sub">—</span>`; if (k.pct == null) return lrPill("p-gr", "thiếu số liệu"); return lrPill((LR_ST[k.status] || LR_ST.na)[0], lrDec(k.pct, 1) + "%"); };
+  const num = (k) => `${kv(k)}<span class="sub"> / ${kt(k)}</span>`;
+  let t = `<div class="grid g4" style="margin:6px 0 10px"><div class="card tile ${ch.revPct >= sc.thresholds.ok ? "good" : ch.revPct >= sc.thresholds.risk ? "warn" : "bad"}"><div class="l">Doanh thu tuần ${lrDM(sc.evalFrom)}–${lrDM(sc.evalTo)}</div><div class="v">${ch.revPct != null ? lrDec(ch.revPct, 1) + "%" : "—"}</div><div class="s">${lrTr(ch.revActual)} / ${lrTr(ch.revTarget)}</div></div>`
+    + `<div class="card tile good"><div class="l">Đạt / vượt</div><div class="v">${(bs.over || 0) + (bs.ok || 0)}</div><div class="s">nhà thuốc</div></div>`
+    + `<div class="card tile warn"><div class="l">Có nguy cơ</div><div class="v">${bs.risk || 0}</div><div class="s">nhà thuốc</div></div>`
+    + `<div class="card tile bad"><div class="l">Chưa đạt</div><div class="v">${bs.under || 0}</div><div class="s">nhà thuốc${bs.nodata ? ` · ${bs.nodata} thiếu số liệu` : ""}</div></div></div>`;
+  // Bảng KPI: số thực tế / mục tiêu + % (màu = trạng thái)
+  t += `<p class="sub">Màu: ${lrPill("p-g", "≥ " + sc.thresholds.ok + "% đạt")} ${lrPill("p-amb", sc.thresholds.risk + "–" + sc.thresholds.ok + "% nguy cơ")} ${lrPill("p-red", "< " + sc.thresholds.risk + "% chưa đạt")} ${lrPill("p-gr", "thiếu số liệu")} · ngưỡng ${sc.thresholdsConfigured ? "do quản lý cấu hình" : "đề xuất"}</p>`;
+  const sorted = sc.shops.slice().sort((x, y) => (x.kpis[0].pct ?? 999) - (y.kpis[0].pct ?? 999));
+  const flags = (x) => [!x.reported ? lrPill("p-red", "Chưa gửi BC") : "", x.selfCheck ? lrPill("p-y", "Số tự báo lệch") : "", (x.kpiRecurring || []).length ? lrPill("p-red", "Hụt 2 tuần liền") : "", x.targetMissing ? lrPill("p-gr", "Chưa có chỉ tiêu") : ""].filter(Boolean).join(" ");
+  t += `<div class="scroll"><table class="tbl kpi"><thead><tr><th>Nhà thuốc</th><th class="num">Doanh thu</th><th class="num">%</th><th class="num">Hàng hệ số</th><th class="num">%</th><th class="num">TB bill</th><th class="num">%</th><th class="num">Số HĐ</th><th class="num">%</th><th class="num">DT so tuần trước</th><th class="num">Cần/ngày để đạt tháng</th><th>Lưu ý</th></tr></thead><tbody>`
+    + sorted.map(x => { const k = x.kpis; const d = k[0].delta;
+      return `<tr><td><b>${lrEsc(x.label)}</b></td>` + k.map(y => `<td class="num">${num(y)}</td><td class="num">${pctB(y)}</td>`).join("")
+        + `<td class="num">${d && d.pct != null ? `<span class="${d.pct >= 0 ? "up" : "down"}">${d.pct >= 0 ? "▲ +" : "▼ "}${lrDec(d.pct, 1)}%</span>` : `<span class="sub">—</span>`}</td>`
+        + `<td class="num">${x.month && x.month.needPerDay ? lrTr(x.month.needPerDay) : "—"}</td><td>${flags(x)}</td></tr>`; }).join("")
+    + `<tr class="total"><td>Toàn khu vực</td><td class="num">${lrTr(ch.revActual)}<span class="sub"> / ${lrTr(ch.revTarget)}</span></td><td class="num">${ch.revPct != null ? lrDec(ch.revPct, 1) + "%" : "—"}</td><td colspan="9"></td></tr></tbody></table></div>`;
+  // Vấn đề chung: ma trận vấn đề × nhà thuốc
+  if ((sc.common || []).length) {
+    const labs = sc.shops.map(x => x.label);
+    t += `<h3>Vấn đề lặp lại ở nhiều nhà thuốc</h3><div class="scroll"><table class="tbl kpi"><thead><tr><th>Vấn đề</th><th class="num">Số NT</th>${labs.map(l => `<th class="num">${lrEsc(l)}</th>`).join("")}</tr></thead><tbody>`
+      + sc.common.map(c => `<tr><td>${lrT(c.label)}</td><td class="num"><b>${c.shops.length}</b></td>${labs.map(l => `<td class="num">${c.shops.includes(l) ? `<span class="down">●</span>` : ""}</td>`).join("")}</tr>`).join("")
+      + `</tbody></table></div>`;
   }
-  if ((sc.common || []).length) t += `<p style="margin-top:8px"><b>Vấn đề chung nhiều nhà thuốc:</b> ${sc.common.map(c => `${lrT(c.label)} (${c.shops.map(lrEsc).join(", ")})`).join(" · ")}</p>`;
-  const rows = sc.shops.map(x => { const k = x.kpis; const ev = evalBy[String(x.label).replace(/\s/g, "")] || {}; const d = k[0].delta;
-    const cause = (ev.causes || []).length ? ev.causes.map(c => `${lrT(c.text)}${c.evidence ? ` <span class="sub">(căn cứ: ${lrT(c.evidence)})</span>` : ""}`).join("<br>") : (ev.causeStatus === "chưa đủ cơ sở" || !ev.assessment ? `<span class="sub">Chưa đủ cơ sở xác định nguyên nhân</span>` : "");
-    const extra = [!x.reported ? `<span class="pill p-red">Chưa gửi báo cáo</span>` : "", x.selfCheck ? `<span class="pill p-y">Cần xác minh</span> <span class="sub">${lrEsc(x.selfCheck)}</span>` : "", ...(x.kpiRecurring || []).map(r => `<span class="pill p-red">${lrEsc(r)}</span>`)].filter(Boolean).join("<br>");
-    return `<tr><td><b>${lrEsc(x.label)}</b>${extra ? "<br>" + extra : ""}</td>`
-      + `<td class="num">${kv(k[0])} / ${kt(k[0])}<br>${st(k[0])}${k[0].gap > 0 ? `<br><span class="sub">thiếu ${lrTr(k[0].gap)}</span>` : ""}</td>`
-      + k.slice(1).map(y => `<td class="num">${kv(y)} / ${kt(y)}<br>${st(y)}</td>`).join("")
-      + `<td class="num">${d && d.pct != null ? `<span class="${d.pct >= 0 ? "up" : "down"}">${d.pct >= 0 ? "▲ +" : "▼ "}${lrDec(d.pct, 1)}%</span>` : `<span class="sub">—</span>`}</td>`
-      + `<td>${ev.assessment ? lrT(ev.assessment) + "<br>" : ""}${cause}</td><td>${lrT(ev.action || "")}${x.month && x.month.needPerDay ? `<br><span class="sub">Cần ${lrTr(x.month.needPerDay)}/ngày trong ${x.month.daysLeft} ngày còn lại để đạt tháng</span>` : ""}</td></tr>`; }).join("");
-  t += `<div class="scroll" style="margin-top:10px"><table class="tbl kpi"><thead><tr><th>Nhà thuốc</th><th class="num">Doanh thu (thực tế / mục tiêu)</th><th class="num">Hàng hệ số</th><th class="num">TB bill</th><th class="num">Số hoá đơn</th><th class="num">So tuần trước</th><th>Nhận định · nguyên nhân có căn cứ</th><th>Hành động</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  // Nhận định & hành động từng nhà thuốc: bảng ngắn
+  if ((A.shopEval || []).length) {
+    t += `<h3>Nguyên nhân & hành động từng nhà thuốc</h3><div class="scroll"><table class="tbl"><thead><tr><th>Nhà thuốc</th><th>Nguyên nhân chính (có căn cứ)</th><th>Hành động tuần này</th></tr></thead><tbody>`
+      + sorted.map(x => { const ev = evalBy[String(x.label).replace(/\s/g, "")]; if (!ev) return "";
+        const c = (ev.causes || [])[0]; const cause = c ? clip(c.text, 90) : `<span class="sub">Chưa đủ căn cứ xác định</span>`;
+        return `<tr><td><b>${lrEsc(x.label)}</b></td><td>${c ? lrEsc(cause) : cause}</td><td>${lrEsc(clip(ev.action || "—", 110))}</td></tr>`; }).join("")
+      + `</tbody></table></div>`;
+  }
+  // Tóm tắt điều hành tuần: bảng 2 cột
+  if (A.executive) { const E = A.executive; const cell = (arr) => (Array.isArray(arr) && arr.length ? arr.slice(0, 4).map(x => "• " + lrEsc(clip(typeof x === "string" ? x : `${x.shop}: ${x.reason || ""}`, 120))).join("<br>") : `<span class="sub">—</span>`);
+    t += `<h3>Nhận định tuần</h3><div class="scroll"><table class="tbl"><tbody>`
+      + [["Điểm tích cực", E.positives, "up"], ["Vấn đề nghiêm trọng", E.criticalIssues, "down"], ["Cần ưu tiên hỗ trợ", E.priorityShops, ""], ["Quyết định cần làm ngay", E.decisionsNow, ""]].map(([l, v, c]) => `<tr><td style="width:180px"><b class="${c}">${l}</b></td><td>${cell(v)}</td></tr>`).join("")
+      + `</tbody></table></div>`; }
   out.top = t;
-  // --- Cam kết tuần trước
+  // --- Cam kết tuần trước (bảng; bỏ mục chưa đủ bằng chứng)
   const all = []; sc.shops.forEach(x => (x.commits || []).forEach(c => all.push({ ...c, shop:x.label })));
-  const G = (s) => all.filter(c => c.status === s);
-  const cl = (arr) => arr.length ? `<ul>${arr.map(c => `<li><b>${lrEsc(c.shop)}</b> · ${LR_CAT[c.cat] || lrEsc(c.cat)}: ${lrEsc(c.noiDung)}${c.target ? ` <span class="sub">(chỉ tiêu: ${lrEsc(c.target)})</span>` : ""} → <i>${c.ketQua ? lrEsc(String(c.ketQua).slice(0, 160)) : "không ghi kết quả"}</i>${c.recurring ? " " + lrPill("p-red", "lặp lại tuần này") : ""}</li>`).join("")}</ul>` : `<p class="sub">Không có.</p>`;
-  out.commit = `<p>${lrPill("p-g", G("done").length + " hoàn thành")} ${lrPill("p-amb", G("partial").length + " hoàn thành một phần")} ${lrPill("p-red", G("notdone").length + " chưa hoàn thành")} ${lrPill("p-red", all.filter(c => c.recurring && c.status !== "noevidence").length + " lặp lại")}</p>`
-    + `<p class="sub">Chỉ liệt kê cam kết có kết quả ghi rõ. Hoàn thành hoạt động chưa chắc đã có kết quả kinh doanh.</p>`
-    + `<h3 class="down">Chưa hoàn thành</h3>${cl(G("notdone"))}<h3>Hoàn thành một phần</h3>${cl(G("partial"))}`
-    + (G("done").length ? `<h3 class="up">Đã hoàn thành</h3>${cl(G("done"))}` : "");
+  const G = (st) => all.filter(c => c.status === st);
+  const STC = { done:["p-g","Hoàn thành"], partial:["p-amb","Một phần"], notdone:["p-red","Chưa hoàn thành"] };
+  const cnt = (x, st) => (x.commits || []).filter(c => c.status === st).length;
+  let cmT = `<div class="scroll"><table class="tbl kpi"><thead><tr><th>Nhà thuốc</th><th class="num">Hoàn thành</th><th class="num">Một phần</th><th class="num">Chưa hoàn thành</th><th class="num">Lặp lại</th></tr></thead><tbody>`
+    + sc.shops.filter(x => (x.commits || []).some(c => c.status !== "noevidence")).map(x => `<tr><td><b>${lrEsc(x.label)}</b></td><td class="num">${cnt(x, "done") || ""}</td><td class="num">${cnt(x, "partial") ? `<span class="pill p-amb">${cnt(x, "partial")}</span>` : ""}</td><td class="num">${cnt(x, "notdone") ? `<span class="pill p-red">${cnt(x, "notdone")}</span>` : ""}</td><td class="num">${(x.commits || []).filter(c => c.recurring && c.status !== "noevidence").length || ""}</td></tr>`).join("")
+    + `<tr class="total"><td>Tổng</td><td class="num">${G("done").length}</td><td class="num">${G("partial").length}</td><td class="num">${G("notdone").length}</td><td class="num">${all.filter(c => c.recurring && c.status !== "noevidence").length}</td></tr></tbody></table></div>`;
+  const rowsC = [...G("notdone"), ...G("partial")];
+  if (rowsC.length) cmT += `<h3>Cam kết chưa hoàn thành / hoàn thành một phần</h3><div class="scroll"><table class="tbl"><thead><tr><th>Nhà thuốc</th><th>Nhóm</th><th>Cam kết</th><th>Chỉ tiêu</th><th>Kết quả ghi nhận</th><th>Trạng thái</th></tr></thead><tbody>`
+    + rowsC.map(c => `<tr><td><b>${lrEsc(c.shop)}</b></td><td>${LR_CAT[c.cat] || lrEsc(c.cat)}</td><td>${lrEsc(clip(c.noiDung, 80))}</td><td>${lrEsc(clip(c.target || "—", 40))}</td><td>${lrEsc(clip(c.ketQua || "—", 70))}</td><td>${lrPill(STC[c.status][0], STC[c.status][1])}${c.recurring ? " " + lrPill("p-red", "lặp lại") : ""}</td></tr>`).join("")
+    + `</tbody></table></div>`;
+  out.commit = cmT;
   // --- Thẩm định kế hoạch tuần này
   const pc = (s) => s >= 80 ? "p-g" : s >= 60 ? "p-y" : s >= 40 ? "p-amb" : "p-red";
   const KL = { rev:"doanh thu", hhs:"hàng hệ số", tbb:"TB bill", bills:"số hoá đơn" }; const pw = sc.planWeights || {};
-  out.plan = `<p class="sub">Thang 100 điểm: mục tiêu định lượng ${pw.quant}, hành động cụ thể ${pw.action}, bám vấn đề thực tế ${pw.link}, người phụ trách & thời hạn ${pw.ownerDeadline}, chỉ số đo ${pw.measure}, rủi ro & dự phòng ${pw.risk}.</p>`
-    + `<div class="scroll"><table class="tbl"><thead><tr><th>Nhà thuốc</th><th class="num">Điểm</th><th class="num">Số việc</th><th>Còn thiếu</th><th>Cần bổ sung</th></tr></thead><tbody>`
-    + sc.shops.slice().sort((a, b) => a.plan.score - b.plan.score).map(x => `<tr><td><b>${lrEsc(x.label)}</b></td><td class="num">${lrPill(pc(x.plan.score), x.plan.score + "/100")}</td><td class="num">${x.plan.items}</td><td>${(x.plan.missing || []).map(lrEsc).join("<br>") || `<span class="up">Đủ các tiêu chí</span>`}${(x.plan.weakItems || []).length ? `<br><span class="sub">Viết chung chung: ${x.plan.weakItems.map(lrEsc).join(" · ")}</span>` : ""}</td><td>${(x.plan.uncovered || []).length ? "Việc cụ thể có con số cho " + x.plan.uncovered.map(k => KL[k] || k).join(", ") : "—"}</td></tr>`).join("")
+  const PCR = [["quant","Mục tiêu có số"],["action","Hành động cụ thể"],["link","Bám KPI hụt"],["ownerDeadline","Phụ trách & hạn"],["measure","Chỉ số đo"],["risk","Dự phòng"]];
+  const pcell = (v) => v == null ? `<span class="sub">—</span>` : v >= 0.8 ? lrPill("p-g", "Đạt") : v >= 0.5 ? lrPill("p-amb", Math.round(v * 100) + "%") : lrPill("p-red", Math.round(v * 100) + "%");
+  out.plan = `<p class="sub">Thang 100 điểm (${PCR.map(([k, l]) => `${l} ${pw[k]}`).join(" · ")}). Ô = tỷ lệ đầu việc đạt tiêu chí.</p>`
+    + `<div class="scroll"><table class="tbl kpi"><thead><tr><th>Nhà thuốc</th><th class="num">Điểm</th><th class="num">Số việc</th>${PCR.map(([, l]) => `<th class="num">${l}</th>`).join("")}<th>Cần bổ sung việc cho KPI</th></tr></thead><tbody>`
+    + sc.shops.slice().sort((a, b) => a.plan.score - b.plan.score).map(x => { const P = x.plan.parts || {}; const none = !x.plan.items;
+      return `<tr><td><b>${lrEsc(x.label)}</b></td><td class="num">${lrPill(pc(x.plan.score), x.plan.score + "/100")}</td><td class="num">${x.plan.items}</td>`
+        + (none ? `<td colspan="6"><span class="pill p-red">${x.reported ? "Chưa lập kế hoạch" : "Chưa gửi báo cáo tuần"}</span></td>` : PCR.map(([k]) => `<td class="num">${pcell(P[k])}</td>`).join(""))
+        + `<td>${(x.plan.uncovered || []).length ? x.plan.uncovered.map(k => KL[k] || k).join(", ") : `<span class="sub">—</span>`}</td></tr>`; }).join("")
     + `</tbody></table></div>`;
   // --- Kế hoạch hành động khu vực
   const confirmed = new Set((wk.commits || []).map(c => (c.goal || "") + "|" + (c.action || "")));
