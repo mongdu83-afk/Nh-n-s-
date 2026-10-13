@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261013-5";
+window.__APP_BUILD = "20261013-6";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -15744,9 +15744,9 @@ function lrWeekEval(wk){
   const all = []; sc.shops.forEach(x => (x.commits || []).forEach(c => all.push({ ...c, shop:x.label })));
   const G = (s) => all.filter(c => c.status === s);
   const cl = (arr) => arr.length ? `<ul>${arr.map(c => `<li><b>${lrEsc(c.shop)}</b> · ${LR_CAT[c.cat] || lrEsc(c.cat)}: ${lrEsc(c.noiDung)}${c.target ? ` <span class="sub">(chỉ tiêu: ${lrEsc(c.target)})</span>` : ""} → <i>${c.ketQua ? lrEsc(String(c.ketQua).slice(0, 160)) : "không ghi kết quả"}</i>${c.recurring ? " " + lrPill("p-red", "lặp lại tuần này") : ""}</li>`).join("")}</ul>` : `<p class="sub">Không có.</p>`;
-  out.commit = `<p>${lrPill("p-g", G("done").length + " hoàn thành")} ${lrPill("p-amb", G("partial").length + " hoàn thành một phần")} ${lrPill("p-red", G("notdone").length + " chưa hoàn thành")} ${lrPill("p-y", G("noevidence").length + " chưa đủ bằng chứng")} ${lrPill("p-red", all.filter(c => c.recurring).length + " lặp lại")}</p>`
-    + `<p class="sub">Ghi "đã làm / ổn / đạt tiến độ" không được tính là bằng chứng. Hoàn thành hoạt động chưa chắc đã có kết quả kinh doanh.</p>`
-    + `<h3 class="down">Chưa hoàn thành</h3>${cl(G("notdone"))}<h3>Hoàn thành một phần</h3>${cl(G("partial"))}<h3>Chưa đủ bằng chứng xác nhận</h3>${cl(G("noevidence"))}`
+  out.commit = `<p>${lrPill("p-g", G("done").length + " hoàn thành")} ${lrPill("p-amb", G("partial").length + " hoàn thành một phần")} ${lrPill("p-red", G("notdone").length + " chưa hoàn thành")} ${lrPill("p-red", all.filter(c => c.recurring && c.status !== "noevidence").length + " lặp lại")}</p>`
+    + `<p class="sub">Chỉ liệt kê cam kết có kết quả ghi rõ. Hoàn thành hoạt động chưa chắc đã có kết quả kinh doanh.</p>`
+    + `<h3 class="down">Chưa hoàn thành</h3>${cl(G("notdone"))}<h3>Hoàn thành một phần</h3>${cl(G("partial"))}`
     + (G("done").length ? `<h3 class="up">Đã hoàn thành</h3>${cl(G("done"))}` : "");
   // --- Thẩm định kế hoạch tuần này
   const pc = (s) => s >= 80 ? "p-g" : s >= 60 ? "p-y" : s >= 40 ? "p-amb" : "p-red";
