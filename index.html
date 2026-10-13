@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261013-4";
+window.__APP_BUILD = "20261013-5";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -16070,11 +16070,17 @@ function LeaderReportView({ isAdmin }){
       h("div", { className:"card", style:{ position:"sticky", top:8, maxHeight:"85vh", overflowY:"auto" } },
         lbl("Người lập"),
         h("input", { value: M.author, onChange: e => setF("author", e.target.value), style:{ width:"100%", padding:"6px 8px", borderRadius:8, border:"1px solid var(--line)" } }),
-        lbl("Tuyển dụng", "số người cần tuyển thêm + lý do"),
-        D.shops.map(s => h("div", { key:s, style:{ display:"grid", gridTemplateColumns:"56px 54px 1fr", gap:6, alignItems:"start", marginBottom:6 } },
-          h("div", { style:{ fontWeight:600, fontSize:13, paddingTop:6 } }, lrShop(s), h("div", { style:{ fontSize:11, color:"var(--inkSoft)", fontWeight:400, display:"flex", alignItems:"center", gap:3 } }, "có", h("input", { type:"number", min:0, value: (M.hires[s] && M.hires[s].cur !== undefined && M.hires[s].cur !== null) ? M.hires[s].cur : "", placeholder: String(D.staffByShop[s]||0), title:`Số nhân sự hiện có. Để trống = lấy theo danh sách Nhân sự (${D.staffByShop[s]||0} người)`, onChange: e => setHire(s, "cur", e.target.value), style:{ width:34, fontSize:11, padding:"1px 2px", borderRadius:5, border:"1px solid var(--line)" } }))),
-          h("input", { type:"number", min:0, value: (M.hires[s] && M.hires[s].n) || "", placeholder:"0", onChange: e => setHire(s, "n", e.target.value), style:{ width:"100%", padding:"6px", borderRadius:8, border:"1px solid var(--line)" } }),
-          h("textarea", { rows:2, value: (M.hires[s] && M.hires[s].reason) || "", placeholder: lrDefaultReason(s, lrWithStaff(D, M)), onChange: e => setHire(s, "reason", e.target.value), style:{ width:"100%", fontSize:12, padding:6, borderRadius:8, border:"1px solid var(--line)", fontFamily:"inherit" } }))),
+        lbl("Nhân sự & tuyển dụng", "sửa số hiện có khi có biến động"),
+        h("div", { style:{ display:"grid", gridTemplateColumns:"48px 52px 52px 1fr", gap:6, fontSize:11, color:"var(--inkSoft)", fontWeight:700, marginBottom:3 } }, h("div", null, "NT"), h("div", null, "Hiện có"), h("div", null, "Tuyển thêm"), h("div", null, "Lý do")),
+        D.shops.map(s => { const hs = M.hires[s] || {}; const curSet = hs.cur !== undefined && hs.cur !== null && hs.cur !== ""; const base = D.staffByShop[s] || 0;
+          const box = { width:"100%", padding:"6px 4px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 };
+          return h("div", { key:s, style:{ display:"grid", gridTemplateColumns:"48px 52px 52px 1fr", gap:6, alignItems:"start", marginBottom:6 } },
+            h("div", { style:{ fontWeight:600, fontSize:13, paddingTop:6 } }, lrShop(s)),
+            h("div", null, h("input", { type:"number", min:0, value: curSet ? hs.cur : base, onChange: e => setHire(s, "cur", e.target.value), title:`Danh sách Nhân sự đang có ${base} người`, style:{ ...box, borderColor: curSet && Number(hs.cur) !== base ? "#d98a1f" : "var(--line)", fontWeight: curSet && Number(hs.cur) !== base ? 700 : 400 } }),
+              curSet && Number(hs.cur) !== base && h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)", lineHeight:1.2, marginTop:2 } }, `DS: ${base} · `, h("a", { href:"#", onClick:e => { e.preventDefault(); setHire(s, "cur", ""); } }, "bỏ sửa"))),
+            h("input", { type:"number", min:0, value: hs.n || "", placeholder:"0", onChange: e => setHire(s, "n", e.target.value), style:box }),
+            h("textarea", { rows:2, value: hs.reason || "", placeholder: lrDefaultReason(s, lrWithStaff(D, M)), onChange: e => setHire(s, "reason", e.target.value), style:{ width:"100%", fontSize:12, padding:6, borderRadius:8, border:"1px solid var(--line)", fontFamily:"inherit" } })); }),
+        h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", margin:"2px 0 4px" } }, "Sửa xong bấm Lưu. Số \"Hiện có\" mặc định đếm từ danh sách Nhân sự; sửa ở đây chỉ áp dụng cho báo cáo tuần này."),
         lbl("Cơ sở vật chất cần sửa", "mỗi dòng 1 hạng mục"),
         ta("csvc", "VD: NT72: sửa la phông, bảng hiệu\nNT95: chống dột", 3),
         lbl("Đề xuất thêm với Ban lãnh đạo", "mỗi dòng 1 ý"),
