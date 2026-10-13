@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261008-2";
+window.__APP_BUILD = "20261013-3";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -11439,6 +11439,143 @@ function wpNormalizeRows(sectionData){
   return [];
 }
 
+// ===== 13/10/2026 (chị Hà) — BÁO CÁO TỔNG HỢP TUẦN: 7 PHẦN (bảng điểm tính sẵn từ dữ liệu hệ thống + nhận định/đề xuất của AI) =====
+// Phân biệt rõ: [Số liệu] tính từ hệ thống · [AI nhận định] · [AI đề xuất — chưa duyệt] · [Đã duyệt] cam kết quản lý.
+const WK_COLOR = { red:{ fg:"#B91C1C", bg:"#FEE2E2" }, orange:{ fg:"#C2410C", bg:"#FFEDD5" }, yellow:{ fg:"#A16207", bg:"#FEF9C3" }, green:{ fg:"#15803D", bg:"#DCFCE7" }, gray:{ fg:"#4B5563", bg:"#F3F4F6" } };
+const WK_STATUS_COLOR = { over:"green", ok:"green", risk:"orange", under:"red", nodata:"gray", na:"gray" };
+const WK_STATUS_LABEL = { over:"Vượt mục tiêu", ok:"Đạt mục tiêu", risk:"Có nguy cơ không đạt", under:"Chưa đạt", nodata:"Chưa đủ dữ liệu", na:"Không áp dụng" };
+const WK_PRI_COLOR = { P0:"red", P1:"orange", P2:"yellow", P3:"gray" };
+const WK_CAT_LABEL = { doanhThu:"Doanh thu & bán hàng", khachHang:"Khách hàng", hangHoa:"Hàng hoá", nhanSu:"Nhân sự", coSoVatChat:"Cơ sở vật chất", matBang:"Mặt bằng & vận hành khác" };
+function wkChip(text, color, key){ const c = WK_COLOR[color] || WK_COLOR.gray; return React.createElement("span", { key, style:{ display:"inline-block", fontSize:11.5, fontWeight:700, color:c.fg, background:c.bg, borderRadius:999, padding:"1px 8px", whiteSpace:"nowrap" } }, text); }
+function wkTag(kind){ const m = { data:["Số liệu hệ thống","gray"], ai:["Nhận định","yellow"], prop:["Đề xuất — chưa duyệt","orange"], ok:["Đã được quản lý duyệt","green"] }[kind]; return wkChip(m[0], m[1], "tag"); }
+function wkMoney(v){ if(v==null) return "—"; const n = Math.round(Number(v)); const a = Math.abs(n); return (n<0?"-":"") + (a>=1e9 ? (a/1e9).toFixed(2).replace(".",",")+" tỷ" : a>=1e6 ? (Math.round(a/1e5)/10).toString().replace(".",",")+"tr" : a>=1e3 ? Math.round(a/1e3)+"k" : String(a)); }
+function wkFmt(k, v){ return k.unit==="HĐ" ? (v==null ? "—" : Math.round(v).toLocaleString("vi-VN")) : wkMoney(v); }
+function WeeklyEvalPanel({ mgrAi, weekStart }){
+  const h = React.createElement;
+  const sc = mgrAi && mgrAi.scorecard; const A = (mgrAi && mgrAi.analysis) || {};
+  const [open, setOpen] = useState({}); const [commits, setCommits] = useState([]); const [repMax, setRepMax] = useState(0); const [cfgOpen, setCfgOpen] = useState(false); const [cfg, setCfg] = useState(null); const [msg, setMsg] = useState("");
+  useEffect(()=> db.collection("managerCommitments").where("week","==",weekStart).onSnapshot(s => setCommits(s.docs.map(d => ({ id:d.id, ...d.data() })).sort((a,b) => String(a.createdAt||"").localeCompare(String(b.createdAt||"")))), e => logSystemError("managerCommitments", e)), [weekStart]);
+  useEffect(()=> db.collection("weeklyReports").where("tuanNgay","==",weekStart).onSnapshot(s => { let m = 0; s.forEach(d => { const x = d.data(); const t = x.updatedAtTs || x.createdAtTs; const ms = t && t.toMillis ? t.toMillis() : 0; if(ms > m) m = ms; }); setRepMax(m); }, () => {}), [weekStart]);
+  useEffect(()=> db.collection("opsConfig").doc("weeklyEvalConfig").onSnapshot(d => setCfg(d.exists ? d.data() : {}), () => setCfg({})), []);
+  if(!sc) return h("div", { className:"card", style:{ marginBottom:16, fontSize:13, color:"var(--inkSoft)" } }, "Chưa có bảng điểm tuần — bấm \"Phân tích tuần này\" ở trên. Bảng điểm (số liệu hệ thống) vẫn được lưu kể cả khi phần phân tích lỗi.");
+  const stale = repMax && mgrAi.inputMaxUpdatedAt && repMax > mgrAi.inputMaxUpdatedAt + 1000;
+  const aiOk = mgrAi.aiStatus === "ok" && mgrAi.analysis;
+  const evalBy = {}; (A.shopEval || []).forEach(x => { if(x && x.shop) evalBy[String(x.shop).replace(/\s/g,"")] = x; });
+  const th = { textAlign:"left", padding:"5px 6px", borderBottom:"1px solid var(--line)", fontSize:11.5, color:"var(--inkSoft)", whiteSpace:"nowrap" };
+  const td = { padding:"6px", borderBottom:"1px solid #F0EEE2", fontSize:12.5, verticalAlign:"top" };
+  const sec = (k, title, tag, ...kids) => h("div", { key:k, className:"card", style:{ marginBottom:14 } }, h("div", { style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", marginBottom:8 } }, h("div", { style:{ fontWeight:800, fontSize:15.5 } }, title), tag), ...kids);
+  const list = (arr) => Array.isArray(arr) && arr.length ? h("ul", { style:{ margin:"2px 0 6px", paddingLeft:18 } }, arr.map((t,i) => h("li", { key:i }, typeof t === "string" ? t : (t.shop ? `${t.shop}: ${t.reason||""}` : JSON.stringify(t))))) : h("div", { style:{ fontSize:12, color:"var(--inkSoft)" } }, "—");
+  const kChip = (k) => wkChip(`${k.pct != null ? k.pct + "% · " : ""}${WK_STATUS_LABEL[k.status] || k.status}`, WK_STATUS_COLOR[k.status], k.kpi);
+  const byStatus = (sc.chain && sc.chain.byStatus) || {};
+  // ---- 1. Tổng quan điều hành
+  const p1 = sec("p1", "1. Tổng quan điều hành", null,
+    h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:8 } }, `Kỳ đánh giá ${sc.evalFrom} → ${sc.evalTo} (kết quả tuần vừa qua) · kế hoạch tuần ${sc.nextFrom} → ${sc.nextTo} · ngưỡng ${sc.thresholdsConfigured ? "do quản lý cấu hình" : "đề xuất"}: vượt ≥${sc.thresholds.over}%, đạt ≥${sc.thresholds.ok}%, nguy cơ ≥${sc.thresholds.risk}%`),
+    h("div", { style:{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"center", marginBottom:8 } },
+      h("div", { style:{ fontSize:26, fontWeight:900, color: (WK_COLOR[WK_STATUS_COLOR[sc.chain && sc.chain.revPct >= sc.thresholds.ok ? "ok" : sc.chain && sc.chain.revPct >= sc.thresholds.risk ? "risk" : "under"]]||WK_COLOR.gray).fg } }, sc.chain && sc.chain.revPct != null ? sc.chain.revPct + "%" : "—"),
+      h("div", { style:{ fontSize:12.5 } }, h("b", null, "Doanh thu tuần toàn chuỗi so chỉ tiêu"), h("div", null, `${wkMoney(sc.chain && sc.chain.revActual)} / ${wkMoney(sc.chain && sc.chain.revTarget)}`)), wkTag("data"),
+      ...["over","ok","risk","under","nodata","na"].filter(k => byStatus[k]).map(k => wkChip(`${byStatus[k]} NT ${WK_STATUS_LABEL[k].toLowerCase()}`, WK_STATUS_COLOR[k], k))),
+    sc.common && sc.common.length > 0 && h("div", { style:{ fontSize:12.5, marginBottom:8 } }, h("b", null, "Vấn đề chung nhiều nhà thuốc: "), sc.common.map(c => `${c.label} (${c.shops.join(", ")})`).join(" · ")),
+    aiOk && A.executive ? h("div", { style:{ background:"#FFFBEB", borderRadius:8, padding:"8px 10px", fontSize:13, lineHeight:1.5 } },
+      h("div", { style:{ marginBottom:4 } }, wkTag("ai")), A.executive.summary,
+      h("div", { style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(240px, 1fr))", gap:10, marginTop:6 } },
+        h("div", null, h("b", { style:{ color:WK_COLOR.green.fg } }, "Điểm tích cực"), list(A.executive.positives)),
+        h("div", null, h("b", { style:{ color:WK_COLOR.red.fg } }, "Vấn đề nghiêm trọng nhất"), list(A.executive.criticalIssues)),
+        h("div", null, h("b", { style:{ color:WK_COLOR.orange.fg } }, "Nhà thuốc cần ưu tiên hỗ trợ"), list(A.executive.priorityShops)),
+        h("div", null, h("b", null, "Quyết định cần làm ngay"), list(A.executive.decisionsNow))))
+    : h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)" } }, mgrAi.aiStatus === "failed" ? "Chưa phân tích được lần này — số liệu bên dưới vẫn chính xác (tính từ hệ thống)." : "Chưa có nhận định cho bản số liệu này."));
+  // ---- 2. Bảng đánh giá kết quả kinh doanh
+  const p2 = sec("p2", "2. Đánh giá kết quả kinh doanh từng nhà thuốc", wkTag("data"),
+    h("div", { style:{ overflowX:"auto" } }, h("table", { style:{ width:"100%", borderCollapse:"collapse" } },
+      h("thead", null, h("tr", null, ["Nhà thuốc","Doanh thu (thực tế / chỉ tiêu)","Hàng hệ số","TB bill","Số hoá đơn","So tuần trước","Đánh giá · nguyên nhân có bằng chứng","Hành động đề xuất"].map(x => h("th", { key:x, style:th }, x)))),
+      h("tbody", null, sc.shops.map(x => { const ev = evalBy[String(x.label).replace(/\s/g,"")] || evalBy[x.shop] || {}; const k0 = x.kpis[0]; const isOpen = !!open[x.shop];
+        return [h("tr", { key:x.shop, style:{ cursor:"pointer" }, onClick:() => setOpen(o => ({ ...o, [x.shop]: !o[x.shop] })) },
+          h("td", { style:{ ...td, fontWeight:800, whiteSpace:"nowrap" } }, (isOpen ? "▾ " : "▸ ") + x.label, !x.reported && h("div", { style:{ fontSize:11, color:WK_COLOR.red.fg } }, "Chưa gửi báo cáo"), x.targetMissing && h("div", { style:{ fontSize:11, color:"var(--inkSoft)" } }, "Chưa có chỉ tiêu tuần")),
+          h("td", { style:td }, h("div", null, `${wkMoney(k0.actual)} / ${wkMoney(k0.target)}`), kChip(k0), k0.gap > 0 && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, "thiếu " + wkMoney(k0.gap))),
+          ...x.kpis.slice(1).map(k => h("td", { key:k.kpi, style:td }, kChip(k))),
+          h("td", { style:{ ...td, whiteSpace:"nowrap" } }, k0.delta && k0.delta.pct != null ? wkChip((k0.delta.pct >= 0 ? "▲ +" : "▼ ") + k0.delta.pct + "%", k0.delta.pct >= 0 ? "green" : "orange", "d") : wkChip("Chưa có kỳ trước", "gray", "d")),
+          h("td", { style:{ ...td, minWidth:220 } }, ev.assessment || h("span", { style:{ color:"var(--inkSoft)" } }, "—"),
+            (ev.causes || []).length ? h("ul", { style:{ margin:"3px 0 0", paddingLeft:16, fontSize:12 } }, ev.causes.map((c,i) => h("li", { key:i }, c.text, c.evidence && h("span", { style:{ color:"var(--inkSoft)" } }, ` (bằng chứng: ${c.evidence})`)))) : null,
+            ev.causeStatus === "chưa đủ cơ sở" && wkChip("Chưa đủ cơ sở xác định nguyên nhân", "gray", "c")),
+          h("td", { style:{ ...td, minWidth:180 } }, ev.action || "—")),
+          isOpen && h("tr", { key:x.shop + "_d" }, h("td", { colSpan:8, style:{ ...td, background:"var(--paper)" } },
+            h("div", { style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(170px, 1fr))", gap:8 } }, x.kpis.map(k => h("div", { key:k.kpi },
+              h("b", null, k.label), h("div", null, `Chỉ tiêu ${wkFmt(k, k.target)} · thực tế ${wkFmt(k, k.actual)}`), h("div", null, k.gap > 0 ? `Thiếu ${wkFmt(k, k.gap)}` : k.gap < 0 ? `Vượt ${wkFmt(k, -k.gap)}` : ""),
+              h("div", { style:{ color:"var(--inkSoft)" } }, `Tuần trước ${wkFmt(k, k.prev)}${k.delta && k.delta.pct != null ? ` (${k.delta.pct >= 0 ? "+" : ""}${k.delta.pct}%)` : ""}`), k.note && h("div", { style:{ color:WK_COLOR.yellow.fg } }, k.note)))),
+            x.month && h("div", { style:{ marginTop:6 } }, h("b", null, "Tiến độ tháng: "), `đạt ${x.month.pct}% (dự kiến ${x.month.projectedPct ?? "—"}%), còn thiếu ${wkMoney(x.month.gap)} → cần ${wkMoney(x.month.needPerDay)}/ngày trong ${x.month.daysLeft} ngày còn lại`),
+            x.selfCheck && h("div", { style:{ marginTop:4, color:WK_COLOR.yellow.fg } }, "Cần xác minh: " + x.selfCheck),
+            x.dataGaps.length > 0 && h("div", { style:{ marginTop:4, color:"var(--inkSoft)" } }, "Ngày thiếu hoá đơn: " + x.dataGaps.join("; ")),
+            x.kpiRecurring.map((t,i) => h("div", { key:i, style:{ marginTop:4, color:WK_COLOR.red.fg } }, t))))]; })))));
+  // ---- 3. Thực hiện cam kết
+  const allC = []; sc.shops.forEach(x => x.commits.forEach(c => allC.push({ ...c, shop:x.label })));
+  const grp = (st) => allC.filter(c => c.status === st);
+  const cRow = (c, i) => h("li", { key:i, style:{ marginBottom:3 } }, h("b", null, c.shop + ": "), `[${WK_CAT_LABEL[c.cat] || c.cat}] ${c.noiDung}`, c.target ? ` (chỉ tiêu: ${c.target})` : "", " → ", h("i", null, c.ketQua ? `"${String(c.ketQua).slice(0,140)}"` : "trống"), c.recurring && wkChip("Lặp lại sang tuần này", "red", "r"));
+  const p3 = sec("p3", "3. Đánh giá thực hiện cam kết tuần trước", wkTag("data"),
+    h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:6 } }, "Cam kết = các việc nhà thuốc đã lập trong kế hoạch tuần trước. \"Đã làm / ổn / đạt tiến độ\" không được tính là bằng chứng. Đã làm hoạt động chưa chắc đã có kết quả kinh doanh."),
+    h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:8 } }, wkChip(`${grp("done").length} đã hoàn thành`, "green", "a"), wkChip(`${grp("partial").length} một phần`, "orange", "b"), wkChip(`${grp("notdone").length} chưa hoàn thành`, "red", "c"), wkChip(`${grp("noevidence").length} chưa đủ bằng chứng`, "yellow", "d"), wkChip(`${allC.filter(c => c.recurring).length} lặp lại`, "red", "e")),
+    ...[["notdone","Chưa hoàn thành","red"],["partial","Hoàn thành một phần","orange"],["noevidence","Chưa đủ bằng chứng xác nhận","yellow"]].map(([st, lbl, col]) => grp(st).length ? h("details", { key:st, open: st !== "noevidence", style:{ marginBottom:6 } }, h("summary", { style:{ cursor:"pointer", fontWeight:700, color:WK_COLOR[col].fg } }, `${lbl} (${grp(st).length})`), h("ul", { style:{ margin:"4px 0", paddingLeft:18, fontSize:12.5 } }, grp(st).map(cRow))) : null),
+    grp("done").length > 0 && h("details", { key:"done" }, h("summary", { style:{ cursor:"pointer", fontWeight:700, color:WK_COLOR.green.fg } }, `Đã hoàn thành (${grp("done").length})`), h("ul", { style:{ margin:"4px 0", paddingLeft:18, fontSize:12.5 } }, grp("done").map(cRow))),
+    sc.shops.filter(x => x.reported && !x.commits.length).length > 0 && h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)" } }, "Không tìm thấy cam kết tuần trước: " + sc.shops.filter(x => x.reported && !x.commits.length).map(x => x.label).join(", ")));
+  // ---- 4. Kế hoạch tuần này
+  const pc = (s) => s >= 80 ? "green" : s >= 60 ? "yellow" : s >= 40 ? "orange" : "red";
+  const KL = { rev:"doanh thu", hhs:"hàng hệ số", tbb:"TB bill", bills:"số hoá đơn" };
+  const p4 = sec("p4", `4. Thẩm định kế hoạch tuần ${sc.nextFrom} → ${sc.nextTo}`, wkTag("data"),
+    h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:6 } }, `Thang 100 điểm (đề xuất, chỉnh được): mục tiêu định lượng ${sc.planWeights.quant}, hành động cụ thể ${sc.planWeights.action}, bám vấn đề thực tế ${sc.planWeights.link}, người phụ trách & hạn ${sc.planWeights.ownerDeadline}, chỉ số đo ${sc.planWeights.measure}, rủi ro & dự phòng ${sc.planWeights.risk}.`),
+    h("div", { style:{ display:"flex", flexDirection:"column", gap:8 } }, sc.shops.slice().sort((a,b) => a.plan.score - b.plan.score).map(x => h("div", { key:x.shop, style:{ borderTop:"1px solid #F0EEE2", paddingTop:6 } },
+      h("div", { style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" } }, h("b", { style:{ minWidth:52 } }, x.label), wkChip(`${x.plan.score}/100`, pc(x.plan.score), "s"), h("span", { style:{ fontSize:12, color:"var(--inkSoft)" } }, `${x.plan.items} đầu việc`), ...(x.plan.good || []).map((g,i) => wkChip(g, "green", "g"+i))),
+      x.plan.missing.length > 0 && h("ul", { style:{ margin:"3px 0 0", paddingLeft:18, fontSize:12.5 } }, x.plan.missing.map((m,i) => h("li", { key:i }, m))),
+      (x.plan.uncovered || []).length > 0 && h("div", { style:{ fontSize:12.5, color:WK_COLOR.orange.fg, marginTop:2 } }, "Đề xuất bổ sung vào kế hoạch: việc cụ thể có con số cho " + x.plan.uncovered.map(k => KL[k] || k).join(", ")),
+      (x.plan.weakItems || []).length > 0 && h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:2 } }, "Viết chung chung: " + x.plan.weakItems.join(" · "))))));
+  // ---- 5. Kế hoạch hành động cấp khu vực (đề xuất — quản lý xác nhận mới thành cam kết)
+  const confirm = async (a, i) => { try {
+      const me = auth.currentUser; await db.collection("managerCommitments").doc(`${weekStart}_${i}_${Date.now().toString(36)}`).set({ week:weekStart, source:"ai_actionPlan", priority:a.priority||"", category:a.category||"", goal:a.problem||"", target:(a.shops||[]).map(s => `${s.shop}: ${s.target||"—"}`).join("; "),
+        action:a.action||"", owner:a.owner||"", deadline:a.deadline||"", acceptance:a.acceptance||"", midCheckDate: addDays(weekStart, 3), midCheck:"", finalResult:"", status:"Đang thực hiện", approvedBy:(me && me.email) || "Quản lý", createdAt:new Date().toISOString() });
+      setMsg("Đã xác nhận thành cam kết quản lý — xem phần 6."); } catch(e){ setMsg("Lỗi: " + (e.message||e)); } };
+  const plan = Array.isArray(A.actionPlan) ? A.actionPlan.slice().sort((a,b) => String(a.priority).localeCompare(String(b.priority))) : [];
+  const confirmedKeys = new Set(commits.map(c => (c.goal||"") + "|" + (c.action||"")));
+  const p5 = sec("p5", "5. Kế hoạch hành động cấp khu vực", wkTag("prop"),
+    !aiOk ? h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)" } }, "Chưa có đề xuất cho bản số liệu này.") :
+    h("div", { style:{ overflowX:"auto" } }, h("table", { style:{ width:"100%", borderCollapse:"collapse" } },
+      h("thead", null, h("tr", null, ["Ưu tiên","Nhóm","Vấn đề cần giải quyết","Nhà thuốc · mục tiêu riêng","Hành động cụ thể","Phụ trách","Hạn","KPI / bằng chứng nghiệm thu","Trạng thái"].map(x => h("th", { key:x, style:th }, x)))),
+      h("tbody", null, plan.map((a,i) => { const done = confirmedKeys.has((a.problem||"") + "|" + (a.action||""));
+        return h("tr", { key:i },
+          h("td", { style:td }, wkChip(a.priority || "—", WK_PRI_COLOR[a.priority] || "gray", "p")), h("td", { style:{ ...td, whiteSpace:"nowrap" } }, WK_CAT_LABEL[a.category] || a.category || "—"),
+          h("td", { style:td }, a.problem), h("td", { style:{ ...td, minWidth:150 } }, (a.shops || []).map((s,j) => h("div", { key:j }, h("b", null, s.shop), s.target ? ": " + s.target : ""))),
+          h("td", { style:{ ...td, minWidth:200 } }, a.action), h("td", { style:td }, a.owner || h("span", { style:{ color:"var(--inkSoft)" } }, "Chưa có")), h("td", { style:{ ...td, whiteSpace:"nowrap" } }, a.deadline || "—"), h("td", { style:td }, a.acceptance || "—"),
+          h("td", { style:td }, done ? wkChip("Đã thành cam kết", "green", "ok") : h("button", { className:"btn btnGhost", style:{ fontSize:11.5, padding:"2px 8px" }, onClick:() => confirm(a, i) }, "Xác nhận thành cam kết"))); })))),
+    msg && h("div", { style:{ fontSize:12.5, marginTop:6, color:"var(--pine)" } }, msg));
+  // ---- 6. Cam kết quản lý (chỉ những gì quản lý đã xác nhận)
+  const upd = (id, patch) => db.collection("managerCommitments").doc(id).set({ ...patch, updatedAt:new Date().toISOString() }, { merge:true }).catch(e => setMsg("Lỗi: " + e.message));
+  const stColor = { "Đang thực hiện":"yellow", "Đạt":"green", "Không đạt":"red", "Huỷ":"gray" };
+  const p6 = sec("p6", "6. Cam kết quản lý tuần " + wpWeekLabel(weekStart), wkTag("ok"),
+    !commits.length ? h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)" } }, "Chưa có cam kết nào được xác nhận. Bấm \"Xác nhận thành cam kết\" ở phần 5 — đề xuất chỉ thành cam kết khi được xác nhận.") :
+    h("div", { style:{ overflowX:"auto" } }, h("table", { style:{ width:"100%", borderCollapse:"collapse" } },
+      h("thead", null, h("tr", null, ["Mục tiêu","Chỉ tiêu cần đạt","Hành động trọng tâm","Phụ trách","Hạn kiểm tra","Mốc giữa tuần","Kết quả cuối tuần","Trạng thái"].map(x => h("th", { key:x, style:th }, x)))),
+      h("tbody", null, commits.map(c => h("tr", { key:c.id },
+        h("td", { style:td }, c.goal, h("div", { style:{ fontSize:11, color:"var(--inkSoft)" } }, `duyệt bởi ${c.approvedBy || "—"}`)), h("td", { style:td }, c.target), h("td", { style:td }, c.action),
+        h("td", { style:td }, h("input", { defaultValue:c.owner || "", placeholder:"Người phụ trách", onBlur:e => e.target.value !== (c.owner||"") && upd(c.id, { owner:e.target.value }), style:{ width:110, fontSize:12 } })),
+        h("td", { style:td }, h("input", { type:"date", defaultValue:c.deadline || "", onBlur:e => upd(c.id, { deadline:e.target.value }), style:{ fontSize:12 } })),
+        h("td", { style:td }, h("div", { style:{ fontSize:11, color:"var(--inkSoft)" } }, c.midCheckDate || ""), h("input", { defaultValue:c.midCheck || "", placeholder:"Ghi tiến độ giữa tuần", onBlur:e => e.target.value !== (c.midCheck||"") && upd(c.id, { midCheck:e.target.value }), style:{ width:140, fontSize:12 } })),
+        h("td", { style:td }, h("input", { defaultValue:c.finalResult || "", placeholder:"Kết quả có số", onBlur:e => e.target.value !== (c.finalResult||"") && upd(c.id, { finalResult:e.target.value }), style:{ width:140, fontSize:12 } })),
+        h("td", { style:td }, wkChip(c.status || "—", stColor[c.status] || "gray", "s"), h("select", { value:c.status || "Đang thực hiện", onChange:e => upd(c.id, { status:e.target.value }), style:{ fontSize:12, marginTop:3, display:"block" } }, ["Đang thực hiện","Đạt","Không đạt","Huỷ"].map(o => h("option", { key:o, value:o }, o))))))))));
+  // ---- 7. Kết luận điều hành
+  const C7 = A.conclusion || {};
+  const p7 = sec("p7", "7. Kết luận điều hành", wkTag("ai"),
+    !aiOk ? h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)" } }, "Chưa có kết luận.") :
+    h("div", { style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(220px, 1fr))", gap:10, fontSize:13 } },
+      h("div", null, h("b", { style:{ color:WK_COLOR.red.fg } }, "Việc cần làm ngay"), list(C7.now)),
+      h("div", null, h("b", { style:{ color:WK_COLOR.orange.fg } }, "Theo dõi trong tuần"), list(C7.watch)),
+      h("div", null, h("b", null, "Đánh giá lại ở kỳ báo cáo sau"), list(C7.reviewNext))));
+  // ---- Cấu hình ngưỡng / trọng số
+  const saveCfg = async (patch) => { try { await db.collection("opsConfig").doc("weeklyEvalConfig").set(patch, { merge:true }); setMsg("Đã lưu cấu hình — áp dụng ở lần phân tích sau."); } catch(e){ setMsg("Lỗi: " + e.message); } };
+  const T = { over:110, ok:100, risk:85, ...((cfg && cfg.thresholds) || {}) }; const PW = { quant:25, action:20, link:20, ownerDeadline:15, measure:10, risk:10, ...((cfg && cfg.planWeights) || {}) };
+  const cfgBox = h("details", { key:"cfg", style:{ fontSize:12.5, marginBottom:14 }, open:cfgOpen, onToggle:e => setCfgOpen(e.target.open) }, h("summary", { style:{ cursor:"pointer", color:"var(--inkSoft)" } }, "Ngưỡng đánh giá & trọng số chấm kế hoạch (quản lý chỉnh được)"),
+    h("div", { style:{ display:"flex", gap:12, flexWrap:"wrap", marginTop:6 } }, [["over","Vượt ≥"],["ok","Đạt ≥"],["risk","Nguy cơ ≥"]].map(([k,l]) => h("label", { key:k }, l + " ", h("input", { type:"number", defaultValue:T[k], style:{ width:60 }, onBlur:e => saveCfg({ thresholds:{ ...T, [k]:Number(e.target.value)||T[k] } }) }), "%"))),
+    h("div", { style:{ display:"flex", gap:12, flexWrap:"wrap", marginTop:6 } }, [["quant","Định lượng"],["action","Hành động"],["link","Bám vấn đề"],["ownerDeadline","Phụ trách & hạn"],["measure","Chỉ số đo"],["risk","Dự phòng"]].map(([k,l]) => h("label", { key:k }, l + " ", h("input", { type:"number", defaultValue:PW[k], style:{ width:50 }, onBlur:e => saveCfg({ planWeights:{ ...PW, [k]:Number(e.target.value)||0 } }) })))));
+  return h("div", { style:{ marginBottom:16 } },
+    stale && h("div", { className:"card", style:{ marginBottom:12, background:WK_COLOR.yellow.bg, borderLeft:"4px solid " + WK_COLOR.yellow.fg, fontSize:13 } }, h("b", null, "Báo cáo nhà thuốc đã được sửa sau lần phân tích. "), "Số liệu và nhận định dưới đây có thể chưa phản ánh bản sửa — bấm \"Cập nhật phân tích\"."),
+    p1, p2, p3, p4, p5, p6, p7, cfgBox);
+}
+
 function WeeklyPlanManagerView(){
   const [weekStart, setWeekStart] = useState(mondayOf(todayISO()));
   const [plan, setPlan] = useState(null);
@@ -11620,17 +11757,17 @@ function WeeklyPlanManagerView(){
 
   const aiCard = React.createElement("div", { key:"mgrai", className:"card", style:{ marginBottom:16, borderLeft:"4px solid var(--pine)" } }, [
     React.createElement("div", { key:"h", style:{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap", marginBottom:8 } }, [
-      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16.5 } }, "Tổng hợp đánh giá của AI"),
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16.5 } }, "Tổng hợp đánh giá kinh doanh tuần"),
       aiA && aiA.level && React.createElement("span", { key:"lv", style:{ fontSize:12, fontWeight:700, color:"#fff", background:aiLevelColor[aiA.level]||"var(--inkSoft)", borderRadius:999, padding:"2px 10px" } }, aiA.level),
       React.createElement("button", { key:"b", type:"button", className:"btn btnPrimary", disabled:mgrAiBusy, onClick:()=>runMgrAi(false) }, mgrAiBusy ? "Đang phân tích..." : (mgrAi && mgrAi.aiStatus==="ok" ? "Cập nhật phân tích" : "Phân tích tuần này")),
-      mgrAi && mgrAi.aiStatus==="ok" && React.createElement("button", { key:"f", type:"button", className:"btn btnGhost", disabled:mgrAiBusy, onClick:()=>runMgrAi(true), title:"Gọi lại AI dù nội dung không đổi (tính tiền)" }, "Phân tích lại"),
+      mgrAi && mgrAi.aiStatus==="ok" && React.createElement("button", { key:"f", type:"button", className:"btn btnGhost", disabled:mgrAiBusy, onClick:()=>runMgrAi(true), title:"Phân tích lại dù nội dung không đổi" }, "Phân tích lại"),
       mgrAiMsg && React.createElement("span", { key:"m", style:{ fontSize:12, color:"var(--inkSoft)" } }, mgrAiMsg),
     ]),
     !mgrAi || mgrAi.aiStatus!=="ok"
-      ? React.createElement("div", { key:"e", style:{ fontSize:12.5, color:"var(--inkSoft)" } }, mgrAi && mgrAi.aiStatus==="failed" ? "Lần phân tích trước bị lỗi — bấm nút để thử lại." : "Bấm nút để AI gộp báo cáo tuần của tất cả nhà thuốc (kết quả + kế hoạch tuần tới), so với tuần trước và đề xuất việc nên giao. Chỉ chạy khi bạn bấm (mỗi lần 1 lượt gọi AI).")
+      ? React.createElement("div", { key:"e", style:{ fontSize:12.5, color:"var(--inkSoft)" } }, mgrAi && mgrAi.aiStatus==="failed" ? "Lần phân tích trước bị lỗi — bấm nút để thử lại." : "Bấm nút để gộp báo cáo tuần của tất cả nhà thuốc (kết quả + kế hoạch tuần tới), so với tuần trước và đề xuất việc nên giao. Chỉ chạy khi bấm nút.")
       : !aiA
         ? React.createElement("div", { key:"raw", style:{ fontSize:12.5 } }, [
-            React.createElement("div", { key:"m", style:{ color:"var(--clay)", marginBottom:6 } }, "Chưa đọc được định dạng kết quả của AI (có thể bị cắt giữa chừng) — bấm \"Phân tích lại\" để chạy lại."),
+            React.createElement("div", { key:"m", style:{ color:"var(--clay)", marginBottom:6 } }, "Chưa đọc được định dạng kết quả phân tích (có thể bị cắt giữa chừng) — bấm \"Phân tích lại\" để chạy lại."),
             mgrAi.rawText && React.createElement("details", { key:"d" }, [
               React.createElement("summary", { key:"s", style:{ cursor:"pointer", color:"var(--inkSoft)" } }, "Xem bản thô"),
               React.createElement("div", { key:"t", style:{ whiteSpace:"pre-wrap", marginTop:4 } }, mgrAi.rawText),
@@ -11645,7 +11782,7 @@ function WeeklyPlanManagerView(){
               (aiA.nextWeekPlan.missingShops||[]).length>0 && React.createElement("div",{key:"ms"}, "Chưa lập kế hoạch: "+aiA.nextWeekPlan.missingShops.join(", ")),
             ]),
             Array.isArray(aiA.suggestedTasks) && aiA.suggestedTasks.length>0 && React.createElement("div", { key:"tk", style:{ marginBottom:4 } }, [
-              React.createElement("div",{key:"l",style:{fontWeight:700,marginBottom:4}}, "Việc nên giao / theo dõi (AI đề xuất — bạn quyết định)"),
+              React.createElement("div",{key:"l",style:{fontWeight:700,marginBottom:4}}, "Việc nên giao / theo dõi (đề xuất — quản lý quyết định)"),
               ...aiA.suggestedTasks.map((t,i)=>React.createElement("div",{ key:"t"+i, style:{ display:"flex", gap:8, alignItems:"flex-start", padding:"5px 0", borderTop:i? "1px dashed var(--line)":"none" } }, [
                 React.createElement("span",{key:"p",style:{ fontSize:11, fontWeight:700, color:"#fff", background:priColor[t.priority]||"var(--inkSoft)", borderRadius:6, padding:"1px 7px", whiteSpace:"nowrap", marginTop:2 }}, t.priority||"—"),
                 React.createElement("div",{key:"d"},[ React.createElement("b",{key:"s"}, (t.shop? t.shop+": ":"")), t.task, t.reason && React.createElement("div",{key:"r",style:{color:"var(--inkSoft)",fontSize:12}}, t.reason) ]),
@@ -11671,7 +11808,7 @@ function WeeklyPlanManagerView(){
             ]),
             mgrAi.shopsMissing && mgrAi.shopsMissing.length>0 && React.createElement("div",{key:"nr",style:{ fontSize:12, color:"var(--clay)", marginTop:6 }}, "Chưa gửi báo cáo tuần: "+mgrAi.shopsMissing.join(", ")),
             mgrAi.aiValidation && mgrAi.aiValidation.status==="warn" && React.createElement("div",{key:"vw",style:{ fontSize:11.5, color:"var(--amber)", marginTop:6 }}, "Có số trong phân tích chưa đối chiếu được với dữ liệu gốc: "+(mgrAi.aiValidation.unverified||[]).slice(0,6).join(", ")+" — hãy kiểm tra lại."),
-            mgrAi.aiUpdatedAtTs && React.createElement("div",{key:"ts",style:{ fontSize:11, color:"var(--inkSoft)", marginTop:6 }}, "Phân tích lúc "+(mgrAi.aiUpdatedAtTs.toDate ? mgrAi.aiUpdatedAtTs.toDate() : new Date(mgrAi.aiUpdatedAtTs)).toLocaleString("vi-VN")+" · AI có thể sai, hãy đối chiếu với dữ liệu ở các mục bên dưới."),
+            mgrAi.aiUpdatedAtTs && React.createElement("div",{key:"ts",style:{ fontSize:11, color:"var(--inkSoft)", marginTop:6 }}, "Phân tích lúc "+(mgrAi.aiUpdatedAtTs.toDate ? mgrAi.aiUpdatedAtTs.toDate() : new Date(mgrAi.aiUpdatedAtTs)).toLocaleString("vi-VN")+" · cần đối chiếu với số liệu ở các mục bên dưới."),
           ]),
   ]);
 
@@ -11818,6 +11955,7 @@ function WeeklyPlanManagerView(){
     React.createElement(PageTitle, { key:"title" }, "Kế hoạch tuần (Quản lý)"),
     weekNav, historyPanel,
     aiCard,
+    React.createElement(WeeklyEvalPanel, { key:"wkeval", mgrAi, weekStart }),
     ...sectionCards,
     React.createElement("div", { key:"save", style:{ display:"flex", alignItems:"center", gap:12 } }, [
       React.createElement("button", { key:"btn", type:"button", className:"btn btnPrimary", disabled:saving, onClick:handleSave }, saving ? "Đang lưu..." : "Lưu kế hoạch tuần"),
@@ -15539,6 +15677,8 @@ p{margin:6px 0}
 .gh1{background:#1f9d55!important}.gh2{background:#d9822b!important}.gh3{background:#7b4fd6!important}.gh4{background:#2f6fe0!important}
 .c2,.c3,.c4{border-left:2px solid #cfd8d3}
 .tbl.kpi tr.total td{background:#eef8f1}
+.p-y{background:#fef9c3;color:#a16207} .p-gr{background:#f1f3f2;color:#4b5563}
+.pillar ul,.exec ul{margin:4px 0 0;padding-left:18px}
 footer{margin-top:36px;color:var(--soft);font-size:12.5px;text-align:center}
 @media print{
   body{background:#fff;font-size:12.5px} .wrap{padding:0} header.top{-webkit-print-color-adjust:exact;print-color-adjust:exact}
@@ -15556,6 +15696,82 @@ const lrPct = (a, t) => t ? lrDec(a/t*100, 1) + "%" : "—";
 const lrCls = (p) => p == null ? "" : (p >= 95 ? "up" : (p >= 80 ? "" : "down"));
 const lrDM = (iso) => iso ? `${iso.slice(8,10)}/${iso.slice(5,7)}` : "";
 const lrAdd = (iso, n) => { const [y,m,d] = iso.split("-").map(Number); const t = new Date(Date.UTC(y, m-1, d+n)); return t.toISOString().slice(0,10); };
+
+// 13/10/2026 (chị Hà): đánh giá kết quả tuần / cam kết / kế hoạch / hành động khu vực trong Báo cáo tổng hợp gửi lãnh đạo.
+// Số liệu lấy từ bảng điểm tính sẵn (opsConfig/managerWeekAi_{tuần}.scorecard); nhận định & đề xuất từ phần phân tích; cam kết từ managerCommitments (chỉ mục quản lý đã xác nhận).
+const LR_ST = { over:["p-g","Vượt mục tiêu"], ok:["p-g","Đạt mục tiêu"], risk:["p-amb","Có nguy cơ không đạt"], under:["p-red","Chưa đạt"], nodata:["p-gr","Chưa đủ dữ liệu"], na:["p-gr","Không áp dụng"] };
+const LR_PRI = { P0:"p-red", P1:"p-amb", P2:"p-y", P3:"p-gr" };
+const LR_CAT = { doanhThu:"Doanh thu", khachHang:"Khách hàng", hangHoa:"Hàng hoá", nhanSu:"Nhân sự", coSoVatChat:"Cơ sở vật chất", matBang:"Mặt bằng" };
+const lrPill = (cls, t) => `<span class="pill ${cls}">${lrEsc(t)}</span>`;
+const lrNoAi = (s) => String(s == null ? "" : s).replace(/\b(theo |do |của )?(AI|trí tuệ nhân tạo)\b[,:]?\s*/gi, "");
+const lrT = (s) => lrEsc(lrNoAi(s));
+function lrWeekEval(wk){
+  const out = { top:"", commit:"", plan:"", region:"", mgr:"", concl:"" };
+  const sc = wk && wk.sc; const A = (wk && wk.ok && wk.A) || {};
+  if (!sc) { out.top = `<p class="sub">Chưa có đánh giá kết quả tuần cho kỳ này — bấm "Đánh giá tuần" trên màn hình lập báo cáo.</p>`; return out; }
+  const kv = (k) => k.unit === "HĐ" ? (k.actual == null ? "—" : lrInt(k.actual)) : (k.actual == null ? "—" : (k.kpi === "tbb" ? lrK(k.actual) : lrTr(k.actual)));
+  const kt = (k) => k.target == null ? "—" : (k.unit === "HĐ" ? lrInt(k.target) : (k.kpi === "tbb" ? lrK(k.target) : lrTr(k.target)));
+  const st = (k) => { const m = LR_ST[k.status] || LR_ST.na; return lrPill(m[0], (k.pct != null ? lrDec(k.pct, 1) + "% · " : "") + m[1]); };
+  const list = (a) => Array.isArray(a) && a.length ? `<ul>${a.map(x => `<li>${typeof x === "string" ? lrT(x) : `<b>${lrT(x.shop)}</b>: ${lrT(x.reason)}`}</li>`).join("")}</ul>` : `<p class="sub">—</p>`;
+  const evalBy = {}; (A.shopEval || []).forEach(x => { if (x && x.shop) evalBy[String(x.shop).replace(/\s/g, "")] = x; });
+  const bs = (sc.chain && sc.chain.byStatus) || {};
+  const ch = sc.chain || {};
+  // --- Đánh giá tuần
+  let t = `<p class="sub">Kỳ đánh giá ${lrDM(sc.evalFrom)} – ${lrDM(sc.evalTo)}/${sc.evalTo.slice(0,4)} so với mục tiêu tuần. Ngưỡng ${sc.thresholdsConfigured ? "do quản lý cấu hình" : "đề xuất"}: vượt ≥ ${sc.thresholds.over}%, đạt ≥ ${sc.thresholds.ok}%, có nguy cơ ≥ ${sc.thresholds.risk}%, dưới mức đó là chưa đạt.</p>`;
+  t += `<div class="grid g4" style="margin:10px 0"><div class="card tile ${ch.revPct >= sc.thresholds.ok ? "good" : ch.revPct >= sc.thresholds.risk ? "warn" : "bad"}"><div class="l">Doanh thu tuần toàn khu vực</div><div class="v">${ch.revPct != null ? lrDec(ch.revPct, 1) + "%" : "—"}</div><div class="s">${lrTr(ch.revActual)} / ${lrTr(ch.revTarget)}</div></div>`
+    + `<div class="card tile good"><div class="l">Đạt / vượt mục tiêu</div><div class="v">${(bs.over || 0) + (bs.ok || 0)}</div><div class="s">nhà thuốc</div></div>`
+    + `<div class="card tile warn"><div class="l">Có nguy cơ không đạt</div><div class="v">${bs.risk || 0}</div><div class="s">nhà thuốc</div></div>`
+    + `<div class="card tile bad"><div class="l">Chưa đạt</div><div class="v">${bs.under || 0}</div><div class="s">nhà thuốc${bs.nodata ? ` · ${bs.nodata} chưa đủ dữ liệu` : ""}</div></div>`
+    + `</div>`;
+  if (A.executive) {
+    const E = A.executive;
+    t += `<div class="exec" style="margin-top:10px">${E.summary ? `<p>${lrT(E.summary)}</p>` : ""}<div class="grid g2" style="margin-top:6px">`
+      + `<div><b class="up">Điểm tích cực</b>${list(E.positives)}</div><div><b class="down">Vấn đề nghiêm trọng nhất</b>${list(E.criticalIssues)}</div>`
+      + `<div><b>Nhà thuốc cần ưu tiên hỗ trợ</b>${list(E.priorityShops)}</div><div><b>Quyết định cần làm ngay</b>${list(E.decisionsNow)}</div></div></div>`;
+  }
+  if ((sc.common || []).length) t += `<p style="margin-top:8px"><b>Vấn đề chung nhiều nhà thuốc:</b> ${sc.common.map(c => `${lrT(c.label)} (${c.shops.map(lrEsc).join(", ")})`).join(" · ")}</p>`;
+  const rows = sc.shops.map(x => { const k = x.kpis; const ev = evalBy[String(x.label).replace(/\s/g, "")] || {}; const d = k[0].delta;
+    const cause = (ev.causes || []).length ? ev.causes.map(c => `${lrT(c.text)}${c.evidence ? ` <span class="sub">(căn cứ: ${lrT(c.evidence)})</span>` : ""}`).join("<br>") : (ev.causeStatus === "chưa đủ cơ sở" || !ev.assessment ? `<span class="sub">Chưa đủ cơ sở xác định nguyên nhân</span>` : "");
+    const extra = [!x.reported ? `<span class="pill p-red">Chưa gửi báo cáo</span>` : "", x.selfCheck ? `<span class="pill p-y">Cần xác minh</span> <span class="sub">${lrEsc(x.selfCheck)}</span>` : "", ...(x.kpiRecurring || []).map(r => `<span class="pill p-red">${lrEsc(r)}</span>`)].filter(Boolean).join("<br>");
+    return `<tr><td><b>${lrEsc(x.label)}</b>${extra ? "<br>" + extra : ""}</td>`
+      + `<td class="num">${kv(k[0])} / ${kt(k[0])}<br>${st(k[0])}${k[0].gap > 0 ? `<br><span class="sub">thiếu ${lrTr(k[0].gap)}</span>` : ""}</td>`
+      + k.slice(1).map(y => `<td class="num">${kv(y)} / ${kt(y)}<br>${st(y)}</td>`).join("")
+      + `<td class="num">${d && d.pct != null ? `<span class="${d.pct >= 0 ? "up" : "down"}">${d.pct >= 0 ? "▲ +" : "▼ "}${lrDec(d.pct, 1)}%</span>` : `<span class="sub">—</span>`}</td>`
+      + `<td>${ev.assessment ? lrT(ev.assessment) + "<br>" : ""}${cause}</td><td>${lrT(ev.action || "")}${x.month && x.month.needPerDay ? `<br><span class="sub">Cần ${lrTr(x.month.needPerDay)}/ngày trong ${x.month.daysLeft} ngày còn lại để đạt tháng</span>` : ""}</td></tr>`; }).join("");
+  t += `<div class="scroll" style="margin-top:10px"><table class="tbl kpi"><thead><tr><th>Nhà thuốc</th><th class="num">Doanh thu (thực tế / mục tiêu)</th><th class="num">Hàng hệ số</th><th class="num">TB bill</th><th class="num">Số hoá đơn</th><th class="num">So tuần trước</th><th>Nhận định · nguyên nhân có căn cứ</th><th>Hành động</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  out.top = t;
+  // --- Cam kết tuần trước
+  const all = []; sc.shops.forEach(x => (x.commits || []).forEach(c => all.push({ ...c, shop:x.label })));
+  const G = (s) => all.filter(c => c.status === s);
+  const cl = (arr) => arr.length ? `<ul>${arr.map(c => `<li><b>${lrEsc(c.shop)}</b> · ${LR_CAT[c.cat] || lrEsc(c.cat)}: ${lrEsc(c.noiDung)}${c.target ? ` <span class="sub">(chỉ tiêu: ${lrEsc(c.target)})</span>` : ""} → <i>${c.ketQua ? lrEsc(String(c.ketQua).slice(0, 160)) : "không ghi kết quả"}</i>${c.recurring ? " " + lrPill("p-red", "lặp lại tuần này") : ""}</li>`).join("")}</ul>` : `<p class="sub">Không có.</p>`;
+  out.commit = `<p>${lrPill("p-g", G("done").length + " hoàn thành")} ${lrPill("p-amb", G("partial").length + " hoàn thành một phần")} ${lrPill("p-red", G("notdone").length + " chưa hoàn thành")} ${lrPill("p-y", G("noevidence").length + " chưa đủ bằng chứng")} ${lrPill("p-red", all.filter(c => c.recurring).length + " lặp lại")}</p>`
+    + `<p class="sub">Ghi "đã làm / ổn / đạt tiến độ" không được tính là bằng chứng. Hoàn thành hoạt động chưa chắc đã có kết quả kinh doanh.</p>`
+    + `<h3 class="down">Chưa hoàn thành</h3>${cl(G("notdone"))}<h3>Hoàn thành một phần</h3>${cl(G("partial"))}<h3>Chưa đủ bằng chứng xác nhận</h3>${cl(G("noevidence"))}`
+    + (G("done").length ? `<h3 class="up">Đã hoàn thành</h3>${cl(G("done"))}` : "");
+  // --- Thẩm định kế hoạch tuần này
+  const pc = (s) => s >= 80 ? "p-g" : s >= 60 ? "p-y" : s >= 40 ? "p-amb" : "p-red";
+  const KL = { rev:"doanh thu", hhs:"hàng hệ số", tbb:"TB bill", bills:"số hoá đơn" }; const pw = sc.planWeights || {};
+  out.plan = `<p class="sub">Thang 100 điểm: mục tiêu định lượng ${pw.quant}, hành động cụ thể ${pw.action}, bám vấn đề thực tế ${pw.link}, người phụ trách & thời hạn ${pw.ownerDeadline}, chỉ số đo ${pw.measure}, rủi ro & dự phòng ${pw.risk}.</p>`
+    + `<div class="scroll"><table class="tbl"><thead><tr><th>Nhà thuốc</th><th class="num">Điểm</th><th class="num">Số việc</th><th>Còn thiếu</th><th>Cần bổ sung</th></tr></thead><tbody>`
+    + sc.shops.slice().sort((a, b) => a.plan.score - b.plan.score).map(x => `<tr><td><b>${lrEsc(x.label)}</b></td><td class="num">${lrPill(pc(x.plan.score), x.plan.score + "/100")}</td><td class="num">${x.plan.items}</td><td>${(x.plan.missing || []).map(lrEsc).join("<br>") || `<span class="up">Đủ các tiêu chí</span>`}${(x.plan.weakItems || []).length ? `<br><span class="sub">Viết chung chung: ${x.plan.weakItems.map(lrEsc).join(" · ")}</span>` : ""}</td><td>${(x.plan.uncovered || []).length ? "Việc cụ thể có con số cho " + x.plan.uncovered.map(k => KL[k] || k).join(", ") : "—"}</td></tr>`).join("")
+    + `</tbody></table></div>`;
+  // --- Kế hoạch hành động khu vực
+  const confirmed = new Set((wk.commits || []).map(c => (c.goal || "") + "|" + (c.action || "")));
+  const ap = (Array.isArray(A.actionPlan) ? A.actionPlan : []).slice().sort((a, b) => String(a.priority).localeCompare(String(b.priority)));
+  out.region = ap.length ? `<p class="sub">Gộp các vấn đề trùng nhau giữa nhà thuốc, giữ mục tiêu riêng từng nhà thuốc. P0 làm ngay · P1 trong tuần · P2 theo dõi · P3 cải tiến dài hạn. Mục chưa xác nhận là đề xuất, chưa phải cam kết.</p>`
+    + `<div class="scroll"><table class="tbl"><thead><tr><th>Ưu tiên</th><th>Nhóm</th><th>Vấn đề</th><th>Nhà thuốc · mục tiêu</th><th>Hành động cụ thể</th><th>Phụ trách</th><th>Hạn</th><th>Nghiệm thu</th><th>Trạng thái</th></tr></thead><tbody>`
+    + ap.map(a => `<tr><td>${lrPill(LR_PRI[a.priority] || "p-gr", a.priority || "—")}</td><td>${LR_CAT[a.category] || lrT(a.category)}</td><td>${lrT(a.problem)}</td><td>${(a.shops || []).map(s => `<b>${lrT(s.shop)}</b>${s.target ? ": " + lrT(s.target) : ""}`).join("<br>")}</td><td>${lrT(a.action)}</td><td>${lrT(a.owner) || "—"}</td><td>${lrT(a.deadline) || "—"}</td><td>${lrT(a.acceptance) || "—"}</td><td>${confirmed.has((a.problem || "") + "|" + (a.action || "")) ? lrPill("p-g", "Đã xác nhận") : lrPill("p-gr", "Đề xuất")}</td></tr>`).join("")
+    + `</tbody></table></div>` : `<p class="sub">Chưa có kế hoạch hành động cấp khu vực cho kỳ này.</p>`;
+  // --- Cam kết quản lý
+  const cm = wk.commits || []; const cmc = { "Đạt":"p-g", "Không đạt":"p-red", "Huỷ":"p-gr", "Đang thực hiện":"p-y" };
+  out.mgr = cm.length ? `<div class="scroll"><table class="tbl"><thead><tr><th>Mục tiêu</th><th>Chỉ tiêu cần đạt</th><th>Hành động trọng tâm</th><th>Phụ trách</th><th>Hạn kiểm tra</th><th>Mốc giữa tuần</th><th>Kết quả cuối tuần</th><th>Trạng thái</th></tr></thead><tbody>`
+    + cm.map(c => `<tr><td>${lrT(c.goal)}</td><td>${lrT(c.target)}</td><td>${lrT(c.action)}</td><td>${lrT(c.owner) || "—"}</td><td>${c.deadline ? lrEsc(c.deadline.length === 10 ? lrDM(c.deadline) : c.deadline) : "—"}</td><td>${c.midCheckDate ? lrDM(c.midCheckDate) + ": " : ""}${lrT(c.midCheck) || "—"}</td><td>${lrT(c.finalResult) || "—"}</td><td>${lrPill(cmc[c.status] || "p-gr", c.status || "—")}</td></tr>`).join("")
+    + `</tbody></table></div>` : `<p class="sub">Chưa có cam kết nào được quản lý xác nhận cho tuần này.</p>`;
+  // --- Kết luận
+  const C = A.conclusion;
+  out.concl = C ? `<div class="grid g3"><div class="pillar"><h4 class="down">Cần làm ngay</h4>${list(C.now)}</div><div class="pillar"><h4>Theo dõi trong tuần</h4>${list(C.watch)}</div><div class="pillar"><h4>Đánh giá lại kỳ sau</h4>${list(C.reviewNext)}</div></div>` : "";
+  return out;
+}
 
 function lrDefaultReason(sh, D){
   const c = D.staffByShop[sh] || 0, ov = (D.overdue[sh]||0), g = D.paceUp[sh];
@@ -15689,6 +15905,11 @@ function buildLeaderReportHtml(D, M){
   h += shopsByRev.map(s => { const o = by[s]; return `<tr><td>${lrShop(s)}</td><td class="num">${lrTr(o.revenue.actual)}</td><td class="num"><b>${lrTr((o.revenue.target-o.revenue.actual)/left*7)}</b></td><td class="num">${lrTr(o.hangHeSo.actual)}</td><td class="num"><b>${lrTr((o.hangHeSo.target-o.hangHeSo.actual)/left*7)}</b></td><td>${pill(s)} cần +${D.paceUp[s]||0}%/ngày</td></tr>`; }).join("");
   h += `<tr class="total"><td>Toàn khu vực</td><td class="num">${lrTr(revA)}</td><td class="num">${lrTr(needDay*7)}</td><td class="num">${lrTr(hA)}</td><td class="num">${lrTr(hNeed*7)}</td><td></td></tr></tbody></table></div><p class="sub">Mục tiêu tuần = (target tháng − số đã đạt) ÷ ${left} ngày còn lại × 7 ngày.</p>`;
   // nhân sự
+  // 13/10/2026: đánh giá kết quả tuần, cam kết tuần trước, thẩm định kế hoạch tuần này
+  const WK = lrWeekEval(M.wk);
+  const wkEv = M.wk && M.wk.sc ? `${lrDM(M.wk.sc.evalFrom)} – ${lrDM(M.wk.sc.evalTo)}` : "";
+  h += H(`Đánh giá kết quả tuần ${wkEv} so với mục tiêu`) + WK.top;
+  if (M.wk && M.wk.sc) { h += H(`Thực hiện cam kết tuần ${wkEv}`) + WK.commit; h += H(`Thẩm định kế hoạch tuần ${lrDM(W1)} – ${lrDM(W2)} của nhà thuốc`) + WK.plan; }
   h += H("Nhân sự – Kế hoạch tuyển dụng");
   if (hireN) {
     h += `<div class="scroll"><table class="tbl"><thead><tr><th>Nhà thuốc</th><th class="num">Hiện có</th><th class="num">Tuyển thêm</th><th class="num">Sau tuyển</th><th>Lý do</th></tr></thead><tbody>`;
@@ -15717,6 +15938,7 @@ function buildLeaderReportHtml(D, M){
   }
   if (allOut.length || trf.length) h += `<h3>Mã cần xử lý ngay</h3><div class="grid g3">` + allOut.map(p => `<div class="card"><span class="pill p-red">Hết, không còn hàng điều chuyển</span><p><b>${lrEsc(p.name)}</b><br><span class="sub">Hết ở ${p.shopCount} nhà thuốc (${(p.shops||[]).slice(0,3).map(lrShop).join(", ")}…) · mất ~${lrK(p.perDay)}/ngày → cần mua hàng.</span></p></div>`).join("") + trf.map(p => `<div class="card"><span class="pill p-amb">Điều chuyển</span><p><b>${lrEsc(p.name)}</b><br><span class="sub">Hết ở ${p.shopCount} nhà thuốc (${(p.shops||[]).slice(0,3).map(lrShop).join(", ")}…), nhà thuốc khác còn hàng để điều chuyển.</span></p></div>`).join("") + `</div>`;
   // kế hoạch hành động
+  if (M.wk && M.wk.sc) h += H("Kế hoạch hành động cấp khu vực theo mức ưu tiên") + WK.region;
   h += H("Kế hoạch hành động chi tiết") + `<div class="scroll"><table class="tbl"><thead><tr><th>#</th><th>Hạng mục</th><th>Việc cần làm</th><th>Nhà thuốc</th><th>Phụ trách</th><th>Hạn</th><th>Đo kết quả</th></tr></thead><tbody>`;
   h += actions.map((a, i) => `<tr><td>${i+1}</td><td><span class="pill ${a[0] === "p-v" ? '" style="background:#f1eafb;color:#7a4cc2' : a[0]}">${lrEsc(a[1])}</span></td><td>${a[2]}</td><td>${lrEsc(a[3])}</td><td>${lrEsc(a[4])}</td><td>${lrEsc(a[5])}</td><td>${lrEsc(a[6])}</td></tr>`).join("") + `</tbody></table></div>`;
   // đề xuất
@@ -15726,8 +15948,10 @@ function buildLeaderReportHtml(D, M){
   if (allOut.length || urgentAll) askAll.push(`<b>Phòng mua hàng ưu tiên nhập</b> ${allOut.length ? "các mã đang hết toàn khu vực (" + allOut.map(p => lrEsc(p.name)).join(", ") + ") và " : ""}${lrInt(urgentAll)} mã cần gọi gấp.`);
   if (fromOrd.length) askAll.push(`<b>Phòng IT / hệ thống:</b> trang Chỉ tiêu nhà thuốc chưa cập nhật thực đạt tháng ${ms} cho ${fromOrd.map(lrShop).join(", ")}. Báo cáo đang tạm dùng số từ hoá đơn POS.`);
   asks.forEach(a => askAll.push(lrEsc(a)));
+  if (M.wk && M.wk.sc) h += H(`Cam kết của quản lý khu vực tuần ${lrDM(W1)} – ${lrDM(W2)}`) + WK.mgr;
   h += H("Đề xuất cần Ban lãnh đạo phê duyệt / hỗ trợ") + (askAll.length ? `<div class="ask"><ol>${askAll.map(a => `<li>${a}</li>`).join("")}</ol></div>` : `<p class="sub">Không có.</p>`);
   // ghi chú
+  if (WK.concl) h += H("Kết luận điều hành") + WK.concl;
   h += H("Ghi chú") + `<div class="note"><p>• Nguồn: hệ thống Upharma Ops (hoá đơn POS, chỉ tiêu tháng từ upharma.com.vn, tồn kho, khách hàng, ca làm việc). Đã loại tài khoản đào tạo khỏi mọi số liệu.</p><p>• Doanh số, hàng hệ số, bill và khuyến mại tính từ ${lrDM(monthStart)}/${cut.slice(0,4)}, không cộng tháng trước. "Dự kiến cả tháng" là ngoại suy từ ${days} ngày đầu tháng.</p>${notes.map(x => `<p>• ${lrEsc(x)}</p>`).join("")}</div>`;
   h += `<footer>Upharma · Báo cáo tuần khu vực · Lập ngày ${lrDM(D.today)}/${D.today.slice(0,4)}</footer></div></body></html>`;
   return h;
@@ -15742,6 +15966,27 @@ function LeaderReportView({ isAdmin }){
   const [err, setErr] = React.useState("");
   const [saving, setSaving] = React.useState(false);
   const [msg, setMsg] = React.useState("");
+  // 13/10/2026: đánh giá tuần (bảng điểm + phân tích) và cam kết quản lý của tuần đang xem
+  const [mw, setMw] = React.useState(null); const [mwCommits, setMwCommits] = React.useState([]); const [repMax, setRepMax] = React.useState(0); const [mwBusy, setMwBusy] = React.useState(false);
+  React.useEffect(() => { setMw(null); return db.collection("opsConfig").doc("managerWeekAi_" + weekStart).onSnapshot(d => setMw(d.exists ? d.data() : null), () => setMw(null)); }, [weekStart]);
+  React.useEffect(() => db.collection("managerCommitments").where("week","==",weekStart).onSnapshot(q => setMwCommits(q.docs.map(d => ({ id:d.id, ...d.data() })).sort((a,b) => String(a.createdAt||"").localeCompare(String(b.createdAt||"")))), () => setMwCommits([])), [weekStart]);
+  React.useEffect(() => db.collection("weeklyReports").where("tuanNgay","==",weekStart).onSnapshot(q => { let m = 0; q.forEach(d => { const x = d.data(); const t = x.updatedAtTs || x.createdAtTs; const ms = t && t.toMillis ? t.toMillis() : 0; if (ms > m) m = ms; }); setRepMax(m); }, () => {}), [weekStart]);
+  const wk = React.useMemo(() => ({ sc: mw && mw.scorecard, A: mw && mw.analysis, ok: !!(mw && mw.aiStatus === "ok" && mw.analysis), commits: mwCommits }), [mw, mwCommits]);
+  const mwStale = !!(repMax && mw && mw.inputMaxUpdatedAt && repMax > mw.inputMaxUpdatedAt + 1000);
+  async function runWeekEval(force){
+    setMwBusy(true); setMsg("");
+    try { const j = await callCf(`https://asia-southeast1-upharma-176d5.cloudfunctions.net/analyzeManagerWeekNow?week=${encodeURIComponent(weekStart)}${force ? "&force=1" : ""}`, {}, 180000);
+      setMsg(j.cached ? "Báo cáo nhà thuốc chưa đổi — dùng lại kết quả đánh giá trước." : j.busy ? "Đang có lượt đánh giá khác chạy — chờ vài giây." : (j.ok ? "Đã cập nhật đánh giá tuần." : "Lỗi: " + (j.error || "không rõ"))); }
+    catch (e) { setMsg("Lỗi: " + (e && e.data && e.data.error ? e.data.error : (e && e.message) || e)); }
+    setMwBusy(false);
+  }
+  async function confirmAction(a){
+    try { const me = auth.currentUser;
+      await db.collection("managerCommitments").doc(`${weekStart}_${Date.now().toString(36)}`).set({ week:weekStart, source:"actionPlan", priority:a.priority||"", category:a.category||"", goal:a.problem||"", target:(a.shops||[]).map(x => `${x.shop}: ${x.target||"—"}`).join("; "),
+        action:a.action||"", owner:a.owner||"", deadline:a.deadline||"", acceptance:a.acceptance||"", midCheckDate:lrAdd(weekStart, 3), midCheck:"", finalResult:"", status:"Đang thực hiện", approvedBy:(me && me.email) || "Quản lý", createdAt:new Date().toISOString() });
+      setMsg("Đã xác nhận thành cam kết quản lý."); } catch (e) { setMsg("Lỗi: " + e.message); }
+  }
+  const updCommit = (id, patch) => db.collection("managerCommitments").doc(id).set({ ...patch, updatedAt:new Date().toISOString() }, { merge:true }).catch(e => setMsg("Lỗi: " + e.message));
   React.useEffect(() => { (async () => {
     try {
       setErr("");
@@ -15779,7 +16024,7 @@ function LeaderReportView({ isAdmin }){
     }, e => setErr(e.message));
     return () => unsub();
   }, [weekStart]);
-  const html = React.useMemo(() => { try { return D && M ? buildLeaderReportHtml(D, { ...M, weekStart }) : ""; } catch (e) { return `<p style="color:#b3261e;font:14px sans-serif">Lỗi dựng báo cáo: ${lrEsc(e.message)}</p>`; } }, [D, M, weekStart]);
+  const html = React.useMemo(() => { try { return D && M ? buildLeaderReportHtml(D, { ...M, weekStart, wk }) : ""; } catch (e) { return `<p style="color:#b3261e;font:14px sans-serif">Lỗi dựng báo cáo: ${lrEsc(e.message)}</p>`; } }, [D, M, weekStart, wk]);
   if (!isAdmin) return h("div", { className:"emptyState" }, "Chỉ quản lý xem được báo cáo tổng hợp.");
   if (err) return h("div", { className:"card", style:{ color:"#b3261e" } }, "Lỗi tải số liệu: " + err);
   if (!D || !M) return h("div", { className:"emptyState" }, "Đang tổng hợp số liệu…");
@@ -15809,10 +16054,12 @@ function LeaderReportView({ isAdmin }){
       h("input", { type:"date", value: weekStart, onChange: e => e.target.value && setWeekStart(mondayOf(e.target.value)), style:{ padding:"6px 8px", borderRadius:8, border:"1px solid var(--line)" } }),
       h("span", { style:{ color:"var(--inkSoft)", fontSize:12.5 } }, `${lrDM(weekStart)} – ${lrDM(lrAdd(weekStart,6))} · số liệu chốt đến ${lrDM(D.cutoff)}`),
       h("div", { style:{ flex:1 } }),
+      h("button", { className:"btn btnGhost", onClick: () => runWeekEval(false), disabled: mwBusy, title:"Đánh giá kết quả tuần, cam kết, kế hoạch của các nhà thuốc từ báo cáo tuần" }, mwBusy ? "Đang đánh giá… (~1 phút)" : (mw && mw.scorecard ? "Cập nhật đánh giá tuần" : "Đánh giá tuần")),
       h("button", { className:"btn btnGhost", onClick: save, disabled: saving }, saving ? "Đang lưu…" : "Lưu"),
       h("button", { className:"btn btnPrimary", onClick: download }, "Tải file HTML"),
       h("button", { className:"btn btnGhost", onClick: printPdf }, "In / PDF"),
       msg && h("span", { style:{ fontSize:12.5, color: msg.startsWith("Lỗi") ? "#b3261e" : "var(--g, #178a43)" } }, msg)),
+    mwStale && h("div", { className:"card", style:{ marginBottom:12, background:"#FEF9C3", borderLeft:"4px solid #A16207", fontSize:13 } }, h("b", null, "Báo cáo nhà thuốc đã được sửa sau lần đánh giá tuần. "), "Phần đánh giá trong báo cáo có thể chưa phản ánh bản sửa — bấm \"Cập nhật đánh giá tuần\"."),
     h("div", { style:{ display:"grid", gridTemplateColumns:"minmax(280px, 380px) 1fr", gap:12, alignItems:"start" }, className:"lrGrid" },
       h("div", { className:"card", style:{ position:"sticky", top:8, maxHeight:"85vh", overflowY:"auto" } },
         lbl("Người lập"),
@@ -15829,7 +16076,19 @@ function LeaderReportView({ isAdmin }){
         lbl("Việc bổ sung vào kế hoạch", "Hạng mục | Việc | Nhà thuốc | Phụ trách | Hạn | Đo kết quả"),
         ta("extraActions", "VD: Marketing | Chạy tờ rơi khai trương | NT122 | CHT | 10/10 | 500 tờ", 3),
         lbl("Ghi chú thêm", "mỗi dòng 1 ý"),
-        ta("notes", "", 2)),
+        ta("notes", "", 2),
+        lbl("Kế hoạch hành động khu vực", "bấm Xác nhận để thành cam kết quản lý"),
+        !(wk.ok && Array.isArray(wk.A.actionPlan) && wk.A.actionPlan.length) ? h("div", { style:{ fontSize:12, color:"var(--inkSoft)" } }, "Chưa có — bấm \"Đánh giá tuần\".") :
+          wk.A.actionPlan.map((a, i) => { const done = mwCommits.some(c => (c.goal||"") === (a.problem||"") && (c.action||"") === (a.action||""));
+            return h("div", { key:i, style:{ fontSize:12, borderTop:"1px solid var(--line)", padding:"6px 0" } }, h("b", null, (a.priority || "") + " · " + (a.problem || "")), h("div", { style:{ color:"var(--inkSoft)" } }, a.action || ""),
+              done ? h("span", { style:{ color:"var(--pine)", fontWeight:700 } }, "✓ Đã thành cam kết") : h("button", { className:"btn btnGhost", style:{ fontSize:11.5, padding:"2px 8px", marginTop:3 }, onClick:() => confirmAction(a) }, "Xác nhận thành cam kết")); }),
+        lbl("Cam kết quản lý tuần này", "cập nhật tiến độ & kết quả"),
+        !mwCommits.length ? h("div", { style:{ fontSize:12, color:"var(--inkSoft)" } }, "Chưa có cam kết nào được xác nhận.") :
+          mwCommits.map(c => h("div", { key:c.id, style:{ fontSize:12, borderTop:"1px solid var(--line)", padding:"6px 0", display:"grid", gap:4 } }, h("b", null, c.goal || c.action),
+            h("input", { defaultValue:c.owner || "", placeholder:"Người phụ trách", onBlur:e => e.target.value !== (c.owner||"") && updCommit(c.id, { owner:e.target.value }), style:{ fontSize:12, padding:4, borderRadius:6, border:"1px solid var(--line)" } }),
+            h("input", { defaultValue:c.midCheck || "", placeholder:`Tiến độ giữa tuần (${lrDM(c.midCheckDate || "")})`, onBlur:e => e.target.value !== (c.midCheck||"") && updCommit(c.id, { midCheck:e.target.value }), style:{ fontSize:12, padding:4, borderRadius:6, border:"1px solid var(--line)" } }),
+            h("input", { defaultValue:c.finalResult || "", placeholder:"Kết quả cuối tuần (có số)", onBlur:e => e.target.value !== (c.finalResult||"") && updCommit(c.id, { finalResult:e.target.value }), style:{ fontSize:12, padding:4, borderRadius:6, border:"1px solid var(--line)" } }),
+            h("select", { value:c.status || "Đang thực hiện", onChange:e => updCommit(c.id, { status:e.target.value }), style:{ fontSize:12, padding:3 } }, ["Đang thực hiện","Đạt","Không đạt","Huỷ"].map(o => h("option", { key:o, value:o }, o)))))),
       h("iframe", { title:"Xem trước báo cáo", srcDoc: html, style:{ width:"100%", height:"85vh", border:"1px solid var(--line)", borderRadius:12, background:"#fff" } })));
 }
 
