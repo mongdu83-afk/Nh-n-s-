@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261013-3";
+window.__APP_BUILD = "20261013-4";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -15957,6 +15957,12 @@ function buildLeaderReportHtml(D, M){
   return h;
 }
 
+// 13/10/2026: số nhân sự "hiện có" — quản lý sửa tay trong báo cáo được (để trống = đếm theo danh sách Nhân sự)
+function lrWithStaff(D, M){
+  const o = { ...D.staffByShop }; let changed = false;
+  Object.entries((M && M.hires) || {}).forEach(([s, v]) => { if (v && v.cur !== undefined && v.cur !== null && v.cur !== "" && !isNaN(Number(v.cur))) { o[s] = Number(v.cur); changed = true; } });
+  return changed ? { ...D, staffByShop: o } : D;
+}
 function LeaderReportView({ isAdmin }){
   const h = React.createElement;
   const today = todayISO();
@@ -16024,7 +16030,7 @@ function LeaderReportView({ isAdmin }){
     }, e => setErr(e.message));
     return () => unsub();
   }, [weekStart]);
-  const html = React.useMemo(() => { try { return D && M ? buildLeaderReportHtml(D, { ...M, weekStart, wk }) : ""; } catch (e) { return `<p style="color:#b3261e;font:14px sans-serif">Lỗi dựng báo cáo: ${lrEsc(e.message)}</p>`; } }, [D, M, weekStart, wk]);
+  const html = React.useMemo(() => { try { return D && M ? buildLeaderReportHtml(lrWithStaff(D, M), { ...M, weekStart, wk }) : ""; } catch (e) { return `<p style="color:#b3261e;font:14px sans-serif">Lỗi dựng báo cáo: ${lrEsc(e.message)}</p>`; } }, [D, M, weekStart, wk]);
   if (!isAdmin) return h("div", { className:"emptyState" }, "Chỉ quản lý xem được báo cáo tổng hợp.");
   if (err) return h("div", { className:"card", style:{ color:"#b3261e" } }, "Lỗi tải số liệu: " + err);
   if (!D || !M) return h("div", { className:"emptyState" }, "Đang tổng hợp số liệu…");
@@ -16033,7 +16039,7 @@ function LeaderReportView({ isAdmin }){
   async function save(){
     setSaving(true); setMsg("");
     try {
-      const hires = {}; Object.entries(M.hires || {}).forEach(([s, v]) => { const n = Number(v && v.n) || 0; if (n > 0 || (v && v.reason)) hires[s] = { n, reason: String((v && v.reason) || "").slice(0, 400) }; });
+      const hires = {}; Object.entries(M.hires || {}).forEach(([s, v]) => { const n = Number(v && v.n) || 0; const cur = v && v.cur !== undefined && v.cur !== "" && v.cur !== null ? Number(v.cur) : null; if (n > 0 || (v && v.reason) || cur != null) hires[s] = { n, reason: String((v && v.reason) || "").slice(0, 400), ...(cur != null ? { cur } : {}) }; });
       await db.collection("leaderReports").doc(weekStart).set({ weekStart, hires, csvc: M.csvc, asks: M.asks, notes: M.notes, extraActions: M.extraActions, author: M.author, updatedAt: new Date().toISOString() });
       setMsg("Đã lưu.");
     } catch (e) { setMsg("Lỗi lưu: " + e.message); }
@@ -16066,9 +16072,9 @@ function LeaderReportView({ isAdmin }){
         h("input", { value: M.author, onChange: e => setF("author", e.target.value), style:{ width:"100%", padding:"6px 8px", borderRadius:8, border:"1px solid var(--line)" } }),
         lbl("Tuyển dụng", "số người cần tuyển thêm + lý do"),
         D.shops.map(s => h("div", { key:s, style:{ display:"grid", gridTemplateColumns:"56px 54px 1fr", gap:6, alignItems:"start", marginBottom:6 } },
-          h("div", { style:{ fontWeight:600, fontSize:13, paddingTop:6 } }, lrShop(s), h("div", { style:{ fontSize:11, color:"var(--inkSoft)", fontWeight:400 } }, `có ${D.staffByShop[s]||0}`)),
+          h("div", { style:{ fontWeight:600, fontSize:13, paddingTop:6 } }, lrShop(s), h("div", { style:{ fontSize:11, color:"var(--inkSoft)", fontWeight:400, display:"flex", alignItems:"center", gap:3 } }, "có", h("input", { type:"number", min:0, value: (M.hires[s] && M.hires[s].cur !== undefined && M.hires[s].cur !== null) ? M.hires[s].cur : "", placeholder: String(D.staffByShop[s]||0), title:`Số nhân sự hiện có. Để trống = lấy theo danh sách Nhân sự (${D.staffByShop[s]||0} người)`, onChange: e => setHire(s, "cur", e.target.value), style:{ width:34, fontSize:11, padding:"1px 2px", borderRadius:5, border:"1px solid var(--line)" } }))),
           h("input", { type:"number", min:0, value: (M.hires[s] && M.hires[s].n) || "", placeholder:"0", onChange: e => setHire(s, "n", e.target.value), style:{ width:"100%", padding:"6px", borderRadius:8, border:"1px solid var(--line)" } }),
-          h("textarea", { rows:2, value: (M.hires[s] && M.hires[s].reason) || "", placeholder: lrDefaultReason(s, D), onChange: e => setHire(s, "reason", e.target.value), style:{ width:"100%", fontSize:12, padding:6, borderRadius:8, border:"1px solid var(--line)", fontFamily:"inherit" } }))),
+          h("textarea", { rows:2, value: (M.hires[s] && M.hires[s].reason) || "", placeholder: lrDefaultReason(s, lrWithStaff(D, M)), onChange: e => setHire(s, "reason", e.target.value), style:{ width:"100%", fontSize:12, padding:6, borderRadius:8, border:"1px solid var(--line)", fontFamily:"inherit" } }))),
         lbl("Cơ sở vật chất cần sửa", "mỗi dòng 1 hạng mục"),
         ta("csvc", "VD: NT72: sửa la phông, bảng hiệu\nNT95: chống dột", 3),
         lbl("Đề xuất thêm với Ban lãnh đạo", "mỗi dòng 1 ý"),
