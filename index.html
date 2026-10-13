@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261013-10";
+window.__APP_BUILD = "20261013-11";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -15925,7 +15925,7 @@ function buildLeaderReportHtml(D, M){
   goalH += `<div class="pillar" style="border-top:4px solid var(--g)"><h4>Doanh số</h4><ul><li>Doanh thu khu vực tuần tới <b>≥ ${lrTr(needDay*7)}</b> (${lrTr(needDay)}/ngày) để quay lại đúng nhịp target tháng.</li><li>Hàng hệ số <b>≥ ${lrTr(hNeed*7)}/tuần</b>.</li><li>TB bill khu vực từ ${lrK(chainObj.tbb.actual)} lên <b>≥ ${lrK(chainObj.tbb.target)}</b>${tbbLow.length ? `. Ưu tiên ${tbbLow.map(s => `${lrShop(s)} (${lrK(by[s].tbb.actual)})`).join(", ")}` : ""}.</li><li>Giảm một nửa số đơn bỏ lỡ khuyến mại: <b>≤ ${lrInt(pmT)} đơn/tuần</b>.</li></ul></div>`;
   goalH += `<div class="pillar" style="border-top:4px solid var(--blue)"><h4>Khách hàng</h4><ul><li>Liên hệ <b>100% trong ${lrInt(csAll.silentVip)} khách VIP</b> lâu chưa quay lại${vipTop ? ` (${vipTop})` : ""}.</li><li>Chăm sóc <b>≥ 25% khách nguy cơ rời bỏ</b>, khoảng ${lrInt(careT)} khách, ưu tiên ${custRows.slice(0,3).map(r => lrShop(r.s)).join(", ")}.</li><li>Ghi nhận lượt chăm sóc khách hàng trên app đầy đủ 100%.</li></ul></div>`;
   goalH += `<div class="pillar" style="border-top:4px solid var(--amb)"><h4>Hàng hoá</h4><ul><li>Giảm mất doanh thu do hết hàng từ ${lrTr(lostDay)} xuống <b>≤ ${lrTr(lostDay/2)}/ngày</b>.</li><li>POS đã tự dự trù theo tốc độ bán, POS tự duyệt đi hàng 1 lần/tuần — trước lượt tự duyệt, nhà thuốc <b>chỉnh dự trù POS</b>: thêm mã POS bỏ sót, tăng mã đặt thiếu, bỏ mã đặt dư/mã dừng (danh sách ở màn Hôm nay).</li>${allOut.length ? `<li>${allOut.map(p => lrEsc(p.name)).join(", ")}: đang hết, không còn hàng để điều chuyển → cần mua hàng.</li>` : ""}<li>Mỗi nhà thuốc chọn 20 mã tồn lâu không bán để đẩy bán hoặc trả hàng.</li></ul></div>`;
-  goalH += `<div class="pillar" style="border-top:4px solid #7a4cc2"><h4>Nhân sự</h4><ul>${hireN ? `<li>Tuyển <b>${hireN} vị trí</b> (chi tiết ở mục Nhân sự – Kế hoạch tuyển dụng).</li>` : ""}${ovAll ? `<li>Xử lý dứt điểm <b>${ovAll} việc quá hạn</b>${ovTop.length ? `. Nhiều nhất ở ${ovTop.map(s => `${lrShop(s)} (${D.overdue[s]})`).join(", ")}` : ""}.</li>` : ""}<li>Mỗi nhân viên làm <b>≥ 5 bài luyện tình huống tư vấn</b> trên app trong tuần.</li><li>Kèm riêng nhân viên đang chậm KPI tháng.</li></ul></div></div>`;
+  goalH += `<div class="pillar" style="border-top:4px solid #7a4cc2"><h4>Nhân sự</h4><ul>${hireN ? `<li>Tuyển <b>${hireN} vị trí</b>.</li>` : ""}${ovAll ? `<li>Xử lý dứt điểm <b>${ovAll} việc quá hạn</b>${ovTop.length ? `. Nhiều nhất ở ${ovTop.map(s => `${lrShop(s)} (${D.overdue[s]})`).join(", ")}` : ""}.</li>` : ""}<li>Mỗi nhân viên làm <b>≥ 5 bài luyện tình huống tư vấn</b> trên app trong tuần.</li><li>Kèm riêng nhân viên đang chậm KPI tháng.</li></ul></div></div>`;
   goalH += `<h3>Mục tiêu tuần tới theo từng nhà thuốc</h3><div class="scroll"><table class="tbl"><thead><tr><th>Nhà thuốc</th><th class="num">Đã đạt từ ${lrDM(monthStart)}</th><th class="num">Mục tiêu DT tuần</th><th class="num">HHS đã đạt</th><th class="num">Mục tiêu HHS tuần</th><th>Mức độ</th></tr></thead><tbody>`;
   goalH += shopsByRev.map(s => { const o = by[s]; return `<tr><td>${lrShop(s)}</td><td class="num">${lrTr(o.revenue.actual)}</td><td class="num"><b>${lrTr((o.revenue.target-o.revenue.actual)/left*7)}</b></td><td class="num">${lrTr(o.hangHeSo.actual)}</td><td class="num"><b>${lrTr((o.hangHeSo.target-o.hangHeSo.actual)/left*7)}</b></td><td>${pill(s)} cần +${D.paceUp[s]||0}%/ngày</td></tr>`; }).join("");
   goalH += `<tr class="total"><td>Toàn khu vực</td><td class="num">${lrTr(revA)}</td><td class="num">${lrTr(needDay*7)}</td><td class="num">${lrTr(hA)}</td><td class="num">${lrTr(hNeed*7)}</td><td></td></tr></tbody></table></div><p class="sub">Mục tiêu tuần = (target tháng − số đã đạt) ÷ ${left} ngày còn lại × 7 ngày.</p>`;
@@ -16017,11 +16017,9 @@ function buildLeaderReportHtml(D, M){
       + `</tbody></table></div><p class="sub">P0 làm ngay · P1 trong tuần · P2 theo dõi · P3 cải tiến dài hạn · "Thường kỳ" = việc theo chỉ tiêu tháng.</p>`;
     // 4. Đề xuất cần phê duyệt
     c += H2("Đề xuất cần Ban lãnh đạo phê duyệt") + (askAll.length ? `<div class="ask"><ol>${askAll.map(a => `<li>${a}</li>`).join("")}</ol></div>` : `<p class="sub">Không có.</p>`);
-    // 5. Mục tiêu tuần tới
-    c += H2(`Mục tiêu tuần ${lrDM(W1)} – ${lrDM(W2)}`) + `<div class="scroll"><table class="tbl kpi"><thead><tr><th>Nhà thuốc</th><th class="num">Doanh thu tuần</th><th class="num">Hàng hệ số tuần</th><th>Mức độ</th></tr></thead><tbody>`
-      + shopsByRev.map(s => { const o = by[s]; return `<tr><td><b>${lrShop(s)}</b></td><td class="num"><b>${lrTr((o.revenue.target - o.revenue.actual) / left * 7)}</b></td><td class="num">${lrTr((o.hangHeSo.target - o.hangHeSo.actual) / left * 7)}</td><td>${pill(s)}</td></tr>`; }).join("")
-      + `<tr class="total"><td>Toàn khu vực</td><td class="num">${lrTr(needDay * 7)}</td><td class="num">${lrTr(hNeed * 7)}</td><td></td></tr></tbody></table></div>`;
-    c += `<p class="sub" style="margin-top:14px">Nguồn: hệ thống Upharma Ops (hoá đơn POS, chỉ tiêu tháng). Mục tiêu tuần = (target tháng − đã đạt) ÷ ${left} ngày còn lại × 7.</p>`;
+    // 5. Tổng kết mục tiêu tuần (4 trụ cột + bảng từng nhà thuốc) — đặt cuối cùng
+    c += H2(`Mục tiêu trọng tâm tuần ${lrDM(W1)} – ${lrDM(W2)}`) + goalH;
+    c += `<p class="sub" style="margin-top:14px">Nguồn: hệ thống Upharma Ops (hoá đơn POS, chỉ tiêu tháng). </p>`;
     c += `<footer>Upharma · Báo cáo tuần khu vực (bản rút gọn) · Lập ngày ${lrDM(D.today)}/${D.today.slice(0,4)}</footer></div></body></html>`;
     return c;
   }
