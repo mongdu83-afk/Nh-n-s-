@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261013-11";
+window.__APP_BUILD = "20261014-5";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -9027,9 +9027,93 @@ const TTS_MODES = [
   { id:"quiz", label:"① Trắc nghiệm", sub:"Nhanh, app tự chấm, không tốn phí AI" },
   { id:"chat", label:"② Khách ảo", sub:"Hỏi đáp như ở quầy — tính điều kiện" },
   { id:"write", label:"③ Tự viết", sub:"Viết câu hỏi, xử trí, thuốc — tính điều kiện" },
+  { id:"voice", label:"④ Giọng nói", sub:"Nói như ở quầy · chấm cả giao tiếp · giới hạn/tuần" },
 ];
+// 14/10/2026: phát giọng khách (PCM 16-bit từ Gemini TTS → WAV)
+function ttsPcmToWavUrl(b64, rate){
+  try{ const bin = atob(b64); const n = bin.length; const buf = new ArrayBuffer(44 + n); const v = new DataView(buf); const w = (o, str) => { for(let i=0;i<str.length;i++) v.setUint8(o+i, str.charCodeAt(i)); };
+    w(0,"RIFF"); v.setUint32(4, 36 + n, true); w(8,"WAVE"); w(12,"fmt "); v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true); v.setUint32(24,rate||24000,true); v.setUint32(28,(rate||24000)*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true); w(36,"data"); v.setUint32(40,n,true);
+    const u8 = new Uint8Array(buf, 44); for(let i=0;i<n;i++) u8[i] = bin.charCodeAt(i);
+    return URL.createObjectURL(new Blob([buf], { type:"audio/wav" })); } catch(e){ return null; } }
+function ttsPlayVoice(v){ if(!v || !v.pcm) return null; const u = ttsPcmToWavUrl(v.pcm, v.rate); if(!u) return null; const a = new Audio(u); a.play().catch(()=>{}); return u; }
+function ttsBlobToB64(blob){ return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1] || ""); r.onerror = rej; r.readAsDataURL(blob); }); }
 // 4/10/2026: Lịch sử bài luyện tình huống — quản lý/buddy/CHT/chính TTS xem lại toàn bộ nội dung từng bài.
-const PH_MODE = { quiz:"Trắc nghiệm", chat:"Khách ảo", write:"Tự viết" };
+const PH_MODE = { quiz:"Trắc nghiệm", chat:"Khách ảo", write:"Tự viết", voice:"Giọng nói" };
+// 14/10/2026 (chị Hà): đánh giá từng thuốc + mục cần dược sĩ xem lại + sửa điểm (bài chấm v3)
+const TTS_DX_LABEL = { dung:"Đúng bệnh", ganDung:"Gần đúng / cùng nhóm", saiNhe:"Sai bệnh (không nguy hiểm) — tối đa 60 điểm", saiNang:"Sai và bỏ sót bệnh nặng — tối đa 40 điểm", khongNeu:"Không nêu nhận định" };
+const TTS_PART_LABEL = { khaiThac:["Khai thác bệnh",20], sangLoc:["Sàng lọc",15], chanDoan:["Chẩn đoán",15], xuTri:["Xử trí",15], thuoc:["Thuốc & liều",25], danDo:["Dặn dò",10], cauHoi:["Câu hỏi",null] };
+function ttsPartsText(p){ if(!p) return ""; if(p.khaiThac != null) return ["khaiThac","sangLoc","chanDoan","xuTri","thuoc","danDo"].map(k => `${TTS_PART_LABEL[k][0]} ${p[k] ?? "—"}/${TTS_PART_LABEL[k][1]}`).join(" · ");
+  if(p.cauHoi != null) return `${p.chanDoan != null ? `Chẩn đoán ${p.chanDoan}% · ` : ""}Câu hỏi ${p.cauHoi}% · Xử trí ${p.xuTri}% · Thuốc ${p.thuoc}%`;
+  return `Sàng lọc ${p.sangLoc ?? "—"}/30 · Xử trí ${p.xuTri ?? "—"}/30 · Thuốc ${p.thuoc ?? "—"}/25 · Dặn dò ${p.danDo ?? "—"}/15`; }
+// 14/10/2026: điểm giao tiếp (bài giọng nói) — chấm riêng, không cộng vào điểm chuyên môn
+function TtsCommBlock({ comm }){
+  const h = React.createElement; if(!comm) return null;
+  const L = { chaoHoi:["Chào hỏi, xưng hô",20], niemNo:["Niềm nở, tone giọng",25], tocDo:["Tốc độ, rõ ràng",15], langNghe:["Lắng nghe",15], deHieu:["Dễ hiểu",15], ketThuc:["Kết thúc",10] };
+  const col = comm.score >= 80 ? CL360.good : comm.score >= 60 ? CL360.warn : CL360.bad;
+  return h("div", { style:{ marginTop:10, border:"1px solid #C7D2FE", background:"#EEF2FF", borderRadius:10, padding:"8px 10px", fontSize:12.8, lineHeight:1.5 } },
+    h("div", { style:{ display:"flex", gap:8, alignItems:"baseline", flexWrap:"wrap" } }, h("b", null, "Giao tiếp (chấm qua giọng nói):"), h("span", { style:{ fontSize:20, fontWeight:900, color:col } }, comm.score), h("span", { style:{ color:"var(--inkSoft)" } }, "/100 · tham khảo, không tính vào điểm chuyên môn")),
+    h("div", { style:{ color:"var(--inkSoft)" } }, Object.keys(L).map(k => `${L[k][0]} ${(comm.parts||{})[k] ?? "—"}/${L[k][1]}`).join(" · ")),
+    comm.summary && h("div", { style:{ marginTop:3 } }, comm.summary),
+    (comm.strengths||[]).length > 0 && h("div", { style:{ marginTop:3 } }, h("b", { style:{ color:CL360.good } }, "Tốt: "), comm.strengths.join(" · ")),
+    (comm.fixes||[]).length > 0 && h("ul", { style:{ margin:"3px 0 0", paddingLeft:18 } }, comm.fixes.map((f,i) => h("li", { key:i }, f.luot ? `Lượt ${f.luot}: ` : "", f.vanDe, f.goiY ? h("span", { style:{ color:"#3730A3" } }, ` → nên nói: "${f.goiY}"`) : null))));
+}
+function TtsVoiceDetail({ it, hireId }){
+  const h = React.createElement; const [busy, setBusy] = useState(null); const [err, setErr] = useState(null);
+  const fb = it.feedback || {};
+  async function play(n){ setBusy(n); setErr(null); try{ const r = await pbCall("practiceVoiceClip", { hireId, id:it.id, n }, 60000); if(r.ok===false) throw new Error(r.error);
+      const bin = atob(r.audio); const u8 = new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) u8[i] = bin.charCodeAt(i); new Audio(URL.createObjectURL(new Blob([u8], { type:r.mime || "audio/webm" }))).play().catch(()=>{}); }
+    catch(e){ setErr(e.message||String(e)); } setBusy(null); }
+  const secT = (t) => h("div", { style:{ fontSize:12, fontWeight:800, color:"var(--inkSoft)", textTransform:"uppercase", letterSpacing:".04em", margin:"12px 0 5px" } }, t);
+  return h("div", null,
+    fb.parts && h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", marginTop:8 } }, h("b", null, "Điểm từng phần: "), ttsPartsText(fb.parts)),
+    fb.diagnosis && h("div", { style:{ fontSize:13, marginTop:4 } }, h("b", null, "Chẩn đoán: "), TTS_DX_LABEL[fb.diagnosis.muc] || fb.diagnosis.muc, fb.diagnosis.nv ? ` · nhân viên nhận định: "${fb.diagnosis.nv}"` : "", fb.diagnosis.nhanXet ? " — " + fb.diagnosis.nhanXet : ""),
+    fb.comm && h(TtsCommBlock, { comm:fb.comm }),
+    (it.voiceClips||[]).length > 0 && h("div", null, secT("Ghi âm của nhân viên"),
+      it.voiceClips.map(v => h("div", { key:v.n, style:{ display:"flex", gap:8, alignItems:"center", fontSize:12.5, marginBottom:4 } },
+        v.has ? h("button", { className:"btn", disabled:busy===v.n, style:{ padding:"2px 9px", fontSize:12 }, onClick:()=>play(v.n) }, busy===v.n ? "…" : "▶ Lượt " + v.n) : h("span", { style:{ color:"var(--inkSoft)" } }, `Lượt ${v.n} (đã xoá file)`),
+        h("span", null, v.text))),
+      err && h("div", { style:{ color:CL360.bad, fontSize:12 } }, err)));
+}
+function PracticeDrugReview({ it, isAdmin, hireId, onChanged }){
+  const h = React.createElement;
+  const [busy, setBusy] = useState(""); const [msg, setMsg] = useState(""); const [lieu, setLieu] = useState({}); const [sc, setSc] = useState(""); const [note, setNote] = useState("");
+  const fb = it.feedback || {}; const drugs = fb.drugs || []; const review = fb.review || [];
+  const pill = (t, fg, bg) => h("span", { style:{ display:"inline-block", fontSize:11.5, fontWeight:700, color:fg, background:bg, borderRadius:999, padding:"1px 8px", whiteSpace:"nowrap" } }, t);
+  const KL = { dung:["Đúng","#15803D","#DCFCE7"], thieu:["Thiếu chi tiết","#A16207","#FEF9C3"], sai:["Sai","#B91C1C","#FEE2E2"], canXacMinh:["Cần dược sĩ xem lại","#C2410C","#FFEDD5"] };
+  async function act(action, extra){ setBusy(action); setMsg("");
+    try{ const r = await pbCall(action, { hireId, id:it.id, ...extra }, 60000); if(r.ok === false) throw new Error(r.error); setMsg("Đã lưu."); onChanged && onChanged(); }
+    catch(e){ setMsg("Lỗi: " + (e.message || e)); } setBusy(""); }
+  const th = { textAlign:"left", padding:"4px 6px", fontSize:11.5, color:"var(--inkSoft)", borderBottom:"1px solid var(--line)" };
+  const td = { padding:"5px 6px", fontSize:12.5, borderBottom:"1px solid #F0EEE2", verticalAlign:"top" };
+  const secT = (t) => h("div", { style:{ fontSize:12, fontWeight:800, color:"var(--inkSoft)", textTransform:"uppercase", letterSpacing:".04em", margin:"12px 0 5px" } }, t);
+  return h("div", null,
+    drugs.length > 0 && h("div", null, secT("Đánh giá từng thuốc"),
+      h("div", { style:{ overflowX:"auto" } }, h("table", { style:{ width:"100%", borderCollapse:"collapse" } },
+        h("thead", null, h("tr", null, ["Thuốc","Nhân viên tư vấn","Liều đúng cho đối tượng","Căn cứ","Kết luận"].map(x => h("th", { key:x, style:th }, x)))),
+        h("tbody", null, drugs.map((d,i) => { const k = KL[d.ketLuan] || KL.canXacMinh;
+          return h("tr", { key:i }, h("td", { style:td }, h("b", null, d.ten), d.hoatChat && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, d.hoatChat + (d.hamLuong ? " " + d.hamLuong : ""))),
+            h("td", { style:td }, d.nvTuVan || "—"), h("td", { style:td }, d.lieuThamChieu || "—", d.nhanXet && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:2 } }, d.nhanXet)),
+            h("td", { style:td }, d.nguon === "tudien" ? pill("Từ điển / dược sĩ duyệt", "#15803D", "#DCFCE7") : pill("Hiểu biết AI", "#4B5563", "#F3F4F6"), d.verify && h("div", { style:{ marginTop:3 } }, pill("Đã kiểm tra lần 2", "#1D4ED8", "#DBEAFE"))),
+            h("td", { style:td }, pill(k[0], k[1], k[2]), d.ketLuan === "sai" && d.nguyHiem && h("div", { style:{ marginTop:3 } }, pill("Nguy hiểm", "#fff", "#B91C1C")))); }))))),
+    review.length > 0 && h("div", null, secT("Cần dược sĩ xem lại (chưa trừ điểm)"),
+      review.map((r,i) => h("div", { key:i, style:{ border:"1px solid #FED7AA", background:"#FFF7ED", borderRadius:10, padding:"8px 10px", marginBottom:6, fontSize:12.5, lineHeight:1.5 } },
+        h("div", null, h("b", null, r.ten), r.hoatChat ? ` (${r.hoatChat})` : "", " · ", r.status === "pending" ? pill("Chờ xem", "#C2410C", "#FFEDD5") : r.status === "confirmed" ? pill("Đã xác nhận SAI", "#B91C1C", "#FEE2E2") : pill("Đã bác bỏ — nhân viên đúng", "#15803D", "#DCFCE7")),
+        h("div", null, "Nhân viên tư vấn: ", r.nvTuVan || "—"), h("div", null, "Lần chấm 1: ", r.lieuThamChieu || "—", r.nhanXet ? " — " + r.nhanXet : ""),
+        r.verify && h("div", null, "Kiểm tra lần 2 (" + (r.verify.by || "") + "): ", r.verify.nvSai === false ? "nhân viên ĐÚNG" : r.verify.nvSai === true ? "nhân viên SAI" : "không đủ căn cứ", r.verify.lieu ? " · liều: " + r.verify.lieu : "", r.verify.giaiThich ? " · " + r.verify.giaiThich : ""),
+        r.verify && (r.verify.sources || []).length > 0 && h("div", { style:{ fontSize:11.5 } }, "Nguồn: ", r.verify.sources.map((s,j) => h("a", { key:j, href:s.u, target:"_blank", rel:"noopener noreferrer", style:{ marginRight:8 } }, s.t || ("nguồn " + (j+1))))),
+        r.decidedBy && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, `${r.decidedBy} · ${String(r.decidedAt||"").slice(0,10)}${r.note ? " · " + r.note : ""}`),
+        isAdmin && r.status === "pending" && h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", marginTop:6, alignItems:"center" } },
+          h("input", { value:lieu[i] || "", onChange:e => setLieu(o => ({ ...o, [i]:e.target.value })), placeholder:"Liều đúng (không bắt buộc) — lưu để lần sau chấm theo", style:{ flex:1, minWidth:200, padding:"4px 6px", borderRadius:6, border:"1px solid var(--line)", fontSize:12 } }),
+          h("button", { className:"btn", disabled:!!busy, style:{ fontSize:12, padding:"3px 10px", color:"#B91C1C", borderColor:"#B91C1C" }, onClick:() => act("practiceReview", { idx:i, decision:"confirm", lieu:lieu[i] || "" }) }, "Xác nhận nhân viên SAI"),
+          h("button", { className:"btn", disabled:!!busy, style:{ fontSize:12, padding:"3px 10px", color:"#15803D", borderColor:"#15803D" }, onClick:() => act("practiceReview", { idx:i, decision:"dismiss", lieu:lieu[i] || "" }) }, "Bác bỏ — nhân viên đúng"))))),
+    isAdmin && it.status === "graded" && h("div", { style:{ marginTop:12, display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", fontSize:12.5 } },
+      h("b", null, "Sửa điểm:"), h("input", { type:"number", min:0, max:100, value:sc, onChange:e => setSc(e.target.value), placeholder:String(it.score ?? ""), style:{ width:64, padding:"4px 6px", borderRadius:6, border:"1px solid var(--line)" } }),
+      h("input", { value:note, onChange:e => setNote(e.target.value), placeholder:"Lý do (vd: chấm sai liều)", style:{ flex:1, minWidth:160, padding:"4px 6px", borderRadius:6, border:"1px solid var(--line)" } }),
+      h("label", { style:{ display:"inline-flex", gap:4, alignItems:"center" } }, h("input", { type:"checkbox", id:"rmLieu"+it.id }), "Bỏ lỗi sai liều"),
+      h("button", { className:"btn btnPrimary", disabled:!!busy || sc === "", style:{ fontSize:12, padding:"3px 10px" }, onClick:() => act("practiceRegrade", { score:Number(sc), note, removeErrors: (document.getElementById("rmLieu"+it.id) || {}).checked ? ["lieu"] : [] }) }, "Lưu điểm")),
+    (it.regradeLog || []).length > 0 && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:6 } }, "Đã sửa điểm: " + it.regradeLog.map(g => `${g.from ?? "—"}→${g.to} (${g.by || ""}${g.note ? ": " + g.note : ""})`).join(" · ")),
+    msg && h("div", { style:{ fontSize:12.5, marginTop:4, color: msg.startsWith("Lỗi") ? "#B91C1C" : "#15803D" } }, msg));
+}
 function PracticeHistoryModal({ row, onClose, onChanged }){
   const h = React.createElement;
   const [list, setList] = useState(null);
@@ -9073,13 +9157,15 @@ function PracticeHistoryModal({ row, onClose, onChanged }){
         h("div", { style:{ fontSize:12, color:"var(--inkSoft)" } }, `${PH_MODE[it.mode]||it.mode} · bắt đầu ${fmtT(it.createdAt)}${it.submittedAt ? " · nộp " + fmtT(it.submittedAt) : " · chưa nộp"}${it.fromLibrary ? "" : " · AI soạn tạm"}${it.byName ? " · người làm: " + it.byName : ""}`)),
       h("div", { style:{ fontSize:22, fontWeight:900, color:scC(it.score) } }, it.score!=null ? it.score : "—")),
     sec("Đề bài", box("#EFF6FF", h("b", null, it.scenario.khach||""), "\n", h("i", null, `"${it.scenario.loiKhach||""}"`))),
-    it.mode==="chat" && sec("Hội thoại", h("div", { style:{ display:"flex", flexDirection:"column", gap:5 } },
+    (it.mode==="chat" || it.mode==="voice") && sec("Hội thoại" + (it.mode==="voice" ? " (giọng nói, đã chép lại)" : "") + (it.answer && it.answer.nhanDinh ? " · nhận định: " + it.answer.nhanDinh : ""), h("div", { style:{ display:"flex", flexDirection:"column", gap:5 } },
       [{ who:"kh", t:it.scenario.loiKhach }, ...(it.transcript||[])].map((m,i) => h("div", { key:i, style:{ alignSelf: m.who==="nv" ? "flex-end" : "flex-start", maxWidth:"85%", background: m.who==="nv" ? "#DCFCE7" : "#F3F4F6", borderRadius:10, padding:"6px 10px", fontSize:13, whiteSpace:"pre-wrap" } },
         h("div", { style:{ fontSize:10.5, fontWeight:800, color:"var(--inkSoft)" } }, m.who==="nv" ? "NHÂN VIÊN" : "KHÁCH"), m.t)))),
     it.mode==="write" && it.answer && sec("Bài viết của nhân viên" + (it.asked ? "" : " (không bấm hỏi thêm khách)"),
-      box("#fff", h("b", null, "1. Hỏi khách: "), it.answer.hoi||"—", "\n", h("b", null, "2. Xử trí: "), it.answer.xuTri||"—", "\n", h("b", null, "3. Thuốc & liều: "), it.answer.thuoc||"—", "\n", h("b", null, "4. Dặn dò: "), it.answer.danDo||"—")),
+      box("#fff", it.answer.nhanDinh ? h("span", null, h("b", null, "Nhận định: "), it.answer.nhanDinh, "\n") : null, h("b", null, "1. Hỏi khách: "), it.answer.hoi||"—", "\n", h("b", null, "2. Xử trí: "), it.answer.xuTri||"—", "\n", h("b", null, "3. Thuốc & liều: "), it.answer.thuoc||"—", "\n", h("b", null, "4. Dặn dò: "), it.answer.danDo||"—")),
     it.mode==="quiz" && it.quiz && sec("Bài trắc nghiệm", quizBlock(it)),
     (it.errors||[]).length>0 && sec("Lỗi", h("div", { style:{ color:CL360.bad, fontWeight:700, fontSize:13 } }, it.errors.map(e=>e.label).join(" · "))),
+    h(TtsVoiceDetail, { it, hireId:row.id }),
+    h(PracticeDrugReview, { it, isAdmin, hireId:row.id, onChanged:()=>{ open(it.id); reload(); onChanged && onChanged(); } }),
     it.feedback && (it.feedback.good||[]).length>0 && sec("Làm đúng", box("#F0FDF4", ul(it.feedback.good))),
     it.feedback && (it.feedback.fix||[]).length>0 && sec("Cần sửa", box("#FEF2F2", ul(it.feedback.fix))),
     it.feedback && (it.feedback.missed||[]).length>0 && sec("Chưa hỏi", box("#FFFBEB", ul(it.feedback.missed))),
@@ -9096,7 +9182,7 @@ function PracticeHistoryModal({ row, onClose, onChanged }){
         h("button", { className:"btn", onClick: sel ? ()=>{ setSel(null); setItem(null); } : onClose }, sel ? "← Danh sách" : "Đóng")),
       err && h("div", { style:{ color:CL360.bad, fontSize:13, marginTop:8 } }, err),
       !sel && h("div", null,
-        h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", margin:"10px 0" } }, [["all","Tất cả"],["chat","Khách ảo"],["write","Tự viết"],["quiz","Trắc nghiệm"]].map(([k,l]) =>
+        h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", margin:"10px 0" } }, [["all","Tất cả"],["chat","Khách ảo"],["voice","Giọng nói"],["write","Tự viết"],["quiz","Trắc nghiệm"]].map(([k,l]) =>
           h("button", { key:k, className:"btn"+(modeF===k ? " btnPrimary" : ""), style:{ padding:"4px 10px", fontSize:12.5 }, onClick:()=>setModeF(k) }, l + (list ? ` (${(k==="all" ? list : list.filter(x=>x.mode===k)).length})` : "")))),
         isAdmin && list && rows.length>0 && h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", margin:"0 0 8px", fontSize:12.5 } },
           h("label", { style:{ display:"inline-flex", gap:5, alignItems:"center", cursor:"pointer" } }, h("input", { type:"checkbox", checked: rows.length>0 && rows.every(x=>picked.includes(x.id)), onChange:e=>setPicked(e.target.checked ? rows.map(x=>x.id) : []) }), "Chọn tất cả đang hiện"),
@@ -9109,20 +9195,134 @@ function PracticeHistoryModal({ row, onClose, onChanged }){
           h("div", { style:{ flex:1, minWidth:0 } },
             h("div", { style:{ fontWeight:700, fontSize:13.5 } }, x.title || "(không rõ phác đồ)"),
             h("div", { style:{ fontSize:12, color:"var(--inkSoft)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" } },
-              `${PH_MODE[x.mode]||x.mode} · ${fmtT(x.createdAt)}${x.mode==="chat" ? ` · ${x.turns} lượt` : ""}${x.status==="open" ? " · chưa nộp" : x.status==="ungraded" ? " · chưa chấm được" : ""}${x.khach ? " · " + x.khach : ""}`),
+              `${PH_MODE[x.mode]||x.mode} · ${fmtT(x.createdAt)}${(x.mode==="chat"||x.mode==="voice") ? ` · ${x.turns} lượt` : ""}${x.commScore!=null ? ` · giao tiếp ${x.commScore}` : ""}${x.status==="open" ? " · chưa nộp" : x.status==="ungraded" ? " · chưa chấm được" : ""}${x.khach ? " · " + x.khach : ""}`),
             (x.errors||[]).length>0 && h("div", { style:{ fontSize:11.5, color:CL360.bad } }, x.errors.map(e=>e.label).join(" · "))),
           isAdmin && h("button", { className:"btn", title:"Xoá bài này", disabled:delBusy, style:{ padding:"3px 8px", fontSize:12, color:CL360.bad }, onClick:e=>{ e.stopPropagation(); del([x.id]); } }, "Xoá"),
           h("span", { style:{ color:"var(--inkSoft)" } }, "›")))),
       sel && (busy ? h("div", { style:{ fontSize:13, color:"var(--inkSoft)", marginTop:10 } }, "Đang tải bài…") : item && h("div", { style:{ marginTop:10 } }, detail(item),
         isAdmin && h("div", { style:{ marginTop:14, textAlign:"right" } }, h("button", { className:"btn", disabled:delBusy, style:{ color:CL360.bad, borderColor:CL360.bad }, onClick:()=>del([item.id]) }, delBusy ? "Đang xoá…" : "Xoá bài luyện này"))))));
 }
+// 14/10/2026 (chị Hà): NÓI LIÊN TỤC NHƯ GỌI ĐIỆN — Gemini Live (WebSocket thẳng tới Google bằng mã tạm do máy chủ cấp)
+// Mic → AudioWorklet → hạ mẫu 16 kHz PCM16 → gửi ~100 ms/lần · giọng khách 24 kHz PCM16 → phát nối tiếp · "interrupted" → dừng phát ngay.
+// Chống vọng tiếng (loa → mic): khi khách đang nói chỉ gửi mic nếu nhân viên nói to (ngắt lời) — khuyên đeo tai nghe.
+const TTS_LIVE_WORKLET = "class P extends AudioWorkletProcessor{process(i){const c=i[0]&&i[0][0];if(c)this.port.postMessage(c.slice(0));return true}}registerProcessor('upharma-pcm',P);";
+function ttsF32ToB64Pcm16(f32){ const b = new ArrayBuffer(f32.length * 2); const v = new DataView(b); for(let i=0;i<f32.length;i++){ let x = Math.max(-1, Math.min(1, f32[i])); v.setInt16(i*2, x < 0 ? x * 0x8000 : x * 0x7FFF, true); }
+  let s = ""; const u = new Uint8Array(b); for(let i=0;i<u.length;i+=0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i+0x8000)); return btoa(s); }
+function TtsLiveCall({ row, cur, onDone, onFallback }){
+  const h = React.createElement;
+  const [st, setSt] = useState("idle"); // idle | connecting | live | ending | done | error
+  const [lines, setLines] = useState([]); const [sec, setSec] = useState(0); const [err, setErr] = useState(""); const [speaking, setSpeaking] = useState(""); const [maxSec, setMaxSec] = useState(480);
+  const R = useRef({}); const boxRef = useRef(null);
+  useEffect(()=>{ if(boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight; }, [lines]);
+  useEffect(()=> () => { try{ cleanup(); }catch(e){} }, []);
+  const push = (who, t) => { if(!t) return; const L = R.current.lines || (R.current.lines = []);
+    const last = L[L.length-1]; if(last && last.who === who && !last.closed) last.t += t; else L.push({ who, t: t.replace(/^\s+/, "") });
+    setLines(L.map(x => ({ ...x }))); };
+  const closeTurn = () => { const L = R.current.lines || []; if(L.length) L[L.length-1].closed = true; };
+  function stopPlayback(){ const r = R.current; (r.srcs || []).forEach(s => { try{ s.stop(); }catch(e){} }); r.srcs = []; r.nextT = 0; r.playing = false; setSpeaking(""); }
+  function playPcm(b64){ const r = R.current; const ctx = r.ctx; if(!ctx) return;
+    const bin = atob(b64); const n = bin.length >> 1; const buf = ctx.createBuffer(1, n, 24000); const ch = buf.getChannelData(0);
+    for(let i=0;i<n;i++){ let v = bin.charCodeAt(i*2) | (bin.charCodeAt(i*2+1) << 8); if(v >= 0x8000) v -= 0x10000; ch[i] = v / 0x8000; }
+    const s = ctx.createBufferSource(); s.buffer = buf; s.connect(ctx.destination); const t = Math.max(ctx.currentTime + 0.03, r.nextT || 0); s.start(t); r.nextT = t + buf.duration;
+    r.srcs = (r.srcs || []).concat([s]); r.playing = true; r.lastAct = Date.now(); setSpeaking("kh");
+    s.onended = () => { r.srcs = (r.srcs || []).filter(x => x !== s); if(!r.srcs.length){ r.playing = false; setSpeaking(""); } }; }
+  function cleanup(){ const r = R.current; clearInterval(r.timer); try{ r.ws && r.ws.readyState <= 1 && r.ws.close(); }catch(e){} try{ r.node && r.node.disconnect(); }catch(e){} try{ r.stream && r.stream.getTracks().forEach(t => t.stop()); }catch(e){} stopPlayback(); try{ r.ctx && r.ctx.close(); }catch(e){} }
+  async function start(){
+    setErr(""); setSt("connecting"); const r = R.current = { lines: [], srcs: [], q: [] };
+    try{
+      // 1) Mic + AudioContext (phải tạo trong thao tác bấm — iPhone)
+      r.ctx = new (window.AudioContext || window.webkitAudioContext)(); await r.ctx.resume();
+      r.stream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount:1 } });
+      // 2) Mã tạm từ máy chủ
+      const tk = await pbCall("practiceLiveToken", { hireId:row.id, id:cur.id }, 60000); if(tk.ok === false) throw new Error(tk.error);
+      r.tk = tk; setMaxSec(tk.maxSec || 480);
+      // 3) Ghi âm giọng nhân viên để chấm giao tiếp
+      try{ const mime = ["audio/webm;codecs=opus","audio/webm","audio/mp4"].find(t => window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || "";
+        r.rec = new MediaRecorder(r.stream, mime ? { mimeType:mime, audioBitsPerSecond:32000 } : undefined); r.chunks = []; r.rec.ondataavailable = e => { if(e.data && e.data.size) r.chunks.push(e.data); }; }catch(e){ r.rec = null; }
+      // 4) WebSocket
+      const ws = r.ws = new WebSocket(tk.wsUrl);
+      ws.onopen = () => { ws.send(JSON.stringify({ setup: tk.setup })); };
+      ws.onerror = () => { if(st !== "done") setErr("Mất kết nối tới máy chủ giọng nói."); };
+      ws.onclose = (ev) => { if(!r.setupDone){ setErr(`Không mở được cuộc gọi (mã ${ev.code}${ev.reason ? ": " + ev.reason : ""}).`); setSt("error"); cleanup(); return; } if(!r.ended) finish("Cuộc gọi bị ngắt"); };
+      ws.onmessage = async (ev) => { let m; try{ m = JSON.parse(typeof ev.data === "string" ? ev.data : await ev.data.text()); }catch(e){ return; }
+        if(m.setupComplete){ r.setupDone = true; onReady(); return; }
+        if(m.goAway){ finish("Hết thời lượng cuộc gọi"); return; }
+        const sc = m.serverContent; if(!sc) return;
+        if(sc.interrupted){ stopPlayback(); closeTurn(); }
+        if(sc.inputTranscription && sc.inputTranscription.text){ push("nv", sc.inputTranscription.text); r.lastAct = Date.now(); }
+        if(sc.outputTranscription && sc.outputTranscription.text){ const L = r.lines; if(L.length && L[L.length-1].who === "nv") closeTurn(); push("kh", sc.outputTranscription.text); }
+        ((sc.modelTurn && sc.modelTurn.parts) || []).forEach(p => { if(p.inlineData && p.inlineData.data && /audio/.test(p.inlineData.mimeType || "audio")) playPcm(p.inlineData.data); });
+        if(sc.turnComplete) closeTurn(); };
+    } catch(e){ setErr((e && e.message) || String(e)); setSt("error"); cleanup(); }
+  }
+  async function onReady(){
+    const r = R.current; const ws = r.ws; const tk = r.tk;
+    if(tk.seed) ws.send(JSON.stringify({ clientContent:{ turns:[{ role:"user", parts:[{ text:"HƯỚNG DẪN VAI DIỄN (làm theo suốt cuộc trò chuyện, không nhắc lại):\n" + tk.seed }] }, { role:"model", parts:[{ text:"Vâng." }] }], turnComplete:false } }));
+    ws.send(JSON.stringify({ realtimeInput:{ text:"BẮT ĐẦU" } }));
+    // mic → 16 kHz PCM16
+    const ctx = r.ctx; const src = ctx.createMediaStreamSource(r.stream); const ratio = ctx.sampleRate / 16000; let acc = [], accN = 0, carry = 0;
+    const onFrame = (f) => { if(ws.readyState !== 1) return;
+      let e = 0; for(let i=0;i<f.length;i++) e += f[i]*f[i]; const rms = Math.sqrt(e / f.length);
+      if(rms > 0.015){ r.lastAct = Date.now(); if(!r.playing) setSpeaking("nv"); }
+      // khách đang nói: chỉ gửi khi nhân viên nói to (ngắt lời) để tránh tiếng loa vọng vào mic
+      const gate = r.playing && rms < 0.05;
+      const outN = Math.floor((f.length + carry) / ratio); const out = new Float32Array(outN);
+      for(let k=0;k<outN;k++){ const a = Math.floor(k*ratio - carry), b = Math.min(f.length, Math.floor((k+1)*ratio - carry)); let s2 = 0, c2 = 0; for(let j=Math.max(0,a); j<b; j++){ s2 += f[j]; c2++; } out[k] = c2 ? (gate ? 0 : s2 / c2) : 0; }
+      carry = (f.length + carry) - outN * ratio;
+      acc.push(out); accN += outN;
+      if(accN >= 1600){ const all = new Float32Array(accN); let o = 0; acc.forEach(a => { all.set(a, o); o += a.length; }); acc = []; accN = 0;
+        ws.send(JSON.stringify({ realtimeInput:{ audio:{ data: ttsF32ToB64Pcm16(all), mimeType:"audio/pcm;rate=16000" } } })); } };
+    try{
+      if(ctx.audioWorklet){ const url = URL.createObjectURL(new Blob([TTS_LIVE_WORKLET], { type:"application/javascript" })); await ctx.audioWorklet.addModule(url);
+        const node = new AudioWorkletNode(ctx, "upharma-pcm"); node.port.onmessage = (e) => onFrame(e.data); src.connect(node); const g = ctx.createGain(); g.gain.value = 0; node.connect(g); g.connect(ctx.destination); r.node = node; }
+      else { const sp = ctx.createScriptProcessor(4096, 1, 1); sp.onaudioprocess = (e) => onFrame(e.inputBuffer.getChannelData(0)); src.connect(sp); const g = ctx.createGain(); g.gain.value = 0; sp.connect(g); g.connect(ctx.destination); r.node = sp; }
+    } catch(e){ setErr("Trình duyệt không thu âm được: " + (e.message || e)); finish("Lỗi micro"); return; }
+    try{ r.rec && r.rec.start(1000); }catch(e){}
+    r.t0 = Date.now(); r.lastAct = Date.now(); setSt("live");
+    r.timer = setInterval(() => { const s2 = Math.round((Date.now() - r.t0) / 1000); setSec(s2);
+      if(s2 >= (tk.maxSec || 480)) finish("Hết thời gian tối đa của cuộc gọi");
+      else if(!r.playing && Date.now() - (r.lastAct || r.t0) > (tk.silenceSec || 60) * 1000) finish("Im lặng quá lâu — tự kết thúc"); }, 1000);
+  }
+  async function finish(reason){
+    const r = R.current; if(r.ended) return; r.ended = true; setSt("ending"); if(reason) setErr(reason === "Bấm kết thúc" ? "" : reason);
+    const dur = r.t0 ? Math.round((Date.now() - r.t0) / 1000) : 0;
+    let blob = null; if(r.rec && r.rec.state === "recording"){ await new Promise(res => { r.rec.onstop = res; try{ r.rec.stop(); }catch(e){ res(); } }); blob = new Blob(r.chunks || [], { type: r.rec.mimeType || "audio/webm" }); }
+    cleanup();
+    const transcript = (r.lines || []).map(x => ({ who:x.who, t:x.t.trim() })).filter(x => x.t);
+    try{ const audio = blob && blob.size > 2000 ? await ttsBlobToB64(blob) : "";
+      const res = await pbCall("practiceLiveEnd", { hireId:row.id, id:cur.id, transcript, durationSec:dur, audio, mime: blob ? blob.type : "" }, 120000); if(res.ok === false) throw new Error(res.error);
+      setSt("done"); onDone && onDone(transcript); }
+    catch(e){ setErr("Không lưu được cuộc gọi: " + (e.message || e)); setSt("done"); onDone && onDone(transcript); }
+  }
+  const mm = (s2) => `${Math.floor(s2/60)}:${String(s2%60).padStart(2,"0")}`;
+  return h("div", { style:{ marginTop:4 } },
+    h("div", { ref:boxRef, style:{ border:"1px solid var(--line)", borderRadius:12, padding:10, height:260, overflowY:"auto", background:"#FAFAF7", display:"flex", flexDirection:"column", gap:6 } },
+      !lines.length && h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)" } }, st === "idle" ? "Bấm \"Bắt đầu gọi\" — khách sẽ nói trước. Nói chuyện tự nhiên như ở quầy, không cần bấm nút mỗi lần nói. Nên đeo tai nghe có mic, ngồi chỗ yên tĩnh." : "…"),
+      lines.map((m,i) => h("div", { key:i, style:{ alignSelf: m.who==="nv" ? "flex-end" : "flex-start", maxWidth:"80%", background: m.who==="nv" ? "var(--pine)" : "#fff", color: m.who==="nv" ? "#fff" : "var(--ink)", border: m.who==="nv" ? "none" : "1px solid var(--line)", borderRadius:12, padding:"7px 11px", fontSize:13.3, lineHeight:1.45 } },
+        h("div", { style:{ fontSize:10, opacity:.75, marginBottom:2 } }, m.who==="nv" ? "Bạn" : "Khách"), m.t))),
+    h("div", { style:{ display:"flex", gap:10, alignItems:"center", justifyContent:"center", marginTop:10, flexWrap:"wrap" } },
+      st === "idle" || st === "error" ? h("button", { className:"btn btnPrimary", style:{ fontSize:15, padding:"10px 22px", borderRadius:999 }, onClick:start }, "📞 Bắt đầu gọi")
+      : st === "connecting" ? h("span", { style:{ fontSize:13, color:"var(--inkSoft)" } }, "Đang kết nối…")
+      : st === "live" ? h(React.Fragment, null,
+          h("span", { style:{ display:"inline-flex", alignItems:"center", gap:6, fontSize:13, fontWeight:700, color: speaking==="kh" ? "#1D4ED8" : speaking==="nv" ? "#15803D" : "var(--inkSoft)" } },
+            h("span", { style:{ width:10, height:10, borderRadius:"50%", background: speaking ? "#22C55E" : "#D1D5DB", boxShadow: speaking ? "0 0 0 4px rgba(34,197,94,.25)" : "none" } }), speaking==="kh" ? "Khách đang nói" : speaking==="nv" ? "Bạn đang nói" : "Đang nghe…"),
+          h("span", { style:{ fontSize:13, fontVariantNumeric:"tabular-nums", color: sec > maxSec - 60 ? "#B91C1C" : "var(--inkSoft)" } }, `${mm(sec)} / ${mm(maxSec)}`),
+          h("button", { className:"btn", style:{ color:"#fff", background:"#DC2626", borderColor:"#DC2626", borderRadius:999, padding:"8px 18px" }, onClick:()=>finish("Bấm kết thúc") }, "Kết thúc cuộc gọi"))
+      : st === "ending" ? h("span", { style:{ fontSize:13, color:"var(--inkSoft)" } }, "Đang lưu cuộc gọi…")
+      : h("span", { style:{ fontSize:13, color:"#15803D", fontWeight:700 } }, "Đã kết thúc cuộc gọi — ghi nhận định rồi bấm \"Kết thúc & chấm\".")),
+    err && h("div", { style:{ fontSize:12.5, color: st === "done" ? "var(--inkSoft)" : "#B91C1C", marginTop:6, textAlign:"center" } }, err),
+    (st === "error" || st === "idle") && onFallback && h("div", { style:{ textAlign:"center", marginTop:6 } }, h("button", { className:"btn btnGhost", style:{ fontSize:12 }, onClick:onFallback }, "Dùng cách bấm giữ để nói thay thế")));
+}
 function TtsPracticeModal({ row, onClose, onChanged, groups }){
   const h = React.createElement;
   const [mode, setMode] = useState("chat");
   const [cur, setCur] = useState(null);
   const [info, setInfo] = useState(null);
-  const [ans, setAns] = useState({ hoi:"", xuTri:"", thuoc:"", danDo:"" });
-  const [quiz, setQuiz] = useState({ cauHoi:[], xuTri:null, thuoc:[] });
+  const [ans, setAns] = useState({ nhanDinh:"", hoi:"", xuTri:"", thuoc:"", danDo:"" });
+  const [quiz, setQuiz] = useState({ cauHoi:[], xuTri:null, thuoc:[], chanDoan:null });
+  const [nhanDinh, setNhanDinh] = useState("");
+  const [p2t, setP2t] = useState(false); const [liveDone, setLiveDone] = useState(false);
+  const [rec, setRec] = useState(false); const recRef = useRef(null); const chunksRef = useRef([]); const [voiceUrls, setVoiceUrls] = useState({});
   const [msgs, setMsgs] = useState([]);
   const [input, setInput] = useState("");
   const [res, setRes] = useState(null);
@@ -9132,14 +9332,33 @@ function TtsPracticeModal({ row, onClose, onChanged, groups }){
   const chatRef = useRef(null);
   async function loadHist(){ try{ setHist(await pbCall("practiceList", { hireId:row.id }, 60000)); } catch(e){} }
   async function next(m){ const md = m || mode; setBusy("new"); setErr(null); setRes(null); setInfo(null); setMsgs([]); setInput("");
-    setAns({ hoi:"", xuTri:"", thuoc:"", danDo:"" }); setQuiz({ cauHoi:[], xuTri:null, thuoc:[] });
-    try{ const r = await pbCall("practiceNew", { hireId:row.id, mode:md, groups: groups||[] }, 120000); if(r.ok===false) throw new Error(r.error); setCur(r); setMsgs([{ who:"kh", t:r.scenario.loiKhach }]); } catch(e){ setErr(e.message||String(e)); setCur(null); } setBusy(""); }
+    setAns({ nhanDinh:"", hoi:"", xuTri:"", thuoc:"", danDo:"" }); setQuiz({ cauHoi:[], xuTri:null, thuoc:[], chanDoan:null }); setNhanDinh(""); setVoiceUrls({}); setLiveDone(false);
+    try{ const r = await pbCall("practiceNew", { hireId:row.id, mode:md, groups: groups||[], live: md==="voice" && !p2t }, 120000); if(r.ok===false) throw new Error(r.error); setCur(r); setMsgs([{ who:"kh", t:r.scenario.loiKhach }]);
+      if(md === "voice" && r.voice && p2t){ const u = ttsPlayVoice(r.voice); if(u) setVoiceUrls({ 0:u }); }
+      if(md === "voice" && !p2t) setMsgs([]); } catch(e){ setErr(e.message||String(e)); setCur(null); } setBusy(""); }
+  // 14/10/2026: bấm giữ để nói — MediaRecorder (Chrome: webm/opus, iPhone Safari: mp4/aac)
+  async function recStart(){ if(busy || rec) return; setErr(null);
+    try{ const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+      const mime = ["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"].find(t => window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || "";
+      const mr = new MediaRecorder(stream, mime ? { mimeType:mime } : undefined); chunksRef.current = [];
+      mr.ondataavailable = e => { if(e.data && e.data.size) chunksRef.current.push(e.data); };
+      mr.onstop = async () => { stream.getTracks().forEach(t => t.stop()); const blob = new Blob(chunksRef.current, { type: mr.mimeType || mime || "audio/webm" });
+        if(blob.size < 1500){ setErr("Đoạn nói quá ngắn — bấm GIỮ nút trong lúc nói, nói xong mới thả."); return; } sendVoice(blob); };
+      recRef.current = mr; mr.start(); setRec(true);
+    } catch(e){ setErr("Không mở được micro: " + (e.message||e) + ". Cho phép trình duyệt dùng micro rồi thử lại."); } }
+  function recStop(){ const mr = recRef.current; if(mr && mr.state === "recording"){ mr.stop(); } setRec(false); }
+  async function sendVoice(blob){ setBusy("chat"); setErr(null);
+    try{ const audio = await ttsBlobToB64(blob);
+      const r = await pbCall("practiceVoiceTurn", { hireId:row.id, id:cur.id, audio, mime:blob.type }, 120000); if(r.ok===false) throw new Error(r.error);
+      setMsgs(m => { const k = m.length + 1; if(r.voice){ const u = ttsPlayVoice(r.voice); if(u) setVoiceUrls(o => ({ ...o, [k]:u })); } return [...m, { who:"nv", t:r.heard }, { who:"kh", t:r.reply }]; }); }
+    catch(e){ setErr(e.message||String(e)); } setBusy(""); }
   async function ask(){ setBusy("ask"); try{ const r = await pbCall("practiceAsk", { hireId:row.id, id:cur.id }, 30000); setInfo(r.thongTinAn); } catch(e){ setErr(e.message||String(e)); } setBusy(""); }
   async function send(){ const t = input.trim(); if(!t || busy) return; setInput(""); setMsgs(m => [...m, { who:"nv", t }]); setBusy("chat"); setErr(null);
     try{ const r = await pbCall("practiceChat", { hireId:row.id, id:cur.id, message:t }, 90000); if(r.ok===false) throw new Error(r.error); setMsgs(m => [...m, { who:"kh", t:r.reply }]); }
     catch(e){ setErr(e.message||String(e)); } setBusy(""); }
   async function submit(){ setBusy("sub"); setErr(null);
-    try{ const r = await pbCall("practiceSubmit", { hireId:row.id, id:cur.id, answer:ans, quiz }, 180000); if(r.ok===false) throw new Error(r.error); setRes(r); onChanged && onChanged(); loadHist(); }
+    if((mode==="chat" || mode==="voice") && !nhanDinh.trim() && !window.confirm("Bạn chưa ghi nhận định bệnh (khách bị gì) — phần Chẩn đoán sẽ được 0 điểm. Vẫn nộp?")){ setBusy(""); return; }
+    try{ const r = await pbCall("practiceSubmit", { hireId:row.id, id:cur.id, answer:ans, quiz, nhanDinh }, 240000); if(r.ok===false) throw new Error(r.error); setRes(r); onChanged && onChanged(); loadHist(); }
     catch(e){ setErr(e.message||String(e)); } setBusy(""); }
   useEffect(()=>{ loadHist(); next("chat"); }, []);
   useEffect(()=>{ if(chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight; }, [msgs]);
@@ -9168,43 +9387,59 @@ function TtsPracticeModal({ row, onClose, onChanged, groups }){
           h("div", { style:{ fontSize:11, fontWeight:800, color:"#1D4ED8", textTransform:"uppercase", letterSpacing:".04em" } }, `${res && res.protocol && cur.hidden ? "Bệnh: " + res.protocol.title : cur.title}${cur.doiTuong ? " · " + cur.doiTuong : ""}${!cur.fromLibrary ? " · AI soạn tạm (chưa có tình huống nào được dược sĩ duyệt)" : ""}`),
           cur.hidden && !res && h("div", { style:{ fontSize:11.5, color:"#1D4ED8", marginTop:2 } }, "Tên bệnh được ẩn — bạn tự hỏi khách để chẩn đoán. Nộp bài xong sẽ hiện tên bệnh."),
           h("div", { style:{ fontSize:13.5, marginTop:3 } }, h("b", null, cur.scenario.khach)),
-          mode!=="chat" && h("div", { style:{ fontSize:13.5, marginTop:3, fontStyle:"italic" } }, `"${cur.scenario.loiKhach}"`),
+          mode!=="chat" && mode!=="voice" && h("div", { style:{ fontSize:13.5, marginTop:3, fontStyle:"italic" } }, `"${cur.scenario.loiKhach}"`),
           mode==="write" && (info ? h("div", { style:{ fontSize:13, marginTop:6, background:"#fff", borderRadius:8, padding:"6px 9px" } }, h("b", null, "Khách trả lời khi được hỏi: "), info)
             : !res && h("button", { className:"btn btnGhost", style:{ fontSize:12, marginTop:6 }, disabled:busy==="ask", onClick:ask }, "Hỏi thêm khách"))),
         // ---- Khách ảo ----
-        mode==="chat" && h("div", null,
+        mode==="voice" && !p2t && !res && h(TtsLiveCall, { key:cur.id, row, cur, onDone:(tr)=>{ setMsgs(tr); setLiveDone(true); }, onFallback:()=>{ setP2t(true); setMsgs([{ who:"kh", t:cur.scenario.loiKhach }]); if(cur.voice){ const u = ttsPlayVoice(cur.voice); if(u) setVoiceUrls({ 0:u }); } } }),
+        mode==="voice" && !p2t && !res && !liveDone && cur.voiceLeft != null && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", textAlign:"center", marginTop:4 } }, `Còn ${Math.max(0, cur.voiceLeft)} bài giọng nói trong tuần này · mỗi bài 1 cuộc gọi`),
+        (mode==="chat" || (mode==="voice" && (p2t || liveDone || res))) && h("div", null,
           h("div", { ref:chatRef, style:{ border:"1px solid var(--line)", borderRadius:12, padding:10, height:280, overflowY:"auto", background:"#FAFAF7", display:"flex", flexDirection:"column", gap:6 } },
             msgs.map((m,i) => h("div", { key:i, style:{ alignSelf: m.who==="nv" ? "flex-end" : "flex-start", maxWidth:"80%", background: m.who==="nv" ? "var(--pine)" : "#fff", color: m.who==="nv" ? "#fff" : "var(--ink)", border: m.who==="nv" ? "none" : "1px solid var(--line)", borderRadius:12, padding:"7px 11px", fontSize:13.3, lineHeight:1.45 } },
-              h("div", { style:{ fontSize:10, opacity:.75, marginBottom:2 } }, m.who==="nv" ? "Bạn" : "Khách"), m.t)),
+              h("div", { style:{ fontSize:10, opacity:.75, marginBottom:2 } }, m.who==="nv" ? "Bạn" : "Khách"), m.t,
+              voiceUrls[i] && h("button", { onClick:()=>{ new Audio(voiceUrls[i]).play().catch(()=>{}); }, style:{ marginLeft:6, border:"none", background:"transparent", cursor:"pointer", fontSize:13 }, title:"Nghe lại" }, "🔊"))),
             busy==="chat" && h("div", { style:{ alignSelf:"flex-start", fontSize:12, color:"var(--inkSoft)" } }, "Khách đang trả lời…")),
-          !res && h("div", { style:{ display:"flex", gap:6, marginTop:8 } },
+          !res && mode==="voice" && p2t && h("div", { style:{ display:"flex", flexDirection:"column", alignItems:"center", gap:6, marginTop:10 } },
+            h("button", { disabled:busy==="chat" || busy==="sub", onPointerDown:e=>{ e.preventDefault(); recStart(); }, onPointerUp:recStop, onPointerLeave:()=>{ if(rec) recStop(); }, onContextMenu:e=>e.preventDefault(),
+              style:{ width:84, height:84, borderRadius:"50%", border:"none", fontSize:30, color:"#fff", cursor:"pointer", touchAction:"none", userSelect:"none", WebkitUserSelect:"none",
+                background: rec ? "#DC2626" : busy==="chat" ? "#9CA3AF" : "var(--pine)", boxShadow: rec ? "0 0 0 8px rgba(220,38,38,.25)" : "0 2px 8px rgba(0,0,0,.15)" } }, "🎤"),
+            h("div", { style:{ fontSize:12.5, color: rec ? "#DC2626" : "var(--inkSoft)", fontWeight: rec ? 700 : 400 } }, rec ? "Đang nghe… thả tay khi nói xong" : busy==="chat" ? "Khách đang nghe và trả lời…" : "Bấm GIỮ nút để nói, thả ra để gửi"),
+            cur.voiceLeft != null && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, `Còn ${Math.max(0, cur.voiceLeft)} bài giọng nói trong tuần này`)),
+          !res && mode==="chat" && h("div", { style:{ display:"flex", gap:6, marginTop:8 } },
             h("input", { value:input, onChange:e=>setInput(e.target.value), onKeyDown:e=>{ if(e.key==="Enter") send(); }, placeholder:"Hỏi khách hoặc tư vấn… (Enter để gửi)", name:"tts-chat", autoComplete:"off", style:{ flex:1, padding:"8px 10px", border:"1px solid var(--line)", borderRadius:8, fontSize:13.5 } }),
             h("button", { className:"btn", disabled:!!busy || !input.trim(), onClick:send }, "Gửi")),
-          !res && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:4 } }, `Hỏi sàng lọc trước, rồi tư vấn thuốc + liều + dặn dò như ở quầy. Xong bấm "Kết thúc & chấm". (${nvTurns}/16 lượt)`)),
+          !res && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:4 } }, `Khai thác bệnh, hỏi sàng lọc, rồi tư vấn thuốc + liều + dặn dò như ở quầy. Xong ghi nhận định và bấm "Kết thúc & chấm". (${nvTurns}/16 lượt)`),
+          !res && h("div", { className:"field", style:{ marginTop:8 } }, h("label", null, "Nhận định của bạn: khách nhiều khả năng bị gì? Vì sao?"),
+            h("textarea", { rows:2, value:nhanDinh, onChange:e=>setNhanDinh(e.target.value), placeholder:"VD: cảm lạnh thông thường — sổ mũi 2 ngày, sốt nhẹ, không khó thở" }))),
         // ---- Trắc nghiệm ----
         mode==="quiz" && cur.quiz && h("div", { style:{ display:"flex", flexDirection:"column", gap:10 } },
           h("div", null, h("div", { style:{ fontWeight:700, fontSize:13, marginBottom:4 } }, "1. Bạn sẽ hỏi khách những câu nào? (chọn nhiều)"), optList("cauHoi", cur.quiz.cauHoi, true)),
+          cur.quiz.chanDoan && h("div", null, h("div", { style:{ fontWeight:700, fontSize:13, marginBottom:4 } }, "Khách nhiều khả năng bị gì? (chọn 1)"), optList("chanDoan", cur.quiz.chanDoan, false)),
           h("div", null, h("div", { style:{ fontWeight:700, fontSize:13, marginBottom:4 } }, "2. Xử trí (chọn 1)"), optList("xuTri", cur.quiz.xuTri, false)),
           h("div", null, h("div", { style:{ fontWeight:700, fontSize:13, marginBottom:4 } }, "3. Thuốc & liều phù hợp (chọn nhiều)"), optList("thuoc", cur.quiz.thuoc, true))),
         // ---- Tự viết ----
         mode==="write" && h("div", null,
-          ta("hoi", "1. Bạn hỏi khách những gì?", "VD: bé mấy tuổi, nặng bao nhiêu kg, sốt bao lâu…"),
+          ta("hoi", "1. Bạn hỏi khách những gì? (triệu chứng, bao lâu, mức độ… và tuổi, cân nặng, dị ứng, bệnh nền…)", "VD: bé mấy tuổi, nặng bao nhiêu kg, sốt bao lâu…"),
+          ta("nhanDinh", "Nhận định: khách nhiều khả năng bị gì? Vì sao?", "VD: viêm mũi dị ứng — hắt hơi từng cơn, ngứa mũi, không sốt"),
           ta("xuTri", "2. Xử trí: cắt liều hay khuyên đi khám? Vì sao?", ""),
           ta("thuoc", "3. Thuốc & liều (mỗi dòng: tên – liều – số lần/ngày – mấy ngày)", ""),
           ta("danDo", "4. Dặn dò khách", "")),
         !res && h("div", { className:"btnRow", style:{ justifyContent:"flex-end", marginTop:10 } },
           h("button", { className:"btn btnGhost", onClick:onClose }, "Đóng"),
-          h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:submit }, busy==="sub" ? "Đang chấm…" : mode==="chat" ? "Kết thúc & chấm" : "Nộp bài")),
+          h("button", { className:"btn btnPrimary", disabled:!!busy || (mode==="voice" && !p2t && !liveDone), title: (mode==="voice" && !p2t && !liveDone) ? "Kết thúc cuộc gọi trước" : "", onClick:submit }, busy==="sub" ? (mode==="voice" ? "Đang chấm (nghe lại giọng)…" : "Đang chấm…") : (mode==="chat" || mode==="voice") ? "Kết thúc & chấm" : "Nộp bài")),
         // ---- Kết quả ----
         res && h("div", { style:{ marginTop:10 } },
           res.graded ? h("div", { style:{ border:`2px solid ${scColor}`, borderRadius:12, padding:"10px 12px" } },
               h("div", { style:{ display:"flex", alignItems:"baseline", gap:8, flexWrap:"wrap" } }, h("span", { style:{ fontSize:30, fontWeight:900, color:scColor } }, sc), h("span", { style:{ fontSize:13, color:"var(--inkSoft)" } }, "/100"),
                 res.caseKey && res.caseKey.canDiKham && h(Pill360, { text:"Ca này phải khuyên đi khám", color:CL360.bad }),
-                res.parts && h("span", { style:{ fontSize:12, color:"var(--inkSoft)" } }, `Câu hỏi ${res.parts.cauHoi}% · Xử trí ${res.parts.xuTri}% · Thuốc ${res.parts.thuoc}%`)),
+                res.parts && h("span", { style:{ fontSize:12, color:"var(--inkSoft)" } }, ttsPartsText(res.parts))),
+              res.diagnosis && h("div", { style:{ fontSize:13, marginTop:6 } }, h("b", null, "Chẩn đoán: "), TTS_DX_LABEL[res.diagnosis.muc] || res.diagnosis.muc, res.diagnosis.nhanXet ? " — " + res.diagnosis.nhanXet : ""),
+              res.comm && h(TtsCommBlock, { comm:res.comm }),
               (res.good||[]).length>0 && h("div", { style:{ fontSize:13, marginTop:6 } }, h("b", { style:{ color:CL360.good } }, "Làm tốt: "), res.good.join(" · ")),
               (res.missed||[]).length>0 && h("div", { style:{ marginTop:6 } }, h("b", { style:{ fontSize:13, color:"#B45309" } }, "Câu cần hỏi mà chưa hỏi:"),
                 h("ul", { style:{ margin:"3px 0 0", paddingLeft:18, fontSize:13, lineHeight:1.5 } }, res.missed.map((x,i)=>h("li", { key:i }, x)))),
               (res.fix||[]).length>0 && h("ul", { style:{ margin:"6px 0 0", paddingLeft:18, fontSize:13, lineHeight:1.55, color:"#7F1D1D" } }, res.fix.map((x,i)=>h("li", { key:i }, x))),
+              (res.review||[]).length>0 && h("div", { style:{ marginTop:6, fontSize:12.5, color:"#C2410C", background:"#FFF7ED", border:"1px solid #FED7AA", borderRadius:8, padding:"6px 8px" } }, `Liều ${res.review.map(r=>r.ten).join(", ")}: chưa đủ căn cứ để kết luận sai — đã chuyển dược sĩ xem lại, CHƯA trừ điểm.`),
               res.model && h("div", { style:{ fontSize:12.8, marginTop:8, background:"#F0FDF4", borderRadius:8, padding:"7px 10px", whiteSpace:"pre-line" } }, h("b", null, "Đáp án: "), res.model))
             : h("div", { style:{ fontSize:12.8, color:CL360.warn, background:"#FFF7ED", borderRadius:8, padding:"8px 10px" } }, "AI chưa chấm được lúc này — tự đối chiếu đáp án bên dưới, bài này không tính điểm."),
           res.caseKey && h("details", { style:{ marginTop:10 }, open: !res.graded }, h("summary", { style:{ cursor:"pointer", fontWeight:700, fontSize:13 } }, "Xem hồ sơ khách & đáp án chuẩn (dược sĩ đã duyệt)"),
@@ -9284,8 +9519,94 @@ function SelfPracticePanel(){
     open && h(TtsPracticeModal, { row:{ id:"self", name:"Bài luyện của bạn" }, groups: sel.filter(k => (groups.find(g=>g.k===k)||{}).n), onClose:()=>{ setOpen(false); load(); } }),
     histOpen && h(PracticeHistoryModal, { row:{ id:"self", name:"bạn" }, onClose:()=>{ setHistOpen(false); load(); } }));
 }
+// 14/10/2026: quản lý chỉnh giới hạn bài luyện GIỌNG NÓI mỗi tuần (opsConfig/ttsVoiceConfig)
+function TtsVoiceLimitSetting(){
+  const h = React.createElement; const [cfg, setCfg] = useState(null); const [msg, setMsg] = useState("");
+  useEffect(()=> db.collection("opsConfig").doc("ttsVoiceConfig").onSnapshot(d => setCfg(d.exists ? d.data() : {}), () => setCfg(null)), []);
+  if(!cfg) return null;
+  const save = (patch) => db.collection("opsConfig").doc("ttsVoiceConfig").set(patch, { merge:true }).then(()=>setMsg("Đã lưu")).catch(e=>setMsg("Lỗi: " + e.message));
+  return h("div", { style:{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap", fontSize:12.5, marginTop:6, color:"var(--inkSoft)" } },
+    h("span", null, "Luyện giọng nói:"),
+    h("label", null, "tối đa ", h("input", { type:"number", min:0, max:20, defaultValue: cfg.perWeek ?? 1, style:{ width:48 }, onBlur:e=>save({ perWeek: Math.max(0, Number(e.target.value)||0) }) }), " bài/người/tuần"),
+    h("label", null, "xoá ghi âm sau ", h("input", { type:"number", min:7, max:365, defaultValue: cfg.keepDays ?? 60, style:{ width:52 }, onBlur:e=>save({ keepDays: Math.max(7, Number(e.target.value)||60) }) }), " ngày"),
+    h("label", { style:{ display:"inline-flex", gap:4, alignItems:"center" } }, h("input", { type:"checkbox", checked: cfg.enabled !== false, onChange:e=>save({ enabled:e.target.checked }) }), "bật"),
+    h("label", { style:{ display:"inline-flex", gap:4, alignItems:"center" } }, h("input", { type:"checkbox", checked: cfg.liveEnabled !== false, onChange:e=>save({ liveEnabled:e.target.checked }) }), "nói liên tục (gọi điện)"),
+    h("label", null, "tối đa ", h("input", { type:"number", min:2, max:14, defaultValue: Math.round((cfg.liveMaxSec ?? 480)/60), style:{ width:44 }, onBlur:e=>save({ liveMaxSec: Math.max(2, Math.min(14, Number(e.target.value)||8)) * 60 }) }), " phút/cuộc gọi"),
+    msg && h("span", { style:{ color:"var(--pine)" } }, msg));
+}
+// 14/10/2026 (chị Hà): quản lý / CHT xem lịch sử luyện tình huống của TẤT CẢ nhân viên (trước chỉ xem được học việc)
+function StaffPracticeOverview(){
+  const h = React.createElement;
+  const [data, setData] = useState(null); const [err, setErr] = useState(null); const [shop, setShop] = useState("all"); const [q, setQ] = useState(""); const [hist, setHist] = useState(null); const [open, setOpen] = useState(true);
+  const load = () => pbCall("practiceStaffSummary", {}, 60000).then(r => { if(r.ok === false) throw new Error(r.error); setData(r); }).catch(e => setErr(e.message || String(e)));
+  useEffect(()=>{ load(); }, []);
+  if(err && /Chỉ quản lý|403/.test(err)) return null;
+  if(err) return h("div", { className:"card", style:{ marginBottom:14, color:"#b3261e", fontSize:13 } }, "Không tải được lịch sử luyện tập: " + err);
+  if(!data) return h("div", { className:"card", style:{ marginBottom:14, fontSize:13, color:"var(--inkSoft)" } }, "Đang tải lịch sử luyện tập của nhân viên…");
+  const rows = data.rows || []; const shops = [...new Set(rows.map(r => r.shop).filter(Boolean))].sort();
+  const nq = q.trim().toLowerCase();
+  const list = rows.filter(r => (shop === "all" || r.shop === shop) && (!nq || String(r.name).toLowerCase().includes(nq)));
+  const sc = (v) => v == null ? h("span", { style:{ color:"var(--inkSoft)" } }, "—") : h("span", { style:{ fontWeight:700, color: v >= (data.pass||70) ? CL360.good : v >= 50 ? CL360.warn : CL360.bad } }, v);
+  const fmt = (iso) => { if(!iso) return "—"; try{ return new Date(iso).toLocaleString("vi-VN", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }); }catch(e){ return iso.slice(0,10); } };
+  const th = { textAlign:"left", padding:"6px 8px", borderBottom:"1px solid var(--line)", fontSize:12, color:"var(--inkSoft)", whiteSpace:"nowrap" };
+  const td = { padding:"6px 8px", borderBottom:"1px solid #F0EEE2", fontSize:13 };
+  const none = list.filter(r => !r.graded).length;
+  return h("div", { className:"card", style:{ marginBottom:14 } },
+    h("div", { style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" } },
+      h("div", { style:{ fontWeight:800, fontSize:16, cursor:"pointer" }, onClick:()=>setOpen(o=>!o) }, (open ? "▾ " : "▸ ") + "Lịch sử luyện tập của nhân viên"),
+      h("span", { style:{ fontSize:12.5, color:"var(--inkSoft)" } }, `${list.length} người · ${none} người chưa có bài nào được chấm`),
+      h("div", { style:{ flex:1 } }),
+      h("select", { value:shop, onChange:e=>setShop(e.target.value), style:{ padding:"5px 8px", borderRadius:8, border:"1px solid var(--line)" } }, h("option", { value:"all" }, "Tất cả nhà thuốc"), shops.map(x => h("option", { key:x, value:x }, typeof shopLabel === "function" ? shopLabel(x) : x))),
+      h("input", { value:q, onChange:e=>setQ(e.target.value), placeholder:"Tìm tên…", style:{ padding:"5px 8px", borderRadius:8, border:"1px solid var(--line)", width:130 } }),
+      h("button", { className:"btn btnGhost", onClick:load }, "Tải lại")),
+    h(TtsVoiceLimitSetting, null),
+    open && h("div", { style:{ overflowX:"auto", marginTop:8 } }, h("table", { style:{ width:"100%", borderCollapse:"collapse" } },
+      h("thead", null, h("tr", null, ["Nhân viên","Nhà thuốc","Loại","Đã chấm","7 ngày qua","TB 10 bài gần nhất","Lần gần nhất",""].map(x => h("th", { key:x, style:th }, x)))),
+      h("tbody", null, list.map(r => h("tr", { key:r.key },
+        h("td", { style:{ ...td, fontWeight:600 } }, r.name || "—"), h("td", { style:td }, typeof shopLabel === "function" ? shopLabel(r.shop) : r.shop), h("td", { style:{ ...td, fontSize:12, color:"var(--inkSoft)" } }, r.kind),
+        h("td", { style:td }, r.graded || h("span", { style:{ color:CL360.bad, fontWeight:600 } }, "0")), h("td", { style:td }, r.week || "—"), h("td", { style:td }, sc(r.avg10)), h("td", { style:{ ...td, whiteSpace:"nowrap" } }, fmt(r.last)),
+        h("td", { style:td }, r.total ? h("button", { className:"btn btnGhost", style:{ fontSize:12, padding:"3px 10px" }, onClick:()=>setHist({ id:r.hireId, name:r.name }) }, "Xem bài") : null)))))),
+    hist && h(PracticeHistoryModal, { row:hist, onClose:()=>{ setHist(null); load(); } }));
+}
+// 14/10/2026: thuốc nhân viên kê ngoài từ điển → dược sĩ duyệt liều một lần, lần sau chấm theo bảng này
+function DoseQueuePanel(){
+  const h = React.createElement;
+  const [data, setData] = useState(null); const [err, setErr] = useState(null); const [open, setOpen] = useState(false); const [ed, setEd] = useState({}); const [busy, setBusy] = useState(""); const [tab, setTab] = useState("pending");
+  const load = () => pbCall("doseQueueList", {}, 60000).then(r => { if(r.ok === false) throw new Error(r.error); setData(r); }).catch(e => setErr(e.message || String(e)));
+  useEffect(()=>{ load(); }, []);
+  if(err) return /Chỉ quản lý|403/.test(err) ? null : h("div", { className:"card", style:{ marginBottom:14, fontSize:13, color:"#b3261e" } }, "Không tải được danh sách thuốc cần bổ sung liều: " + err);
+  if(!data) return null;
+  const rows = (data.rows || []).filter(r => tab === "pending" ? (r.status || "pending") === "pending" : tab === "approved" ? r.status === "approved" : r.status === "skipped");
+  const pend = (data.rows || []).filter(r => (r.status || "pending") === "pending").length;
+  const refBy = {}; (data.refs || []).forEach(r => { refBy[r.id] = r; });
+  const val = (r, k, d) => (ed[r.id] && ed[r.id][k] != null) ? ed[r.id][k] : d;
+  const set = (r, k, v) => setEd(o => ({ ...o, [r.id]: { ...(o[r.id] || {}), [k]: v } }));
+  async function act(action, r){ setBusy(r.id);
+    try{ const x = await pbCall(action, { id:r.id, name:val(r, "name", r.name), hoatChat:val(r, "hoatChat", r.hoatChat || ""), lieu:val(r, "lieu", (refBy[r.id] && refBy[r.id].lieu) || r.aiLieu || "") }, 60000); if(x.ok === false) throw new Error(x.error); await load(); }
+    catch(e){ alert(e.message || e); } setBusy(""); }
+  const inp = { width:"100%", padding:"4px 6px", borderRadius:6, border:"1px solid var(--line)", fontSize:12.5, fontFamily:"inherit" };
+  return h("div", { className:"card", style:{ marginBottom:14 } },
+    h("div", { style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", cursor:"pointer" }, onClick:()=>setOpen(o=>!o) },
+      h("div", { style:{ fontWeight:800, fontSize:16 } }, (open ? "▾ " : "▸ ") + "Thuốc cần bổ sung liều"),
+      h("span", { style:{ fontSize:12.5, color: pend ? "#C2410C" : "var(--inkSoft)" } }, pend ? `${pend} thuốc nhân viên đã kê nhưng chưa có liều chuẩn — duyệt một lần, lần sau chấm theo liều này` : "Không có thuốc chờ duyệt")),
+    open && h("div", { style:{ marginTop:8 } },
+      h("div", { style:{ display:"flex", gap:6, marginBottom:8 } }, [["pending","Chờ duyệt"],["approved","Đã duyệt"],["skipped","Bỏ qua"]].map(([k,l]) => h("button", { key:k, className:"btn" + (tab===k ? " btnPrimary" : ""), style:{ fontSize:12.5, padding:"3px 10px" }, onClick:()=>setTab(k) }, l))),
+      !rows.length && h("div", { style:{ fontSize:13, color:"var(--inkSoft)" } }, "Trống."),
+      rows.map(r => h("div", { key:r.id, style:{ border:"1px solid var(--line)", borderRadius:10, padding:"8px 10px", marginBottom:8, fontSize:12.5 } },
+        h("div", { style:{ display:"flex", gap:8, alignItems:"baseline", flexWrap:"wrap" } }, h("b", { style:{ fontSize:14 } }, r.name), h("span", { style:{ color:"var(--inkSoft)" } }, `được kê ${r.count || 0} lần · gần nhất ${String(r.lastAt || "").slice(0,10)}`)),
+        (r.samples || []).length > 0 && h("div", { style:{ color:"var(--inkSoft)", margin:"3px 0" } }, "Ví dụ: ", r.samples.slice(-2).map(x => `${x.doiTuong ? x.doiTuong + ": " : ""}"${x.nvTuVan}"`).join(" · ")),
+        (r.sources || []).length > 0 && h("div", { style:{ fontSize:11.5, margin:"2px 0 4px" } }, "Nguồn tra cứu: ", r.sources.map((x,j) => h("a", { key:j, href:x.u, target:"_blank", rel:"noopener noreferrer", style:{ marginRight:8 } }, x.t || ("nguồn " + (j+1))))),
+        tab === "pending" ? h("div", { style:{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6 } },
+          h("input", { value:val(r, "name", r.name), onChange:e => set(r, "name", e.target.value), placeholder:"Tên thuốc", style:inp }),
+          h("input", { value:val(r, "hoatChat", r.hoatChat || ""), onChange:e => set(r, "hoatChat", e.target.value), placeholder:"Hoạt chất + hàm lượng", style:inp }),
+          h("textarea", { rows:3, value:val(r, "lieu", r.aiLieu || ""), onChange:e => set(r, "lieu", e.target.value), placeholder:"Liều theo tuổi/cân nặng (mỗi lần, số lần, tối đa/ngày). Gợi ý từ AI đã điền sẵn — dược sĩ kiểm tra trước khi duyệt.", style:{ ...inp, gridColumn:"1 / -1" } }),
+          h("div", { style:{ gridColumn:"1 / -1", display:"flex", gap:6, justifyContent:"flex-end" } },
+            h("button", { className:"btn", disabled:busy===r.id, onClick:()=>act("doseQueueSkip", r) }, "Bỏ qua (không phải thuốc)"),
+            h("button", { className:"btn btnPrimary", disabled:busy===r.id, onClick:()=>act("doseQueueApprove", r) }, busy===r.id ? "Đang lưu…" : "Duyệt liều")))
+        : h("div", { style:{ whiteSpace:"pre-wrap" } }, (refBy[r.id] && refBy[r.id].lieu) || r.aiLieu || "—")))));
+}
 function TtsCaseLibraryView({ isAdmin }){
-  return React.createElement(React.Fragment, null, React.createElement(SelfPracticePanel, { key:"self" }), React.createElement(TtsCaseLibraryInner, { key:"lib", isAdmin }));
+  return React.createElement(React.Fragment, null, React.createElement(SelfPracticePanel, { key:"self" }), React.createElement(StaffPracticeOverview, { key:"staff" }), React.createElement(DoseQueuePanel, { key:"dq" }), React.createElement(TtsCaseLibraryInner, { key:"lib", isAdmin }));
 }
 function TtsCaseLibraryInner({ isAdmin }){
   const h = React.createElement;
