@@ -25008,7 +25008,78 @@ function PeerCompareCard({ me, thang, staffList, assign }){
         ]),
   ]);
 }
+// ===== 14/10/2026 (đề xuất cải tiến — P1 Employee360): KẾ HOẠCH CẢI THIỆN 7/14 NGÀY (IP) =====
+// Chỉ số đầu kỳ (lấy từ hồ sơ 360) → mục tiêu định lượng → phân loại nguyên nhân TRƯỚC khi chọn hỗ trợ (kỹ năng / quy trình /
+// nguồn lực / chưa rõ) → người kèm cặp + hỗ trợ của quản lý → hết kỳ tự so chỉ số hiện tại với đầu kỳ và mục tiêu.
+// Lưu như 1 việc (tasks, extra.improvementPlan) — dùng chung luồng giao việc / Action Center, không tạo hệ thống riêng.
+// IP-ENGINE-BEGIN
+const IP_CAUSES = {
+  skill:{ label:"Khoảng trống kỹ năng", support:"Kèm cặp / luyện tình huống đúng kỹ năng yếu; người kèm theo dõi hằng ngày." },
+  process:{ label:"Lỗi quy trình", support:"Sửa quy trình / hướng dẫn thao tác — KHÔNG cần đào tạo cá nhân; kiểm tra lại cách làm sau 3 ngày." },
+  resource:{ label:"Thiếu nguồn lực (hàng, ca, công cụ)", support:"Quản lý xử lý nguồn lực (bổ sung hàng, điều chỉnh ca, công cụ) trước — không giao đào tạo." },
+  unknown:{ label:"Chưa rõ — cần trao đổi", support:"Trao đổi 1-1 để xác định nguyên nhân trước khi chọn cách hỗ trợ." },
+};
+function ipAdd(iso, n){ const [y,m,d] = String(iso).split("-").map(Number); return new Date(Date.UTC(y, m-1, d+n)).toISOString().slice(0,10); }
+function ipPct(r){ return r==null || !Number.isFinite(r) ? "—" : Math.round(r*100) + "%"; }
+function ipBuild(o){
+  const days = o.days===14 ? 14 : 7, start = o.startDate;
+  return { metricLabel:o.metricLabel, baseline:o.baseline, target:o.target, days, startDate:start, endDate:ipAdd(start, days),
+    causeType:o.causeType || "unknown", support:o.support || "", mentor:o.mentor || "", managerSupport:o.managerSupport || "" };
+}
+function ipText(plan, staffName){
+  const c = IP_CAUSES[plan.causeType] || IP_CAUSES.unknown;
+  return [`KẾ HOẠCH CẢI THIỆN ${plan.days} NGÀY — ${staffName}`,
+    `Chỉ số: ${plan.metricLabel} · đầu kỳ ${ipPct(plan.baseline)} → mục tiêu ${ipPct(plan.target)} (hạn ${plan.endDate.slice(8,10)}/${plan.endDate.slice(5,7)})`,
+    `Nguyên nhân (đã phân loại): ${c.label}`,
+    `Hỗ trợ: ${plan.support || c.support}`,
+    plan.mentor ? `Người kèm cặp: ${plan.mentor}` : "Người kèm cặp: (chưa chọn)",
+    plan.managerSupport ? `Hỗ trợ của quản lý: ${plan.managerSupport}` : "",
+    "Kết quả cuối kỳ: hệ thống so chỉ số hiện tại với đầu kỳ và mục tiêu khi hết hạn."].filter(Boolean).join("\n");
+}
+function ipEvaluate(plan, currentRatio, today){
+  const out = { current: currentRatio==null ? null : currentRatio, delta:null, status:"", tone:"grey", ended: today >= plan.endDate, note:"" };
+  if(String(plan.startDate).slice(0,7)!==String(today).slice(0,7)) out.note = "Kỳ kế hoạch vắt sang tháng mới — chỉ số dự kiến đã tính lại theo tháng mới, so sánh chỉ mang tính tham khảo.";
+  if(currentRatio==null){ out.status = "Chưa đo được — không còn số liệu chỉ số này"; return out; }
+  out.delta = currentRatio - plan.baseline;
+  if(!out.ended){ out.status = `Đang thực hiện (còn đến ${plan.endDate.slice(8,10)}/${plan.endDate.slice(5,7)}) · ${out.delta>=0?"+":""}${Math.round(out.delta*100)} điểm % so với đầu kỳ`; out.tone = out.delta>0 ? "green" : "yellow"; return out; }
+  if(currentRatio >= plan.target){ out.status = `Đạt mục tiêu: ${ipPct(plan.baseline)} → ${ipPct(currentRatio)} (mục tiêu ${ipPct(plan.target)})`; out.tone = "green"; out.verdict = "achieved"; }
+  else if(out.delta >= 0.02){ out.status = `Cải thiện một phần: ${ipPct(plan.baseline)} → ${ipPct(currentRatio)}, chưa tới mục tiêu ${ipPct(plan.target)} — điều chỉnh phương án hoặc gia hạn`; out.tone = "orange"; out.verdict = "partial"; }
+  else { out.status = `Chưa cải thiện: ${ipPct(plan.baseline)} → ${ipPct(currentRatio)} — xem lại nguyên nhân đã phân loại và đổi cách hỗ trợ`; out.tone = "red"; out.verdict = "none"; }
+  return out;
+}
+// IP-ENGINE-END
+function ImprovementPlanForm({ me, causes, staffList, onCancel, onSubmit }){
+  const h = React.createElement;
+  const first = causes[0];
+  const [metric, setMetric] = useState(first ? first.label : "");
+  const [days, setDays] = useState(7);
+  const cur = (causes.find(c => c.label===metric) || {}).ratio;
+  const [target, setTarget] = useState(first ? String(Math.min(100, Math.round(first.ratio*100) + 10)) : "85");
+  const [causeType, setCauseType] = useState("unknown");
+  const [support, setSupport] = useState("");
+  const [mentor, setMentor] = useState("");
+  const [managerSupport, setManagerSupport] = useState("");
+  const mentors = staffList.filter(s => s.id!==me.id && s.shop===me.shop);
+  const tgt = Number(target)/100;
+  const valid = metric && cur!=null && Number.isFinite(tgt) && tgt > cur;
+  const fld = (l, c) => h("div", { className:"field", style:{ marginBottom:8 } }, h("label", null, l), c);
+  return h("div", { className:"modalOverlay", onClick:onCancel }, h("div", { className:"modal", onClick:e=>e.stopPropagation() },
+    h("div", { style:{ fontWeight:700, fontSize:17, marginBottom:10 } }, `Kế hoạch cải thiện — ${me.name}`),
+    fld("Chỉ số cần cải thiện (đầu kỳ lấy từ hồ sơ)", h("select", { value:metric, onChange:e=>{ setMetric(e.target.value); const c = causes.find(x => x.label===e.target.value); if(c) setTarget(String(Math.min(100, Math.round(c.ratio*100) + 10))); } }, causes.map(c => h("option", { key:c.label, value:c.label }, `${c.label} — hiện ${ipPct(c.ratio)}`)))),
+    fld("Thời gian", h("select", { value:days, onChange:e=>setDays(Number(e.target.value)) }, h("option", { value:7 }, "7 ngày"), h("option", { value:14 }, "14 ngày"))),
+    fld(`Mục tiêu (%) — đầu kỳ ${ipPct(cur)}`, h("input", { type:"number", value:target, onChange:e=>setTarget(e.target.value) })),
+    fld("Nguyên nhân (phân loại trước khi chọn hỗ trợ)", h("select", { value:causeType, onChange:e=>setCauseType(e.target.value) }, Object.entries(IP_CAUSES).map(([k, v]) => h("option", { key:k, value:k }, v.label)))),
+    h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", margin:"-4px 0 8px" } }, "Gợi ý: " + IP_CAUSES[causeType].support),
+    fld("Hoạt động hỗ trợ cụ thể", h("textarea", { rows:2, value:support, placeholder:IP_CAUSES[causeType].support, onChange:e=>setSupport(e.target.value) })),
+    fld("Người kèm cặp", h("select", { value:mentor, onChange:e=>setMentor(e.target.value) }, h("option", { value:"" }, "— chọn —"), mentors.map(s => h("option", { key:s.id, value:s.name }, `${s.name} · ${s.role||""}`)))),
+    fld("Hỗ trợ của quản lý (ghi nhận)", h("input", { value:managerSupport, onChange:e=>setManagerSupport(e.target.value), placeholder:"VD: điều chỉnh ca, bổ sung hàng, gặp 1-1 thứ 4" })),
+    !valid && h("div", { style:{ fontSize:12, color:"var(--clay)", marginBottom:8 } }, "Mục tiêu phải cao hơn chỉ số đầu kỳ."),
+    h("div", { className:"btnRow", style:{ justifyContent:"flex-end" } },
+      h("button", { type:"button", className:"btn btnGhost", onClick:onCancel }, "Huỷ"),
+      h("button", { type:"button", className:"btn btnPrimary", disabled:!valid, onClick:()=>onSubmit(ipBuild({ metricLabel:metric, baseline:cur, target:tgt, days, startDate:todayISO(), causeType, support, mentor, managerSupport })) }, "Tiếp tục → giao việc"))));
+}
 function Employee360View({ isAdmin, myStaff, navParam, onNavigate }){
+  const [ipForm, setIpForm] = useState(false); // 14/10/2026: form kế hoạch cải thiện 7/14 ngày
   const [staffList, setStaffList] = useState([]);
   const [showLeft360, setShowLeft360] = useState(false); // 7/10/2026: mặc định ẩn người đã nghỉ
   const [paceList, setPaceList] = useState([]);
@@ -25372,7 +25443,21 @@ function Employee360View({ isAdmin, myStaff, navParam, onNavigate }){
           extra:{ sourceScreen:"employee360" },
         }) }, "Tạo coaching task")
       : rc("button", { type:"button", className:"btn", style:{ fontSize:12, padding:"6px 12px" }, onClick:()=>onNavigate && onNavigate("kudos") }, "Đi tới Ghi nhận & Quà"));
+    // 14/10/2026 (P1 Employee360): kế hoạch cải thiện 7/14 ngày của nhân viên này + đánh giá lại tự động
+    const ipTasks = tasks.filter(t => t.improvementPlan).sort((a, b) => String(b.ngayGiao||"").localeCompare(String(a.ngayGiao||"")));
+    const ipCard = rc("div", { key:"ip", className:"card", style:{ marginBottom:12 } }, [
+      rc(Head360, { key:"h", title:`Kế hoạch cải thiện (${ipTasks.length})`, right: isAdmin && causes.length>0 ? rc("button", { type:"button", className:"btn btnPrimary", style:{ fontSize:11.5, padding:"5px 10px" }, onClick:()=>setIpForm(true) }, "＋ Lập kế hoạch 7/14 ngày") : null }),
+      ipTasks.length===0 ? rc("div", { key:"e", style:{ fontSize:12, color:"var(--inkSoft)" } }, causes.length ? "Chưa có kế hoạch cải thiện. Lập kế hoạch khi có chỉ số dưới mục tiêu: chỉ số đầu kỳ, mục tiêu, nguyên nhân, người kèm cặp, hạn." : "Chưa có chỉ số để lập kế hoạch.")
+        : ipTasks.slice(0, 5).map(t => { const p = t.improvementPlan; const curC = causes.find(c => c.label===p.metricLabel); const ev = ipEvaluate(p, curC ? curC.ratio : null, today);
+            const col = { green:CL360.good, yellow:CL360.warn, orange:CL360.warn, red:CL360.bad, grey:CL360.gray }[ev.tone];
+            return rc(Row360, { key:t.id, color:col, title:`${p.metricLabel}: ${ipPct(p.baseline)} → mục tiêu ${ipPct(p.target)} · ${p.days} ngày (${dmy360(p.startDate)}–${dmy360(p.endDate)})`,
+              sub:`${ev.status}${ev.note ? " · " + ev.note : ""} · Nguyên nhân: ${(IP_CAUSES[p.causeType]||IP_CAUSES.unknown).label}${p.mentor ? " · kèm cặp: " + p.mentor : ""}${p.managerSupport ? " · QL hỗ trợ: " + p.managerSupport : ""} · việc: ${t.trangThai||"—"}` }); }),
+    ]);
     body = rc("div", { key:"ov" }, [
+      ipCard,
+      ipForm && rc(ImprovementPlanForm, { key:"ipf", me, causes, staffList:staffWorking, onCancel:()=>setIpForm(false), onSubmit:(plan)=>{ setIpForm(false); setComposer({
+        heading:`Giao kế hoạch cải thiện ${plan.days} ngày`, module:"HR", staffId:me.id, deadline:plan.endDate,
+        title:`Kế hoạch cải thiện ${plan.metricLabel} — ${me.name}`, mota:ipText(plan, me.name), extra:{ sourceScreen:"employee360", improvementPlan:plan } }); } }),
       me && rc(PeerCompareCard, { key:"peer", me, thang, staffList:staffWorking, assign }),
       // P1-1 (mục XI): cảnh báo vấn đề nhân sự phát hiện được cho nhân viên này.
       staffIssues.length>0 && rc("div", { key:"issues", className:"card", style:{ marginBottom:12, borderColor:CL360.warn } }, [
