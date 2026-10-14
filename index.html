@@ -12656,7 +12656,296 @@ function TargetCompletionTable({ mt, shops }){
     ])
   );
 }
-function RevenueMucTieu({ mt, isAdmin, shopFilter, isAll }){
+// =====================================================================================================
+// ===== 14/10/2026 (đề xuất cải tiến vận hành — P0 Doanh thu & KPI): CHẨN ĐOÁN DOANH THU NHÀ THUỐC (RVD) =====
+// Một nhà thuốc + một tháng → mục tiêu, thực tế, phần thiếu, tốc độ cần đạt mỗi ngày còn lại, dự báo cuối kỳ (nêu rõ
+// giả định), phân rã theo số bill / TB bill / số mã mỗi bill / tỷ trọng hàng hệ số / ngày trong tuần so với kỳ đối chứng,
+// rồi tách DỮ KIỆN (số đo được) khỏi GIẢ THUYẾT (có mức chắc chắn) và ĐỀ XUẤT (gắn với tín hiệu). Thiếu căn cứ thì ghi
+// "Chưa đủ dữ liệu để kết luận". Không quy doanh thu thấp cho nhân viên (hệ thống không có lượt khách vào cửa).
+// Chỉ đọc dữ liệu có sẵn: opsConfig/revenueAnalytics.byShop (theo ngày) + revenueAnalyticsMonths/{tháng} (chỉ tiêu).
+// Khối tự chứa để tests/revenueDiagnosis.test.js chạy bằng Node — giữ 2 dòng RVD-ENGINE-BEGIN / RVD-ENGINE-END.
+// RVD-ENGINE-BEGIN
+const RVD_RULES = {
+  billsDropPct: 10, tbbDropPct: 8, skuDropPct: 10, hhsShareDropPp: 3, weekdayWeakPct: 15,
+  staleHours: 36, minDaysForCompare: 5,
+};
+const RVD_WEEKDAY = ["Chủ nhật","Thứ 2","Thứ 3","Thứ 4","Thứ 5","Thứ 6","Thứ 7"];
+function rvdAdd(iso, n){ const [y,m,d] = String(iso).split("-").map(Number); return new Date(Date.UTC(y, m-1, d+n)).toISOString().slice(0,10); }
+function rvdDM(iso){ return iso ? `${iso.slice(8,10)}/${iso.slice(5,7)}` : "—"; }
+function rvdWd(iso){ const [y,m,d] = String(iso).split("-").map(Number); return new Date(Date.UTC(y, m-1, d)).getUTCDay(); }
+function rvdNum(v){ const n = Number(v); return v==null || v==="" || !Number.isFinite(n) ? null : n; }
+function rvdMoney(v){
+  if(v==null || !Number.isFinite(Number(v))) return "—";
+  const n = Number(v), a = Math.abs(n), s = n<0 ? "−" : "";
+  if(a >= 1e9) return s + (a/1e9).toFixed(2).replace(".", ",") + " tỷ";
+  if(a >= 1e6) return s + (a/1e6).toFixed(1).replace(".", ",") + " tr";
+  if(a >= 1e3) return s + Math.round(a/1e3) + "k";
+  return s + Math.round(a) + "đ";
+}
+function rvdPct(p, signed){ if(p==null || !Number.isFinite(p)) return "—"; const r = Math.round(p*10)/10; return (signed && r>0 ? "+" : "") + String(r).replace(".", ",") + "%"; }
+function rvdChg(cur, prev){ return cur!=null && prev!=null && prev>0 ? (cur-prev)/prev*100 : null; }
+// Tổng 1 khoảng ngày; trả null nếu khoảng đó nằm ngoài vùng dữ liệu đã đồng bộ (khác với "bằng 0").
+function rvdSum(map, from, to, coverFrom){
+  if(!map) return null;
+  if(coverFrom && from < coverFrom) return null;
+  let s = 0; for(let d = from; d <= to; d = rvdAdd(d, 1)) s += Number(map[d]) || 0;
+  return s;
+}
+function rvdWindow(D, from, to, coverFrom){
+  const rev = rvdSum(D.revenueByDay, from, to, coverFrom);
+  if(rev==null) return null;
+  const bills = rvdSum(D.orderCountByDay, from, to, coverFrom);
+  const lines = rvdSum(D.lineCountByDay, from, to, coverFrom);
+  const hhs = rvdSum(D.hhsRevenueByDay, from, to, coverFrom);
+  return { from, to, revenue:rev, bills, tbb: bills>0 ? rev/bills : null, skuPerBill: bills>0 && lines!=null ? lines/bills : null, hhsShare: rev>0 && hhs!=null ? hhs/rev*100 : null };
+}
+function rvdDiagnose(I){
+  const R = { ...RVD_RULES, ...(I.rules||{}) };
+  const today = I.today, month = I.month;
+  const D = I.daily || {};
+  const row = I.monthRow || null, meta = I.monthMeta || {};
+  const out = { shop:I.shop, month, facts:[], hypotheses:[], actions:[], insufficient:[], dataNotes:[], conclusion:"", plan:null, compare:null, weekday:null };
+  // ----- Kỳ & độ tin cậy dữ liệu -----
+  const monthStart = month + "-01";
+  const dim = meta.daysInMonth || new Date(Date.UTC(Number(month.slice(0,4)), Number(month.slice(5,7)), 0)).getUTCDate();
+  const monthEnd = month + "-" + String(dim).padStart(2, "0");
+  const isCurrent = meta.isCurrentMonth!=null ? !!meta.isCurrentMonth : (today >= monthStart && today <= monthEnd);
+  const elapsed = isCurrent ? Math.max(0, Math.min(dim, meta.daysElapsed!=null ? meta.daysElapsed : Number(today.slice(8,10)) - 1)) : dim;
+  const cut = elapsed>0 ? rvdAdd(monthStart, elapsed-1) : null;   // ngày bán trọn vẹn cuối cùng tính trong tháng
+  const remaining = isCurrent ? dim - elapsed : 0;
+  out.period = { monthStart, monthEnd, cut, elapsed, daysInMonth:dim, remaining, isCurrent };
+  const keys = Object.keys(D.revenueByDay || {}).sort();
+  const coverFrom = keys[0] || null, coverTo = keys[keys.length-1] || null;
+  out.coverage = { from:coverFrom, to:coverTo };
+  const ageH = I.computedAt ? (Date.parse(I.nowIso || (today+"T12:00:00")) - Date.parse(I.computedAt))/3600000 : null;
+  out.freshness = { computedAt:I.computedAt || null, ageHours: ageH==null ? null : Math.round(ageH), stale: ageH!=null && ageH > R.staleHours };
+  if(out.freshness.stale) out.dataNotes.push(`Số POS tính cách đây ${Math.round(ageH)} giờ — chưa cập nhật, cần bấm "Tính lại" trước khi kết luận.`);
+  const confirmed = !!row && row.hasData!==false && !row.fromOrders;
+  out.confirmed = confirmed;
+  if(row && row.fromOrders) out.dataNotes.push("Hệ thống chỉ tiêu chưa trả số thực đạt — thực tế đang lấy tạm từ hoá đơn POS (chưa xác nhận).");
+  // ----- Mục tiêu / thực tế / phần thiếu / tốc độ cần đạt -----
+  const rv = row && row.revenue ? row.revenue : {};
+  const target = rvdNum(rv.target), actual = rvdNum(rv.actual);
+  const T = { target, actual, pct:null, gap:null, curPerDay:null, needPerDay:null, upliftPct:null, projected:null, projectedPct:null, assumption:"" };
+  if(target==null || target<=0) out.insufficient.push(target===0 ? "Chỉ tiêu tháng bằng 0 — không tính tỷ lệ hoàn thành." : "Chưa có chỉ tiêu doanh thu tháng của nhà thuốc.");
+  if(actual==null) out.insufficient.push("Chưa có doanh thu thực tế của tháng.");
+  if(target>0 && actual!=null){
+    T.pct = actual/target*100;
+    T.gap = Math.max(0, target - actual);
+    if(elapsed>0) T.curPerDay = actual/elapsed;
+    if(isCurrent && remaining>0){
+      T.needPerDay = T.gap/remaining;
+      T.upliftPct = T.curPerDay>0 ? (T.needPerDay/T.curPerDay - 1)*100 : null;
+      T.projected = T.curPerDay!=null ? actual + T.curPerDay*remaining : null;
+      T.projectedPct = T.projected!=null ? T.projected/target*100 : null;
+      T.assumption = `Dự báo giả định giữ nguyên tốc độ bình quân ${rvdMoney(T.curPerDay)}/ngày của ${elapsed} ngày đã qua cho ${remaining} ngày còn lại; chưa tính ngày lễ, CTKM sắp chạy hay nhân sự nghỉ.`;
+    } else { T.projected = actual; T.projectedPct = T.pct; }
+  }
+  out.target = T;
+  // Trạng thái (theo dự báo nếu tháng đang chạy, theo kết quả nếu tháng đã qua)
+  let st;
+  if(T.pct==null) st = { code:"nodata", label:"Chưa đủ dữ liệu", tone:"grey", rank:5 };
+  else if(isCurrent && elapsed===0) st = { code:"nodata", label:"Tháng mới bắt đầu", tone:"grey", rank:5 };
+  else if(isCurrent){
+    const p = T.projectedPct;
+    st = p >= 100 ? { code:"onTrack", label:"Đúng tiến độ", tone:"green", rank:4 } : p >= 90 ? { code:"risk", label:"Có nguy cơ không đạt", tone:"orange", rank:2 } : { code:"high", label:"Nguy cơ cao không đạt", tone:"red", rank:1 };
+  } else st = T.pct >= 100 ? { code:"met", label:"Đã đạt", tone:"green", rank:4 } : { code:"missed", label:"Không đạt", tone:"red", rank:1 };
+  if(!confirmed && st.tone==="green") { st = { ...st, tone:"yellow", note:"Cần xác minh — số thực đạt chưa xác nhận" }; }
+  out.status = st;
+  if(T.pct!=null){
+    out.facts.push(`Đạt ${rvdMoney(actual)} / ${rvdMoney(target)} (${rvdPct(T.pct)}) sau ${elapsed}/${dim} ngày${T.gap>0 ? `, còn thiếu ${rvdMoney(T.gap)}` : ""}.`);
+    if(isCurrent && remaining>0 && T.gap>0) out.facts.push(`Cần ${rvdMoney(T.needPerDay)}/ngày cho ${remaining} ngày còn lại — ${T.upliftPct==null ? "chưa có tốc độ hiện tại để so" : (T.upliftPct>0 ? `cao hơn tốc độ hiện tại ${rvdPct(T.upliftPct)}` : "thấp hơn tốc độ hiện tại")}.`);
+  }
+  // ----- So sánh 7 ngày gần nhất với 7 ngày liền trước (cùng các thứ trong tuần) -----
+  const endA = cut && coverTo ? (cut < coverTo ? cut : coverTo) : coverTo;
+  if(endA){
+    const A = rvdWindow(D, rvdAdd(endA, -6), endA, coverFrom), B = rvdWindow(D, rvdAdd(endA, -13), rvdAdd(endA, -7), coverFrom);
+    if(A && B && B.revenue>0){
+      const c = { A, B, revenue:rvdChg(A.revenue, B.revenue), bills:rvdChg(A.bills, B.bills), tbb:rvdChg(A.tbb, B.tbb), sku:rvdChg(A.skuPerBill, B.skuPerBill),
+        hhsPp: A.hhsShare!=null && B.hhsShare!=null ? A.hhsShare - B.hhsShare : null };
+      if(A.bills>0 && B.bills>0){ c.billsEffect = (A.bills - B.bills) * B.tbb; c.tbbEffect = (A.tbb - B.tbb) * A.bills; }
+      out.compare = c;
+      out.facts.push(`7 ngày ${rvdDM(A.from)}–${rvdDM(A.to)} so với ${rvdDM(B.from)}–${rvdDM(B.to)}: doanh thu ${rvdPct(c.revenue, true)}`
+        + (c.bills!=null ? `, số bill ${rvdPct(c.bills, true)}` : "") + (c.tbb!=null ? `, TB bill ${rvdPct(c.tbb, true)}` : "")
+        + (c.sku!=null ? `, số mã/bill ${rvdPct(c.sku, true)}` : "") + (c.hhsPp!=null ? `, tỷ trọng hàng hệ số ${c.hhsPp>=0?"+":""}${String(Math.round(c.hhsPp*10)/10).replace(".", ",")} điểm %` : "") + ".");
+      if(c.billsEffect!=null) out.facts.push(`Phân rã chênh lệch doanh thu: do số bill ≈ ${c.billsEffect>=0?"+":""}${rvdMoney(c.billsEffect)}, do TB bill ≈ ${c.tbbEffect>=0?"+":""}${rvdMoney(c.tbbEffect)}.`);
+      if(A.bills==null) out.insufficient.push("Không có số bill theo ngày — không tách được doanh thu theo lượng đơn và giá trị đơn.");
+    } else out.insufficient.push("Chưa đủ 14 ngày dữ liệu theo ngày để so sánh với kỳ đối chứng.");
+    // ----- Ngày trong tuần (28 ngày gần nhất) -----
+    const from28 = rvdAdd(endA, -27);
+    if(coverFrom && from28 >= coverFrom){
+      const sum = [0,0,0,0,0,0,0], cnt = [0,0,0,0,0,0,0];
+      for(let d = from28; d <= endA; d = rvdAdd(d, 1)){ const w = rvdWd(d); sum[w] += Number(D.revenueByDay[d])||0; cnt[w]++; }
+      const avg = sum.reduce((a, v) => a + v, 0)/28;
+      const prof = sum.map((s, w) => ({ w, label:RVD_WEEKDAY[w], avg: cnt[w] ? s/cnt[w] : null, vsAvg: cnt[w] && avg>0 ? (s/cnt[w]/avg - 1)*100 : null }));
+      const weakest = prof.filter(p => p.vsAvg!=null).sort((a, b) => a.vsAvg - b.vsAvg)[0];
+      out.weekday = { avgPerDay:avg, profile:prof, weakest: weakest && weakest.vsAvg <= -R.weekdayWeakPct ? weakest : null };
+    }
+  } else out.insufficient.push("Không có doanh thu theo ngày của nhà thuốc trong vùng dữ liệu đã đồng bộ.");
+  // ----- Giả thuyết (có bằng chứng + mức chắc chắn) & đề xuất gắn với tín hiệu -----
+  const c = out.compare;
+  const needAction = st.code==="risk" || st.code==="high" || st.code==="missed";
+  const hyp = (key, text, evidence, confidence, action, owner) => { out.hypotheses.push({ key, text, evidence, confidence }); if(action) out.actions.push({ key, text:action, owner, basedOn:text }); };
+  if(c){
+    if(c.bills!=null && c.bills <= -R.billsDropPct) hyp("bills", "Lượng đơn giảm (ít khách mua hơn hoặc ít khách vào hơn).", `Số bill ${rvdPct(c.bills, true)} (${Math.round(c.A.bills)} so với ${Math.round(c.B.bills)}).`, "Trung bình",
+      "Kéo khách quay lại: gọi danh sách khách đến hạn mua lại / VIP lâu chưa quay lại (tab Khách hàng); kiểm tra hàng bán chạy có đang hết không (tab Hàng hoá).", "Cửa hàng trưởng");
+    if(c.tbb!=null && c.tbb <= -R.tbbDropPct) hyp("tbb", "Giá trị mỗi đơn giảm.", `TB bill ${rvdMoney(c.A.tbb)} so với ${rvdMoney(c.B.tbb)} (${rvdPct(c.tbb, true)}).`, "Trung bình",
+      "Tư vấn trọn liệu trình và sản phẩm đi kèm; kiểm tra đơn có bị tách nhỏ không.", "Cửa hàng trưởng");
+    if(c.sku!=null && c.sku <= -R.skuDropPct) hyp("sku", "Bán kèm giảm (ít mã hàng trên mỗi đơn).", `Số mã/bill ${String(Math.round(c.A.skuPerBill*10)/10).replace(".", ",")} so với ${String(Math.round(c.B.skuPerBill*10)/10).replace(".", ",")} (${rvdPct(c.sku, true)}).`, "Trung bình",
+      "Đặt mục tiêu bán kèm theo bài tư vấn trên app; trưng bày nhóm hàng đi kèm cạnh quầy.", "Cửa hàng trưởng");
+    if(c.hhsPp!=null && c.hhsPp <= -R.hhsShareDropPp) hyp("hhs", "Tỷ trọng hàng hệ số giảm.", `Hàng hệ số chiếm ${String(Math.round(c.A.hhsShare*10)/10).replace(".", ",")}% doanh thu, giảm ${String(Math.round(-c.hhsPp*10)/10).replace(".", ",")} điểm %.`, "Trung bình",
+      "Ưu tiên tư vấn nhóm hàng hệ số; kiểm tra tồn các mã hệ số chủ lực.", "Cửa hàng trưởng");
+  }
+  if(out.weekday && out.weekday.weakest){ const w = out.weekday.weakest;
+    hyp("weekday", `${w.label} bán thấp hơn hẳn các ngày khác.`, `${w.label} bình quân ${rvdMoney(w.avg)}, thấp hơn trung bình ngày ${rvdPct(-w.vsAvg)} (28 ngày gần nhất).`, "Thấp",
+      `Rà soát ca làm, hàng hoá và hoạt động bán hàng vào ${w.label}; cân nhắc hoạt động kéo khách riêng cho ngày này.`, "Cửa hàng trưởng"); }
+  if(needAction && !out.hypotheses.length && c) out.hypotheses.push({ key:"none", text:"Không có tín hiệu nổi bật trong số bill, TB bill, số mã/bill, hàng hệ số so với kỳ đối chứng.", evidence:"Các chỉ số thay đổi dưới ngưỡng cảnh báo.", confidence:"—" });
+  if(out.hypotheses.length && out.hypotheses[0].key!=="none") out.dataNotes.push("Hệ thống không có lượt khách vào cửa hàng → chưa phân biệt được 'ít khách' với 'khách vào nhưng không mua'; không quy kết cho nhân viên khi chưa xem ngày công / ca làm.");
+  if(needAction && (!out.actions.length)) out.actions.push({ key:"review", text:"Cửa hàng trưởng rà soát trực tiếp (khách hàng, hàng hoá, nhân sự, yếu tố bên ngoài) và ghi lại nguyên nhân tìm được.", owner:"Cửa hàng trưởng", basedOn:"Chưa có tín hiệu dữ liệu đủ rõ" });
+  // ----- Kế hoạch bù (đề xuất — quản lý duyệt khi giao việc) -----
+  if(isCurrent && T.gap>0 && remaining>0 && T.needPerDay!=null){
+    const checkDate = rvdAdd(today, Math.min(3, remaining));
+    out.plan = { gap:T.gap, needPerDay:T.needPerDay, baselinePerDay:T.curPerDay, from:today, to:monthEnd, checkDate,
+      commitment:`Doanh thu bình quân ≥ ${rvdMoney(T.needPerDay)}/ngày từ ${rvdDM(today)} đến ${rvdDM(monthEnd)} (đo bằng số POS; hiện ${rvdMoney(T.curPerDay)}/ngày).`,
+      checkpoint:`Kiểm tra lại ngày ${rvdDM(checkDate)}: bình quân các ngày sau khi giao việc phải ≥ ${rvdMoney(T.needPerDay)}/ngày; nếu không, điều chỉnh phương án.` };
+  }
+  // ----- Kết luận -----
+  if(T.pct==null) out.conclusion = "Chưa đủ dữ liệu để kết luận: " + out.insufficient.join(" ");
+  else if(!needAction) out.conclusion = st.code==="onTrack" ? `Đang đúng tiến độ (dự báo ${rvdPct(T.projectedPct)}).` : st.code==="met" ? `Đã đạt chỉ tiêu tháng (${rvdPct(T.pct)}).` : st.label + ".";
+  else {
+    const strong = out.hypotheses.filter(h => h.key!=="none");
+    out.conclusion = (isCurrent ? `Dự báo đạt ${rvdPct(T.projectedPct)} chỉ tiêu nếu giữ tốc độ hiện tại.` : `Tháng kết thúc ở ${rvdPct(T.pct)} chỉ tiêu.`)
+      + (strong.length ? ` Tín hiệu chính: ${strong.map(h => h.text.replace(/\.$/, "").toLowerCase()).join("; ")} (giả thuyết, cần CHT xác minh).` : " Chưa đủ dữ liệu để kết luận nguyên nhân.");
+  }
+  out.riskScore = st.rank*1000 + (T.projectedPct!=null ? Math.min(999, Math.round(T.projectedPct*5)) : 999);
+  return out;
+}
+// Xếp hạng theo NGUY CƠ không đạt (không theo doanh thu tuyệt đối): trạng thái xấu trước, cùng trạng thái thì dự báo thấp trước.
+function rvdRank(list){ return list.slice().sort((a, b) => a.riskScore - b.riskScore); }
+// Đo kết quả SAU khi giao việc: so bình quân/ngày các ngày SAU ngày giao (không dùng lại ngày trước khi giao).
+function rvdMeasureAfter(revenueByDay, assignedDate, today, baselinePerDay, targetPerDay){
+  const from = rvdAdd(assignedDate, 1), to = rvdAdd(today, -1);
+  if(!revenueByDay || to < from) return { ok:false, reason:"Chưa có ngày bán trọn vẹn nào sau khi giao việc." };
+  const days = []; for(let d = from; d <= to; d = rvdAdd(d, 1)) days.push({ date:d, revenue: revenueByDay[d]!=null ? Number(revenueByDay[d]) : null });
+  const known = days.filter(x => x.revenue!=null);
+  if(!known.length) return { ok:false, reason:"Chưa có số POS của các ngày sau khi giao việc.", days };
+  const avg = known.reduce((a, x) => a + x.revenue, 0)/known.length;
+  const vsBase = baselinePerDay>0 ? (avg/baselinePerDay - 1)*100 : null;
+  const metTarget = targetPerDay>0 ? avg >= targetPerDay : null;
+  const verdict = metTarget===true ? "hieu_qua" : vsBase!=null && vsBase>0 ? "mot_phan" : "khong_hieu_qua";
+  return { ok:true, from, to, days, avgPerDay:avg, vsBasePct:vsBase, metTarget, suggestedEffect:verdict,
+    text:`Sau giao việc (${rvdDM(from)}–${rvdDM(to)}, ${known.length} ngày): bình quân ${rvdMoney(avg)}/ngày`
+      + (baselinePerDay>0 ? `, so với trước ${rvdMoney(baselinePerDay)}/ngày (${rvdPct(vsBase, true)})` : "")
+      + (targetPerDay>0 ? `; cam kết ${rvdMoney(targetPerDay)}/ngày → ${metTarget ? "ĐẠT" : "CHƯA ĐẠT"}` : "") + "." };
+}
+// Nội dung giao việc (mô tả) từ chẩn đoán: vấn đề, dữ kiện, giả thuyết cần xác minh, hành động, chỉ số cam kết, mốc kiểm tra, bằng chứng cần nộp.
+function rvdTaskText(dx){
+  const L = [];
+  L.push("VẤN ĐỀ: " + dx.conclusion);
+  if(dx.facts.length) L.push("DỮ KIỆN:\n" + dx.facts.map(t => "- " + t).join("\n"));
+  const hy = dx.hypotheses.filter(x => x.key!=="none");
+  if(hy.length) L.push("GIẢ THUYẾT CẦN XÁC MINH:\n" + hy.map(x => `- ${x.text} (${x.evidence})`).join("\n"));
+  if(dx.actions.length) L.push("HÀNH ĐỘNG ĐỀ XUẤT:\n" + dx.actions.map(x => "- " + x.text).join("\n"));
+  if(dx.plan) L.push(`CHỈ SỐ CAM KẾT: ${dx.plan.commitment}\nMỐC KIỂM TRA: ${dx.plan.checkpoint}`);
+  L.push("BẰNG CHỨNG CẦN NỘP: nguyên nhân xác minh được tại nhà thuốc (đúng/sai với giả thuyết nào), việc đã làm, số liệu kèm theo.");
+  return L.join("\n\n");
+}
+// RVD-ENGINE-END
+// ===== 14/10/2026: Khối hiển thị chẩn đoán doanh thu (dùng chung: tab Doanh thu → Theo kỳ và màn vấn đề DT01).
+// Tách rõ 4 lớp: Dữ kiện (số đo được) · Giả thuyết (kèm bằng chứng + mức chắc chắn) · Đề xuất · Kế hoạch bù (chờ duyệt khi giao việc).
+const RVD_TONE = { red:["var(--clay)","var(--claySoft)"], orange:["var(--amber)","var(--amberSoft)"], yellow:["#8a6d1a","var(--goldSoft)"], green:["var(--pine)","var(--pineSoft)"], grey:["var(--inkSoft)","#E7E5DA"] };
+function rvdChip(tone, text, key){ const c = RVD_TONE[tone] || RVD_TONE.grey; return React.createElement("span", { key, style:{ display:"inline-block", fontSize:11, fontWeight:800, color:c[0], background:c[1], borderRadius:999, padding:"2px 9px", whiteSpace:"nowrap" } }, text); }
+function RevenueDiagnosisPanel({ dx, compact }){
+  const h = React.createElement;
+  if(!dx) return h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)" } }, "Đang tải số liệu doanh thu…");
+  const T = dx.target || {};
+  const lbl = (t) => h("div", { key:"l_"+t, style:{ fontWeight:700, fontSize:12.5, margin:"10px 0 4px" } }, t);
+  const li = (arr, render, key) => h("ul", { key:"u_"+(key||"x"), style:{ margin:"0 0 4px", paddingLeft:18, fontSize:12.5, lineHeight:1.5 } }, arr.map((x, i) => h("li", { key:i }, render ? render(x) : x)));
+  const tile = (k, l, v, s) => h("div", { key:k, style:{ background:"var(--paper)", borderRadius:8, padding:"7px 9px" } }, [
+    h("div", { key:"l", style:{ fontSize:10.5, color:"var(--inkSoft)", fontWeight:700, textTransform:"uppercase" } }, l),
+    h("div", { key:"v", style:{ fontSize:15, fontWeight:800 } }, v), s && h("div", { key:"s", style:{ fontSize:11, color:"var(--inkSoft)" } }, s) ]);
+  const c = dx.compare;
+  return h("div", { style:{ fontSize:12.5 } }, [
+    h("div", { key:"st", style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", marginBottom:6 } }, [
+      rvdChip(dx.status.tone, dx.status.label, "s"), dx.status.note && rvdChip("yellow", dx.status.note, "n"),
+      h("span", { key:"p", style:{ fontSize:11.5, color:"var(--inkSoft)" } }, `Kỳ ${rvdDM(dx.period.monthStart)}–${rvdDM(dx.period.monthEnd)} · số liệu đến ${rvdDM(dx.period.cut)}${dx.freshness.computedAt ? ` · POS tính lúc ${new Date(dx.freshness.computedAt).toLocaleString("vi-VN")}` : ""}`),
+    ]),
+    h("div", { key:"cl", style:{ fontWeight:600, marginBottom:8, lineHeight:1.5 } }, dx.conclusion),
+    T.pct!=null && h("div", { key:"tl", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(118px, 1fr))", gap:6 } }, [
+      tile("t", "Mục tiêu tháng", rvdMoney(T.target)), tile("a", "Thực tế", rvdMoney(T.actual), rvdPct(T.pct)), tile("g", "Còn thiếu", rvdMoney(T.gap)),
+      dx.period.isCurrent && tile("n", "Cần / ngày", rvdMoney(T.needPerDay), T.curPerDay!=null ? `hiện ${rvdMoney(T.curPerDay)}/ngày` : ""),
+      dx.period.isCurrent && tile("p", "Dự báo cuối tháng", rvdPct(T.projectedPct), "nếu giữ tốc độ hiện tại"),
+    ]),
+    T.assumption && h("div", { key:"as", style:{ fontSize:11, color:"var(--inkSoft)", marginTop:4 } }, T.assumption),
+    dx.facts.length>0 && lbl("Dữ kiện (số liệu hệ thống)"), dx.facts.length>0 && li(dx.facts, null, "f"),
+    c && !compact && h("div", { key:"cmp", style:{ overflowX:"auto" } }, h("table", { style:{ borderCollapse:"collapse", fontSize:12, minWidth:420 } }, [
+      h("thead", { key:"h" }, h("tr", null, ["Chỉ số", `${rvdDM(c.B.from)}–${rvdDM(c.B.to)}`, `${rvdDM(c.A.from)}–${rvdDM(c.A.to)}`, "Thay đổi"].map(x => h("th", { key:x, style:{ textAlign:"left", padding:"3px 8px", borderBottom:"1px solid var(--line)", color:"var(--inkSoft)" } }, x)))),
+      h("tbody", { key:"b" }, [
+        ["Doanh thu", rvdMoney(c.B.revenue), rvdMoney(c.A.revenue), rvdPct(c.revenue, true)],
+        ["Số bill", c.B.bills==null ? "—" : Math.round(c.B.bills).toLocaleString("vi-VN"), c.A.bills==null ? "—" : Math.round(c.A.bills).toLocaleString("vi-VN"), rvdPct(c.bills, true)],
+        ["TB bill", rvdMoney(c.B.tbb), rvdMoney(c.A.tbb), rvdPct(c.tbb, true)],
+        ["Số mã / bill", c.B.skuPerBill==null ? "—" : c.B.skuPerBill.toFixed(1).replace(".", ","), c.A.skuPerBill==null ? "—" : c.A.skuPerBill.toFixed(1).replace(".", ","), rvdPct(c.sku, true)],
+        ["Tỷ trọng hàng hệ số", c.B.hhsShare==null ? "—" : rvdPct(c.B.hhsShare), c.A.hhsShare==null ? "—" : rvdPct(c.A.hhsShare), c.hhsPp==null ? "—" : `${c.hhsPp>=0?"+":""}${String(Math.round(c.hhsPp*10)/10).replace(".", ",")} điểm %`],
+      ].map((r, i) => h("tr", { key:i }, r.map((v, j) => h("td", { key:j, style:{ padding:"3px 8px", borderBottom:"1px solid var(--line)", fontWeight: j===3 ? 700 : 400 } }, v))))),
+    ])),
+    dx.weekday && !compact && h("div", { key:"wd", style:{ display:"flex", gap:4, alignItems:"flex-end", marginTop:8, flexWrap:"wrap" } }, [1,2,3,4,5,6,0].map(w => {
+      const p = dx.weekday.profile[w]; const v = p.vsAvg==null ? 0 : p.vsAvg;
+      return h("div", { key:w, title:`${p.label}: ${rvdMoney(p.avg)}/ngày (${rvdPct(p.vsAvg, true)} so với trung bình)`, style:{ textAlign:"center", fontSize:10.5, width:46 } }, [
+        h("div", { key:"b", style:{ height:Math.max(4, 30 + v), background: dx.weekday.weakest && dx.weekday.weakest.w===w ? "var(--clay)" : "var(--pine)", borderRadius:"3px 3px 0 0", opacity:.85 } }),
+        h("div", { key:"l" }, p.label.replace("Thứ ", "T").replace("Chủ nhật", "CN")), h("div", { key:"v", style:{ color:"var(--inkSoft)" } }, rvdPct(p.vsAvg, true)),
+      ]);
+    })),
+    dx.hypotheses.length>0 && lbl("Giả thuyết nguyên nhân (cần xác minh)"),
+    dx.hypotheses.length>0 && li(dx.hypotheses, x => [h("b", { key:"t" }, x.text), x.evidence ? ` — căn cứ: ${x.evidence}` : "", x.confidence && x.confidence!=="—" ? h("span", { key:"c", style:{ color:"var(--inkSoft)" } }, ` (mức chắc chắn: ${x.confidence})`) : null], "h"),
+    dx.actions.length>0 && lbl("Đề xuất xử lý"), dx.actions.length>0 && li(dx.actions, x => [x.text, h("span", { key:"o", style:{ color:"var(--inkSoft)" } }, ` · phụ trách đề xuất: ${x.owner}`)], "a"),
+    dx.plan && h("div", { key:"pl", style:{ background:"var(--amberSoft)", borderRadius:8, padding:"7px 10px", marginTop:8 } }, [
+      h("b", { key:"t" }, "Kế hoạch bù (đề xuất — thành cam kết khi quản lý giao việc): "), `Mức thiếu ${rvdMoney(dx.plan.gap)}. ${dx.plan.commitment} ${dx.plan.checkpoint}`,
+    ]),
+    (dx.dataNotes.length>0 || dx.insufficient.length>0) && h("div", { key:"dn", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:8 } }, dx.dataNotes.concat(dx.insufficient).map((t, i) => h("div", { key:i }, "• " + t))),
+  ]);
+}
+// Bảng xếp hạng nguy cơ không đạt (toàn khu vực) + mở chẩn đoán từng nhà thuốc + mở hồ sơ xử lý DT01 (cùng hồ sơ với Hồ sơ nhà thuốc).
+function RevenueRiskBoard({ mt, stats, shops, isAdmin, onOpenIssue }){
+  const h = React.createElement;
+  const [open, setOpen] = useState(null);
+  const today = todayISO();
+  const list = useMemo(()=>{
+    if(!mt || !stats) return [];
+    return rvdRank(shops.map(s => rvdDiagnose({ shop:s, month:mt.month, today, daily:(stats.byShop||{})[s] || {}, computedAt:stats.computedAt,
+      monthRow:(mt.byShop||{})[s] || null, monthMeta:{ daysElapsed:mt.daysElapsed, daysInMonth:mt.daysInMonth, isCurrentMonth:mt.isCurrentMonth } })));
+  }, [mt, stats, shops.join(",")]);
+  if(!mt) return null;
+  if(!stats) return h("div", { className:"card", style:{ fontSize:12.5, color:"var(--inkSoft)", marginTop:16 } }, "Chưa có số POS theo ngày để chẩn đoán.");
+  const cell = { padding:"5px 7px", borderBottom:"1px solid var(--line)", fontSize:12, verticalAlign:"top" };
+  return h("div", { className:"card", style:{ marginTop:16 } }, [
+    h("div", { key:"t", style:{ fontWeight:700, fontSize:15.5 } }, "Nguy cơ không đạt & chẩn đoán theo nhà thuốc"),
+    h("div", { key:"s", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8 } }, "Xếp theo nguy cơ không đạt (dự báo thấp nhất lên đầu), không theo doanh thu tuyệt đối. Bấm 1 dòng để xem dữ kiện, giả thuyết, đề xuất và kế hoạch bù."),
+    h("div", { key:"tb", style:{ overflowX:"auto" } }, h("table", { style:{ width:"100%", borderCollapse:"collapse" } }, [
+      h("thead", { key:"h" }, h("tr", null, ["Nhà thuốc","Trạng thái","Đạt","Còn thiếu","Cần/ngày","So tốc độ hiện tại","Dự báo","Tín hiệu chính"].map(x => h("th", { key:x, style:{ ...cell, textAlign:"left", color:"var(--inkSoft)", fontSize:11, background:"var(--paper)", whiteSpace:"nowrap" } }, x)))),
+      h("tbody", { key:"b" }, list.flatMap(dx => {
+        const T = dx.target; const isOpen = open===dx.shop;
+        const sig = dx.hypotheses.filter(x => x.key!=="none").map(x => x.text.replace(/\.$/, "")).join("; ");
+        const r = h("tr", { key:dx.shop, onClick:()=>setOpen(isOpen ? null : dx.shop), style:{ cursor:"pointer", background: isOpen ? "var(--pineSoft)" : undefined } }, [
+          h("td", { key:"a", style:{ ...cell, fontWeight:700, whiteSpace:"nowrap" } }, (isOpen ? "▾ " : "▸ ") + shopLabel(dx.shop)),
+          h("td", { key:"b", style:cell }, rvdChip(dx.status.tone, dx.status.label)),
+          h("td", { key:"c", style:cell }, rvdPct(T.pct)),
+          h("td", { key:"d", style:cell }, T.gap==null ? "—" : rvdMoney(T.gap)),
+          h("td", { key:"e", style:cell }, T.needPerDay==null ? "—" : rvdMoney(T.needPerDay)),
+          h("td", { key:"f", style:{ ...cell, color: T.upliftPct>25 ? "var(--clay)" : undefined, fontWeight: T.upliftPct>25 ? 700 : 400 } }, T.upliftPct==null ? "—" : rvdPct(T.upliftPct, true)),
+          h("td", { key:"g", style:cell }, rvdPct(T.projectedPct)),
+          h("td", { key:"h", style:{ ...cell, fontSize:11.5 } }, sig || (T.pct==null ? "Chưa đủ dữ liệu để kết luận" : "—")),
+        ]);
+        if(!isOpen) return [r];
+        return [r, h("tr", { key:dx.shop+"_d" }, h("td", { colSpan:8, style:{ padding:"8px 10px", background:"#FBFAF6", borderBottom:"1px solid var(--line)" } }, [
+          h(RevenueDiagnosisPanel, { key:"p", dx }),
+          isAdmin && onOpenIssue && ["risk","high"].includes(dx.status.code) && h("div", { key:"btn", style:{ marginTop:10, display:"flex", gap:8 } },
+            h("button", { type:"button", className:"btn btnPrimary", style:{ fontSize:12 }, onClick:(e)=>{ e.stopPropagation(); onOpenIssue(dx.shop); } }, "Mở hồ sơ xử lý (giao việc / kế hoạch bù)")),
+        ]))];
+      })),
+    ])),
+  ]);
+}
+function RevenueMucTieu({ mt, isAdmin, shopFilter, isAll, stats, onOpenIssue }){
   if(!mt) return React.createElement("div", { className:"card", style:{ fontSize:13, color:"var(--inkSoft)" } }, "Đang tải dữ liệu chỉ tiêu tháng này (lần đầu xem 1 tháng có thể mất vài giây)...");
   const row = (!isAll && mt.byShop[shopFilter]) ? mt.byShop[shopFilter] : mt.chain;
   const shopHasNoData = !isAll && mt.byShop[shopFilter] && mt.byShop[shopFilter].hasData===false;
@@ -12665,11 +12954,19 @@ function RevenueMucTieu({ mt, isAdmin, shopFilter, isAll }){
     shopHasNoData && React.createElement("div", { key:"warn", className:"card", style:{ marginBottom:12, fontSize:12, color:"#b3261e" } }, "Chưa có chỉ tiêu tháng này cho nhà thuốc — kiểm tra lại trên hệ thống upharma.com.vn."),
     mt.shopPlanErrors && React.createElement("div", { key:"err", className:"card", style:{ marginBottom:12, fontSize:11.5, color:"#b3261e" } }, `Một số cửa hàng lấy chỉ tiêu bị lỗi: ${Object.keys(mt.shopPlanErrors).join(", ")}`),
     React.createElement(MonthTargetTiles, { key:"tiles", row }),
+    !isAll && stats && React.createElement("div", { key:"dx", className:"card", style:{ marginTop:16 } }, [
+      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15.5, marginBottom:6 } }, `Chẩn đoán doanh thu — ${shopLabel(shopFilter)}`),
+      React.createElement(RevenueDiagnosisPanel, { key:"p", dx: rvdDiagnose({ shop:shopFilter, month:mt.month, today:todayISO(), daily:(stats.byShop||{})[shopFilter] || {}, computedAt:stats.computedAt,
+        monthRow:(mt.byShop||{})[shopFilter] || null, monthMeta:{ daysElapsed:mt.daysElapsed, daysInMonth:mt.daysInMonth, isCurrentMonth:mt.isCurrentMonth } }) }),
+      isAdmin && React.createElement("button", { key:"b", type:"button", className:"btn btnPrimary", style:{ fontSize:12, marginTop:10 }, onClick:()=>onOpenIssue && onOpenIssue(shopFilter) }, "Mở hồ sơ xử lý (giao việc / kế hoạch bù)"),
+    ]),
     isAll && React.createElement("div", { key:"table", style:{ marginTop:16 } }, [
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15.5, marginBottom:2 } }, "Tỷ lệ hoàn thành target theo cửa hàng"),
       mt.isCurrentMonth && React.createElement("div", { key:"note", style:{ fontSize:11, color:"var(--inkSoft)", marginBottom:8 } },
         `"Target ngày" = (Target − Thực tế đã ghi nhận) ÷ ${Math.max(0,(mt.daysInMonth||0)-(mt.daysElapsed||0))} ngày bán hàng còn lại của tháng`),
       React.createElement(TargetCompletionTable, { key:"tbl", mt, shops: DEFAULT_SHOPS }),
+      // 14/10/2026 (đề xuất cải tiến P0): xếp hạng nguy cơ + chẩn đoán từng nhà thuốc
+      React.createElement(RevenueRiskBoard, { key:"risk", mt, stats, shops: DEFAULT_SHOPS, isAdmin, onOpenIssue }),
       Object.values(mt.byShop||{}).some(x=>x&&x.fromOrders) && React.createElement("div", { key:"fbn", style:{ fontSize:11, color:"var(--inkSoft)", marginTop:6 } }, "* Hệ thống chỉ tiêu upharma.com.vn chưa trả thực đạt cho nhà thuốc này — doanh thu, số bill, hàng hệ số đang lấy tạm từ hoá đơn POS đã đồng bộ (tới hết hôm qua); số khách hàng vẫn chờ hệ thống."),
     ]),
   ]);
@@ -13563,6 +13860,9 @@ function RevenueAnalyticsView({ isAdmin, myStaff, navParam }){
   const isAll = !shopFilter || shopFilter==="Tất cả";
   // 3/10/2026: gộp "Kết quả ngày" vào đây (tab con) — cùng một chỗ xem doanh thu
   const subTabs = [ { id:"ketqua", label:"Kết quả ngày" }, { id:"theoky", label:"Theo kỳ" }, { id:"sosanh", label:"So sánh theo kỳ" }, { id:"nganh", label:"Theo ngành" } ];
+  // 14/10/2026: mở đúng hồ sơ vấn đề DT01 của nhà thuốc (issueActions/{shop}__DT01 — cùng hồ sơ với Hồ sơ nhà thuốc, không tạo việc trùng)
+  const [dtIssue, setDtIssue] = useState(null);
+  function openRevenueIssue(shop){ setDtIssue({ code:"DT01", title:"Doanh thu dự kiến không đạt chỉ tiêu tháng", priority:"P1", severity:"orange", shopCode:shop }); }
   return React.createElement("div", { style:{ maxWidth:1100, margin:"0 auto", padding:16, overflowX:"hidden" } }, [
     React.createElement("div", { key:"src", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8, padding:"6px 10px", background:"var(--paper)", borderRadius:8, border:"1px solid var(--line)" } },
       "Nguồn sự thật doanh thu: đồng bộ đơn bán (externalSalesLines) → tính lại trên tab này. KPI / CTKM dùng nguồn khác — không so số tuyệt đối giữa các tab."),
@@ -13590,11 +13890,12 @@ function RevenueAnalyticsView({ isAdmin, myStaff, navParam }){
           React.createElement(SubTabBar, { key:"sub", tabs:subTabs, active:sub, onChange:setSub, style:{ marginBottom:0 } }),
           sub==="theoky" && React.createElement(MonthPicker, { key:"mp", month, setMonth }),
         ]),
-        sub==="theoky" && React.createElement(RevenueMucTieu, { key:"mt", mt:monthTracking, isAdmin, shopFilter, isAll }),
+        sub==="theoky" && React.createElement(RevenueMucTieu, { key:"mt", mt:monthTracking, isAdmin, shopFilter, isAll, stats, onOpenIssue: isAdmin ? openRevenueIssue : null }),
         sub==="sosanh" && React.createElement(RevenueSoSanhKy, { key:"v", stats, shopFilter, isAll }),
         sub==="nganh" && React.createElement(RevenueTheoNganh, { key:"v", shopFilter, isAll, isAdmin, onPickShop: isAdmin ? setAdminShop : null }),
         sub==="ketqua" && React.createElement(DailyResultsView, { key:"kq", isAdmin, myStaff }),
       ]),
+    dtIssue && React.createElement(IssueDetailModal360, { key:"dt01", issue:dtIssue, shop:dtIssue.shopCode, onClose:()=>setDtIssue(null) }),
   ]);
 }
 // Đánh giá THAM KHẢO dựa trên doanh thu so với mức trung bình của nhóm nhân viên đang xem (KHÔNG
@@ -23203,6 +23504,13 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
 
   // ---- Dữ liệu chứng minh — nguồn khác nhau theo từng loại vấn đề ----
   const [proofList, setProofList] = useState(null);
+  const [rvdSrc, setRvdSrc] = useState(null);
+  const dx = useMemo(()=>{
+    if(kind!=="revenue" || !rvdSrc) return null;
+    const mt = rvdSrc.mt || {};
+    return rvdDiagnose({ shop, month: mt.month || todayISO().slice(0,7), today:todayISO(), daily:rvdSrc.daily, computedAt:rvdSrc.computedAt,
+      monthRow:(mt.byShop||{})[shop] || null, monthMeta: mt.month ? { daysElapsed:mt.daysElapsed, daysInMonth:mt.daysInMonth, isCurrentMonth:mt.isCurrentMonth } : {} });
+  }, [kind, rvdSrc, shop]);
   useEffect(()=>{
     let cancelled = false; setProofList(null);
     if(isGoodsKind){
@@ -23217,13 +23525,18 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
         .catch(err => { logSystemError("externalInventoryExpiry(issueDetail)", err); if(!cancelled) setProofList([]); });
     } else if(kind==="revenue"){
       // 14 ngày doanh thu gần nhất của nhà thuốc, đã tính sẵn ở opsConfig/revenueAnalytics.byShop.
+      // 14/10/2026: giữ thêm toàn bộ số theo ngày (bill, số mã, hàng hệ số) + chỉ tiêu tháng để chẩn đoán (rvdDiagnose).
       db.collection("opsConfig").doc("revenueAnalytics").get()
-        .then(d => {
+        .then(async d => {
           if(cancelled) return;
-          const byShop = (d.exists && d.data().byShop) || {};
+          const data = d.exists ? d.data() : {};
+          const byShop = data.byShop || {};
           const revMap = (byShop[shop] && byShop[shop].revenueByDay) || {};
           const dates = Object.keys(revMap).sort();
           setProofList(dates.slice(-14).map(dt => ({ date:dt, revenue:revMap[dt] })));
+          let mtDoc = null;
+          try{ const m = await db.collection("opsConfig").doc("revenueAnalyticsMonths").collection("months").doc(todayISO().slice(0,7)).get(); mtDoc = m.exists ? m.data() : null; }catch(e){ logSystemError("revenueAnalyticsMonths(issueDetail)", e); }
+          if(!cancelled) setRvdSrc({ daily: byShop[shop] || {}, computedAt: data.computedAt || null, mt: mtDoc });
         })
         .catch(err => { logSystemError("revenueAnalytics(issueDetail)", err); if(!cancelled) setProofList([]); });
     } else if(kind==="ops"){
@@ -23442,11 +23755,12 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
       });
     } else if(kind==="revenue"){
       setComposer({
-        heading:"Giao việc rà soát doanh thu",
-        title:`Rà soát nguyên nhân doanh thu thấp — ${shopLabel(shop)}`,
-        mota:`Doanh thu dự kiến không đạt chỉ tiêu tháng. Chưa đủ dữ liệu xác định nguyên nhân — cần rà soát trực tiếp (khách hàng, nhân sự, hàng hoá, yếu tố bên ngoài) và ghi lại kết quả rà soát.`,
+        heading: dx && dx.plan ? "Giao kế hoạch bù doanh thu" : "Giao việc rà soát doanh thu",
+        title: dx && dx.plan ? `Kế hoạch bù doanh thu — ${shopLabel(shop)}` : `Rà soát nguyên nhân doanh thu thấp — ${shopLabel(shop)}`,
+        mota: dx ? rvdTaskText(dx) : `Doanh thu dự kiến không đạt chỉ tiêu tháng. Chưa đủ dữ liệu xác định nguyên nhân — cần rà soát trực tiếp (khách hàng, nhân sự, hàng hoá, yếu tố bên ngoài) và ghi lại kết quả rà soát.`,
         module:"Khác", ...(cht ? { staffId:cht.id } : { shopOnly:true, shop }), ...slaFields,
-        extra:{ sourceIssueCode:code, sourceIssueTitle:issue.title, sourceShop:shop, sourceIssuePriority:issue.priority, actionInsight:issue.title, issueActionKey:issueActionKeyOf(shop, code), expectedResult },
+        extra:{ sourceIssueCode:code, sourceIssueTitle:issue.title, sourceShop:shop, sourceIssuePriority:issue.priority, actionInsight:issue.title, issueActionKey:issueActionKeyOf(shop, code), expectedResult,
+          ...(dx && dx.plan ? { commitMetric:"revenuePerDay", commitTarget:Math.round(dx.plan.needPerDay), commitBaseline:Math.round(dx.plan.baselinePerDay||0), commitText:dx.plan.commitment, checkDate:dx.plan.checkDate } : {}) },
       });
     }
   }
@@ -23479,13 +23793,16 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
         recommendation = { assignedTo: cht ? cht.name : shopLabel(shop), items:recoItemsOps };
         resultBeforeItems = recoItemsOps.map(it => ({ key:it.key, label:it.label, deadline:it.deadline }));
       } else if(kind==="revenue"){
-        recommendation = { assignedTo: cht ? cht.name : shopLabel(shop), note:"Chưa đủ dữ liệu xác định nguyên nhân — cần rà soát trực tiếp." };
+        recommendation = { assignedTo: cht ? cht.name : shopLabel(shop), note: dx ? dx.conclusion : "Chưa đủ dữ liệu xác định nguyên nhân — cần rà soát trực tiếp.",
+          hypotheses: dx ? dx.hypotheses.map(x => ({ key:x.key, text:x.text, evidence:x.evidence||"", confidence:x.confidence||"" })) : [],
+          actions: dx ? dx.actions.map(x => x.text) : [], plan: dx && dx.plan ? { gap:Math.round(dx.plan.gap), needPerDay:Math.round(dx.plan.needPerDay), baselinePerDay:Math.round(dx.plan.baselinePerDay||0), commitment:dx.plan.commitment, checkDate:dx.plan.checkDate } : null };
         resultBeforeItems = (proofList||[]).map(r => ({ key:r.date, label:r.date, revenue:r.revenue }));
       }
       await db.collection("issueActions").doc(issueActionKeyOf(shop, code)).set({
         shop, code, title:issue.title, status:"IN_PROGRESS", assignedTaskId:taskId,
         recommendation, resultBefore:{ capturedAtTs:new Date().toISOString(), items:resultBeforeItems },
         expectedResult: EXPECTED_RESULT_BY_KIND[kind] || "", recurrence,
+        ...(kind==="revenue" ? { revenuePlan:{ assignedDate:todayISO(), baselinePerDay: dx && dx.plan ? Math.round(dx.plan.baselinePerDay||0) : null, targetPerDay: dx && dx.plan ? Math.round(dx.plan.needPerDay) : null } } : {}),
         updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(), createdAtTs: firebase.firestore.FieldValue.serverTimestamp(),
       }, { merge:true });
       await logIssueHistory({ shop, code, action:"ASSIGN", oldStatus: action ? action.status : null, newStatus:"IN_PROGRESS", detail:`Đã giao việc: ${issue.title}` });
@@ -23505,7 +23822,7 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
     try{
       const beforeItems = (action.resultBefore && action.resultBefore.items) || [];
       const ids = new Set(beforeItems.map(it => it.key));
-      let after = [];
+      let after = [], revenueSummary = null;
       if(isGoodsKind){
         // Chỉ lọc theo shopCode (chỉ mục đơn, không cần chỉ mục kép mới) rồi lọc mã hàng ở phía trình
         // duyệt — tránh cần tạo thêm composite index cho truy vấn "in" kết hợp shopCode.
@@ -23532,13 +23849,22 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
         const stillOverdueIds = new Set(snap.docs.filter(d => { const t=d.data(); return t.deadline && `${t.deadline}T${t.hanGio||"23:59"}` < nowTs2; }).map(d=>d.id));
         after = [...ids].map(tid => { const b = beforeItems.find(x=>x.key===tid); return { key:tid, label:(b&&b.label)||tid, stillOverdue:stillOverdueIds.has(tid) }; });
       } else if(kind==="revenue"){
+        // 14/10/2026: trước đây đọc lại ĐÚNG các ngày trước khi giao việc (trước = sau). Nay đo các ngày SAU ngày giao,
+        // so bình quân/ngày với trước khi giao và với mức cam kết của kế hoạch bù (nếu có).
         const d = await db.collection("opsConfig").doc("revenueAnalytics").get();
         const byShop = (d.exists && d.data().byShop) || {};
         const revMap = (byShop[shop] && byShop[shop].revenueByDay) || {};
-        after = [...ids].map(dt => ({ key:dt, label:dt, revenue: revMap[dt]!=null ? revMap[dt] : null }));
+        const rp = action.revenuePlan || {};
+        const assigned = rp.assignedDate || String((action.resultBefore && action.resultBefore.capturedAtTs) || todayISO()).slice(0,10);
+        const baseVals = beforeItems.map(x => Number(x.revenue)).filter(Number.isFinite);
+        const baseline = rp.baselinePerDay || (baseVals.length ? baseVals.reduce((a, v) => a + v, 0)/baseVals.length : null);
+        const m = rvdMeasureAfter(revMap, assigned, todayISO(), baseline, rp.targetPerDay || null);
+        if(!m.ok){ window.alert("Chưa đo được: " + m.reason); setBusy(false); return; }
+        after = m.days.map(x => ({ key:x.date, label:x.date, revenue:x.revenue }));
+        revenueSummary = { text:m.text, avgPerDay:Math.round(m.avgPerDay), baselinePerDay: baseline==null ? null : Math.round(baseline), targetPerDay: rp.targetPerDay || null, metTarget:m.metTarget, suggestedEffect:m.suggestedEffect };
       }
       await db.collection("issueActions").doc(issueActionKeyOf(shop, code)).set({
-        status:"PENDING_VERIFICATION", resultAfter:{ capturedAtTs:new Date().toISOString(), items:after },
+        status:"PENDING_VERIFICATION", resultAfter:{ capturedAtTs:new Date().toISOString(), items:after, ...(revenueSummary ? { summary:revenueSummary } : {}) },
         updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
       }, { merge:true });
       await logIssueHistory({ shop, code, action:"MEASURE", oldStatus:"IN_PROGRESS", newStatus:"PENDING_VERIFICATION", detail:"Đã đo kết quả sau xử lý" });
@@ -23593,9 +23919,10 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
       ketQua = after ? `Sau xử lý: ${(action.resultAfter.items||[]).filter(x=>!x.stillOverdue).length}/${(action.resultAfter.items||[]).length} việc không còn quá hạn.` : "";
       phamViApDung = "Các nhà thuốc có nhiều công việc quá hạn tương tự.";
     } else if(kind==="revenue"){
-      nguyenNhan = "Chưa đủ dữ liệu xác định nguyên nhân — đã giao rà soát trực tiếp tại nhà thuốc.";
-      cachXuLy = `Giao ${(action.recommendation&&action.recommendation.assignedTo)||""} rà soát nguyên nhân doanh thu thấp.`;
-      ketQua = "";
+      const rec = action.recommendation || {};
+      nguyenNhan = rec.note || "Chưa đủ dữ liệu xác định nguyên nhân — đã giao rà soát trực tiếp tại nhà thuốc.";
+      cachXuLy = rec.plan ? `Giao ${rec.assignedTo||""} kế hoạch bù: ${rec.plan.commitment}${(rec.actions||[]).length ? " Hành động: " + rec.actions.join(" ") : ""}` : `Giao ${rec.assignedTo||""} rà soát nguyên nhân doanh thu thấp.`;
+      ketQua = action.resultAfter && action.resultAfter.summary ? action.resultAfter.summary.text : "";
       phamViApDung = "Các nhà thuốc có doanh thu dự kiến không đạt chỉ tiêu tháng tương tự.";
     }
     const draft = { vanDe: issue.title, issueCode: code, issueShop: shop, nguyenNhan, cachXuLy, ketQua, hieuQua:"Hiệu quả", phamViApDung };
@@ -23734,10 +24061,9 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
               rc("div", { key:"impact", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:8 } }, "Ảnh hưởng dự kiến: giảm số việc quá hạn, cải thiện điểm vận hành."),
             ])),
         kind==="revenue" && rc("div", { key:"box", style:{ background:"var(--pineSoft)", borderRadius:10, padding:"10px 12px" } }, [
-          rc("div", { key:"a", style:{ ...rowStyle, borderBottom:"none", flexDirection:"column", alignItems:"flex-start", gap:2 } }, [
-            rc("b", { key:"k" }, "Nguyên nhân"),
-            rc("span", { key:"v", style:{ color:CL360.warn } }, "Chưa đủ dữ liệu xác định nguyên nhân — cần Cửa hàng trưởng rà soát trực tiếp."),
-          ]),
+          // 14/10/2026: thay câu cố định "Chưa đủ dữ liệu…" bằng chẩn đoán thật (dữ kiện / giả thuyết / đề xuất / kế hoạch bù);
+          // chỉ ghi "Chưa đủ dữ liệu để kết luận" khi thật sự thiếu căn cứ.
+          rc(RevenueDiagnosisPanel, { key:"dx", dx, compact:true }),
           rc("div", { key:"b", style:{ ...rowStyle, borderBottom:"none", marginTop:6 } }, [ rc("span",{key:"k"},"Giao cho"), rc("b",{key:"v"}, recoTargetLabel) ]),
         ]),
         similarTotal>0 && rc("div", { key:"sim", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:8 } },
@@ -23808,10 +24134,13 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
           const a = ((action.resultAfter && action.resultAfter.items) || []).find(x => x.key===b.key);
           return { cells:[ b.label, rc("span",{key:"v",style:{fontWeight:700,color:a&&!a.stillOverdue?CL360.good:CL360.bad}}, a?(a.stillOverdue?"Còn quá hạn":"Đã xử lý"):"—") ] };
         }) }),
-        kind==="revenue" && rc(Table360, { key:"tbl", head:["Ngày","Doanh thu trước","Doanh thu sau"], rows:(action.resultBefore.items||[]).map(b => {
-          const a = ((action.resultAfter && action.resultAfter.items) || []).find(x => x.key===b.key);
-          return { cells:[ b.label, fmtNum(Math.round(b.revenue||0))+" đ", a&&a.revenue!=null?fmtNum(Math.round(a.revenue))+" đ":"—" ] };
-        }) }),
+        kind==="revenue" && action.resultAfter && action.resultAfter.summary && rc("div", { key:"rsum", style:{ fontSize:12.5, fontWeight:600, margin:"4px 0 6px", color: action.resultAfter.summary.metTarget ? CL360.good : CL360.warn } }, action.resultAfter.summary.text),
+        kind==="revenue" && (action.resultAfter && action.resultAfter.summary
+          ? rc(Table360, { key:"tbl", head:["Ngày sau giao việc","Doanh thu"], rows:(action.resultAfter.items||[]).map(a => ({ cells:[ a.label, a.revenue!=null ? fmtNum(Math.round(a.revenue))+" đ" : "—" ] })) })
+          : rc(Table360, { key:"tbl", head:["Ngày","Doanh thu trước","Doanh thu sau"], rows:(action.resultBefore.items||[]).map(b => {
+              const a = ((action.resultAfter && action.resultAfter.items) || []).find(x => x.key===b.key);
+              return { cells:[ b.label, fmtNum(Math.round(b.revenue||0))+" đ", a&&a.revenue!=null?fmtNum(Math.round(a.revenue))+" đ":"—" ] };
+            }) })),
         rc("div", { key:"q", style:{ fontSize:12.5, fontWeight:600, marginTop:12, marginBottom:6 } }, "Đánh giá hiệu quả xử lý"),
         rc("textarea", { key:"note", rows:2, placeholder:"Nguyên nhân (bắt buộc nếu không hiệu quả / hiệu quả một phần)", value:effNote, onChange:e=>setEffNote(e.target.value), style:{ width:"100%", padding:8, borderRadius:8, border:"1px solid var(--line)", fontSize:12.5, marginBottom:8 } }),
         rc("div", { key:"btns", style:{ display:"flex", gap:8, flexWrap:"wrap" } }, Object.keys(ISSUE_EFFECT).map(k => rc("button", { key:k, type:"button", className:"btn", disabled:busy, style:{ borderColor:ISSUE_EFFECT[k].color, color:ISSUE_EFFECT[k].color }, onClick:()=>setEffectiveness(k) }, `${ISSUE_EFFECT[k].icon} ${ISSUE_EFFECT[k].label}`))),
