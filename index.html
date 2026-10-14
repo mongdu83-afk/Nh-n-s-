@@ -27451,7 +27451,8 @@ function aaTarget(staff, shop){
   const cht = (staff||[]).find(s => s.shop===shop && s.role==="Cửa hàng trưởng");
   return cht ? { assignType:"staff", staffId:cht.id, staffName:cht.name, shop } : { assignType:"shop", staffId:null, staffName:"", shop };
 }
-// 15/10/2026 (chị Hà): GIAO THEO CA LÀM VIỆC — ghép lịch ca (externalShiftWork + externalOverTime, khớp tên đã chuẩn hoá
+// 15/10/2026 (chị Hà): chỉ tin ca HÔM NAY và NGÀY MAI — nhân viên đăng ký ca trước 1–2 ngày nên lịch xa hơn chưa đầy đủ.
+// GIAO THEO CA LÀM VIỆC — ghép lịch ca (externalShiftWork + externalOverTime, khớp tên đã chuẩn hoá
 // giống normalizeStaffName) với nhân viên của nhà thuốc. mode "now": việc làm ngay → người ĐANG trong ca (ưu tiên CHT), không có
 // thì người vào ca sớm nhất; hạn = giờ hết ca. mode "lead": việc kế hoạch → CHT nếu có ca hôm nay / ngày mai, không thì người
 // đang trong ca. Không giao học việc, không giao người đã hết ca. Không có lịch ca → giao CHT / cả nhà thuốc như cũ (ghi rõ).
@@ -27469,10 +27470,10 @@ function aaAssign(I, shop, mode){
   if(!I.shifts) return { ...aaTarget(I.staff, shop), shift:null, shiftNote: I.shiftsMissing ? "Chưa có dữ liệu lịch ca (đồng bộ ca lỗi?) — giao theo cửa hàng trưởng / nhà thuốc." : "" };
   const today = I.today, now = I.nowHM || "00:00", tomorrow = addDaysAA(today, 1);
   const cands = (I.staff||[]).filter(s => s.shop===shop && s.role!=="Nhân viên học việc").map(st => {
-    const sh = aaShiftsOf(I, st).filter(x => x.date > today || (x.date===today && x.end > now));
+    const sh = aaShiftsOf(I, st).filter(x => x.date <= tomorrow && (x.date > today || (x.date===today && x.end > now)));
     return sh.length ? { st, sh:sh[0] } : null;
   }).filter(Boolean).sort((a, b) => (a.sh.date + a.sh.start).localeCompare(b.sh.date + b.sh.start));
-  if(!cands.length) return { ...aaTarget(I.staff, shop), shift:null, shiftNote:"Không có ai trong lịch ca 7 ngày tới — giao theo nhà thuốc (cần kiểm tra lịch ca)." };
+  if(!cands.length) return { ...aaTarget(I.staff, shop), shift:null, shiftNote:"Chưa có ai đăng ký ca hôm nay / ngày mai (còn lại trong hôm nay) — giao theo cửa hàng trưởng / nhà thuốc, cần kiểm tra lịch ca." };
   const isCHT = c => c.st.role==="Cửa hàng trưởng";
   const onNow = c => c.sh.date===today && c.sh.start <= now;
   let pick;
@@ -27613,8 +27614,8 @@ async function runAutoAssign({ force, slot, source } = {}){
     safe(() => get("opsConfig", "inventoryConsumptionSummary"), null),
     safe(async () => (await db.collection("dailyKpiPace").where("date", "==", today).get()).docs.map(d => d.data()), []),
   ]);
-  // Lịch ca 7 ngày tới (ca thường + tăng ca) để giao đúng người đang / sắp vào ca
-  const shiftRange = async (c, ot) => (await db.collection(c).where("WorkDate", ">=", today).where("WorkDate", "<=", addDays(today, 6) + "\uf8ff").get()).docs.map(d => ({ ...d.data(), __isOT:ot }));
+  // Lịch ca HÔM NAY + NGÀY MAI (ca thường + tăng ca) — nhân viên đăng ký trước 1–2 ngày nên không dò xa hơn
+  const shiftRange = async (c, ot) => (await db.collection(c).where("WorkDate", ">=", today).where("WorkDate", "<=", addDays(today, 1) + "\uf8ff").get()).docs.map(d => ({ ...d.data(), __isOT:ot }));
   const shiftsAll = await safe(async () => { const [a, b] = await Promise.all([shiftRange("externalShiftWork", false), shiftRange("externalOverTime", true)]); return a.concat(b); }, null);
   const staffById = {}; staffSnap.forEach(s => { staffById[s.id] = s; });
   const running = ((idx && idx.campaigns) || []).find(c => c.kind==="campaign" && c.running);
@@ -27696,7 +27697,7 @@ function AutoAssignCard(){
       log && log.lastServerRunAt && Date.now() - Date.parse(log.lastServerRunAt) < 26*3600*1000
         ? `Máy chủ đang tự giao đúng 9h20 & 15h20 (lần gần nhất ${new Date(log.lastServerRunAt).toLocaleString("vi-VN")}) — người nhận được thông báo ngay, không cần ai mở app.`
         : "Lịch máy chủ chưa chạy (chưa cài hoặc bị dừng) — tạm thời app giao khi quản lý mở app. Cài lịch: xem docs/DE_XUAT_CAI_TIEN_DOI_CHIEU_BACKLOG.md mục 9."),
-    h("div", { style:{ fontSize:12, color:"var(--inkSoft)", margin:"0 0 8px", lineHeight:1.5 } }, " Chỉ giao khi có số liệu chứng minh (đã xác nhận, còn mới); việc đang mở cùng vấn đề thì không giao trùng. Giao THEO CA: việc làm ngay → người đang trong ca (ưu tiên CHT), hạn = giờ hết ca; việc kế hoạch → CHT nếu có ca hôm nay / ngày mai, không thì người đang trong ca. Không giao học việc, không giao người đã hết ca. Việc nhân sự mặc định chờ duyệt."),
+    h("div", { style:{ fontSize:12, color:"var(--inkSoft)", margin:"0 0 8px", lineHeight:1.5 } }, " Chỉ giao khi có số liệu chứng minh (đã xác nhận, còn mới); việc đang mở cùng vấn đề thì không giao trùng. Giao THEO CA: việc làm ngay → người đang trong ca (ưu tiên CHT), hạn = giờ hết ca; việc kế hoạch → CHT nếu có ca hôm nay / ngày mai, không thì người đang trong ca. Chỉ dùng ca hôm nay và ngày mai (lịch xa hơn chưa đăng ký đủ). Không giao học việc, không giao người đã hết ca. Việc nhân sự mặc định chờ duyệt."),
     h("div", { style:{ display:"flex", flexDirection:"column", gap:3 } }, Object.entries(AA_RULES).map(([k, v]) => h("label", { key:k, style:{ fontSize:13, display:"inline-flex", gap:6, alignItems:"center" } },
       h("input", { type:"checkbox", checked:on[k], disabled:!on.enabled, onChange:e=>save({ rules:{ ...((cfg && cfg.rules)||{}), [k]:e.target.checked } }) }), v.label))),
     h("div", { style:{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap", marginTop:8 } },

@@ -199,13 +199,13 @@ Không thêm collection mới.
 
 ## 10. Giao việc theo ca làm việc (15/10/2026)
 
-AI tự giao (cả trên máy chủ lẫn trong app) ghép **lịch ca 7 ngày tới** với nhân viên từng nhà thuốc:
+AI tự giao (cả trên máy chủ lẫn trong app) ghép **lịch ca HÔM NAY và NGÀY MAI** với nhân viên từng nhà thuốc. Nhân viên thường đăng ký ca trước 1–2 ngày, nên lịch xa hơn chưa đủ và **không được dùng**:
 - Lịch ca gồm ca thường (`externalShiftWork`) và tăng ca (`externalOverTime`).
 - Ghép theo tên đã chuẩn hoá, giống cách app đang làm, nên tên có dấu hay không dấu vẫn khớp.
 
 | Loại việc | Giao cho | Hạn |
 |---|---|---|
-| **Làm ngay:** khắc phục checklist, kiểm tra triển khai CTKM | Người **đang trong ca** lúc chạy (ưu tiên CHT). Không ai đang trong ca → người vào ca sớm nhất hôm nay → ca gần nhất các ngày sau | Ngày ca đó, **giờ hết ca** của người nhận |
+| **Làm ngay:** khắc phục checklist, kiểm tra triển khai CTKM | Người **đang trong ca** lúc chạy (ưu tiên CHT). Không ai đang trong ca → người vào ca sớm nhất hôm nay → người có ca ngày mai | Ngày ca đó, **giờ hết ca** của người nhận |
 | **Kế hoạch:** bù doanh thu, bù KPI, tăng tốc NT mới | **CHT** nếu CHT có ca hôm nay hoặc ngày mai. CHT nghỉ dài → người đang trong ca | Giữ mốc kiểm tra của kế hoạch, nhưng không sớm hơn ngày ca nhận việc |
 
 - Không giao cho **nhân viên học việc**, không giao cho người **đã hết ca**.
@@ -214,10 +214,10 @@ AI tự giao (cả trên máy chủ lẫn trong app) ghép **lịch ca 7 ngày t
 - Thông báo đẩy đến đúng người đang làm.
 
 **Trường hợp ngoại lệ:**
-- **Không ai của nhà thuốc có ca trong 7 ngày tới:** giao theo CHT hoặc cả nhà thuốc như trước, và ghi "cần kiểm tra lịch ca".
+- **Không ai của nhà thuốc đăng ký ca hôm nay (còn lại) hoặc ngày mai:** giao theo CHT hoặc cả nhà thuốc như trước, và ghi "cần kiểm tra lịch ca".
 - **Không tải được lịch ca (đồng bộ lỗi):** giao theo CHT hoặc nhà thuốc, và ghi "Chưa có dữ liệu lịch ca".
 
-**Kiểm thử:** `tests/autoAssign.test.js`, thêm 3 ca, **ĐẠT**.
+**Kiểm thử:** `tests/autoAssign.test.js`, thêm 4 ca, **ĐẠT** (gồm ca "lịch ngày kia bị bỏ qua").
 - 9h20: CHT hết ca lúc 9h → giao người đang trong ca, hạn 15:00.
 - 15h20: giao người ca chiều, hạn 22:00.
 - Việc kế hoạch: CHT có ca ngày mai → giao CHT, hạn không sớm hơn ngày mai. CHT nghỉ đến 20/10 → giao người đang trong ca.
