@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261014-5";
+window.__APP_BUILD = "20261014-6";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -9529,7 +9529,7 @@ function TtsVoiceLimitSetting(){
     h("span", null, "Luyện giọng nói:"),
     h("label", null, "tối đa ", h("input", { type:"number", min:0, max:20, defaultValue: cfg.perWeek ?? 1, style:{ width:48 }, onBlur:e=>save({ perWeek: Math.max(0, Number(e.target.value)||0) }) }), " bài/người/tuần"),
     h("label", null, "xoá ghi âm sau ", h("input", { type:"number", min:7, max:365, defaultValue: cfg.keepDays ?? 60, style:{ width:52 }, onBlur:e=>save({ keepDays: Math.max(7, Number(e.target.value)||60) }) }), " ngày"),
-    h("label", { style:{ display:"inline-flex", gap:4, alignItems:"center" } }, h("input", { type:"checkbox", checked: cfg.enabled !== false, onChange:e=>save({ enabled:e.target.checked }) }), "bật"),
+    h("label", { style:{ display:"inline-flex", gap:4, alignItems:"center" } }, h("input", { type:"checkbox", checked: cfg.enabled !== false, onChange:e=>save({ enabled:e.target.checked }) }), cfg.enabled === false ? h("b", { style:{ color:"#B91C1C" } }, "đang TẮT — tích để bật") : "đang bật"),
     h("label", { style:{ display:"inline-flex", gap:4, alignItems:"center" } }, h("input", { type:"checkbox", checked: cfg.liveEnabled !== false, onChange:e=>save({ liveEnabled:e.target.checked }) }), "nói liên tục (gọi điện)"),
     h("label", null, "tối đa ", h("input", { type:"number", min:2, max:14, defaultValue: Math.round((cfg.liveMaxSec ?? 480)/60), style:{ width:44 }, onBlur:e=>save({ liveMaxSec: Math.max(2, Math.min(14, Number(e.target.value)||8)) * 60 }) }), " phút/cuộc gọi"),
     msg && h("span", { style:{ color:"var(--pine)" } }, msg));
