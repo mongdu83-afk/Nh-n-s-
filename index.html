@@ -1499,6 +1499,8 @@ function ChecklistTemplateEditor({ roles, templates, initialRole, onSave, onClos
   const [error, setError] = useState(null);
   useEffect(()=>{ setItems(templates[role] || []); setNewLabel(""); setError(null); }, [role]);
   function updateLabel(id, label){ setItems(items.map(it => it.id===id ? { ...it, label } : it)); }
+  // 14/10/2026 (P2): mức nghiêm trọng của đầu việc — để trống = tự xếp theo từ khoá (clqSeverity)
+  function updateSeverity(id, severity){ setItems(items.map(it => { if(it.id!==id) return it; const n = { ...it }; if(severity) n.severity = severity; else delete n.severity; return n; })); }
   function removeItem(id){ setItems(items.filter(it => it.id!==id)); }
   function addItem(){ if(!newLabel.trim()) return; setItems([...items, { id:uid(), label:newLabel.trim() }]); setNewLabel(""); }
   async function save(){
@@ -1517,6 +1519,8 @@ function ChecklistTemplateEditor({ roles, templates, initialRole, onSave, onClos
       React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8, marginBottom:12, maxHeight:360, overflowY:"auto" } }, items.map(it =>
         React.createElement("div", { key:it.id, style:{ display:"flex", gap:8, alignItems:"flex-start" } }, [
           React.createElement(AutoGrowTextarea, { key:"i", value:it.label, onChange:e=>updateLabel(it.id, e.target.value), style:{ flex:1, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5, resize:"none", fontFamily:"inherit" } }),
+          React.createElement("select", { key:"sev", value:it.severity || "", onChange:e=>updateSeverity(it.id, e.target.value), title:"Mức nghiêm trọng khi bỏ sót", style:{ padding:"6px 4px", fontSize:11.5, border:"1px solid var(--line)", borderRadius:7, flexShrink:0 } },
+            [React.createElement("option", { key:"a", value:"" }, `Tự động (${CLQ_SEV[clqSeverity({ label:it.label })].label})`), ...Object.entries(CLQ_SEV).map(([k, v]) => React.createElement("option", { key:k, value:k }, v.label))]),
           React.createElement("button", { key:"d", type:"button", className:"btn btnDanger", style:{ padding:"6px 9px", fontSize:11.5, flexShrink:0 }, onClick:()=>removeItem(it.id) }, "Xoá"),
         ])
       )),
@@ -1672,6 +1676,109 @@ function summarizeShiftLabel(regsForDay){
   return labels.length ? labels.join(", ") : "Có ca (chưa rõ khung giờ)";
 }
 
+// ===== 14/10/2026 (đề xuất cải tiến — P2 Checklist & sức khoẻ nhà thuốc): LỖI CHECKLIST THEO MỨC NGHIÊM TRỌNG & TÁI DIỄN (CLQ) =====
+// "Lỗi" = đầu việc trong checklist chuẩn của vai trò KHÔNG được tick trong báo cáo ngày đã nộp. Mức nghiêm trọng: lấy từ mẫu
+// (item.severity) nếu quản lý đã gán, không thì xếp theo từ khoá (GPP, hạn dùng, bảo quản, thuốc kê đơn, tiền… = nghiêm trọng).
+// Tái diễn = bỏ sót ≥ 3 ngày trong kỳ tại cùng nhà thuốc. Có việc khắc phục đã xong nhưng sau đó vẫn bỏ sót → "tái diễn sau
+// khắc phục" (đã khắc phục ≠ đã xác minh không tái diễn). Điểm % tổng không che lỗi nghiêm trọng.
+// CLQ-ENGINE-BEGIN
+const CLQ_SEV = { critical:{ label:"Nghiêm trọng", rank:0, tone:"red" }, major:{ label:"Trung bình", rank:1, tone:"orange" }, minor:{ label:"Nhẹ", rank:2, tone:"yellow" } };
+function clqStrip(s){ return String(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[đĐ]/g,"d").toLowerCase(); }
+function clqSeverity(item){
+  if(item && CLQ_SEV[item.severity]) return item.severity;
+  const t = clqStrip(item && item.label);
+  if(/\bgpp\b|han su dung|han dung|can date|bao quan|nhiet do|do am|ke don|thuoc doc|gay nghien|tien|ket|doi soat|an toan|phong chay|hoa don/.test(t)) return "critical";
+  if(/dong phuc|bang ten|ve sinh|don dep|sap xep|ghi chu|dung gio/.test(t)) return "minor";
+  return "major";
+}
+function clqAnalyze(I){
+  const tpl = I.templatesByRole || {}, staffById = I.staffById || {};
+  const items = {};
+  const reports = (I.reports||[]).filter(r => r && r.ngay >= I.since && r.ngay <= I.today);
+  reports.forEach(r => {
+    const st = staffById[r.staffId] || {};
+    const role = r.role || st.role, shop = r.shop || st.shop;
+    if(I.shop && shop!==I.shop) return;
+    (tpl[role] || []).forEach(it => {
+      const k = it.id;
+      const o = items[k] || (items[k] = { id:k, label:it.label, role, severity:clqSeverity(it), checks:0, misses:0, missDays:{}, shops:{} });
+      o.checks++;
+      if(!(r.doneIds && r.doneIds[k])){
+        o.misses++;
+        (o.missDays[shop] = o.missDays[shop] || new Set()).add(r.ngay);
+        o.shops[shop] = (o.shops[shop]||0) + 1;
+      }
+    });
+  });
+  const fixes = I.fixTasks || [];
+  const list = Object.values(items).filter(o => o.misses>0).map(o => {
+    const recurringShops = Object.entries(o.missDays).filter(([, s]) => s.size >= 3).map(([sh]) => sh);
+    const fixed = fixes.filter(t => t.checklistItemId===o.id);
+    const fixStatus = Object.keys(o.missDays).map(sh => {
+      const f = fixed.filter(t => t.shop===sh).sort((a, b) => String(b.ngayHoanThanh||"").localeCompare(String(a.ngayHoanThanh||"")))[0];
+      if(!f) return null;
+      if(f.trangThai!=="Đã hoàn thành") return { shop:sh, state:"fixing", label:"Đang khắc phục" };
+      const after = Array.from(o.missDays[sh]).filter(d => d > String(f.ngayHoanThanh).slice(0,10));
+      return after.length ? { shop:sh, state:"recurred", label:`Tái diễn sau khắc phục (${after.length} ngày)` } : { shop:sh, state:"fixed", label:"Đã khắc phục — chưa thấy tái diễn" };
+    }).filter(Boolean);
+    return { ...o, missRate:o.misses/o.checks, recurringShops, fixStatus, missDays:undefined, sev:CLQ_SEV[o.severity] };
+  }).sort((a, b) => a.sev.rank - b.sev.rank || b.misses - a.misses);
+  const critical = list.filter(x => x.severity==="critical");
+  const totalChecks = Object.values(items).reduce((a, o) => a + o.checks, 0), totalMiss = Object.values(items).reduce((a, o) => a + o.misses, 0);
+  return { list, critical, reportCount:reports.length, completion: totalChecks ? 1 - totalMiss/totalChecks : null,
+    headline: !reports.length ? "Chưa có báo cáo checklist trong kỳ — chưa đủ dữ liệu để kết luận."
+      : `Hoàn thành ${Math.round((1 - totalMiss/totalChecks)*100)}% đầu việc, nhưng có ${critical.reduce((a, x) => a + x.misses, 0)} lần bỏ sót việc NGHIÊM TRỌNG ở ${critical.length} đầu việc.` };
+}
+// CLQ-ENGINE-END
+function ChecklistQualityPanel({ templates, staff, scopeShop, isAdmin, giver }){
+  const h = React.createElement;
+  const [days, setDays] = useState(14);
+  const [data, setData] = useState(null);
+  const [fixTasks, setFixTasks] = useState([]);
+  const [composer, setComposer] = useState(null);
+  const [shopF, setShopF] = useState(scopeShop || "Tất cả");
+  const today = todayISO(), since = addDays(today, -(days-1));
+  async function load(){
+    setData("loading");
+    try{
+      const snap = await db.collection("dailyReports").where("ngay", ">=", since).get();
+      setData(snap.docs.map(d => d.data()));
+    }catch(e){ logSystemError("checklistQuality", e); setData({ error:e.message }); }
+  }
+  useEffect(()=> db.collection("tasks").where("sourceScreen", "==", "checklistQuality").onSnapshot(s => setFixTasks(s.docs.map(d => d.data())), err => logSystemError("checklistQualityTasks", err)), []);
+  const staffById = {}; staff.forEach(s => { staffById[s.id] = s; });
+  const res = Array.isArray(data) ? clqAnalyze({ reports:data, templatesByRole:templates, staffById, since, today, shop: shopF==="Tất cả" ? null : shopF, fixTasks }) : null;
+  const tone = (t) => ({ red:"sev-critical", orange:"sev-warning", yellow:"sev-monitor", green:"sev-healthy" })[t] || "sev-neutral";
+  return h("div", { className:"card", style:{ marginBottom:16 } },
+    h("div", { style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", marginBottom:6 } },
+      h("b", { style:{ fontSize:15 } }, "Lỗi checklist theo mức nghiêm trọng & tái diễn"),
+      h("select", { value:days, onChange:e=>{ setDays(Number(e.target.value)); setData(null); }, style:{ fontSize:12, padding:"3px 6px" } }, [7,14,30].map(n => h("option", { key:n, value:n }, `${n} ngày`))),
+      !scopeShop && h("select", { value:shopF, onChange:e=>setShopF(e.target.value), style:{ fontSize:12, padding:"3px 6px" } }, ["Tất cả", ...DEFAULT_SHOPS].map(s => h("option", { key:s, value:s }, s))),
+      h("button", { className:"btn btnPrimary", style:{ fontSize:12, padding:"4px 10px" }, disabled:data==="loading", onClick:load }, data==="loading" ? "Đang phân tích…" : (data ? "↻ Phân tích lại" : "Phân tích"))),
+    !data && h("div", { style:{ fontSize:12, color:"var(--inkSoft)" } }, "Bấm Phân tích để xem đầu việc hay bị bỏ sót, xếp theo mức nghiêm trọng (không chỉ tỷ lệ % tick)."),
+    data && data.error && h("div", { style:{ fontSize:12, color:"var(--clay)" } }, "Lỗi: " + data.error),
+    res && h("div", null,
+      h("div", { style:{ fontSize:12.5, fontWeight:600, marginBottom:8, color: res.critical.length ? "var(--clay)" : "inherit" } }, res.headline + ` (${res.reportCount} báo cáo, ${since.slice(8,10)}/${since.slice(5,7)}–${today.slice(8,10)}/${today.slice(5,7)})`),
+      res.list.length===0 ? h("div", { style:{ fontSize:12.5, color:"var(--pine)" } }, "Không có đầu việc bị bỏ sót trong kỳ.") :
+      h("div", { style:{ overflowX:"auto" } }, h("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5 } },
+        h("thead", null, h("tr", null, ["Mức","Đầu việc","Vai trò","Bỏ sót","Nhà thuốc","Tái diễn","Khắc phục",""].map(x => h("th", { key:x, style:{ textAlign:"left", padding:"4px 6px", borderBottom:"1px solid var(--line)", color:"var(--inkSoft)", fontSize:11.5 } }, x)))),
+        h("tbody", null, res.list.slice(0, 40).map(x => h("tr", { key:x.id+x.role },
+          h("td", { style:{ padding:"4px 6px", borderBottom:"1px solid var(--line)" } }, h("span", { className:"sevBadge " + tone(x.sev.tone) }, x.sev.label)),
+          h("td", { style:{ padding:"4px 6px", borderBottom:"1px solid var(--line)" } }, x.label),
+          h("td", { style:{ padding:"4px 6px", borderBottom:"1px solid var(--line)", fontSize:11.5 } }, x.role),
+          h("td", { style:{ padding:"4px 6px", borderBottom:"1px solid var(--line)", whiteSpace:"nowrap" } }, `${x.misses}/${x.checks} (${Math.round(x.missRate*100)}%)`),
+          h("td", { style:{ padding:"4px 6px", borderBottom:"1px solid var(--line)", fontSize:11.5 } }, Object.entries(x.shops).map(([s, n]) => `${shopLabel(s)}: ${n}`).join(", ")),
+          h("td", { style:{ padding:"4px 6px", borderBottom:"1px solid var(--line)", fontSize:11.5, color: x.recurringShops.length ? "var(--clay)" : "var(--inkSoft)", fontWeight: x.recurringShops.length ? 700 : 400 } }, x.recurringShops.length ? x.recurringShops.map(shopLabel).join(", ") : "—"),
+          h("td", { style:{ padding:"4px 6px", borderBottom:"1px solid var(--line)", fontSize:11.5 } }, x.fixStatus.length ? x.fixStatus.map(f => `${shopLabel(f.shop)}: ${f.label}`).join("; ") : "—"),
+          h("td", { style:{ padding:"4px 6px", borderBottom:"1px solid var(--line)" } }, (isAdmin || giver) && (x.severity==="critical" || x.recurringShops.length>0) && h("button", { className:"btn btnGhost", style:{ fontSize:11, padding:"2px 8px" }, onClick:()=>{
+            const sh = (x.recurringShops[0] || Object.keys(x.shops).sort((a, b) => x.shops[b]-x.shops[a])[0]);
+            setComposer({ heading:"Giao việc khắc phục lỗi checklist", module:"Ops", shopOnly:true, shop:sh, deadline:addDays(today, x.severity==="critical" ? 1 : 3), giver,
+              title:`Khắc phục: "${x.label}" bị bỏ sót ${x.shops[sh]} lần — ${shopLabel(sh)}`,
+              mota:`Mức: ${x.sev.label}. Đầu việc checklist "${x.label}" (vai trò ${x.role}) bị bỏ sót ${x.shops[sh]} lần trong ${days} ngày tại ${shopLabel(sh)}.\nYêu cầu: tìm nguyên nhân (quy trình / nguồn lực / kỹ năng), khắc phục, gửi bằng chứng (ảnh / mô tả). Hệ thống sẽ theo dõi đầu việc này sau khi khắc phục để xác minh không tái diễn.`,
+              extra:{ sourceScreen:"checklistQuality", checklistItemId:x.id, checklistItemLabel:x.label } }); } }, "Tạo việc khắc phục"))))))),
+      h("div", { style:{ fontSize:11, color:"var(--inkSoft)", marginTop:6 } }, "Mức nghiêm trọng lấy theo mẫu checklist (nếu quản lý đã gán) hoặc theo từ khoá (GPP, hạn dùng, bảo quản, thuốc kê đơn, tiền… = nghiêm trọng). Chỉ tính báo cáo đã nộp; nhân viên có ca nhưng không nộp báo cáo xem ở bảng bên dưới.")),
+    composer && h(TaskComposer360, { preset:composer, onClose:()=>setComposer(null) }));
+}
 function DailyChecklistView({ isAdmin, myStaff }){
   const [staff, setStaff] = useState([]);
   const [templates, setTemplates] = useState(DEFAULT_DAILY_CHECKLISTS);
@@ -2052,7 +2159,9 @@ function DailyChecklistView({ isAdmin, myStaff }){
         adminOpen ? "▲ Ẩn checklist nhân viên" : (isAdmin ? "▾ Xem báo cáo tất cả nhà thuốc" : `▾ Xem checklist nhân viên — ${myStaff.shop}`)),
       isAdmin && React.createElement("button", { key:"tpl", type:"button", className:"btn", onClick:()=>setShowTplEditor(true) }, "Chỉnh checklist theo vai trò"),
     ]),
-    adminOpen && React.createElement(React.Fragment, null, [ adminMetrics, shiftReminderBanner, noWorkRegNotice, adminFilterRow, adminTable ]),
+    // 14/10/2026 (P2): lỗi checklist theo mức nghiêm trọng & tái diễn (không để % tổng che lỗi nặng)
+    adminOpen && React.createElement(ChecklistQualityPanel, { key:"clq", templates, staff, scopeShop: isShopManager && myStaff ? myStaff.shop : null, isAdmin, giver: isShopManager ? myStaff : null }),
+    adminOpen && React.createElement(React.Fragment, { key:"adm" }, [ adminMetrics, shiftReminderBanner, noWorkRegNotice, adminFilterRow, adminTable ]),
   ]);
 
   return React.createElement(React.Fragment, null, [
