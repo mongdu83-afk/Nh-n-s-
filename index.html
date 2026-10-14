@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261014-6";
+window.__APP_BUILD = "20261014-8";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -9057,6 +9057,13 @@ function TtsCommBlock({ comm }){
     (comm.strengths||[]).length > 0 && h("div", { style:{ marginTop:3 } }, h("b", { style:{ color:CL360.good } }, "Tốt: "), comm.strengths.join(" · ")),
     (comm.fixes||[]).length > 0 && h("ul", { style:{ margin:"3px 0 0", paddingLeft:18 } }, comm.fixes.map((f,i) => h("li", { key:i }, f.luot ? `Lượt ${f.luot}: ` : "", f.vanDe, f.goiY ? h("span", { style:{ color:"#3730A3" } }, ` → nên nói: "${f.goiY}"`) : null))));
 }
+function TtsReplayBtn({ hireId, id }){
+  const h = React.createElement; const [b, setB] = useState(false); const [e, setE] = useState("");
+  async function play(){ setB(true); setE(""); try{ const r = await pbCall("practiceVoiceClip", { hireId, id, n:1 }, 60000); if(r.ok===false) throw new Error(r.error);
+      const bin = atob(r.audio); const u8 = new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) u8[i] = bin.charCodeAt(i); new Audio(URL.createObjectURL(new Blob([u8], { type:r.mime || "audio/webm" }))).play().catch(()=>setE("Trình duyệt không phát được file này.")); }
+    catch(er){ setE(er.message||String(er)); } setB(false); }
+  return h("div", { style:{ marginTop:8 } }, h("button", { className:"btn", disabled:b, onClick:play }, b ? "Đang tải…" : "🎧 Nghe lại cuộc gọi"), e && h("span", { style:{ fontSize:12, color:CL360.bad, marginLeft:8 } }, e));
+}
 function TtsVoiceDetail({ it, hireId }){
   const h = React.createElement; const [busy, setBusy] = useState(null); const [err, setErr] = useState(null);
   const fb = it.feedback || {};
@@ -9068,10 +9075,10 @@ function TtsVoiceDetail({ it, hireId }){
     fb.parts && h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", marginTop:8 } }, h("b", null, "Điểm từng phần: "), ttsPartsText(fb.parts)),
     fb.diagnosis && h("div", { style:{ fontSize:13, marginTop:4 } }, h("b", null, "Chẩn đoán: "), TTS_DX_LABEL[fb.diagnosis.muc] || fb.diagnosis.muc, fb.diagnosis.nv ? ` · nhân viên nhận định: "${fb.diagnosis.nv}"` : "", fb.diagnosis.nhanXet ? " — " + fb.diagnosis.nhanXet : ""),
     fb.comm && h(TtsCommBlock, { comm:fb.comm }),
-    (it.voiceClips||[]).length > 0 && h("div", null, secT("Ghi âm của nhân viên"),
-      it.voiceClips.map(v => h("div", { key:v.n, style:{ display:"flex", gap:8, alignItems:"center", fontSize:12.5, marginBottom:4 } },
-        v.has ? h("button", { className:"btn", disabled:busy===v.n, style:{ padding:"2px 9px", fontSize:12 }, onClick:()=>play(v.n) }, busy===v.n ? "…" : "▶ Lượt " + v.n) : h("span", { style:{ color:"var(--inkSoft)" } }, `Lượt ${v.n} (đã xoá file)`),
-        h("span", null, v.text))),
+    (it.voiceClips||[]).length > 0 && h("div", null, secT(it.voiceClips.length === 1 && it.mode === "voice" && it.liveSec != null ? "Ghi âm cuộc gọi" : "Ghi âm của nhân viên"),
+      it.voiceClips.map(v => h("div", { key:v.n, style:{ display:"flex", gap:8, alignItems:"flex-start", fontSize:12.5, marginBottom:4 } },
+        v.has ? h("button", { className:"btn btnPrimary", disabled:busy===v.n, style:{ padding:"4px 12px", fontSize:12.5, whiteSpace:"nowrap" }, onClick:()=>play(v.n) }, busy===v.n ? "Đang tải…" : (it.voiceClips.length === 1 ? "🎧 Nghe lại cuộc gọi" : "▶ Lượt " + v.n)) : h("span", { style:{ color:"var(--inkSoft)" } }, `Lượt ${v.n} (file đã tự xoá sau thời hạn lưu)`),
+        it.voiceClips.length > 1 && h("span", null, v.text))),
       err && h("div", { style:{ color:CL360.bad, fontSize:12 } }, err)));
 }
 function PracticeDrugReview({ it, isAdmin, hireId, onChanged }){
@@ -9125,6 +9132,7 @@ function PracticeHistoryModal({ row, onClose, onChanged }){
   const [isAdmin, setIsAdmin] = useState(false);
   const [picked, setPicked] = useState([]);
   const [delBusy, setDelBusy] = useState(false);
+  const [regBusy, setRegBusy] = useState(null);
   async function reload(){ try{ const r = await pbCall("practiceList", { hireId:row.id, limit:200 }, 60000); if(r.ok===false) throw new Error(r.error); setList(r.rows||[]); setIsAdmin(!!r.isAdmin); } catch(e){ setErr(e.message||String(e)); } }
   useEffect(()=>{ reload(); }, []);
   // 5/10/2026: quản lý xoá bài luyện test nhầm
@@ -9197,6 +9205,8 @@ function PracticeHistoryModal({ row, onClose, onChanged }){
             h("div", { style:{ fontSize:12, color:"var(--inkSoft)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" } },
               `${PH_MODE[x.mode]||x.mode} · ${fmtT(x.createdAt)}${(x.mode==="chat"||x.mode==="voice") ? ` · ${x.turns} lượt` : ""}${x.commScore!=null ? ` · giao tiếp ${x.commScore}` : ""}${x.status==="open" ? " · chưa nộp" : x.status==="ungraded" ? " · chưa chấm được" : ""}${x.khach ? " · " + x.khach : ""}`),
             (x.errors||[]).length>0 && h("div", { style:{ fontSize:11.5, color:CL360.bad } }, x.errors.map(e=>e.label).join(" · "))),
+          x.status==="ungraded" && h("button", { className:"btn btnPrimary", disabled:!!regBusy, style:{ padding:"3px 8px", fontSize:12 }, onClick:async e=>{ e.stopPropagation(); setRegBusy(x.id); setErr(null);
+              try{ const r = await pbCall("practiceSubmit", { hireId:row.id, id:x.id }, 240000); if(r.ok===false) throw new Error(r.error); if(!r.graded) setErr("Máy chấm vẫn đang quá tải — thử lại sau ít phút."); await reload(); onChanged && onChanged(); } catch(er){ setErr(er.message||String(er)); } setRegBusy(null); } }, regBusy===x.id ? "Đang chấm…" : "Chấm lại"),
           isAdmin && h("button", { className:"btn", title:"Xoá bài này", disabled:delBusy, style:{ padding:"3px 8px", fontSize:12, color:CL360.bad }, onClick:e=>{ e.stopPropagation(); del([x.id]); } }, "Xoá"),
           h("span", { style:{ color:"var(--inkSoft)" } }, "›")))),
       sel && (busy ? h("div", { style:{ fontSize:13, color:"var(--inkSoft)", marginTop:10 } }, "Đang tải bài…") : item && h("div", { style:{ marginTop:10 } }, detail(item),
@@ -9223,7 +9233,7 @@ function TtsLiveCall({ row, cur, onDone, onFallback }){
   function playPcm(b64){ const r = R.current; const ctx = r.ctx; if(!ctx) return;
     const bin = atob(b64); const n = bin.length >> 1; const buf = ctx.createBuffer(1, n, 24000); const ch = buf.getChannelData(0);
     for(let i=0;i<n;i++){ let v = bin.charCodeAt(i*2) | (bin.charCodeAt(i*2+1) << 8); if(v >= 0x8000) v -= 0x10000; ch[i] = v / 0x8000; }
-    const s = ctx.createBufferSource(); s.buffer = buf; s.connect(ctx.destination); const t = Math.max(ctx.currentTime + 0.03, r.nextT || 0); s.start(t); r.nextT = t + buf.duration;
+    const s = ctx.createBufferSource(); s.buffer = buf; s.connect(ctx.destination); if(r.mixDest) s.connect(r.mixDest); const t = Math.max(ctx.currentTime + 0.03, r.nextT || 0); s.start(t); r.nextT = t + buf.duration;
     r.srcs = (r.srcs || []).concat([s]); r.playing = true; r.lastAct = Date.now(); setSpeaking("kh");
     s.onended = () => { r.srcs = (r.srcs || []).filter(x => x !== s); if(!r.srcs.length){ r.playing = false; setSpeaking(""); } }; }
   function cleanup(){ const r = R.current; clearInterval(r.timer); try{ r.ws && r.ws.readyState <= 1 && r.ws.close(); }catch(e){} try{ r.node && r.node.disconnect(); }catch(e){} try{ r.stream && r.stream.getTracks().forEach(t => t.stop()); }catch(e){} stopPlayback(); try{ r.ctx && r.ctx.close(); }catch(e){} }
@@ -9238,7 +9248,9 @@ function TtsLiveCall({ row, cur, onDone, onFallback }){
       r.tk = tk; setMaxSec(tk.maxSec || 480);
       // 3) Ghi âm giọng nhân viên để chấm giao tiếp
       try{ const mime = ["audio/webm;codecs=opus","audio/webm","audio/mp4"].find(t => window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || "";
-        r.rec = new MediaRecorder(r.stream, mime ? { mimeType:mime, audioBitsPerSecond:32000 } : undefined); r.chunks = []; r.rec.ondataavailable = e => { if(e.data && e.data.size) r.chunks.push(e.data); }; }catch(e){ r.rec = null; }
+        // ghi CẢ cuộc gọi (giọng nhân viên + giọng khách) để quản lý nghe lại
+        let recStream = r.stream; try{ r.mixDest = r.ctx.createMediaStreamDestination(); r.ctx.createMediaStreamSource(r.stream).connect(r.mixDest); recStream = r.mixDest.stream; }catch(e){ r.mixDest = null; }
+        r.rec = new MediaRecorder(recStream, mime ? { mimeType:mime, audioBitsPerSecond:32000 } : undefined); r.chunks = []; r.rec.ondataavailable = e => { if(e.data && e.data.size) r.chunks.push(e.data); }; }catch(e){ r.rec = null; }
       // 4) WebSocket
       const ws = r.ws = new WebSocket(tk.wsUrl);
       ws.onopen = () => { ws.send(JSON.stringify({ setup: tk.setup })); };
@@ -9435,13 +9447,16 @@ function TtsPracticeModal({ row, onClose, onChanged, groups }){
                 res.parts && h("span", { style:{ fontSize:12, color:"var(--inkSoft)" } }, ttsPartsText(res.parts))),
               res.diagnosis && h("div", { style:{ fontSize:13, marginTop:6 } }, h("b", null, "Chẩn đoán: "), TTS_DX_LABEL[res.diagnosis.muc] || res.diagnosis.muc, res.diagnosis.nhanXet ? " — " + res.diagnosis.nhanXet : ""),
               res.comm && h(TtsCommBlock, { comm:res.comm }),
+              mode==="voice" && h(TtsReplayBtn, { hireId:row.id, id:cur.id }),
               (res.good||[]).length>0 && h("div", { style:{ fontSize:13, marginTop:6 } }, h("b", { style:{ color:CL360.good } }, "Làm tốt: "), res.good.join(" · ")),
               (res.missed||[]).length>0 && h("div", { style:{ marginTop:6 } }, h("b", { style:{ fontSize:13, color:"#B45309" } }, "Câu cần hỏi mà chưa hỏi:"),
                 h("ul", { style:{ margin:"3px 0 0", paddingLeft:18, fontSize:13, lineHeight:1.5 } }, res.missed.map((x,i)=>h("li", { key:i }, x)))),
               (res.fix||[]).length>0 && h("ul", { style:{ margin:"6px 0 0", paddingLeft:18, fontSize:13, lineHeight:1.55, color:"#7F1D1D" } }, res.fix.map((x,i)=>h("li", { key:i }, x))),
               (res.review||[]).length>0 && h("div", { style:{ marginTop:6, fontSize:12.5, color:"#C2410C", background:"#FFF7ED", border:"1px solid #FED7AA", borderRadius:8, padding:"6px 8px" } }, `Liều ${res.review.map(r=>r.ten).join(", ")}: chưa đủ căn cứ để kết luận sai — đã chuyển dược sĩ xem lại, CHƯA trừ điểm.`),
               res.model && h("div", { style:{ fontSize:12.8, marginTop:8, background:"#F0FDF4", borderRadius:8, padding:"7px 10px", whiteSpace:"pre-line" } }, h("b", null, "Đáp án: "), res.model))
-            : h("div", { style:{ fontSize:12.8, color:CL360.warn, background:"#FFF7ED", borderRadius:8, padding:"8px 10px" } }, "AI chưa chấm được lúc này — tự đối chiếu đáp án bên dưới, bài này không tính điểm."),
+            : h("div", { style:{ fontSize:12.8, color:CL360.warn, background:"#FFF7ED", borderRadius:8, padding:"8px 10px", display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" } },
+                h("span", { style:{ flex:1, minWidth:200 } }, "Máy chấm đang quá tải, chưa chấm được — bài đã được lưu. Bấm \"Chấm lại\" sau ít phút (không phải làm lại bài)."),
+                h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:()=>{ setRes(null); submit(); } }, busy==="sub" ? "Đang chấm…" : "Chấm lại")),
           res.caseKey && h("details", { style:{ marginTop:10 }, open: !res.graded }, h("summary", { style:{ cursor:"pointer", fontWeight:700, fontSize:13 } }, "Xem hồ sơ khách & đáp án chuẩn (dược sĩ đã duyệt)"),
             h("div", { style:{ fontSize:12.8, lineHeight:1.6, marginTop:6, border:"1px solid var(--line)", borderRadius:8, padding:"8px 10px" } },
               (res.caseKey.thongTinAn||[]).length>0 && h("div", null, h("b", null, "Khách sẽ nói khi được hỏi: "), res.caseKey.thongTinAn.map(t => `${t.chuDe}: ${t.traLoi}`).join(" · ")),
