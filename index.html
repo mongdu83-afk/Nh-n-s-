@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261015-1";
+window.__APP_BUILD = "20261015-2";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -1499,8 +1499,6 @@ function ChecklistTemplateEditor({ roles, templates, initialRole, onSave, onClos
   const [error, setError] = useState(null);
   useEffect(()=>{ setItems(templates[role] || []); setNewLabel(""); setError(null); }, [role]);
   function updateLabel(id, label){ setItems(items.map(it => it.id===id ? { ...it, label } : it)); }
-  // 14/10/2026 (P2): mức nghiêm trọng của đầu việc — để trống = tự xếp theo từ khoá (clqSeverity)
-  function updateSeverity(id, severity){ setItems(items.map(it => { if(it.id!==id) return it; const n = { ...it }; if(severity) n.severity = severity; else delete n.severity; return n; })); }
   function removeItem(id){ setItems(items.filter(it => it.id!==id)); }
   function addItem(){ if(!newLabel.trim()) return; setItems([...items, { id:uid(), label:newLabel.trim() }]); setNewLabel(""); }
   async function save(){
@@ -1519,8 +1517,6 @@ function ChecklistTemplateEditor({ roles, templates, initialRole, onSave, onClos
       React.createElement("div", { key:"list", style:{ display:"flex", flexDirection:"column", gap:8, marginBottom:12, maxHeight:360, overflowY:"auto" } }, items.map(it =>
         React.createElement("div", { key:it.id, style:{ display:"flex", gap:8, alignItems:"flex-start" } }, [
           React.createElement(AutoGrowTextarea, { key:"i", value:it.label, onChange:e=>updateLabel(it.id, e.target.value), style:{ flex:1, padding:"7px 9px", border:"1px solid var(--line)", borderRadius:7, fontSize:12.5, resize:"none", fontFamily:"inherit" } }),
-          React.createElement("select", { key:"sev", value:it.severity || "", onChange:e=>updateSeverity(it.id, e.target.value), title:"Mức nghiêm trọng khi bỏ sót", style:{ padding:"6px 4px", fontSize:11.5, border:"1px solid var(--line)", borderRadius:7, flexShrink:0 } },
-            [React.createElement("option", { key:"a", value:"" }, `Tự động (${CLQ_SEV[clqSeverity({ label:it.label })].label})`), ...Object.entries(CLQ_SEV).map(([k, v]) => React.createElement("option", { key:k, value:k }, v.label))]),
           React.createElement("button", { key:"d", type:"button", className:"btn btnDanger", style:{ padding:"6px 9px", fontSize:11.5, flexShrink:0 }, onClick:()=>removeItem(it.id) }, "Xoá"),
         ])
       )),
@@ -1676,109 +1672,6 @@ function summarizeShiftLabel(regsForDay){
   return labels.length ? labels.join(", ") : "Có ca (chưa rõ khung giờ)";
 }
 
-// ===== 14/10/2026 (đề xuất cải tiến — P2 Checklist & sức khoẻ nhà thuốc): LỖI CHECKLIST THEO MỨC NGHIÊM TRỌNG & TÁI DIỄN (CLQ) =====
-// "Lỗi" = đầu việc trong checklist chuẩn của vai trò KHÔNG được tick trong báo cáo ngày đã nộp. Mức nghiêm trọng: lấy từ mẫu
-// (item.severity) nếu quản lý đã gán, không thì xếp theo từ khoá (GPP, hạn dùng, bảo quản, thuốc kê đơn, tiền… = nghiêm trọng).
-// Tái diễn = bỏ sót ≥ 3 ngày trong kỳ tại cùng nhà thuốc. Có việc khắc phục đã xong nhưng sau đó vẫn bỏ sót → "tái diễn sau
-// khắc phục" (đã khắc phục ≠ đã xác minh không tái diễn). Điểm % tổng không che lỗi nghiêm trọng.
-// CLQ-ENGINE-BEGIN
-const CLQ_SEV = { critical:{ label:"Nghiêm trọng", rank:0, tone:"red" }, major:{ label:"Trung bình", rank:1, tone:"orange" }, minor:{ label:"Nhẹ", rank:2, tone:"yellow" } };
-function clqStrip(s){ return String(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[đĐ]/g,"d").toLowerCase(); }
-function clqSeverity(item){
-  if(item && CLQ_SEV[item.severity]) return item.severity;
-  const t = clqStrip(item && item.label);
-  if(/\bgpp\b|han su dung|han dung|can date|bao quan|nhiet do|do am|ke don|thuoc doc|gay nghien|tien|ket|doi soat|an toan|phong chay|hoa don/.test(t)) return "critical";
-  if(/dong phuc|bang ten|ve sinh|don dep|sap xep|ghi chu|dung gio/.test(t)) return "minor";
-  return "major";
-}
-function clqAnalyze(I){
-  const tpl = I.templatesByRole || {}, staffById = I.staffById || {};
-  const items = {};
-  const reports = (I.reports||[]).filter(r => r && r.ngay >= I.since && r.ngay <= I.today);
-  reports.forEach(r => {
-    const st = staffById[r.staffId] || {};
-    const role = r.role || st.role, shop = r.shop || st.shop;
-    if(I.shop && shop!==I.shop) return;
-    (tpl[role] || []).forEach(it => {
-      const k = it.id;
-      const o = items[k] || (items[k] = { id:k, label:it.label, role, severity:clqSeverity(it), checks:0, misses:0, missDays:{}, shops:{} });
-      o.checks++;
-      if(!(r.doneIds && r.doneIds[k])){
-        o.misses++;
-        (o.missDays[shop] = o.missDays[shop] || new Set()).add(r.ngay);
-        o.shops[shop] = (o.shops[shop]||0) + 1;
-      }
-    });
-  });
-  const fixes = I.fixTasks || [];
-  const list = Object.values(items).filter(o => o.misses>0).map(o => {
-    const recurringShops = Object.entries(o.missDays).filter(([, s]) => s.size >= 3).map(([sh]) => sh);
-    const fixed = fixes.filter(t => t.checklistItemId===o.id);
-    const fixStatus = Object.keys(o.missDays).map(sh => {
-      const f = fixed.filter(t => t.shop===sh).sort((a, b) => String(b.ngayHoanThanh||"").localeCompare(String(a.ngayHoanThanh||"")))[0];
-      if(!f) return null;
-      if(f.trangThai!=="Đã hoàn thành") return { shop:sh, state:"fixing", label:"Đang khắc phục" };
-      const after = Array.from(o.missDays[sh]).filter(d => d > String(f.ngayHoanThanh).slice(0,10));
-      return after.length ? { shop:sh, state:"recurred", label:`Tái diễn sau khắc phục (${after.length} ngày)` } : { shop:sh, state:"fixed", label:"Đã khắc phục — chưa thấy tái diễn" };
-    }).filter(Boolean);
-    return { ...o, missRate:o.misses/o.checks, recurringShops, fixStatus, missDays:undefined, sev:CLQ_SEV[o.severity] };
-  }).sort((a, b) => a.sev.rank - b.sev.rank || b.misses - a.misses);
-  const critical = list.filter(x => x.severity==="critical");
-  const totalChecks = Object.values(items).reduce((a, o) => a + o.checks, 0), totalMiss = Object.values(items).reduce((a, o) => a + o.misses, 0);
-  return { list, critical, reportCount:reports.length, completion: totalChecks ? 1 - totalMiss/totalChecks : null,
-    headline: !reports.length ? "Chưa có báo cáo checklist trong kỳ — chưa đủ dữ liệu để kết luận."
-      : `Hoàn thành ${Math.round((1 - totalMiss/totalChecks)*100)}% đầu việc, nhưng có ${critical.reduce((a, x) => a + x.misses, 0)} lần bỏ sót việc NGHIÊM TRỌNG ở ${critical.length} đầu việc.` };
-}
-// CLQ-ENGINE-END
-function ChecklistQualityPanel({ templates, staff, scopeShop, isAdmin, giver }){
-  const h = React.createElement;
-  const [days, setDays] = useState(14);
-  const [data, setData] = useState(null);
-  const [fixTasks, setFixTasks] = useState([]);
-  const [composer, setComposer] = useState(null);
-  const [shopF, setShopF] = useState(scopeShop || "Tất cả");
-  const today = todayISO(), since = addDays(today, -(days-1));
-  async function load(){
-    setData("loading");
-    try{
-      const snap = await db.collection("dailyReports").where("ngay", ">=", since).get();
-      setData(snap.docs.map(d => d.data()));
-    }catch(e){ logSystemError("checklistQuality", e); setData({ error:e.message }); }
-  }
-  useEffect(()=> db.collection("tasks").where("sourceScreen", "==", "checklistQuality").onSnapshot(s => setFixTasks(s.docs.map(d => d.data())), err => logSystemError("checklistQualityTasks", err)), []);
-  const staffById = {}; staff.forEach(s => { staffById[s.id] = s; });
-  const res = Array.isArray(data) ? clqAnalyze({ reports:data, templatesByRole:templates, staffById, since, today, shop: shopF==="Tất cả" ? null : shopF, fixTasks }) : null;
-  const tone = (t) => ({ red:"sev-critical", orange:"sev-warning", yellow:"sev-monitor", green:"sev-healthy" })[t] || "sev-neutral";
-  return h("div", { className:"card", style:{ marginBottom:16 } },
-    h("div", { style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", marginBottom:6 } },
-      h("b", { style:{ fontSize:15 } }, "Lỗi checklist theo mức nghiêm trọng & tái diễn"),
-      h("select", { value:days, onChange:e=>{ setDays(Number(e.target.value)); setData(null); }, style:{ fontSize:12, padding:"3px 6px" } }, [7,14,30].map(n => h("option", { key:n, value:n }, `${n} ngày`))),
-      !scopeShop && h("select", { value:shopF, onChange:e=>setShopF(e.target.value), style:{ fontSize:12, padding:"3px 6px" } }, ["Tất cả", ...DEFAULT_SHOPS].map(s => h("option", { key:s, value:s }, s))),
-      h("button", { className:"btn btnPrimary", style:{ fontSize:12, padding:"4px 10px" }, disabled:data==="loading", onClick:load }, data==="loading" ? "Đang phân tích…" : (data ? "↻ Phân tích lại" : "Phân tích"))),
-    !data && h("div", { style:{ fontSize:12, color:"var(--inkSoft)" } }, "Bấm Phân tích để xem đầu việc hay bị bỏ sót, xếp theo mức nghiêm trọng (không chỉ tỷ lệ % tick)."),
-    data && data.error && h("div", { style:{ fontSize:12, color:"var(--clay)" } }, "Lỗi: " + data.error),
-    res && h("div", null,
-      h("div", { style:{ fontSize:12.5, fontWeight:600, marginBottom:8, color: res.critical.length ? "var(--clay)" : "inherit" } }, res.headline + ` (${res.reportCount} báo cáo, ${since.slice(8,10)}/${since.slice(5,7)}–${today.slice(8,10)}/${today.slice(5,7)})`),
-      res.list.length===0 ? h("div", { style:{ fontSize:12.5, color:"var(--pine)" } }, "Không có đầu việc bị bỏ sót trong kỳ.") :
-      h("div", { style:{ overflowX:"auto" } }, h("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5 } },
-        h("thead", null, h("tr", null, ["Mức","Đầu việc","Vai trò","Bỏ sót","Nhà thuốc","Tái diễn","Khắc phục",""].map(x => h("th", { key:x, style:{ textAlign:"left", padding:"4px 6px", borderBottom:"1px solid var(--line)", color:"var(--inkSoft)", fontSize:11.5 } }, x)))),
-        h("tbody", null, res.list.slice(0, 40).map(x => h("tr", { key:x.id+x.role },
-          h("td", { style:{ padding:"4px 6px", borderBottom:"1px solid var(--line)" } }, h("span", { className:"sevBadge " + tone(x.sev.tone) }, x.sev.label)),
-          h("td", { style:{ padding:"4px 6px", borderBottom:"1px solid var(--line)" } }, x.label),
-          h("td", { style:{ padding:"4px 6px", borderBottom:"1px solid var(--line)", fontSize:11.5 } }, x.role),
-          h("td", { style:{ padding:"4px 6px", borderBottom:"1px solid var(--line)", whiteSpace:"nowrap" } }, `${x.misses}/${x.checks} (${Math.round(x.missRate*100)}%)`),
-          h("td", { style:{ padding:"4px 6px", borderBottom:"1px solid var(--line)", fontSize:11.5 } }, Object.entries(x.shops).map(([s, n]) => `${shopLabel(s)}: ${n}`).join(", ")),
-          h("td", { style:{ padding:"4px 6px", borderBottom:"1px solid var(--line)", fontSize:11.5, color: x.recurringShops.length ? "var(--clay)" : "var(--inkSoft)", fontWeight: x.recurringShops.length ? 700 : 400 } }, x.recurringShops.length ? x.recurringShops.map(shopLabel).join(", ") : "—"),
-          h("td", { style:{ padding:"4px 6px", borderBottom:"1px solid var(--line)", fontSize:11.5 } }, x.fixStatus.length ? x.fixStatus.map(f => `${shopLabel(f.shop)}: ${f.label}`).join("; ") : "—"),
-          h("td", { style:{ padding:"4px 6px", borderBottom:"1px solid var(--line)" } }, (isAdmin || giver) && (x.severity==="critical" || x.recurringShops.length>0) && h("button", { className:"btn btnGhost", style:{ fontSize:11, padding:"2px 8px" }, onClick:()=>{
-            const sh = (x.recurringShops[0] || Object.keys(x.shops).sort((a, b) => x.shops[b]-x.shops[a])[0]);
-            setComposer({ heading:"Giao việc khắc phục lỗi checklist", module:"Ops", shopOnly:true, shop:sh, deadline:addDays(today, x.severity==="critical" ? 1 : 3), giver,
-              title:`Khắc phục: "${x.label}" bị bỏ sót ${x.shops[sh]} lần — ${shopLabel(sh)}`,
-              mota:`Mức: ${x.sev.label}. Đầu việc checklist "${x.label}" (vai trò ${x.role}) bị bỏ sót ${x.shops[sh]} lần trong ${days} ngày tại ${shopLabel(sh)}.\nYêu cầu: tìm nguyên nhân (quy trình / nguồn lực / kỹ năng), khắc phục, gửi bằng chứng (ảnh / mô tả). Hệ thống sẽ theo dõi đầu việc này sau khi khắc phục để xác minh không tái diễn.`,
-              extra:{ sourceScreen:"checklistQuality", checklistItemId:x.id, checklistItemLabel:x.label } }); } }, "Tạo việc khắc phục"))))))),
-      h("div", { style:{ fontSize:11, color:"var(--inkSoft)", marginTop:6 } }, "Mức nghiêm trọng lấy theo mẫu checklist (nếu quản lý đã gán) hoặc theo từ khoá (GPP, hạn dùng, bảo quản, thuốc kê đơn, tiền… = nghiêm trọng). Chỉ tính báo cáo đã nộp; nhân viên có ca nhưng không nộp báo cáo xem ở bảng bên dưới.")),
-    composer && h(TaskComposer360, { preset:composer, onClose:()=>setComposer(null) }));
-}
 function DailyChecklistView({ isAdmin, myStaff }){
   const [staff, setStaff] = useState([]);
   const [templates, setTemplates] = useState(DEFAULT_DAILY_CHECKLISTS);
@@ -2159,9 +2052,7 @@ function DailyChecklistView({ isAdmin, myStaff }){
         adminOpen ? "▲ Ẩn checklist nhân viên" : (isAdmin ? "▾ Xem báo cáo tất cả nhà thuốc" : `▾ Xem checklist nhân viên — ${myStaff.shop}`)),
       isAdmin && React.createElement("button", { key:"tpl", type:"button", className:"btn", onClick:()=>setShowTplEditor(true) }, "Chỉnh checklist theo vai trò"),
     ]),
-    // 14/10/2026 (P2): lỗi checklist theo mức nghiêm trọng & tái diễn (không để % tổng che lỗi nặng)
-    adminOpen && React.createElement(ChecklistQualityPanel, { key:"clq", templates, staff, scopeShop: isShopManager && myStaff ? myStaff.shop : null, isAdmin, giver: isShopManager ? myStaff : null }),
-    adminOpen && React.createElement(React.Fragment, { key:"adm" }, [ adminMetrics, shiftReminderBanner, noWorkRegNotice, adminFilterRow, adminTable ]),
+    adminOpen && React.createElement(React.Fragment, null, [ adminMetrics, shiftReminderBanner, noWorkRegNotice, adminFilterRow, adminTable ]),
   ]);
 
   return React.createElement(React.Fragment, null, [
@@ -2975,8 +2866,6 @@ function DailyKpiPaceBanner({ myStaff, onOpen }){
         React.createElement("div", { key:"n" }, mine.kpiPctProjected!=null ? (mine.kpiPctProjected>=KPI_PASS_PCT ? "Đang kịp mốc 85%" : "Chưa kịp mốc 85%") : `Lũy kế ${mine.kpiPct!=null?Math.round(mine.kpiPct*100):"—"}%`),
       ]),
     ]),
-    // 14/10/2026 (P0 KPI): dự báo cuối kỳ phải nêu giả định và thời gian còn lại
-    React.createElement("div", { key:"as", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8 } }, kbpAssumption(mine, todayISO())),
     React.createElement("button", { key:"b", type:"button", className:"btn btnGhost", style:{padding:"7px 13px",fontSize:12.5}, onClick:onOpen }, "Xem chi tiết KPI"),
   ]);
 }
@@ -5243,87 +5132,6 @@ function paceProjected(p){
   const kpi = p.kpiPctProjected!=null ? p.kpiPctProjected : (p.kpiPct!=null ? p.kpiPct : null);
   return { ds: ds==null ? null : ds, kpi };
 }
-// ===== 14/10/2026 (đề xuất cải tiến — P0 KPI): KẾ HOẠCH BÙ KPI TỪNG NHÂN VIÊN + GIẢ ĐỊNH DỰ BÁO (KBP) =====
-// Đầu vào: 1 bản ghi dailyKpiPace (doanhSoTarget/Actual, hesoTarget/Actual, workedBefore, shiftToday, *Projected).
-// Tính theo NGÀY LÀM VIỆC (trừ ngày nghỉ còn lại trong 4 ngày/tháng — cùng quy tắc kpiMakeProjector), nêu rõ giả định,
-// mức thiếu, cần bao nhiêu mỗi ngày làm còn lại, chỉ số yếu nhất (có số chứng minh) và gợi ý huấn luyện theo chỉ số đó.
-// Không quy kết thái độ / năng lực. Khối tự chứa để tests/kpiRecovery.test.js chạy bằng Node.
-// KBP-ENGINE-BEGIN
-function kbpAdd(iso, n){ const [y,m,d] = String(iso).split("-").map(Number); return new Date(Date.UTC(y, m-1, d+n)).toISOString().slice(0,10); }
-function kbpMoney(v){ if(v==null || !Number.isFinite(Number(v))) return "—"; const a = Math.abs(v); return a>=1e6 ? (v/1e6).toFixed(1).replace(".", ",")+" tr" : a>=1e3 ? Math.round(v/1e3)+"k" : Math.round(v)+"đ"; }
-function kbpPct(r){ return r==null || !Number.isFinite(r) ? "—" : Math.round(r*100) + "%"; }
-function kbpWorkdays(p, today, offDays){
-  const off = offDays==null ? 4 : offDays;
-  const thang = p.thang || String(p.date || today).slice(0,7);
-  const D = new Date(Date.UTC(Number(thang.slice(0,4)), Number(thang.slice(5,7)), 0)).getUTCDate();
-  const inMonth = today.slice(0,7)===thang;
-  const day = inMonth ? Number(today.slice(8,10)) : D + 1;
-  const daysBefore = day - 1;
-  const known = p.workedBefore!=null && Number.isFinite(Number(p.workedBefore));
-  const workedBefore = known ? Math.min(daysBefore, Math.max(Number(p.workedBefore), daysBefore - off)) : null;
-  const offLeft = known ? Math.max(0, off - (daysBefore - workedBefore)) : off;
-  const remainingCal = Math.max(0, D - daysBefore);
-  const workLeft = inMonth ? Math.max(remainingCal ? 1 : 0, remainingCal - offLeft) : 0;
-  return { thang, D, daysBefore, workedBefore, known, offLeft, remainingCal, workLeft, inMonth };
-}
-function kbpAssumption(p, today, offDays){
-  const w = kbpWorkdays(p, today, offDays);
-  if(!w.inMonth) return "Tháng đã kết thúc — số liệu là kết quả cuối cùng, không còn dự báo.";
-  if(!w.known) return `Chưa có dữ liệu ca làm → dự báo chiếu theo ngày lịch (${w.daysBefore} ngày đã qua / ${w.D} ngày), có thể lệch nếu nhân viên nghỉ phép hoặc làm ít ca.`;
-  const cur = w.workedBefore>0 && p.doanhSoActual!=null ? Number(p.doanhSoActual)/w.workedBefore : null;
-  return `Dự báo giả định giữ tốc độ ${cur==null ? "hiện tại" : kbpMoney(cur) + "/ngày làm"} của ${w.workedBefore} ngày đã làm cho ${w.workLeft} ngày làm còn lại (đã trừ ${w.offLeft} ngày nghỉ còn lại trong ${offDays==null?4:offDays} ngày/tháng); chưa tính ca đăng ký thêm, nghỉ phép đột xuất.`;
-}
-function kbpPlan(p, today, opts){
-  const o = opts || {}, pass = o.passPct==null ? 0.85 : o.passPct;
-  const w = kbpWorkdays(p, today, o.offDays);
-  const out = { staffId:p.staffId, name:p.staffName || p.staffId, shop:p.shop, workdays:w, assumption:kbpAssumption(p, today, o.offDays), metrics:[], weakest:null, plan:null, insufficient:[], coaching:[], notes:[] };
-  const mk = (key, label, target, actual, projected) => {
-    const t = Number(target), a = Number(actual);
-    if(target==null || !Number.isFinite(t) || t<=0 || actual==null || !Number.isFinite(a)) return null;
-    const gap = Math.max(0, t - a);
-    const cur = w.known && w.workedBefore>0 ? a/w.workedBefore : null;
-    const need = w.workLeft>0 ? gap/w.workLeft : null;
-    return { key, label, target:t, actual:a, pct:a/t, projectedPct: projected!=null ? Number(projected) : null, gap, curPerWorkday:cur, needPerWorkday:need,
-      upliftPct: cur>0 && need!=null ? (need/cur - 1)*100 : null };
-  };
-  const ds = mk("ds", "Doanh số", p.doanhSoTarget, p.doanhSoActual, p.pctDoanhSoProjected);
-  const hs = mk("hs", "Hàng hệ số", p.hesoTarget, p.hesoActual, p.pctHeSoProjected);
-  [ds, hs].forEach(x => { if(x) out.metrics.push(x); });
-  if(!ds) out.insufficient.push("Chưa có chỉ tiêu hoặc thực đạt doanh số cá nhân tháng này.");
-  const kpi = p.kpiPctProjected!=null ? Number(p.kpiPctProjected) : (p.kpiPct!=null ? Number(p.kpiPct) : null);
-  out.kpiProjected = kpi;
-  const low = out.metrics.filter(x => x.projectedPct!=null && x.projectedPct < pass).sort((a, b) => a.projectedPct - b.projectedPct);
-  out.weakest = low[0] || null;
-  if(out.weakest){
-    const x = out.weakest;
-    out.coaching.push(x.key==="ds"
-      ? `Doanh số dự kiến ${kbpPct(x.projectedPct)} — kèm tư vấn bán hàng: hỏi đủ nhu cầu, tư vấn trọn liệu trình và sản phẩm đi kèm (luyện tình huống trên app).`
-      : `Hàng hệ số dự kiến ${kbpPct(x.projectedPct)} — học thẻ sản phẩm hệ số chủ lực, luyện câu tư vấn hàng hệ số.`);
-  }
-  if(kpi!=null && kpi < pass && !out.weakest) out.coaching.push(`KPI tổng dự kiến ${kbpPct(kpi)} nhưng doanh số / hàng hệ số đang kịp — xem chi tiết từng chỉ tiêu KPI (khách phục vụ, số đơn, nâng hạng…) để chọn chỉ tiêu cần hỗ trợ.`);
-  // Ca đăng ký thật ít hơn mức nghỉ cho phép → dự báo đang coi phần thiếu là "đi làm chưa đăng ký" → cần kiểm tra trước khi kết luận.
-  if(w.known && w.inMonth && Number(p.workedBefore) < w.daysBefore - (o.offDays==null ? 4 : o.offDays)) out.notes.push(`Chỉ ghi nhận ${Number(p.workedBefore)} ca trong ${w.daysBefore} ngày đã qua — kiểm tra ca / nghỉ phép trước khi kết luận về hiệu suất.`);
-  out.notes.push("Gợi ý huấn luyện dựa trên chỉ số; không quy kết thái độ hay năng lực khi chưa trao đổi với nhân viên.");
-  if(ds && w.inMonth && w.workLeft>0 && (ds.gap>0) && (out.weakest || (kpi!=null && kpi<pass))){
-    const checkDate = kbpAdd(today, 3);
-    const parts = out.metrics.filter(x => x.gap>0).map(x => `${x.label} ≥ ${kbpMoney(x.needPerWorkday)}/ngày làm (hiện ${x.curPerWorkday==null ? "—" : kbpMoney(x.curPerWorkday)})`);
-    out.plan = { checkDate, commitment:`${parts.join("; ")} trong ${w.workLeft} ngày làm còn lại của tháng.`,
-      checkpoint:`Kiểm tra ${checkDate.slice(8,10)}/${checkDate.slice(5,7)}: KPI dự kiến phải tăng so với ${kbpPct(kpi)} và tiến tới ≥ ${Math.round(pass*100)}%.`,
-      needPerWorkday: ds.needPerWorkday, baselinePerWorkday: ds.curPerWorkday, baselineKpi: kpi };
-  }
-  return out;
-}
-function kbpTaskLines(plans){
-  return plans.map(x => {
-    const L = [`• ${x.name}: KPI dự kiến ${kbpPct(x.kpiProjected)}` + (x.weakest ? `, yếu nhất: ${x.weakest.label} dự kiến ${kbpPct(x.weakest.projectedPct)}` : "")];
-    if(x.plan) L.push(`  Cam kết: ${x.plan.commitment}`, `  ${x.plan.checkpoint}`);
-    x.coaching.forEach(c => L.push(`  Hỗ trợ: ${c}`));
-    x.notes.filter(n => /kiểm tra ca/.test(n)).forEach(n => L.push(`  Lưu ý: ${n}`));
-    if(x.insufficient.length) L.push(`  ${x.insufficient.join(" ")}`);
-    return L.join("\n");
-  }).join("\n");
-}
-// KBP-ENGINE-END
 function paceIsLow(p, threshold){
   const th = threshold==null ? KPI_PASS_PCT : threshold;
   const { ds, kpi } = paceProjected(p);
@@ -12766,9 +12574,19 @@ function TargetHeroTiles({ label, block, fmt, tint, unitLabel }){
     React.createElement(PercentTile, { key:"proj", label:"Tỷ lệ dự kiến hoàn thành", pct: block.projectedPct, sub:`Dự kiến ${fmt(block.projected||0)}`, tint }),
   ]);
 }
-function MonthTargetTiles({ row }){
+function MonthTargetTiles({ row, mt }){
   const hhsPctOfRevenue = row.revenue.actual ? Math.round((row.hangHeSo.actual||0)/row.revenue.actual*1000)/10 : 0;
+  // 15/10/2026 (đề xuất cải tiến P0): 1 nhà thuốc cũng thấy ngay PHẦN CÒN THIẾU và MỨC CẦN ĐẠT MỖI NGÀY còn lại (trước đây chỉ bảng toàn khu vực có)
+  const remDays = mt ? Math.max(0, (mt.daysInMonth||0) - (mt.daysElapsed||0)) : 0;
+  const gapLine = (b, isNum) => { if(!b || !b.target) return null; const miss = Math.max(0, (b.target||0) - (b.actual||0)); const f = isNum ? fmtNum : fmtVNDCompact;
+    return miss <= 0 ? "Đã đạt mục tiêu tháng" : `Còn thiếu ${f(miss)}${remDays > 0 ? ` · cần ${f(miss/remDays)}/ngày trong ${remDays} ngày còn lại` : ""}`; };
   return React.createElement("div", {}, [
+    mt && row.revenue && row.revenue.target ? React.createElement("div", { key:"gap", className:"card", style:{ marginBottom:10, borderLeft:"4px solid var(--clay)", fontSize:13, lineHeight:1.7 } }, [
+      React.createElement("div", { key:"r" }, [React.createElement("b", { key:"b" }, "Doanh thu: "), gapLine(row.revenue)]),
+      row.hangHeSo && row.hangHeSo.target ? React.createElement("div", { key:"h" }, [React.createElement("b", { key:"b" }, "Hàng hệ số: "), gapLine(row.hangHeSo)]) : null,
+      row.invoice && row.invoice.target ? React.createElement("div", { key:"i" }, [React.createElement("b", { key:"b" }, "Số đơn: "), gapLine(row.invoice, true)]) : null,
+      React.createElement("div", { key:"n", style:{ fontSize:11.5, color:"var(--inkSoft)" } }, `Dự kiến cuối tháng giả định giữ nguyên nhịp bán trung bình từ đầu tháng (ngày ${mt.daysElapsed||0}/${mt.daysInMonth||0}); chưa tính mùa vụ, ngày lễ.`),
+    ]) : null,
     React.createElement(TargetHeroTiles, { key:"rev", label:"Tổng doanh thu", block:row.revenue, tint:"var(--pineSoft)", unitLabel: `${fmtNum(row.customers.actual||0)} khách hàng` }),
     React.createElement("div", { key:"hhsTitle", style:{ fontWeight:700, fontSize:13, margin:"4px 0 10px" } }, "Doanh thu & điểm thưởng hàng hệ số"),
     React.createElement(TargetHeroTiles, { key:"hhs", label:"Doanh thu hàng hệ số (HHS)", block:row.hangHeSo, tint:"var(--amberSoft)", unitLabel: `${hhsPctOfRevenue}% tổng doanh thu` }),
@@ -12809,6 +12627,8 @@ function TargetCompletionTable({ mt, shops }){
   const cell = (v, style) => React.createElement("td", { style:{ padding:"5px 5px", fontSize:11, textAlign:"right", borderBottom:"1px solid var(--line)", whiteSpace:"nowrap", ...style } }, v);
   const groupHead = key => React.createElement("th", { key, colSpan:TARGET_TABLE_GROUPS[key].cols, style:{ padding:"6px 5px", fontSize:10.5, textTransform:"uppercase", fontWeight:800, letterSpacing:.03, color:"#fff", background: TARGET_TABLE_GROUPS[key].solid, ...groupBorder(key) } }, TARGET_TABLE_GROUPS[key].label);
   const subHead = (label, key, i, n) => React.createElement("th", { key:key+i, style:{ padding:"4px 5px", fontSize:9.5, color: TARGET_TABLE_GROUPS[key].head, fontWeight:700, background: TARGET_TABLE_GROUPS[key].tint, borderBottom:"2px solid var(--line)", whiteSpace:"nowrap", ...(i===n-1?groupBorder(key):{}) } }, label);
+  // 15/10/2026 (đề xuất cải tiến P0): xếp nhà thuốc theo NGUY CƠ KHÔNG ĐẠT (doanh thu dự kiến thấp nhất lên đầu), không theo thứ tự cố định
+  shops = shops.slice().sort((a, b) => (((mt.byShop[a]||{}).revenue||{}).projectedPct ?? 999) - (((mt.byShop[b]||{}).revenue||{}).projectedPct ?? 999));
   const rows = [{ label:"TỔNG TOÀN KHU VỰC", ...mt.chain, strong:true }, ...shops.map(s=>({ ...(mt.byShop[s]||{ revenue:{}, hangHeSo:{}, customers:{}, invoice:{}, tbb:{} }), label: s + ((mt.byShop[s]||{}).fromOrders ? " *" : "") }))];
   // Số ngày bán hàng còn lại của tháng (kể cả hôm nay) — tháng đã qua thì =0 (không còn ý nghĩa
   // "Target ngày" nữa, hiện "—"). daysInMonth/daysElapsed lấy từ computeMonthTracking() (index.js).
@@ -12848,309 +12668,7 @@ function TargetCompletionTable({ mt, shops }){
     ])
   );
 }
-// =====================================================================================================
-// ===== 14/10/2026 (đề xuất cải tiến vận hành — P0 Doanh thu & KPI): CHẨN ĐOÁN DOANH THU NHÀ THUỐC (RVD) =====
-// Một nhà thuốc + một tháng → mục tiêu, thực tế, phần thiếu, tốc độ cần đạt mỗi ngày còn lại, dự báo cuối kỳ (nêu rõ
-// giả định), phân rã theo số bill / TB bill / số mã mỗi bill / tỷ trọng hàng hệ số / ngày trong tuần so với kỳ đối chứng,
-// rồi tách DỮ KIỆN (số đo được) khỏi GIẢ THUYẾT (có mức chắc chắn) và ĐỀ XUẤT (gắn với tín hiệu). Thiếu căn cứ thì ghi
-// "Chưa đủ dữ liệu để kết luận". Không quy doanh thu thấp cho nhân viên (hệ thống không có lượt khách vào cửa).
-// Chỉ đọc dữ liệu có sẵn: opsConfig/revenueAnalytics.byShop (theo ngày) + revenueAnalyticsMonths/{tháng} (chỉ tiêu).
-// Khối tự chứa để tests/revenueDiagnosis.test.js chạy bằng Node — giữ 2 dòng RVD-ENGINE-BEGIN / RVD-ENGINE-END.
-// RVD-ENGINE-BEGIN
-const RVD_RULES = {
-  billsDropPct: 10, tbbDropPct: 8, skuDropPct: 10, hhsShareDropPp: 3, weekdayWeakPct: 15,
-  staleHours: 36, minDaysForCompare: 5,
-};
-const RVD_WEEKDAY = ["Chủ nhật","Thứ 2","Thứ 3","Thứ 4","Thứ 5","Thứ 6","Thứ 7"];
-function rvdAdd(iso, n){ const [y,m,d] = String(iso).split("-").map(Number); return new Date(Date.UTC(y, m-1, d+n)).toISOString().slice(0,10); }
-function rvdDM(iso){ return iso ? `${iso.slice(8,10)}/${iso.slice(5,7)}` : "—"; }
-function rvdWd(iso){ const [y,m,d] = String(iso).split("-").map(Number); return new Date(Date.UTC(y, m-1, d)).getUTCDay(); }
-function rvdNum(v){ const n = Number(v); return v==null || v==="" || !Number.isFinite(n) ? null : n; }
-function rvdMoney(v){
-  if(v==null || !Number.isFinite(Number(v))) return "—";
-  const n = Number(v), a = Math.abs(n), s = n<0 ? "−" : "";
-  if(a >= 1e9) return s + (a/1e9).toFixed(2).replace(".", ",") + " tỷ";
-  if(a >= 1e6) return s + (a/1e6).toFixed(1).replace(".", ",") + " tr";
-  if(a >= 1e3) return s + Math.round(a/1e3) + "k";
-  return s + Math.round(a) + "đ";
-}
-function rvdPct(p, signed){ if(p==null || !Number.isFinite(p)) return "—"; const r = Math.round(p*10)/10; return (signed && r>0 ? "+" : "") + String(r).replace(".", ",") + "%"; }
-function rvdChg(cur, prev){ return cur!=null && prev!=null && prev>0 ? (cur-prev)/prev*100 : null; }
-// Tổng 1 khoảng ngày; trả null nếu khoảng đó nằm ngoài vùng dữ liệu đã đồng bộ (khác với "bằng 0").
-function rvdSum(map, from, to, coverFrom){
-  if(!map) return null;
-  if(coverFrom && from < coverFrom) return null;
-  let s = 0; for(let d = from; d <= to; d = rvdAdd(d, 1)) s += Number(map[d]) || 0;
-  return s;
-}
-function rvdWindow(D, from, to, coverFrom){
-  const rev = rvdSum(D.revenueByDay, from, to, coverFrom);
-  if(rev==null) return null;
-  const bills = rvdSum(D.orderCountByDay, from, to, coverFrom);
-  const lines = rvdSum(D.lineCountByDay, from, to, coverFrom);
-  const hhs = rvdSum(D.hhsRevenueByDay, from, to, coverFrom);
-  return { from, to, revenue:rev, bills, tbb: bills>0 ? rev/bills : null, skuPerBill: bills>0 && lines!=null ? lines/bills : null, hhsShare: rev>0 && hhs!=null ? hhs/rev*100 : null };
-}
-function rvdDiagnose(I){
-  const R = { ...RVD_RULES, ...(I.rules||{}) };
-  const today = I.today, month = I.month;
-  const D = I.daily || {};
-  const row = I.monthRow || null, meta = I.monthMeta || {};
-  const out = { shop:I.shop, month, facts:[], hypotheses:[], actions:[], insufficient:[], dataNotes:[], conclusion:"", plan:null, compare:null, weekday:null };
-  // ----- Kỳ & độ tin cậy dữ liệu -----
-  const monthStart = month + "-01";
-  const dim = meta.daysInMonth || new Date(Date.UTC(Number(month.slice(0,4)), Number(month.slice(5,7)), 0)).getUTCDate();
-  const monthEnd = month + "-" + String(dim).padStart(2, "0");
-  const isCurrent = meta.isCurrentMonth!=null ? !!meta.isCurrentMonth : (today >= monthStart && today <= monthEnd);
-  const elapsed = isCurrent ? Math.max(0, Math.min(dim, meta.daysElapsed!=null ? meta.daysElapsed : Number(today.slice(8,10)) - 1)) : dim;
-  const cut = elapsed>0 ? rvdAdd(monthStart, elapsed-1) : null;   // ngày bán trọn vẹn cuối cùng tính trong tháng
-  const remaining = isCurrent ? dim - elapsed : 0;
-  out.period = { monthStart, monthEnd, cut, elapsed, daysInMonth:dim, remaining, isCurrent };
-  const keys = Object.keys(D.revenueByDay || {}).sort();
-  const coverFrom = keys[0] || null, coverTo = keys[keys.length-1] || null;
-  out.coverage = { from:coverFrom, to:coverTo };
-  const ageH = I.computedAt ? (Date.parse(I.nowIso || (today+"T12:00:00")) - Date.parse(I.computedAt))/3600000 : null;
-  out.freshness = { computedAt:I.computedAt || null, ageHours: ageH==null ? null : Math.round(ageH), stale: ageH!=null && ageH > R.staleHours };
-  if(out.freshness.stale) out.dataNotes.push(`Số POS tính cách đây ${Math.round(ageH)} giờ — chưa cập nhật, cần bấm "Tính lại" trước khi kết luận.`);
-  const confirmed = !!row && row.hasData!==false && !row.fromOrders;
-  out.confirmed = confirmed;
-  if(row && row.fromOrders) out.dataNotes.push("Hệ thống chỉ tiêu chưa trả số thực đạt — thực tế đang lấy tạm từ hoá đơn POS (chưa xác nhận).");
-  // ----- Mục tiêu / thực tế / phần thiếu / tốc độ cần đạt -----
-  const rv = row && row.revenue ? row.revenue : {};
-  const target = rvdNum(rv.target), actual = rvdNum(rv.actual);
-  const T = { target, actual, pct:null, gap:null, curPerDay:null, needPerDay:null, upliftPct:null, projected:null, projectedPct:null, assumption:"" };
-  if(target==null || target<=0) out.insufficient.push(target===0 ? "Chỉ tiêu tháng bằng 0 — không tính tỷ lệ hoàn thành." : "Chưa có chỉ tiêu doanh thu tháng của nhà thuốc.");
-  if(actual==null) out.insufficient.push("Chưa có doanh thu thực tế của tháng.");
-  if(target>0 && actual!=null){
-    T.pct = actual/target*100;
-    T.gap = Math.max(0, target - actual);
-    if(elapsed>0) T.curPerDay = actual/elapsed;
-    if(isCurrent && remaining>0){
-      T.needPerDay = T.gap/remaining;
-      T.upliftPct = T.curPerDay>0 ? (T.needPerDay/T.curPerDay - 1)*100 : null;
-      T.projected = T.curPerDay!=null ? actual + T.curPerDay*remaining : null;
-      T.projectedPct = T.projected!=null ? T.projected/target*100 : null;
-      T.assumption = `Dự báo giả định giữ nguyên tốc độ bình quân ${rvdMoney(T.curPerDay)}/ngày của ${elapsed} ngày đã qua cho ${remaining} ngày còn lại; chưa tính ngày lễ, CTKM sắp chạy hay nhân sự nghỉ.`;
-    } else { T.projected = actual; T.projectedPct = T.pct; }
-  }
-  out.target = T;
-  // Trạng thái (theo dự báo nếu tháng đang chạy, theo kết quả nếu tháng đã qua)
-  let st;
-  if(T.pct==null) st = { code:"nodata", label:"Chưa đủ dữ liệu", tone:"grey", rank:5 };
-  else if(isCurrent && elapsed===0) st = { code:"nodata", label:"Tháng mới bắt đầu", tone:"grey", rank:5 };
-  else if(isCurrent){
-    const p = T.projectedPct;
-    st = p >= 100 ? { code:"onTrack", label:"Đúng tiến độ", tone:"green", rank:4 } : p >= 90 ? { code:"risk", label:"Có nguy cơ không đạt", tone:"orange", rank:2 } : { code:"high", label:"Nguy cơ cao không đạt", tone:"red", rank:1 };
-  } else st = T.pct >= 100 ? { code:"met", label:"Đã đạt", tone:"green", rank:4 } : { code:"missed", label:"Không đạt", tone:"red", rank:1 };
-  if(!confirmed && st.tone==="green") { st = { ...st, tone:"yellow", note:"Cần xác minh — số thực đạt chưa xác nhận" }; }
-  out.status = st;
-  if(T.pct!=null){
-    out.facts.push(`Đạt ${rvdMoney(actual)} / ${rvdMoney(target)} (${rvdPct(T.pct)}) sau ${elapsed}/${dim} ngày${T.gap>0 ? `, còn thiếu ${rvdMoney(T.gap)}` : ""}.`);
-    if(isCurrent && remaining>0 && T.gap>0) out.facts.push(`Cần ${rvdMoney(T.needPerDay)}/ngày cho ${remaining} ngày còn lại — ${T.upliftPct==null ? "chưa có tốc độ hiện tại để so" : (T.upliftPct>0 ? `cao hơn tốc độ hiện tại ${rvdPct(T.upliftPct)}` : "thấp hơn tốc độ hiện tại")}.`);
-  }
-  // ----- So sánh 7 ngày gần nhất với 7 ngày liền trước (cùng các thứ trong tuần) -----
-  const endA = cut && coverTo ? (cut < coverTo ? cut : coverTo) : coverTo;
-  if(endA){
-    const A = rvdWindow(D, rvdAdd(endA, -6), endA, coverFrom), B = rvdWindow(D, rvdAdd(endA, -13), rvdAdd(endA, -7), coverFrom);
-    if(A && B && B.revenue>0){
-      const c = { A, B, revenue:rvdChg(A.revenue, B.revenue), bills:rvdChg(A.bills, B.bills), tbb:rvdChg(A.tbb, B.tbb), sku:rvdChg(A.skuPerBill, B.skuPerBill),
-        hhsPp: A.hhsShare!=null && B.hhsShare!=null ? A.hhsShare - B.hhsShare : null };
-      if(A.bills>0 && B.bills>0){ c.billsEffect = (A.bills - B.bills) * B.tbb; c.tbbEffect = (A.tbb - B.tbb) * A.bills; }
-      out.compare = c;
-      out.facts.push(`7 ngày ${rvdDM(A.from)}–${rvdDM(A.to)} so với ${rvdDM(B.from)}–${rvdDM(B.to)}: doanh thu ${rvdPct(c.revenue, true)}`
-        + (c.bills!=null ? `, số bill ${rvdPct(c.bills, true)}` : "") + (c.tbb!=null ? `, TB bill ${rvdPct(c.tbb, true)}` : "")
-        + (c.sku!=null ? `, số mã/bill ${rvdPct(c.sku, true)}` : "") + (c.hhsPp!=null ? `, tỷ trọng hàng hệ số ${c.hhsPp>=0?"+":""}${String(Math.round(c.hhsPp*10)/10).replace(".", ",")} điểm %` : "") + ".");
-      if(c.billsEffect!=null) out.facts.push(`Phân rã chênh lệch doanh thu: do số bill ≈ ${c.billsEffect>=0?"+":""}${rvdMoney(c.billsEffect)}, do TB bill ≈ ${c.tbbEffect>=0?"+":""}${rvdMoney(c.tbbEffect)}.`);
-      if(A.bills==null) out.insufficient.push("Không có số bill theo ngày — không tách được doanh thu theo lượng đơn và giá trị đơn.");
-    } else out.insufficient.push("Chưa đủ 14 ngày dữ liệu theo ngày để so sánh với kỳ đối chứng.");
-    // ----- Ngày trong tuần (28 ngày gần nhất) -----
-    const from28 = rvdAdd(endA, -27);
-    if(coverFrom && from28 >= coverFrom){
-      const sum = [0,0,0,0,0,0,0], cnt = [0,0,0,0,0,0,0];
-      for(let d = from28; d <= endA; d = rvdAdd(d, 1)){ const w = rvdWd(d); sum[w] += Number(D.revenueByDay[d])||0; cnt[w]++; }
-      const avg = sum.reduce((a, v) => a + v, 0)/28;
-      const prof = sum.map((s, w) => ({ w, label:RVD_WEEKDAY[w], avg: cnt[w] ? s/cnt[w] : null, vsAvg: cnt[w] && avg>0 ? (s/cnt[w]/avg - 1)*100 : null }));
-      const weakest = prof.filter(p => p.vsAvg!=null).sort((a, b) => a.vsAvg - b.vsAvg)[0];
-      out.weekday = { avgPerDay:avg, profile:prof, weakest: weakest && weakest.vsAvg <= -R.weekdayWeakPct ? weakest : null };
-    }
-  } else out.insufficient.push("Không có doanh thu theo ngày của nhà thuốc trong vùng dữ liệu đã đồng bộ.");
-  // ----- Giả thuyết (có bằng chứng + mức chắc chắn) & đề xuất gắn với tín hiệu -----
-  const c = out.compare;
-  const needAction = st.code==="risk" || st.code==="high" || st.code==="missed";
-  const hyp = (key, text, evidence, confidence, action, owner) => { out.hypotheses.push({ key, text, evidence, confidence }); if(action) out.actions.push({ key, text:action, owner, basedOn:text }); };
-  if(c){
-    if(c.bills!=null && c.bills <= -R.billsDropPct) hyp("bills", "Lượng đơn giảm (ít khách mua hơn hoặc ít khách vào hơn).", `Số bill ${rvdPct(c.bills, true)} (${Math.round(c.A.bills)} so với ${Math.round(c.B.bills)}).`, "Trung bình",
-      "Kéo khách quay lại: gọi danh sách khách đến hạn mua lại / VIP lâu chưa quay lại (tab Khách hàng); kiểm tra hàng bán chạy có đang hết không (tab Hàng hoá).", "Cửa hàng trưởng");
-    if(c.tbb!=null && c.tbb <= -R.tbbDropPct) hyp("tbb", "Giá trị mỗi đơn giảm.", `TB bill ${rvdMoney(c.A.tbb)} so với ${rvdMoney(c.B.tbb)} (${rvdPct(c.tbb, true)}).`, "Trung bình",
-      "Tư vấn trọn liệu trình và sản phẩm đi kèm; kiểm tra đơn có bị tách nhỏ không.", "Cửa hàng trưởng");
-    if(c.sku!=null && c.sku <= -R.skuDropPct) hyp("sku", "Bán kèm giảm (ít mã hàng trên mỗi đơn).", `Số mã/bill ${String(Math.round(c.A.skuPerBill*10)/10).replace(".", ",")} so với ${String(Math.round(c.B.skuPerBill*10)/10).replace(".", ",")} (${rvdPct(c.sku, true)}).`, "Trung bình",
-      "Đặt mục tiêu bán kèm theo bài tư vấn trên app; trưng bày nhóm hàng đi kèm cạnh quầy.", "Cửa hàng trưởng");
-    if(c.hhsPp!=null && c.hhsPp <= -R.hhsShareDropPp) hyp("hhs", "Tỷ trọng hàng hệ số giảm.", `Hàng hệ số chiếm ${String(Math.round(c.A.hhsShare*10)/10).replace(".", ",")}% doanh thu, giảm ${String(Math.round(-c.hhsPp*10)/10).replace(".", ",")} điểm %.`, "Trung bình",
-      "Ưu tiên tư vấn nhóm hàng hệ số; kiểm tra tồn các mã hệ số chủ lực.", "Cửa hàng trưởng");
-  }
-  if(out.weekday && out.weekday.weakest){ const w = out.weekday.weakest;
-    hyp("weekday", `${w.label} bán thấp hơn hẳn các ngày khác.`, `${w.label} bình quân ${rvdMoney(w.avg)}, thấp hơn trung bình ngày ${rvdPct(-w.vsAvg)} (28 ngày gần nhất).`, "Thấp",
-      `Rà soát ca làm, hàng hoá và hoạt động bán hàng vào ${w.label}; cân nhắc hoạt động kéo khách riêng cho ngày này.`, "Cửa hàng trưởng"); }
-  if(needAction && !out.hypotheses.length && c) out.hypotheses.push({ key:"none", text:"Không có tín hiệu nổi bật trong số bill, TB bill, số mã/bill, hàng hệ số so với kỳ đối chứng.", evidence:"Các chỉ số thay đổi dưới ngưỡng cảnh báo.", confidence:"—" });
-  if(out.hypotheses.length && out.hypotheses[0].key!=="none") out.dataNotes.push("Hệ thống không có lượt khách vào cửa hàng → chưa phân biệt được 'ít khách' với 'khách vào nhưng không mua'; không quy kết cho nhân viên khi chưa xem ngày công / ca làm.");
-  if(needAction && (!out.actions.length)) out.actions.push({ key:"review", text:"Cửa hàng trưởng rà soát trực tiếp (khách hàng, hàng hoá, nhân sự, yếu tố bên ngoài) và ghi lại nguyên nhân tìm được.", owner:"Cửa hàng trưởng", basedOn:"Chưa có tín hiệu dữ liệu đủ rõ" });
-  // ----- Kế hoạch bù (đề xuất — quản lý duyệt khi giao việc) -----
-  if(isCurrent && T.gap>0 && remaining>0 && T.needPerDay!=null){
-    const checkDate = rvdAdd(today, Math.min(3, remaining));
-    out.plan = { gap:T.gap, needPerDay:T.needPerDay, baselinePerDay:T.curPerDay, from:today, to:monthEnd, checkDate,
-      commitment:`Doanh thu bình quân ≥ ${rvdMoney(T.needPerDay)}/ngày từ ${rvdDM(today)} đến ${rvdDM(monthEnd)} (đo bằng số POS; hiện ${rvdMoney(T.curPerDay)}/ngày).`,
-      checkpoint:`Kiểm tra lại ngày ${rvdDM(checkDate)}: bình quân các ngày sau khi giao việc phải ≥ ${rvdMoney(T.needPerDay)}/ngày; nếu không, điều chỉnh phương án.` };
-  }
-  // ----- Kết luận -----
-  if(T.pct==null) out.conclusion = "Chưa đủ dữ liệu để kết luận: " + out.insufficient.join(" ");
-  else if(!needAction) out.conclusion = st.code==="onTrack" ? `Đang đúng tiến độ (dự báo ${rvdPct(T.projectedPct)}).` : st.code==="met" ? `Đã đạt chỉ tiêu tháng (${rvdPct(T.pct)}).` : st.label + ".";
-  else {
-    const strong = out.hypotheses.filter(h => h.key!=="none");
-    out.conclusion = (isCurrent ? `Dự báo đạt ${rvdPct(T.projectedPct)} chỉ tiêu nếu giữ tốc độ hiện tại.` : `Tháng kết thúc ở ${rvdPct(T.pct)} chỉ tiêu.`)
-      + (strong.length ? ` Tín hiệu chính: ${strong.map(h => h.text.replace(/\.$/, "").toLowerCase()).join("; ")} (giả thuyết, cần CHT xác minh).` : " Chưa đủ dữ liệu để kết luận nguyên nhân.");
-  }
-  out.riskScore = st.rank*1000 + (T.projectedPct!=null ? Math.min(999, Math.round(T.projectedPct*5)) : 999);
-  return out;
-}
-// Xếp hạng theo NGUY CƠ không đạt (không theo doanh thu tuyệt đối): trạng thái xấu trước, cùng trạng thái thì dự báo thấp trước.
-function rvdRank(list){ return list.slice().sort((a, b) => a.riskScore - b.riskScore); }
-// Đo kết quả SAU khi giao việc: so bình quân/ngày các ngày SAU ngày giao (không dùng lại ngày trước khi giao).
-function rvdMeasureAfter(revenueByDay, assignedDate, today, baselinePerDay, targetPerDay){
-  const from = rvdAdd(assignedDate, 1), to = rvdAdd(today, -1);
-  if(!revenueByDay || to < from) return { ok:false, reason:"Chưa có ngày bán trọn vẹn nào sau khi giao việc." };
-  const days = []; for(let d = from; d <= to; d = rvdAdd(d, 1)) days.push({ date:d, revenue: revenueByDay[d]!=null ? Number(revenueByDay[d]) : null });
-  const known = days.filter(x => x.revenue!=null);
-  if(!known.length) return { ok:false, reason:"Chưa có số POS của các ngày sau khi giao việc.", days };
-  const avg = known.reduce((a, x) => a + x.revenue, 0)/known.length;
-  const vsBase = baselinePerDay>0 ? (avg/baselinePerDay - 1)*100 : null;
-  const metTarget = targetPerDay>0 ? avg >= targetPerDay : null;
-  const verdict = metTarget===true ? "hieu_qua" : vsBase!=null && vsBase>0 ? "mot_phan" : "khong_hieu_qua";
-  return { ok:true, from, to, days, avgPerDay:avg, vsBasePct:vsBase, metTarget, suggestedEffect:verdict,
-    text:`Sau giao việc (${rvdDM(from)}–${rvdDM(to)}, ${known.length} ngày): bình quân ${rvdMoney(avg)}/ngày`
-      + (baselinePerDay>0 ? `, so với trước ${rvdMoney(baselinePerDay)}/ngày (${rvdPct(vsBase, true)})` : "")
-      + (targetPerDay>0 ? `; cam kết ${rvdMoney(targetPerDay)}/ngày → ${metTarget ? "ĐẠT" : "CHƯA ĐẠT"}` : "") + "." };
-}
-// Nội dung giao việc (mô tả) từ chẩn đoán: vấn đề, dữ kiện, giả thuyết cần xác minh, hành động, chỉ số cam kết, mốc kiểm tra, bằng chứng cần nộp.
-function rvdTaskText(dx){
-  const L = [];
-  L.push("VẤN ĐỀ: " + dx.conclusion);
-  if(dx.facts.length) L.push("DỮ KIỆN:\n" + dx.facts.map(t => "- " + t).join("\n"));
-  const hy = dx.hypotheses.filter(x => x.key!=="none");
-  if(hy.length) L.push("GIẢ THUYẾT CẦN XÁC MINH:\n" + hy.map(x => `- ${x.text} (${x.evidence})`).join("\n"));
-  if(dx.actions.length) L.push("HÀNH ĐỘNG ĐỀ XUẤT:\n" + dx.actions.map(x => "- " + x.text).join("\n"));
-  if(dx.plan) L.push(`CHỈ SỐ CAM KẾT: ${dx.plan.commitment}\nMỐC KIỂM TRA: ${dx.plan.checkpoint}`);
-  L.push("BẰNG CHỨNG CẦN NỘP: nguyên nhân xác minh được tại nhà thuốc (đúng/sai với giả thuyết nào), việc đã làm, số liệu kèm theo.");
-  return L.join("\n\n");
-}
-// Độ mới của số liệu (dùng chung Hàng hoá / Doanh thu): quá maxHours → "chưa cập nhật", không đưa vào kết luận.
-function dataFreshness(ts, nowMs, maxHours){
-  const t = ts==null ? NaN : (typeof ts==="number" ? ts : Date.parse(ts));
-  if(!Number.isFinite(t)) return { known:false, stale:true, hours:null, text:"Không rõ thời điểm cập nhật số liệu — chưa đủ căn cứ để kết luận." };
-  const hours = Math.max(0, Math.round((nowMs - t)/3600000));
-  const stale = hours > (maxHours==null ? 30 : maxHours);
-  return { known:true, stale, hours, text: stale ? `Số liệu cập nhật cách đây ${hours} giờ — CHƯA CẬP NHẬT. Tồn = 0 hoặc thiếu hàng có thể chỉ do chưa đồng bộ; đồng bộ lại trước khi điều chuyển / đặt hàng.` : `Số liệu cập nhật cách đây ${hours} giờ.` };
-}
-// RVD-ENGINE-END
-function StaleDataNotice({ ts, maxHours, style }){
-  const f = dataFreshness(ts, Date.now(), maxHours);
-  if(!f.stale) return null;
-  return React.createElement("div", { style:{ fontSize:12, fontWeight:600, color:"var(--clay)", background:"var(--claySoft)", borderRadius:8, padding:"6px 10px", margin:"6px 0", ...(style||{}) } }, f.text);
-}
-// ===== 14/10/2026: Khối hiển thị chẩn đoán doanh thu (dùng chung: tab Doanh thu → Theo kỳ và màn vấn đề DT01).
-// Tách rõ 4 lớp: Dữ kiện (số đo được) · Giả thuyết (kèm bằng chứng + mức chắc chắn) · Đề xuất · Kế hoạch bù (chờ duyệt khi giao việc).
-const RVD_TONE = { red:["var(--clay)","var(--claySoft)"], orange:["var(--amber)","var(--amberSoft)"], yellow:["#8a6d1a","var(--goldSoft)"], green:["var(--pine)","var(--pineSoft)"], grey:["var(--inkSoft)","#E7E5DA"] };
-function rvdChip(tone, text, key){ const c = RVD_TONE[tone] || RVD_TONE.grey; return React.createElement("span", { key, style:{ display:"inline-block", fontSize:11, fontWeight:800, color:c[0], background:c[1], borderRadius:999, padding:"2px 9px", whiteSpace:"nowrap" } }, text); }
-function RevenueDiagnosisPanel({ dx, compact }){
-  const h = React.createElement;
-  if(!dx) return h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)" } }, "Đang tải số liệu doanh thu…");
-  const T = dx.target || {};
-  const lbl = (t) => h("div", { key:"l_"+t, style:{ fontWeight:700, fontSize:12.5, margin:"10px 0 4px" } }, t);
-  const li = (arr, render, key) => h("ul", { key:"u_"+(key||"x"), style:{ margin:"0 0 4px", paddingLeft:18, fontSize:12.5, lineHeight:1.5 } }, arr.map((x, i) => h("li", { key:i }, render ? render(x) : x)));
-  const tile = (k, l, v, s) => h("div", { key:k, style:{ background:"var(--paper)", borderRadius:8, padding:"7px 9px" } }, [
-    h("div", { key:"l", style:{ fontSize:10.5, color:"var(--inkSoft)", fontWeight:700, textTransform:"uppercase" } }, l),
-    h("div", { key:"v", style:{ fontSize:15, fontWeight:800 } }, v), s && h("div", { key:"s", style:{ fontSize:11, color:"var(--inkSoft)" } }, s) ]);
-  const c = dx.compare;
-  return h("div", { style:{ fontSize:12.5 } }, [
-    h("div", { key:"st", style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", marginBottom:6 } }, [
-      rvdChip(dx.status.tone, dx.status.label, "s"), dx.status.note && rvdChip("yellow", dx.status.note, "n"),
-      h("span", { key:"p", style:{ fontSize:11.5, color:"var(--inkSoft)" } }, `Kỳ ${rvdDM(dx.period.monthStart)}–${rvdDM(dx.period.monthEnd)} · số liệu đến ${rvdDM(dx.period.cut)}${dx.freshness.computedAt ? ` · POS tính lúc ${new Date(dx.freshness.computedAt).toLocaleString("vi-VN")}` : ""}`),
-    ]),
-    h("div", { key:"cl", style:{ fontWeight:600, marginBottom:8, lineHeight:1.5 } }, dx.conclusion),
-    T.pct!=null && h("div", { key:"tl", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(118px, 1fr))", gap:6 } }, [
-      tile("t", "Mục tiêu tháng", rvdMoney(T.target)), tile("a", "Thực tế", rvdMoney(T.actual), rvdPct(T.pct)), tile("g", "Còn thiếu", rvdMoney(T.gap)),
-      dx.period.isCurrent && tile("n", "Cần / ngày", rvdMoney(T.needPerDay), T.curPerDay!=null ? `hiện ${rvdMoney(T.curPerDay)}/ngày` : ""),
-      dx.period.isCurrent && tile("p", "Dự báo cuối tháng", rvdPct(T.projectedPct), "nếu giữ tốc độ hiện tại"),
-    ]),
-    T.assumption && h("div", { key:"as", style:{ fontSize:11, color:"var(--inkSoft)", marginTop:4 } }, T.assumption),
-    dx.facts.length>0 && lbl("Dữ kiện (số liệu hệ thống)"), dx.facts.length>0 && li(dx.facts, null, "f"),
-    c && !compact && h("div", { key:"cmp", style:{ overflowX:"auto" } }, h("table", { style:{ borderCollapse:"collapse", fontSize:12, minWidth:420 } }, [
-      h("thead", { key:"h" }, h("tr", null, ["Chỉ số", `${rvdDM(c.B.from)}–${rvdDM(c.B.to)}`, `${rvdDM(c.A.from)}–${rvdDM(c.A.to)}`, "Thay đổi"].map(x => h("th", { key:x, style:{ textAlign:"left", padding:"3px 8px", borderBottom:"1px solid var(--line)", color:"var(--inkSoft)" } }, x)))),
-      h("tbody", { key:"b" }, [
-        ["Doanh thu", rvdMoney(c.B.revenue), rvdMoney(c.A.revenue), rvdPct(c.revenue, true)],
-        ["Số bill", c.B.bills==null ? "—" : Math.round(c.B.bills).toLocaleString("vi-VN"), c.A.bills==null ? "—" : Math.round(c.A.bills).toLocaleString("vi-VN"), rvdPct(c.bills, true)],
-        ["TB bill", rvdMoney(c.B.tbb), rvdMoney(c.A.tbb), rvdPct(c.tbb, true)],
-        ["Số mã / bill", c.B.skuPerBill==null ? "—" : c.B.skuPerBill.toFixed(1).replace(".", ","), c.A.skuPerBill==null ? "—" : c.A.skuPerBill.toFixed(1).replace(".", ","), rvdPct(c.sku, true)],
-        ["Tỷ trọng hàng hệ số", c.B.hhsShare==null ? "—" : rvdPct(c.B.hhsShare), c.A.hhsShare==null ? "—" : rvdPct(c.A.hhsShare), c.hhsPp==null ? "—" : `${c.hhsPp>=0?"+":""}${String(Math.round(c.hhsPp*10)/10).replace(".", ",")} điểm %`],
-      ].map((r, i) => h("tr", { key:i }, r.map((v, j) => h("td", { key:j, style:{ padding:"3px 8px", borderBottom:"1px solid var(--line)", fontWeight: j===3 ? 700 : 400 } }, v))))),
-    ])),
-    dx.weekday && !compact && h("div", { key:"wd", style:{ display:"flex", gap:4, alignItems:"flex-end", marginTop:8, flexWrap:"wrap" } }, [1,2,3,4,5,6,0].map(w => {
-      const p = dx.weekday.profile[w]; const v = p.vsAvg==null ? 0 : p.vsAvg;
-      return h("div", { key:w, title:`${p.label}: ${rvdMoney(p.avg)}/ngày (${rvdPct(p.vsAvg, true)} so với trung bình)`, style:{ textAlign:"center", fontSize:10.5, width:46 } }, [
-        h("div", { key:"b", style:{ height:Math.max(4, 30 + v), background: dx.weekday.weakest && dx.weekday.weakest.w===w ? "var(--clay)" : "var(--pine)", borderRadius:"3px 3px 0 0", opacity:.85 } }),
-        h("div", { key:"l" }, p.label.replace("Thứ ", "T").replace("Chủ nhật", "CN")), h("div", { key:"v", style:{ color:"var(--inkSoft)" } }, rvdPct(p.vsAvg, true)),
-      ]);
-    })),
-    dx.hypotheses.length>0 && lbl("Giả thuyết nguyên nhân (cần xác minh)"),
-    dx.hypotheses.length>0 && li(dx.hypotheses, x => [h("b", { key:"t" }, x.text), x.evidence ? ` — căn cứ: ${x.evidence}` : "", x.confidence && x.confidence!=="—" ? h("span", { key:"c", style:{ color:"var(--inkSoft)" } }, ` (mức chắc chắn: ${x.confidence})`) : null], "h"),
-    dx.actions.length>0 && lbl("Đề xuất xử lý"), dx.actions.length>0 && li(dx.actions, x => [x.text, h("span", { key:"o", style:{ color:"var(--inkSoft)" } }, ` · phụ trách đề xuất: ${x.owner}`)], "a"),
-    dx.plan && h("div", { key:"pl", style:{ background:"var(--amberSoft)", borderRadius:8, padding:"7px 10px", marginTop:8 } }, [
-      h("b", { key:"t" }, "Kế hoạch bù (đề xuất — thành cam kết khi quản lý giao việc): "), `Mức thiếu ${rvdMoney(dx.plan.gap)}. ${dx.plan.commitment} ${dx.plan.checkpoint}`,
-    ]),
-    (dx.dataNotes.length>0 || dx.insufficient.length>0) && h("div", { key:"dn", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:8 } }, dx.dataNotes.concat(dx.insufficient).map((t, i) => h("div", { key:i }, "• " + t))),
-  ]);
-}
-// Bảng xếp hạng nguy cơ không đạt (toàn khu vực) + mở chẩn đoán từng nhà thuốc + mở hồ sơ xử lý DT01 (cùng hồ sơ với Hồ sơ nhà thuốc).
-function RevenueRiskBoard({ mt, stats, shops, isAdmin, onOpenIssue }){
-  const h = React.createElement;
-  const [open, setOpen] = useState(null);
-  const today = todayISO();
-  const list = useMemo(()=>{
-    if(!mt || !stats) return [];
-    return rvdRank(shops.map(s => rvdDiagnose({ shop:s, month:mt.month, today, daily:(stats.byShop||{})[s] || {}, computedAt:stats.computedAt,
-      monthRow:(mt.byShop||{})[s] || null, monthMeta:{ daysElapsed:mt.daysElapsed, daysInMonth:mt.daysInMonth, isCurrentMonth:mt.isCurrentMonth } })));
-  }, [mt, stats, shops.join(",")]);
-  if(!mt) return null;
-  if(!stats) return h("div", { className:"card", style:{ fontSize:12.5, color:"var(--inkSoft)", marginTop:16 } }, "Chưa có số POS theo ngày để chẩn đoán.");
-  const cell = { padding:"5px 7px", borderBottom:"1px solid var(--line)", fontSize:12, verticalAlign:"top" };
-  return h("div", { className:"card", style:{ marginTop:16 } }, [
-    h("div", { key:"t", style:{ fontWeight:700, fontSize:15.5 } }, "Nguy cơ không đạt & chẩn đoán theo nhà thuốc"),
-    h("div", { key:"s", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8 } }, "Xếp theo nguy cơ không đạt (dự báo thấp nhất lên đầu), không theo doanh thu tuyệt đối. Bấm 1 dòng để xem dữ kiện, giả thuyết, đề xuất và kế hoạch bù."),
-    h("div", { key:"tb", style:{ overflowX:"auto" } }, h("table", { style:{ width:"100%", borderCollapse:"collapse" } }, [
-      h("thead", { key:"h" }, h("tr", null, ["Nhà thuốc","Trạng thái","Đạt","Còn thiếu","Cần/ngày","So tốc độ hiện tại","Dự báo","Tín hiệu chính"].map(x => h("th", { key:x, style:{ ...cell, textAlign:"left", color:"var(--inkSoft)", fontSize:11, background:"var(--paper)", whiteSpace:"nowrap" } }, x)))),
-      h("tbody", { key:"b" }, list.flatMap(dx => {
-        const T = dx.target; const isOpen = open===dx.shop;
-        const sig = dx.hypotheses.filter(x => x.key!=="none").map(x => x.text.replace(/\.$/, "")).join("; ");
-        const r = h("tr", { key:dx.shop, onClick:()=>setOpen(isOpen ? null : dx.shop), style:{ cursor:"pointer", background: isOpen ? "var(--pineSoft)" : undefined } }, [
-          h("td", { key:"a", style:{ ...cell, fontWeight:700, whiteSpace:"nowrap" } }, (isOpen ? "▾ " : "▸ ") + shopLabel(dx.shop)),
-          h("td", { key:"b", style:cell }, rvdChip(dx.status.tone, dx.status.label)),
-          h("td", { key:"c", style:cell }, rvdPct(T.pct)),
-          h("td", { key:"d", style:cell }, T.gap==null ? "—" : rvdMoney(T.gap)),
-          h("td", { key:"e", style:cell }, T.needPerDay==null ? "—" : rvdMoney(T.needPerDay)),
-          h("td", { key:"f", style:{ ...cell, color: T.upliftPct>25 ? "var(--clay)" : undefined, fontWeight: T.upliftPct>25 ? 700 : 400 } }, T.upliftPct==null ? "—" : rvdPct(T.upliftPct, true)),
-          h("td", { key:"g", style:cell }, rvdPct(T.projectedPct)),
-          h("td", { key:"h", style:{ ...cell, fontSize:11.5 } }, sig || (T.pct==null ? "Chưa đủ dữ liệu để kết luận" : "—")),
-        ]);
-        if(!isOpen) return [r];
-        return [r, h("tr", { key:dx.shop+"_d" }, h("td", { colSpan:8, style:{ padding:"8px 10px", background:"#FBFAF6", borderBottom:"1px solid var(--line)" } }, [
-          h(RevenueDiagnosisPanel, { key:"p", dx }),
-          isAdmin && onOpenIssue && ["risk","high"].includes(dx.status.code) && h("div", { key:"btn", style:{ marginTop:10, display:"flex", gap:8 } },
-            h("button", { type:"button", className:"btn btnPrimary", style:{ fontSize:12 }, onClick:(e)=>{ e.stopPropagation(); onOpenIssue(dx.shop); } }, "Mở hồ sơ xử lý (giao việc / kế hoạch bù)")),
-        ]))];
-      })),
-    ])),
-  ]);
-}
-function RevenueMucTieu({ mt, isAdmin, shopFilter, isAll, stats, onOpenIssue }){
+function RevenueMucTieu({ mt, isAdmin, shopFilter, isAll }){
   if(!mt) return React.createElement("div", { className:"card", style:{ fontSize:13, color:"var(--inkSoft)" } }, "Đang tải dữ liệu chỉ tiêu tháng này (lần đầu xem 1 tháng có thể mất vài giây)...");
   const row = (!isAll && mt.byShop[shopFilter]) ? mt.byShop[shopFilter] : mt.chain;
   const shopHasNoData = !isAll && mt.byShop[shopFilter] && mt.byShop[shopFilter].hasData===false;
@@ -13158,20 +12676,12 @@ function RevenueMucTieu({ mt, isAdmin, shopFilter, isAll, stats, onOpenIssue }){
     React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16.5, marginBottom:12 } }, `Chỉ tiêu ${fmtMonthLabel(mt.month)}${!isAll?` — ${shopFilter}`:""}`),
     shopHasNoData && React.createElement("div", { key:"warn", className:"card", style:{ marginBottom:12, fontSize:12, color:"#b3261e" } }, "Chưa có chỉ tiêu tháng này cho nhà thuốc — kiểm tra lại trên hệ thống upharma.com.vn."),
     mt.shopPlanErrors && React.createElement("div", { key:"err", className:"card", style:{ marginBottom:12, fontSize:11.5, color:"#b3261e" } }, `Một số cửa hàng lấy chỉ tiêu bị lỗi: ${Object.keys(mt.shopPlanErrors).join(", ")}`),
-    React.createElement(MonthTargetTiles, { key:"tiles", row }),
-    !isAll && stats && React.createElement("div", { key:"dx", className:"card", style:{ marginTop:16 } }, [
-      React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15.5, marginBottom:6 } }, `Chẩn đoán doanh thu — ${shopLabel(shopFilter)}`),
-      React.createElement(RevenueDiagnosisPanel, { key:"p", dx: rvdDiagnose({ shop:shopFilter, month:mt.month, today:todayISO(), daily:(stats.byShop||{})[shopFilter] || {}, computedAt:stats.computedAt,
-        monthRow:(mt.byShop||{})[shopFilter] || null, monthMeta:{ daysElapsed:mt.daysElapsed, daysInMonth:mt.daysInMonth, isCurrentMonth:mt.isCurrentMonth } }) }),
-      isAdmin && React.createElement("button", { key:"b", type:"button", className:"btn btnPrimary", style:{ fontSize:12, marginTop:10 }, onClick:()=>onOpenIssue && onOpenIssue(shopFilter) }, "Mở hồ sơ xử lý (giao việc / kế hoạch bù)"),
-    ]),
+    React.createElement(MonthTargetTiles, { key:"tiles", row, mt }),
     isAll && React.createElement("div", { key:"table", style:{ marginTop:16 } }, [
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15.5, marginBottom:2 } }, "Tỷ lệ hoàn thành target theo cửa hàng"),
       mt.isCurrentMonth && React.createElement("div", { key:"note", style:{ fontSize:11, color:"var(--inkSoft)", marginBottom:8 } },
         `"Target ngày" = (Target − Thực tế đã ghi nhận) ÷ ${Math.max(0,(mt.daysInMonth||0)-(mt.daysElapsed||0))} ngày bán hàng còn lại của tháng`),
       React.createElement(TargetCompletionTable, { key:"tbl", mt, shops: DEFAULT_SHOPS }),
-      // 14/10/2026 (đề xuất cải tiến P0): xếp hạng nguy cơ + chẩn đoán từng nhà thuốc
-      React.createElement(RevenueRiskBoard, { key:"risk", mt, stats, shops: DEFAULT_SHOPS, isAdmin, onOpenIssue }),
       Object.values(mt.byShop||{}).some(x=>x&&x.fromOrders) && React.createElement("div", { key:"fbn", style:{ fontSize:11, color:"var(--inkSoft)", marginTop:6 } }, "* Hệ thống chỉ tiêu upharma.com.vn chưa trả thực đạt cho nhà thuốc này — doanh thu, số bill, hàng hệ số đang lấy tạm từ hoá đơn POS đã đồng bộ (tới hết hôm qua); số khách hàng vẫn chờ hệ thống."),
     ]),
   ]);
@@ -14065,9 +13575,6 @@ function RevenueAnalyticsView({ isAdmin, myStaff, navParam }){
   const isAll = !shopFilter || shopFilter==="Tất cả";
   // 3/10/2026: gộp "Kết quả ngày" vào đây (tab con) — cùng một chỗ xem doanh thu
   const subTabs = [ { id:"ketqua", label:"Kết quả ngày" }, { id:"theoky", label:"Theo kỳ" }, { id:"sosanh", label:"So sánh theo kỳ" }, { id:"nganh", label:"Theo ngành" } ];
-  // 14/10/2026: mở đúng hồ sơ vấn đề DT01 của nhà thuốc (issueActions/{shop}__DT01 — cùng hồ sơ với Hồ sơ nhà thuốc, không tạo việc trùng)
-  const [dtIssue, setDtIssue] = useState(null);
-  function openRevenueIssue(shop){ setDtIssue({ code:"DT01", title:"Doanh thu dự kiến không đạt chỉ tiêu tháng", priority:"P1", severity:"orange", shopCode:shop }); }
   return React.createElement("div", { style:{ maxWidth:1100, margin:"0 auto", padding:16, overflowX:"hidden" } }, [
     React.createElement("div", { key:"src", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8, padding:"6px 10px", background:"var(--paper)", borderRadius:8, border:"1px solid var(--line)" } },
       "Nguồn sự thật doanh thu: đồng bộ đơn bán (externalSalesLines) → tính lại trên tab này. KPI / CTKM dùng nguồn khác — không so số tuyệt đối giữa các tab."),
@@ -14095,12 +13602,11 @@ function RevenueAnalyticsView({ isAdmin, myStaff, navParam }){
           React.createElement(SubTabBar, { key:"sub", tabs:subTabs, active:sub, onChange:setSub, style:{ marginBottom:0 } }),
           sub==="theoky" && React.createElement(MonthPicker, { key:"mp", month, setMonth }),
         ]),
-        sub==="theoky" && React.createElement(RevenueMucTieu, { key:"mt", mt:monthTracking, isAdmin, shopFilter, isAll, stats, onOpenIssue: isAdmin ? openRevenueIssue : null }),
+        sub==="theoky" && React.createElement(RevenueMucTieu, { key:"mt", mt:monthTracking, isAdmin, shopFilter, isAll }),
         sub==="sosanh" && React.createElement(RevenueSoSanhKy, { key:"v", stats, shopFilter, isAll }),
         sub==="nganh" && React.createElement(RevenueTheoNganh, { key:"v", shopFilter, isAll, isAdmin, onPickShop: isAdmin ? setAdminShop : null }),
         sub==="ketqua" && React.createElement(DailyResultsView, { key:"kq", isAdmin, myStaff }),
       ]),
-    dtIssue && React.createElement(IssueDetailModal360, { key:"dt01", issue:dtIssue, shop:dtIssue.shopCode, onClose:()=>setDtIssue(null) }),
   ]);
 }
 // Đánh giá THAM KHẢO dựa trên doanh thu so với mức trung bình của nhóm nhân viên đang xem (KHÔNG
@@ -14204,9 +13710,6 @@ function StaffPerformanceView({ isAdmin, myStaff, onNavigate }){
   const needsImproveCount = employees.filter(e=>e.rating && e.rating.label==="Cần cải thiện").length;
   return React.createElement("div", { style:{ maxWidth:1200, margin:"0 auto", padding:16 } }, [
     React.createElement(PageTitle, { key:"title" }, "Hiệu suất nhân viên"),
-    // 14/10/2026 (P0 KPI — xét ngày công trước khi so sánh): bảng này là doanh thu 30 ngày, CHƯA chia theo số ca đã làm.
-    React.createElement("div", { key:"wdnote", style:{ fontSize:11.5, color:"var(--inkSoft)", background:"var(--goldSoft)", borderRadius:8, padding:"6px 10px", marginBottom:10 } },
-      "Lưu ý: xếp hạng theo doanh thu 30 ngày, chưa chia theo số ca / ngày công — người làm ít ca (nghỉ phép, mới vào) sẽ bị xếp thấp. Để đánh giá hiệu suất, dùng tab KPI (đã chiếu theo ngày làm việc) và kiểm tra ca trước khi kết luận."),
     React.createElement(RevenueRefreshButton, { key:"rb", refreshing, onRefresh:refresh, computedAt: stats && stats.computedAt, canRefresh:isAdmin }),
     !stats ? React.createElement("div", { key:"empty", className:"card", style:{ fontSize:13, color:"var(--inkSoft)" } }, "Chưa có dữ liệu — bấm \"Tính lại\" ở trên.")
     : React.createElement(React.Fragment, { key:"body" }, [
@@ -15106,7 +14609,7 @@ function PromoEffectView(){
     : h("div", null,
       needCompute && h("div", { className:"card", style:{ fontSize:13 } }, "Chưa tính hiệu quả cho tháng này — bấm \"Tính lại\"."),
       h("div", { className:"metrics" },
-        h("div", { className:"metric" }, h("div", { className:"label" }, "Doanh thu tăng thêm"), h("div", { className:"value" }, fmtVNDCompact(sum("incRevenue")))),
+        h("div", { className:"metric" }, h("div", { className:"label", title:"So với cùng số ngày ngay trước CTKM — chưa loại trừ mùa vụ, thời tiết, yếu tố khác nên chưa khẳng định chắc chắn do CTKM" }, "Doanh thu tăng so với trước CTKM*"), h("div", { className:"value" }, fmtVNDCompact(sum("incRevenue")))),
         h("div", { className:"metric" }, h("div", { className:"label" }, "Chi phí KM"), h("div", { className:"value" }, fmtVNDCompact(sum("costUsed")))),
         h("div", { className:"metric " + (sum("costUsed")>0 && sum("incRevenue")/sum("costUsed") >= Number(roiMin||3) ? "good" : "warn") }, h("div", { className:"label" }, "DT tăng thêm / 1đ KM"), h("div", { className:"value" }, sum("costUsed")>0 ? (Math.round(sum("incRevenue")/sum("costUsed")*10)/10).toLocaleString("vi-VN") + "đ" : "—")),
         h("div", { className:"metric good" }, h("div", { className:"label" }, "Nên lặp lại"), h("div", { className:"value" }, fmtNum(cnt("repeat")))),
@@ -15133,7 +14636,7 @@ function PromoEffectView(){
               e.baseline && h("div", null, `Mức nền ${dd(e.baseline.start)}–${dd(e.baseline.end)} (${e.baseline.days} ngày): ${fmtVND(e.baseline.revPerDay)}/ngày, ${String(e.baseline.qtyPerDay).replace(".",",")} SP/ngày. Trong CTKM (${e.days} ngày): ${fmtVND(e.during.revPerDay)}/ngày, ${String(e.during.qtyPerDay).replace(".",",")} SP/ngày.`),
               e.after && h("div", null, `Sau CTKM ${dd(e.after.start)}–${dd(e.after.end)}: ${fmtVND(e.after.revPerDay)}/ngày${e.pullForward ? " — thấp hơn mức nền > 20%: khách có thể đã mua dồn trong đợt KM (doanh thu tăng thêm thực tế thấp hơn con số trên)." : "."}`),
               e.costUsed!=null && h("div", null, `Chi phí KM: giảm giá ${fmtVND(e.costDiscount||0)} + quà tặng (giá bán lẻ) ${fmtVND(e.costGift||0)}${e.costPlan ? ` · chi phí kế hoạch ${fmtVND(e.costPlan)}` : ""}${!e.costEst && e.costPlan ? " (không đọc được chi phí từ hoá đơn → dùng chi phí kế hoạch)" : ""}.`),
-              e.incRevenue!=null && e.roi!=null && h("div", null, `Doanh thu tăng thêm ${fmtVND(e.incRevenue)} ÷ chi phí KM ${fmtVND(e.costUsed)} = `, h("b", null, `${String(e.roi).replace(".",",")}đ doanh thu tăng thêm / 1đ KM`), ` (ngưỡng ${roiMin||3}đ).`),
+              e.incRevenue!=null && e.roi!=null && h("div", null, `Doanh thu tăng so với trước CTKM (chưa loại yếu tố khác) ${fmtVND(e.incRevenue)} ÷ chi phí KM ${fmtVND(e.costUsed)} = `, h("b", null, `${String(e.roi).replace(".",",")}đ doanh thu tăng thêm / 1đ KM`), ` (ngưỡng ${roiMin||3}đ).`),
               e.verdict==="no_data" && h("div", { style:{ color:"var(--inkSoft)" } }, "Theo dõi chương trình theo DocumentID/API ở mục \"Nhập dữ liệu\" để có danh sách SKU."))),
           ];
         }))))));
@@ -15143,132 +14646,6 @@ function PromoEffectView(){
 const PO_TYPES = { voucher:{ t:"Voucher", icon:"" }, giamgia:{ t:"Giảm giá", icon:"" }, quatang:{ t:"Quà tặng", icon:"" }, doidiem:{ t:"Đổi điểm", icon:"" }, combo:{ t:"Combo", icon:"" } };
 const PO_FAMS = [["sinhnhat","Voucher sinh nhật","Sinh nhật"],["hangthe","Voucher hạng thẻ","Hạng thẻ"],["voucherhd","Voucher theo giá trị hoá đơn","Voucher HĐ"],["coupon","Coupon khách hàng VIP","Coupon VIP"],["combo","Combo 2 sản phẩm","Combo"],["quahd","Quà tặng theo giá trị hoá đơn","Quà HĐ"],["giamgiasp","Giảm giá sản phẩm theo đợt","Giảm giá SP"],["candate","Giảm giá hàng cận date","Cận date"],["doidiem","Đổi điểm tích luỹ","Đổi điểm"],["khac","Chương trình khác (kẹo trẻ em, bán trước cửa, vỏ thuốc, web…)","Khác"]];
 const PO_FAMS_ORDER = PO_FAMS.map(x=>x[0]); const PO_FAM_LABEL = Object.fromEntries(PO_FAMS.map(x=>[x[0],x[1]])); const PO_FAM_SHORT = Object.fromEntries(PO_FAMS.map(x=>[x[0],x[2]]));
-// ===== 14/10/2026 (đề xuất cải tiến — P1 CTKM): ĐÁNH GIÁ ĐỢT KHUYẾN MẠI & GỢI Ý QUYẾT ĐỊNH (PMD) =====
-// Từ số liệu đợt đã tính sẵn (promoOrderAnalytics/{đợt}: chi phí, doanh thu, đơn có KM theo chuỗi & nhà thuốc) + doanh thu
-// chuỗi theo ngày (revenueAnalytics) → so doanh thu/ngày trong đợt với CÙNG SỐ NGÀY ngay trước đợt (kỳ đối chứng), tỷ lệ
-// chi phí/doanh thu, nhà thuốc triển khai yếu, rồi gợi ý Tiếp tục / Điều chỉnh / Dừng để xem xét kèm căn cứ.
-// Thiếu kỳ đối chứng thì KHÔNG khẳng định doanh thu tăng thêm. Khối tự chứa — tests/promoDecision.test.js.
-// PMD-ENGINE-BEGIN
-const PMD_RULES = { liftGoodPct:5, costGoodPct:2, costMaxPct:3, weakShareRel:0.7 };
-function pmdAdd(iso, n){ const [y,m,d] = String(iso).split("-").map(Number); return new Date(Date.UTC(y, m-1, d+n)).toISOString().slice(0,10); }
-function pmdDays(a, b){ const p = s => { const [y,m,d] = s.split("-").map(Number); return Date.UTC(y, m-1, d); }; return Math.round((p(b)-p(a))/86400000) + 1; }
-function pmdPct(v, signed){ if(v==null || !Number.isFinite(v)) return "—"; const r = Math.round(v*10)/10; return (signed && r>0 ? "+" : "") + String(r).replace(".", ",") + "%"; }
-function pmdMoney(v){ if(v==null || !Number.isFinite(Number(v))) return "—"; const a = Math.abs(v); return a>=1e9 ? (v/1e9).toFixed(2).replace(".", ",")+" tỷ" : a>=1e6 ? (v/1e6).toFixed(1).replace(".", ",")+" tr" : Math.round(v/1e3)+"k"; }
-function pmdDecide(camp, chainRevenueByDay, rules){
-  const R = { ...PMD_RULES, ...(rules||{}) };
-  const c = camp.chain || {};
-  const out = { evidence:[], caveats:[], weakShops:[], decision:null, lift:null, costPct:null, baseline:null };
-  const from = camp.dataFrom || camp.from, to = camp.dataTo || camp.to;
-  out.costPct = c.rev>0 && c.cost!=null ? c.cost/c.rev*100 : null;
-  const promoShare = c.orders>0 ? (c.promoOrders||0)/c.orders : null;
-  if(out.costPct!=null) out.evidence.push(`Chi phí KM ${pmdMoney(c.cost)} = ${pmdPct(out.costPct)} doanh thu (${pmdMoney(c.rev)}) trong ${camp.days || (from && to ? pmdDays(from, to) : "?")} ngày có dữ liệu.`);
-  if(promoShare!=null) out.evidence.push(`${pmdPct(promoShare*100)} số đơn có dùng khuyến mại (${(c.promoOrders||0).toLocaleString("vi-VN")}/${(c.orders||0).toLocaleString("vi-VN")}).`);
-  const nonN = (c.orders||0) - (c.promoOrders||0);
-  if(c.promoOrders>0 && nonN>0){ const tP = c.promoRev/c.promoOrders, tN = (c.rev - c.promoRev)/nonN; out.evidence.push(`TB bill đơn có KM ${pmdMoney(tP)} so với đơn thường ${pmdMoney(tN)} (${pmdPct((tP/tN - 1)*100, true)}).`); }
-  // Kỳ đối chứng: cùng số ngày, liền trước đợt, lấy từ doanh thu chuỗi theo ngày
-  if(from && to && chainRevenueByDay){
-    const n = pmdDays(from, to), bFrom = pmdAdd(from, -n), bTo = pmdAdd(from, -1);
-    const keys = Object.keys(chainRevenueByDay).sort();
-    const covered = keys.length && keys[0] <= bFrom && keys[keys.length-1] >= to;
-    if(covered){
-      let a = 0, b = 0; for(let d = from; d <= to; d = pmdAdd(d, 1)) a += Number(chainRevenueByDay[d])||0; for(let d = bFrom; d <= bTo; d = pmdAdd(d, 1)) b += Number(chainRevenueByDay[d])||0;
-      if(b>0){ out.lift = (a/b - 1)*100; out.baseline = { from:bFrom, to:bTo, perDay:b/n, campaignPerDay:a/n };
-        out.evidence.push(`Doanh thu chuỗi/ngày trong đợt ${pmdMoney(a/n)} so với ${n} ngày liền trước (${bFrom.slice(8,10)}/${bFrom.slice(5,7)}–${bTo.slice(8,10)}/${bTo.slice(5,7)}) ${pmdMoney(b/n)}: ${pmdPct(out.lift, true)}.`); }
-    }
-    if(out.lift==null) out.caveats.push("Chưa có đủ doanh thu theo ngày của kỳ đối chứng (cùng số ngày ngay trước đợt) → chưa đủ cơ sở khẳng định doanh thu tăng thêm nhờ khuyến mại.");
-  }
-  if(out.lift!=null) out.caveats.push("So với kỳ liền trước chỉ là ước tính: mùa vụ, ngày lễ, hàng hoá, nhân sự cũng ảnh hưởng doanh thu — không quy toàn bộ chênh lệch cho khuyến mại.");
-  if(camp.running) out.caveats.push("Đợt đang chạy — đây là đánh giá giữa kỳ.");
-  if(camp.partial) out.caveats.push("Thiếu dữ liệu đầu đợt — số liệu chỉ tính phần có dữ liệu.");
-  // Nhà thuốc triển khai yếu: tỷ lệ đơn có KM thấp hơn nhiều so với bình quân chuỗi, hoặc chi phí/doanh thu cao
-  Object.entries(camp.shops||{}).forEach(([s, x]) => {
-    if(!s || !x || !x.n) return;
-    const share = (x.pn||0)/x.n, cost = Object.values(x.cost||{}).reduce((a, v) => a + (Number(v)||0), 0), cp = x.rev>0 ? cost/x.rev*100 : null;
-    const why = [];
-    if(promoShare>0 && share < promoShare*R.weakShareRel) why.push(`chỉ ${pmdPct(share*100)} đơn có KM (chuỗi ${pmdPct(promoShare*100)})`);
-    if(cp!=null && cp > R.costMaxPct) why.push(`chi phí/doanh thu ${pmdPct(cp)}`);
-    if(why.length) out.weakShops.push({ shop:s, why:why.join("; "), share, costPct:cp });
-  });
-  // Gợi ý quyết định
-  const cp = out.costPct, L = out.lift;
-  let code, reason;
-  if(cp==null){ code = "nodata"; reason = "Chưa có chi phí / doanh thu của đợt."; }
-  else if(L!=null){
-    if(L >= R.liftGoodPct && cp <= R.costMaxPct){ code = "continue"; reason = `Doanh thu/ngày ${pmdPct(L, true)} so với kỳ đối chứng, chi phí ${pmdPct(cp)} doanh thu (≤ ${R.costMaxPct}%).`; }
-    else if(L >= 0 && cp > R.costMaxPct){ code = "adjust"; reason = `Doanh thu không giảm (${pmdPct(L, true)}) nhưng chi phí ${pmdPct(cp)} doanh thu (> ${R.costMaxPct}%) → giảm mức ưu đãi / thu hẹp đối tượng, nhóm hàng.`; }
-    else if(L < 0 && cp > R.costMaxPct){ code = "stop"; reason = `Doanh thu/ngày ${pmdPct(L, true)} trong khi chi phí ${pmdPct(cp)} doanh thu → dừng để xem xét lại.`; }
-    else { code = "adjust"; reason = `Doanh thu/ngày ${pmdPct(L, true)} — chi phí chấp nhận được (${pmdPct(cp)}) nhưng chưa tạo tăng trưởng rõ → điều chỉnh cách triển khai (truyền thông, trưng bày, tư vấn).`; }
-  } else {
-    if(cp <= R.costGoodPct){ code = "watch"; reason = `Chi phí thấp (${pmdPct(cp)} doanh thu) — tiếp tục theo dõi, CHƯA khẳng định hiệu quả tăng thêm vì thiếu kỳ đối chứng.`; }
-    else if(cp <= R.costMaxPct){ code = "adjust"; reason = `Chi phí ${pmdPct(cp)} doanh thu, chưa có kỳ đối chứng → điều chỉnh / thu hẹp phạm vi trong khi chờ đủ số liệu.`; }
-    else { code = "review"; reason = `Chi phí ${pmdPct(cp)} doanh thu (> ${R.costMaxPct}%), chưa có kỳ đối chứng → xem xét dừng hoặc điều chỉnh mạnh.`; }
-  }
-  const LABEL = { continue:["Tiếp tục","green"], watch:["Tiếp tục theo dõi","yellow"], adjust:["Điều chỉnh","orange"], stop:["Dừng để xem xét","red"], review:["Xem xét dừng / điều chỉnh","red"], nodata:["Chưa đủ dữ liệu để kết luận","grey"] };
-  out.decision = { code, label:LABEL[code][0], tone:LABEL[code][1], reason };
-  const reviewDate = camp.running && camp.to ? camp.to : null;
-  out.next = { owner:"QLKV + phụ trách marketing", reviewDate, actions: [
-    ...(out.weakShops.length ? [`Kiểm tra cách triển khai tại ${out.weakShops.map(w => w.shop.replace(/^SHOP0*/, "NT")).join(", ")} (trưng bày, tư vấn, nhân viên có biết chương trình).`] : []),
-    ...(code==="adjust" || code==="review" || code==="stop" ? ["Rà các chương trình có chi phí / doanh thu đơn > 10% trong bảng chi tiết bên dưới."] : []),
-    "Ghi quyết định và kỳ vọng cho đợt sau để so sánh dự báo với thực tế.",
-  ] };
-  return out;
-}
-// PMD-ENGINE-END
-// 14/10/2026 (P1 CTKM): thẻ "Đánh giá đợt & quyết định" — gợi ý của hệ thống + quyết định quản lý lưu ở
-// opsConfig/promoCampaignReviews (map theo mã đợt), giữ ảnh chụp số liệu lúc quyết định để so dự báo với thực tế.
-const PMD_DECISIONS = ["Tiếp tục", "Tiếp tục theo dõi", "Điều chỉnh", "Dừng để xem xét"];
-function PromoDecisionCard({ campKey, camp, isAdmin }){
-  const h = React.createElement;
-  const [chainDaily, setChainDaily] = useState(undefined);
-  const [reviews, setReviews] = useState({});
-  const [form, setForm] = useState(null);
-  const [saving, setSaving] = useState(false);
-  useEffect(()=>{ db.collection("opsConfig").doc("revenueAnalytics").get().then(d => setChainDaily(d.exists ? (d.data().chainRevenueByDay || null) : null)).catch(err => { logSystemError("revenueAnalytics(promoDecision)", err); setChainDaily(null); }); }, []);
-  useEffect(()=> db.collection("opsConfig").doc("promoCampaignReviews").onSnapshot(d => setReviews(d.exists ? (d.data().byCampaign || {}) : {}), err => logSystemError("promoCampaignReviews", err)), []);
-  useEffect(()=>{ setForm(null); }, [campKey]);
-  if(!camp || chainDaily===undefined) return null;
-  const r = pmdDecide(camp, chainDaily);
-  const saved = reviews[campKey];
-  const tone = { green:["var(--pine)","var(--pineSoft)"], yellow:["#8a6d1a","var(--goldSoft)"], orange:["var(--amber)","var(--amberSoft)"], red:["var(--clay)","var(--claySoft)"], grey:["var(--inkSoft)","#E7E5DA"] }[r.decision.tone];
-  const ul = (arr) => h("ul", { style:{ margin:"2px 0 6px", paddingLeft:18, fontSize:12.5, lineHeight:1.5 } }, arr.map((t, i) => h("li", { key:i }, t)));
-  async function save(){
-    setSaving(true);
-    try{
-      const entry = { ...form, label: camp.label || campKey, from: camp.from || null, to: camp.to || null,
-        snapshot:{ suggested:r.decision.label, costPct: r.costPct==null ? null : Math.round(r.costPct*10)/10, liftPct: r.lift==null ? null : Math.round(r.lift*10)/10, cost: (camp.chain||{}).cost || null, rev: (camp.chain||{}).rev || null },
-        decidedBy:(auth.currentUser && auth.currentUser.email) || "", decidedAt:new Date().toISOString() };
-      await db.collection("opsConfig").doc("promoCampaignReviews").set({ byCampaign:{ [campKey]: entry } }, { merge:true });
-      setForm(null);
-    }catch(e){ alert("Lưu thất bại: " + (e && e.message ? e.message : e)); }
-    setSaving(false);
-  }
-  const inp = (k, ph, type) => h(type==="area" ? "textarea" : "input", { key:k, rows:2, type: type==="date" ? "date" : undefined, value:(form||{})[k] || "", placeholder:ph, onChange:e=>setForm({ ...form, [k]:e.target.value }), style:{ width:"100%", padding:6, fontSize:12.5, borderRadius:6, border:"1px solid var(--line)", fontFamily:"inherit", marginBottom:6 } });
-  const past = Object.entries(reviews).filter(([k]) => k!==campKey).sort((a, b) => String(b[1].decidedAt||"").localeCompare(String(a[1].decidedAt||""))).slice(0, 6);
-  return h("div", { className:"card", style:{ marginBottom:12, borderLeft:`4px solid ${tone[0]}` } },
-    h("div", { style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", marginBottom:6 } },
-      h("b", { style:{ fontSize:14.5 } }, "Đánh giá đợt & gợi ý quyết định"),
-      h("span", { style:{ fontSize:11.5, fontWeight:800, color:tone[0], background:tone[1], borderRadius:999, padding:"2px 10px" } }, "Gợi ý: " + r.decision.label),
-      saved && h("span", { style:{ fontSize:11.5, fontWeight:800, color:"var(--pine)", background:"var(--pineSoft)", borderRadius:999, padding:"2px 10px" } }, "Quản lý đã quyết: " + saved.decision)),
-    h("div", { style:{ fontSize:12.5, fontWeight:600, marginBottom:4 } }, r.decision.reason),
-    h("div", { style:{ fontSize:12, fontWeight:700, marginTop:4 } }, "Căn cứ (số liệu)"), ul(r.evidence),
-    r.weakShops.length>0 && h("div", { style:{ fontSize:12, fontWeight:700 } }, "Nhà thuốc triển khai yếu"),
-    r.weakShops.length>0 && ul(r.weakShops.map(w => `${w.shop.replace(/^SHOP0*/, "NT")}: ${w.why}`)),
-    h("div", { style:{ fontSize:12, fontWeight:700 } }, `Bước tiếp theo (phụ trách đề xuất: ${r.next.owner}${r.next.reviewDate ? ` · đánh giá lại khi kết thúc đợt ${r.next.reviewDate.slice(8,10)}/${r.next.reviewDate.slice(5,7)}` : ""})`), ul(r.next.actions),
-    r.caveats.length>0 && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, r.caveats.map((t, i) => h("div", { key:i }, "• " + t))),
-    saved && h("div", { style:{ fontSize:12.5, background:"var(--paper)", borderRadius:8, padding:"7px 10px", marginTop:8 } },
-      h("b", null, `Quyết định: ${saved.decision}`), saved.reason ? ` — ${saved.reason}` : "", saved.owner ? ` · phụ trách: ${saved.owner}` : "", saved.reviewDate ? ` · đánh giá lại ${saved.reviewDate.slice(8,10)}/${saved.reviewDate.slice(5,7)}` : "",
-      saved.expected && h("div", null, "Kỳ vọng: " + saved.expected), saved.actual && h("div", null, "Kết quả thực tế: " + saved.actual), saved.lesson && h("div", null, "Bài học: " + saved.lesson),
-      h("div", { style:{ fontSize:11, color:"var(--inkSoft)" } }, `Lúc quyết định: gợi ý "${(saved.snapshot||{}).suggested||"—"}", chi phí ${pmdPct((saved.snapshot||{}).costPct)} doanh thu, so kỳ đối chứng ${pmdPct((saved.snapshot||{}).liftPct, true)} · ${saved.decidedBy||""}`)),
-    isAdmin && !form && h("button", { className:"btn btnGhost", style:{ fontSize:12, marginTop:8 }, onClick:()=>setForm({ decision: saved ? saved.decision : (r.decision.code==="continue" ? "Tiếp tục" : r.decision.code==="watch" ? "Tiếp tục theo dõi" : r.decision.code==="stop" || r.decision.code==="review" ? "Dừng để xem xét" : "Điều chỉnh"), reason: saved ? saved.reason : "", owner: saved ? saved.owner : "", reviewDate: saved ? saved.reviewDate : (camp.to || ""), expected: saved ? saved.expected : "", actual: saved ? saved.actual : "", lesson: saved ? saved.lesson : "" }) }, saved ? "Cập nhật quyết định / kết quả" : "Ghi quyết định của quản lý"),
-    isAdmin && form && h("div", { style:{ marginTop:8, background:"var(--paper)", borderRadius:8, padding:10 } },
-      h("select", { value:form.decision, onChange:e=>setForm({ ...form, decision:e.target.value }), style:{ padding:"5px 8px", fontSize:12.5, borderRadius:6, border:"1px solid var(--line)", marginBottom:6 } }, PMD_DECISIONS.map(x => h("option", { key:x, value:x }, x))),
-      inp("reason", "Lý do quyết định"), inp("owner", "Người phụ trách"), inp("reviewDate", "", "date"),
-      inp("expected", "Kỳ vọng / dự báo cho đợt (VD: chi phí ≤ 2% doanh thu, doanh thu/ngày +5%)", "area"),
-      inp("actual", "Kết quả thực tế (ghi khi đánh giá lại)", "area"), inp("lesson", "Bài học cho lần sau", "area"),
-      h("div", { style:{ display:"flex", gap:8 } }, h("button", { className:"btn btnPrimary", disabled:saving || !form.owner, onClick:save, title: !form.owner ? "Cần người phụ trách" : "" }, saving ? "Đang lưu…" : "Lưu"), h("button", { className:"btn btnGhost", onClick:()=>setForm(null) }, "Huỷ"))),
-    past.length>0 && h("details", { style:{ marginTop:8, fontSize:12 } }, h("summary", { style:{ cursor:"pointer", color:"var(--pine)" } }, `Các đợt đã đánh giá (${past.length}) — so kỳ vọng với thực tế`),
-      ul(past.map(([k, v]) => `${v.label || k}: ${v.decision}${v.expected ? ` · kỳ vọng: ${v.expected}` : ""}${v.actual ? ` · thực tế: ${v.actual}` : " · chưa ghi kết quả thực tế"}${v.lesson ? ` · bài học: ${v.lesson}` : ""}`))));
-}
 function PromoOrderView({ isAdmin }){
   const h = React.createElement;
   const [key, setKey] = useState(null);
@@ -15356,7 +14733,6 @@ function PromoOrderView({ isAdmin }){
   const shown = showAll ? progs : progs.slice(0, 40);
   const shopsList = Object.keys(d.shops||{}).filter(Boolean).sort();
   return h("div", null, head, back,
-    h(PromoDecisionCard, { campKey:key, camp:{ ...d, label:(camps.find(x => x.key===key)||{}).label, running:d.running, partial:d.partial }, isAdmin }),
     h("div", { className:"metrics" },
       kpi("Tổng chi phí khuyến mại", fm(c.cost), `${dm(d.dataFrom)} – ${dm(d.dataTo)} · ${fm(c.cost/(d.days||1))}/ngày`),
       kpi("Chi phí / doanh thu", pcs(pc(c.cost, c.rev)), `doanh thu ${fm(c.rev)} · ${(c.orders||0).toLocaleString("vi-VN")} đơn`),
@@ -21026,7 +20402,6 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
       React.createElement("div", { key:"head", className:"card", style:{ marginBottom:16, display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10 } }, [
         React.createElement("div", { key:"info", style:{ fontSize:12.5, color:"var(--inkSoft)" } }, [
           React.createElement("div", { key:"a" }, `${fmtNum(s.totalSKU||0)} mã×nhà thuốc đang theo dõi${consShop!=="Tất cả" ? ` tại ${nt(consShop)}` : ""} · tính lúc ${s.computedAt ? new Date(s.computedAt).toLocaleString("vi-VN") : "—"}`),
-          React.createElement(StaleDataNotice, { key:"stale", ts:s.computedAt, maxHours:30 }),
           consShop!=="Tất cả" && !shopHasDetail && React.createElement("div", { key:"b", style:{ color:"var(--clay)" } }, isAdmin ? "Dashboard & ma trận đang hiện số TOÀN CHUỖI — bấm \"Tính lại\" 1 lần để có số riêng từng nhà thuốc. Danh sách bên dưới đã lọc đúng nhà thuốc." : "Dashboard & ma trận đang hiện số TOÀN CHUỖI (chưa có số riêng nhà thuốc). Danh sách bên dưới đã lọc đúng nhà thuốc của bạn."),
         ]),
         React.createElement("div", { key:"flt", style:{ display:"flex", gap:6, flexWrap:"wrap" } },
@@ -21169,8 +20544,6 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
                 React.createElement("div", { key:"a", style:{ fontSize:13, fontWeight:600 } }, `Lần phân tích gần nhất: ${new Date(data.generatedAtTs).toLocaleString("vi-VN")}`),
                 React.createElement("div", { key:"b", style:{ fontSize:12, color:"var(--inkSoft)", marginTop:2 } },
                   `Đối chiếu tốc độ bán ${data.periodFrom} → ${data.periodTo} · Dư khi tồn >${data.surplusDays} ngày bán · Thiếu khi tồn <${data.shortageDays} ngày bán`),
-                // 14/10/2026 (P0 Hàng hoá): phân biệt "tồn = 0" với "số liệu chưa cập nhật"
-                React.createElement(StaleDataNotice, { key:"stale", ts:data.generatedAtTs, maxHours:30 }),
               ]
             : React.createElement("div", { style:{ fontSize:13, color:"var(--inkSoft)" } }, loaded ? (isAdmin ? "Chưa có dữ liệu — bấm \"Phân tích ngay\" để chạy lần đầu." : "Chưa có dữ liệu phân tích — quản lý sẽ cập nhật sau.") : "Đang tải...")
         ),
@@ -23842,13 +23215,6 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
 
   // ---- Dữ liệu chứng minh — nguồn khác nhau theo từng loại vấn đề ----
   const [proofList, setProofList] = useState(null);
-  const [rvdSrc, setRvdSrc] = useState(null);
-  const dx = useMemo(()=>{
-    if(kind!=="revenue" || !rvdSrc) return null;
-    const mt = rvdSrc.mt || {};
-    return rvdDiagnose({ shop, month: mt.month || todayISO().slice(0,7), today:todayISO(), daily:rvdSrc.daily, computedAt:rvdSrc.computedAt,
-      monthRow:(mt.byShop||{})[shop] || null, monthMeta: mt.month ? { daysElapsed:mt.daysElapsed, daysInMonth:mt.daysInMonth, isCurrentMonth:mt.isCurrentMonth } : {} });
-  }, [kind, rvdSrc, shop]);
   useEffect(()=>{
     let cancelled = false; setProofList(null);
     if(isGoodsKind){
@@ -23863,18 +23229,13 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
         .catch(err => { logSystemError("externalInventoryExpiry(issueDetail)", err); if(!cancelled) setProofList([]); });
     } else if(kind==="revenue"){
       // 14 ngày doanh thu gần nhất của nhà thuốc, đã tính sẵn ở opsConfig/revenueAnalytics.byShop.
-      // 14/10/2026: giữ thêm toàn bộ số theo ngày (bill, số mã, hàng hệ số) + chỉ tiêu tháng để chẩn đoán (rvdDiagnose).
       db.collection("opsConfig").doc("revenueAnalytics").get()
-        .then(async d => {
+        .then(d => {
           if(cancelled) return;
-          const data = d.exists ? d.data() : {};
-          const byShop = data.byShop || {};
+          const byShop = (d.exists && d.data().byShop) || {};
           const revMap = (byShop[shop] && byShop[shop].revenueByDay) || {};
           const dates = Object.keys(revMap).sort();
           setProofList(dates.slice(-14).map(dt => ({ date:dt, revenue:revMap[dt] })));
-          let mtDoc = null;
-          try{ const m = await db.collection("opsConfig").doc("revenueAnalyticsMonths").collection("months").doc(todayISO().slice(0,7)).get(); mtDoc = m.exists ? m.data() : null; }catch(e){ logSystemError("revenueAnalyticsMonths(issueDetail)", e); }
-          if(!cancelled) setRvdSrc({ daily: byShop[shop] || {}, computedAt: data.computedAt || null, mt: mtDoc });
         })
         .catch(err => { logSystemError("revenueAnalytics(issueDetail)", err); if(!cancelled) setProofList([]); });
     } else if(kind==="ops"){
@@ -24056,15 +23417,13 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
         },
       });
     } else if(kind==="hr"){
-      // 14/10/2026 (P0 KPI): kế hoạch bù từng nhân viên — mức thiếu, cần/ngày làm còn lại, chỉ số cam kết, mốc kiểm tra, gợi ý huấn luyện theo chỉ số yếu.
-      const plans = (proofList||[]).map(p => kbpPlan(p, todayISO()));
+      const itemsTxt = recoItemsHr.map(it => `- ${it.label}: Doanh số dự kiến ${it.pctDoanhSo!=null?Math.round(it.pctDoanhSo*100)+"%":"—"}, KPI dự kiến ${it.kpiPct!=null?Math.round(it.kpiPct*100)+"%":"—"}`).join("\n");
       setComposer({
-        heading:"Giao kế hoạch bù KPI",
-        title:`Kế hoạch bù KPI ${recoItemsHr.length} nhân viên — ${shopLabel(shop)}`,
-        mota:`Nhân viên có doanh số/KPI dự kiến cuối tháng dưới 85% (mốc đạt KPI). Kế hoạch bù đề xuất — CHT trao đổi với từng nhân viên, chỉnh nếu cần:\n${kbpTaskLines(plans)}\n\nBằng chứng cần nộp: nội dung đã trao đổi / kèm cặp với từng người và tiến độ tại mốc kiểm tra.`,
+        heading:"Giao việc coaching nhân sự",
+        title:`Coaching ${recoItemsHr.length} nhân viên tiến độ thấp — ${shopLabel(shop)}`,
+        mota:`Nhân viên cần hỗ trợ (doanh số/KPI dự kiến cuối tháng dưới 85% — mốc đạt KPI):\n${itemsTxt}`,
         module:"HR", ...(cht ? { staffId:cht.id } : { shopOnly:true, shop }), ...slaFields,
-        extra:{ sourceIssueCode:code, sourceIssueTitle:issue.title, sourceShop:shop, sourceIssuePriority:issue.priority, actionInsight:issue.title, issueActionKey:issueActionKeyOf(shop, code), expectedResult,
-          commitKind:"kpiRecovery", commitPlans: plans.filter(x => x.plan).map(x => ({ staffId:x.staffId, name:x.name, commitment:x.plan.commitment, checkDate:x.plan.checkDate, needPerWorkday:Math.round(x.plan.needPerWorkday||0), baselinePerWorkday:Math.round(x.plan.baselinePerWorkday||0), baselineKpi:x.plan.baselineKpi })) },
+        extra:{ sourceIssueCode:code, sourceIssueTitle:issue.title, sourceShop:shop, sourceIssuePriority:issue.priority, actionInsight:issue.title, issueActionKey:issueActionKeyOf(shop, code), expectedResult },
       });
     } else if(kind==="customer"){
       const itemsTxt = recoItemsCust.slice(0,20).map(it => `- ${it.label} (${it.phone})${it.lastPurchaseAt?` — mua gần nhất ${it.lastPurchaseAt}`:""}`).join("\n");
@@ -24095,12 +23454,11 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
       });
     } else if(kind==="revenue"){
       setComposer({
-        heading: dx && dx.plan ? "Giao kế hoạch bù doanh thu" : "Giao việc rà soát doanh thu",
-        title: dx && dx.plan ? `Kế hoạch bù doanh thu — ${shopLabel(shop)}` : `Rà soát nguyên nhân doanh thu thấp — ${shopLabel(shop)}`,
-        mota: dx ? rvdTaskText(dx) : `Doanh thu dự kiến không đạt chỉ tiêu tháng. Chưa đủ dữ liệu xác định nguyên nhân — cần rà soát trực tiếp (khách hàng, nhân sự, hàng hoá, yếu tố bên ngoài) và ghi lại kết quả rà soát.`,
+        heading:"Giao việc rà soát doanh thu",
+        title:`Rà soát nguyên nhân doanh thu thấp — ${shopLabel(shop)}`,
+        mota:`Doanh thu dự kiến không đạt chỉ tiêu tháng. Chưa đủ dữ liệu xác định nguyên nhân — cần rà soát trực tiếp (khách hàng, nhân sự, hàng hoá, yếu tố bên ngoài) và ghi lại kết quả rà soát.`,
         module:"Khác", ...(cht ? { staffId:cht.id } : { shopOnly:true, shop }), ...slaFields,
-        extra:{ sourceIssueCode:code, sourceIssueTitle:issue.title, sourceShop:shop, sourceIssuePriority:issue.priority, actionInsight:issue.title, issueActionKey:issueActionKeyOf(shop, code), expectedResult,
-          ...(dx && dx.plan ? { commitMetric:"revenuePerDay", commitTarget:Math.round(dx.plan.needPerDay), commitBaseline:Math.round(dx.plan.baselinePerDay||0), commitText:dx.plan.commitment, checkDate:dx.plan.checkDate } : {}) },
+        extra:{ sourceIssueCode:code, sourceIssueTitle:issue.title, sourceShop:shop, sourceIssuePriority:issue.priority, actionInsight:issue.title, issueActionKey:issueActionKeyOf(shop, code), expectedResult },
       });
     }
   }
@@ -24133,18 +23491,13 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
         recommendation = { assignedTo: cht ? cht.name : shopLabel(shop), items:recoItemsOps };
         resultBeforeItems = recoItemsOps.map(it => ({ key:it.key, label:it.label, deadline:it.deadline }));
       } else if(kind==="revenue"){
-        recommendation = { assignedTo: cht ? cht.name : shopLabel(shop), note: dx ? dx.conclusion : "Chưa đủ dữ liệu xác định nguyên nhân — cần rà soát trực tiếp.",
-          hypotheses: dx ? dx.hypotheses.map(x => ({ key:x.key, text:x.text, evidence:x.evidence||"", confidence:x.confidence||"" })) : [],
-          actions: dx ? dx.actions.map(x => x.text) : [], plan: dx && dx.plan ? { gap:Math.round(dx.plan.gap), needPerDay:Math.round(dx.plan.needPerDay), baselinePerDay:Math.round(dx.plan.baselinePerDay||0), commitment:dx.plan.commitment, checkDate:dx.plan.checkDate } : null };
+        recommendation = { assignedTo: cht ? cht.name : shopLabel(shop), note:"Chưa đủ dữ liệu xác định nguyên nhân — cần rà soát trực tiếp." };
         resultBeforeItems = (proofList||[]).map(r => ({ key:r.date, label:r.date, revenue:r.revenue }));
       }
       await db.collection("issueActions").doc(issueActionKeyOf(shop, code)).set({
         shop, code, title:issue.title, status:"IN_PROGRESS", assignedTaskId:taskId,
         recommendation, resultBefore:{ capturedAtTs:new Date().toISOString(), items:resultBeforeItems },
         expectedResult: EXPECTED_RESULT_BY_KIND[kind] || "", recurrence,
-        // 14/10/2026 (chỉ số hiệu quả app): thời điểm phát hiện & giao việc để đo "phát hiện → giao việc"
-        detectedAtTs: issue.detectedAtTs || null, assignedAtTs: new Date().toISOString(),
-        ...(kind==="revenue" ? { revenuePlan:{ assignedDate:todayISO(), baselinePerDay: dx && dx.plan ? Math.round(dx.plan.baselinePerDay||0) : null, targetPerDay: dx && dx.plan ? Math.round(dx.plan.needPerDay) : null } } : {}),
         updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(), createdAtTs: firebase.firestore.FieldValue.serverTimestamp(),
       }, { merge:true });
       await logIssueHistory({ shop, code, action:"ASSIGN", oldStatus: action ? action.status : null, newStatus:"IN_PROGRESS", detail:`Đã giao việc: ${issue.title}` });
@@ -24164,7 +23517,7 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
     try{
       const beforeItems = (action.resultBefore && action.resultBefore.items) || [];
       const ids = new Set(beforeItems.map(it => it.key));
-      let after = [], revenueSummary = null;
+      let after = [];
       if(isGoodsKind){
         // Chỉ lọc theo shopCode (chỉ mục đơn, không cần chỉ mục kép mới) rồi lọc mã hàng ở phía trình
         // duyệt — tránh cần tạo thêm composite index cho truy vấn "in" kết hợp shopCode.
@@ -24191,22 +23544,13 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
         const stillOverdueIds = new Set(snap.docs.filter(d => { const t=d.data(); return t.deadline && `${t.deadline}T${t.hanGio||"23:59"}` < nowTs2; }).map(d=>d.id));
         after = [...ids].map(tid => { const b = beforeItems.find(x=>x.key===tid); return { key:tid, label:(b&&b.label)||tid, stillOverdue:stillOverdueIds.has(tid) }; });
       } else if(kind==="revenue"){
-        // 14/10/2026: trước đây đọc lại ĐÚNG các ngày trước khi giao việc (trước = sau). Nay đo các ngày SAU ngày giao,
-        // so bình quân/ngày với trước khi giao và với mức cam kết của kế hoạch bù (nếu có).
         const d = await db.collection("opsConfig").doc("revenueAnalytics").get();
         const byShop = (d.exists && d.data().byShop) || {};
         const revMap = (byShop[shop] && byShop[shop].revenueByDay) || {};
-        const rp = action.revenuePlan || {};
-        const assigned = rp.assignedDate || String((action.resultBefore && action.resultBefore.capturedAtTs) || todayISO()).slice(0,10);
-        const baseVals = beforeItems.map(x => Number(x.revenue)).filter(Number.isFinite);
-        const baseline = rp.baselinePerDay || (baseVals.length ? baseVals.reduce((a, v) => a + v, 0)/baseVals.length : null);
-        const m = rvdMeasureAfter(revMap, assigned, todayISO(), baseline, rp.targetPerDay || null);
-        if(!m.ok){ window.alert("Chưa đo được: " + m.reason); setBusy(false); return; }
-        after = m.days.map(x => ({ key:x.date, label:x.date, revenue:x.revenue }));
-        revenueSummary = { text:m.text, avgPerDay:Math.round(m.avgPerDay), baselinePerDay: baseline==null ? null : Math.round(baseline), targetPerDay: rp.targetPerDay || null, metTarget:m.metTarget, suggestedEffect:m.suggestedEffect };
+        after = [...ids].map(dt => ({ key:dt, label:dt, revenue: revMap[dt]!=null ? revMap[dt] : null }));
       }
       await db.collection("issueActions").doc(issueActionKeyOf(shop, code)).set({
-        status:"PENDING_VERIFICATION", resultAfter:{ capturedAtTs:new Date().toISOString(), items:after, ...(revenueSummary ? { summary:revenueSummary } : {}) },
+        status:"PENDING_VERIFICATION", resultAfter:{ capturedAtTs:new Date().toISOString(), items:after },
         updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
       }, { merge:true });
       await logIssueHistory({ shop, code, action:"MEASURE", oldStatus:"IN_PROGRESS", newStatus:"PENDING_VERIFICATION", detail:"Đã đo kết quả sau xử lý" });
@@ -24261,10 +23605,9 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
       ketQua = after ? `Sau xử lý: ${(action.resultAfter.items||[]).filter(x=>!x.stillOverdue).length}/${(action.resultAfter.items||[]).length} việc không còn quá hạn.` : "";
       phamViApDung = "Các nhà thuốc có nhiều công việc quá hạn tương tự.";
     } else if(kind==="revenue"){
-      const rec = action.recommendation || {};
-      nguyenNhan = rec.note || "Chưa đủ dữ liệu xác định nguyên nhân — đã giao rà soát trực tiếp tại nhà thuốc.";
-      cachXuLy = rec.plan ? `Giao ${rec.assignedTo||""} kế hoạch bù: ${rec.plan.commitment}${(rec.actions||[]).length ? " Hành động: " + rec.actions.join(" ") : ""}` : `Giao ${rec.assignedTo||""} rà soát nguyên nhân doanh thu thấp.`;
-      ketQua = action.resultAfter && action.resultAfter.summary ? action.resultAfter.summary.text : "";
+      nguyenNhan = "Chưa đủ dữ liệu xác định nguyên nhân — đã giao rà soát trực tiếp tại nhà thuốc.";
+      cachXuLy = `Giao ${(action.recommendation&&action.recommendation.assignedTo)||""} rà soát nguyên nhân doanh thu thấp.`;
+      ketQua = "";
       phamViApDung = "Các nhà thuốc có doanh thu dự kiến không đạt chỉ tiêu tháng tương tự.";
     }
     const draft = { vanDe: issue.title, issueCode: code, issueShop: shop, nguyenNhan, cachXuLy, ketQua, hieuQua:"Hiệu quả", phamViApDung };
@@ -24359,7 +23702,6 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
       // Đề xuất xử lý
       rc("div", { key:"reco", style:{ marginTop:16 } }, [
         rc("div", { key:"t", style:{ fontWeight:700, fontSize:15.5, marginBottom:6 } }, "Đề xuất xử lý"),
-        isGoodsKind && transferDoc && rc(StaleDataNotice, { key:"stale", ts:transferDoc.generatedAtTs, maxHours:30 }),
         isGoodsKind && (!transferDoc ? rc("div", { key:"e", className:"emptyState" }, "Đang tải đề xuất điều chuyển...")
           : !primarySource ? rc("div", { key:"e", className:"emptyState" }, kind==="goods_overstock" ? "Chưa có đề xuất điều chuyển đi phù hợp — có thể cân nhắc khuyến mãi/giảm giá để đẩy hàng." : "Chưa có đề xuất điều chuyển phù hợp từ dữ liệu hiện có — có thể cần đặt hàng NCC, hoặc bấm \"Phân tích ngay\" ở tab Hàng hoá → Điều chuyển để tính lại.")
           : rc("div", { key:"box", style:{ background:"var(--pineSoft)", borderRadius:10, padding:"10px 12px" } }, [
@@ -24375,13 +23717,8 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
           : rc("div", { key:"box", style:{ background:"var(--pineSoft)", borderRadius:10, padding:"10px 12px" } }, [
               rc("div", { key:"a", style:rowStyle }, [ rc("span",{key:"k"},"Giao cho"), rc("b",{key:"v"}, recoTargetLabel) ]),
               rc("div", { key:"c", style:{ ...rowStyle, borderBottom:"none" } }, [ rc("span",{key:"k"},"Số nhân viên cần coaching"), rc("b",{key:"v"}, `${recoItemsHr.length} người`) ]),
-              rc("div", { key:"items", style:{ marginTop:8 } }, (proofList||[]).map(p => { const x = kbpPlan(p, todayISO()); return rc("div", { key:p.staffId, style:{ fontSize:12, padding:"5px 0", borderBottom:"1px dashed var(--line)" } }, [
-                rc("b", { key:"n" }, x.name), ` — KPI dự kiến ${kbpPct(x.kpiProjected)}`,
-                ...x.metrics.map(m => rc("div", { key:m.key }, `${m.label}: đạt ${kbpPct(m.pct)} (dự kiến ${kbpPct(m.projectedPct)}), thiếu ${kbpMoney(m.gap)}${m.needPerWorkday!=null ? `, cần ${kbpMoney(m.needPerWorkday)}/ngày làm` : ""}${m.curPerWorkday!=null ? ` (hiện ${kbpMoney(m.curPerWorkday)})` : ""}`)),
-                x.plan && rc("div", { key:"c", style:{ color:"var(--amber)" } }, "Cam kết đề xuất: " + x.plan.commitment),
-                ...x.coaching.map((c, i) => rc("div", { key:"h"+i }, "Gợi ý hỗ trợ: " + c)),
-                rc("div", { key:"as", style:{ color:"var(--inkSoft)", fontSize:11 } }, x.assumption + " " + x.notes.join(" ")),
-              ]); }) ),
+              rc("div", { key:"items", style:{ marginTop:8 } }, recoItemsHr.map(it => rc("div", { key:it.key, style:{ fontSize:12, padding:"3px 0" } },
+                `${it.label}  —  Doanh số ${it.pctDoanhSo!=null?Math.round(it.pctDoanhSo*100)+"%":"—"}, KPI ${it.kpiPct!=null?Math.round(it.kpiPct*100)+"%":"—"}`)) ),
               rc("div", { key:"impact", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:8 } }, "Ảnh hưởng dự kiến: cải thiện tiến độ doanh số/KPI của các nhân viên nêu trên."),
             ])),
         kind==="customer" && (recoItemsCust.length===0 ? rc("div", { key:"e", className:"emptyState" }, "Không có khách hàng nào thuộc nhóm cảnh báo này hiện tại.")
@@ -24409,9 +23746,10 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
               rc("div", { key:"impact", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:8 } }, "Ảnh hưởng dự kiến: giảm số việc quá hạn, cải thiện điểm vận hành."),
             ])),
         kind==="revenue" && rc("div", { key:"box", style:{ background:"var(--pineSoft)", borderRadius:10, padding:"10px 12px" } }, [
-          // 14/10/2026: thay câu cố định "Chưa đủ dữ liệu…" bằng chẩn đoán thật (dữ kiện / giả thuyết / đề xuất / kế hoạch bù);
-          // chỉ ghi "Chưa đủ dữ liệu để kết luận" khi thật sự thiếu căn cứ.
-          rc(RevenueDiagnosisPanel, { key:"dx", dx, compact:true }),
+          rc("div", { key:"a", style:{ ...rowStyle, borderBottom:"none", flexDirection:"column", alignItems:"flex-start", gap:2 } }, [
+            rc("b", { key:"k" }, "Nguyên nhân"),
+            rc("span", { key:"v", style:{ color:CL360.warn } }, "Chưa đủ dữ liệu xác định nguyên nhân — cần Cửa hàng trưởng rà soát trực tiếp."),
+          ]),
           rc("div", { key:"b", style:{ ...rowStyle, borderBottom:"none", marginTop:6 } }, [ rc("span",{key:"k"},"Giao cho"), rc("b",{key:"v"}, recoTargetLabel) ]),
         ]),
         similarTotal>0 && rc("div", { key:"sim", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:8 } },
@@ -24482,13 +23820,10 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
           const a = ((action.resultAfter && action.resultAfter.items) || []).find(x => x.key===b.key);
           return { cells:[ b.label, rc("span",{key:"v",style:{fontWeight:700,color:a&&!a.stillOverdue?CL360.good:CL360.bad}}, a?(a.stillOverdue?"Còn quá hạn":"Đã xử lý"):"—") ] };
         }) }),
-        kind==="revenue" && action.resultAfter && action.resultAfter.summary && rc("div", { key:"rsum", style:{ fontSize:12.5, fontWeight:600, margin:"4px 0 6px", color: action.resultAfter.summary.metTarget ? CL360.good : CL360.warn } }, action.resultAfter.summary.text),
-        kind==="revenue" && (action.resultAfter && action.resultAfter.summary
-          ? rc(Table360, { key:"tbl", head:["Ngày sau giao việc","Doanh thu"], rows:(action.resultAfter.items||[]).map(a => ({ cells:[ a.label, a.revenue!=null ? fmtNum(Math.round(a.revenue))+" đ" : "—" ] })) })
-          : rc(Table360, { key:"tbl", head:["Ngày","Doanh thu trước","Doanh thu sau"], rows:(action.resultBefore.items||[]).map(b => {
-              const a = ((action.resultAfter && action.resultAfter.items) || []).find(x => x.key===b.key);
-              return { cells:[ b.label, fmtNum(Math.round(b.revenue||0))+" đ", a&&a.revenue!=null?fmtNum(Math.round(a.revenue))+" đ":"—" ] };
-            }) })),
+        kind==="revenue" && rc(Table360, { key:"tbl", head:["Ngày","Doanh thu trước","Doanh thu sau"], rows:(action.resultBefore.items||[]).map(b => {
+          const a = ((action.resultAfter && action.resultAfter.items) || []).find(x => x.key===b.key);
+          return { cells:[ b.label, fmtNum(Math.round(b.revenue||0))+" đ", a&&a.revenue!=null?fmtNum(Math.round(a.revenue))+" đ":"—" ] };
+        }) }),
         rc("div", { key:"q", style:{ fontSize:12.5, fontWeight:600, marginTop:12, marginBottom:6 } }, "Đánh giá hiệu quả xử lý"),
         rc("textarea", { key:"note", rows:2, placeholder:"Nguyên nhân (bắt buộc nếu không hiệu quả / hiệu quả một phần)", value:effNote, onChange:e=>setEffNote(e.target.value), style:{ width:"100%", padding:8, borderRadius:8, border:"1px solid var(--line)", fontSize:12.5, marginBottom:8 } }),
         rc("div", { key:"btns", style:{ display:"flex", gap:8, flexWrap:"wrap" } }, Object.keys(ISSUE_EFFECT).map(k => rc("button", { key:k, type:"button", className:"btn", disabled:busy, style:{ borderColor:ISSUE_EFFECT[k].color, color:ISSUE_EFFECT[k].color }, onClick:()=>setEffectiveness(k) }, `${ISSUE_EFFECT[k].icon} ${ISSUE_EFFECT[k].label}`))),
@@ -25119,78 +24454,68 @@ function PeerCompareCard({ me, thang, staffList, assign }){
         ]),
   ]);
 }
-// ===== 14/10/2026 (đề xuất cải tiến — P1 Employee360): KẾ HOẠCH CẢI THIỆN 7/14 NGÀY (IP) =====
-// Chỉ số đầu kỳ (lấy từ hồ sơ 360) → mục tiêu định lượng → phân loại nguyên nhân TRƯỚC khi chọn hỗ trợ (kỹ năng / quy trình /
-// nguồn lực / chưa rõ) → người kèm cặp + hỗ trợ của quản lý → hết kỳ tự so chỉ số hiện tại với đầu kỳ và mục tiêu.
-// Lưu như 1 việc (tasks, extra.improvementPlan) — dùng chung luồng giao việc / Action Center, không tạo hệ thống riêng.
-// IP-ENGINE-BEGIN
-const IP_CAUSES = {
-  skill:{ label:"Khoảng trống kỹ năng", support:"Kèm cặp / luyện tình huống đúng kỹ năng yếu; người kèm theo dõi hằng ngày." },
-  process:{ label:"Lỗi quy trình", support:"Sửa quy trình / hướng dẫn thao tác — KHÔNG cần đào tạo cá nhân; kiểm tra lại cách làm sau 3 ngày." },
-  resource:{ label:"Thiếu nguồn lực (hàng, ca, công cụ)", support:"Quản lý xử lý nguồn lực (bổ sung hàng, điều chỉnh ca, công cụ) trước — không giao đào tạo." },
-  unknown:{ label:"Chưa rõ — cần trao đổi", support:"Trao đổi 1-1 để xác định nguyên nhân trước khi chọn cách hỗ trợ." },
-};
-function ipAdd(iso, n){ const [y,m,d] = String(iso).split("-").map(Number); return new Date(Date.UTC(y, m-1, d+n)).toISOString().slice(0,10); }
-function ipPct(r){ return r==null || !Number.isFinite(r) ? "—" : Math.round(r*100) + "%"; }
-function ipBuild(o){
-  const days = o.days===14 ? 14 : 7, start = o.startDate;
-  return { metricLabel:o.metricLabel, baseline:o.baseline, target:o.target, days, startDate:start, endDate:ipAdd(start, days),
-    causeType:o.causeType || "unknown", support:o.support || "", mentor:o.mentor || "", managerSupport:o.managerSupport || "" };
-}
-function ipText(plan, staffName){
-  const c = IP_CAUSES[plan.causeType] || IP_CAUSES.unknown;
-  return [`KẾ HOẠCH CẢI THIỆN ${plan.days} NGÀY — ${staffName}`,
-    `Chỉ số: ${plan.metricLabel} · đầu kỳ ${ipPct(plan.baseline)} → mục tiêu ${ipPct(plan.target)} (hạn ${plan.endDate.slice(8,10)}/${plan.endDate.slice(5,7)})`,
-    `Nguyên nhân (đã phân loại): ${c.label}`,
-    `Hỗ trợ: ${plan.support || c.support}`,
-    plan.mentor ? `Người kèm cặp: ${plan.mentor}` : "Người kèm cặp: (chưa chọn)",
-    plan.managerSupport ? `Hỗ trợ của quản lý: ${plan.managerSupport}` : "",
-    "Kết quả cuối kỳ: hệ thống so chỉ số hiện tại với đầu kỳ và mục tiêu khi hết hạn."].filter(Boolean).join("\n");
-}
-function ipEvaluate(plan, currentRatio, today){
-  const out = { current: currentRatio==null ? null : currentRatio, delta:null, status:"", tone:"grey", ended: today >= plan.endDate, note:"" };
-  if(String(plan.startDate).slice(0,7)!==String(today).slice(0,7)) out.note = "Kỳ kế hoạch vắt sang tháng mới — chỉ số dự kiến đã tính lại theo tháng mới, so sánh chỉ mang tính tham khảo.";
-  if(currentRatio==null){ out.status = "Chưa đo được — không còn số liệu chỉ số này"; return out; }
-  out.delta = currentRatio - plan.baseline;
-  if(!out.ended){ out.status = `Đang thực hiện (còn đến ${plan.endDate.slice(8,10)}/${plan.endDate.slice(5,7)}) · ${out.delta>=0?"+":""}${Math.round(out.delta*100)} điểm % so với đầu kỳ`; out.tone = out.delta>0 ? "green" : "yellow"; return out; }
-  if(currentRatio >= plan.target){ out.status = `Đạt mục tiêu: ${ipPct(plan.baseline)} → ${ipPct(currentRatio)} (mục tiêu ${ipPct(plan.target)})`; out.tone = "green"; out.verdict = "achieved"; }
-  else if(out.delta >= 0.02){ out.status = `Cải thiện một phần: ${ipPct(plan.baseline)} → ${ipPct(currentRatio)}, chưa tới mục tiêu ${ipPct(plan.target)} — điều chỉnh phương án hoặc gia hạn`; out.tone = "orange"; out.verdict = "partial"; }
-  else { out.status = `Chưa cải thiện: ${ipPct(plan.baseline)} → ${ipPct(currentRatio)} — xem lại nguyên nhân đã phân loại và đổi cách hỗ trợ`; out.tone = "red"; out.verdict = "none"; }
-  return out;
-}
-// IP-ENGINE-END
-function ImprovementPlanForm({ me, causes, staffList, onCancel, onSubmit }){
+
+// ===== 15/10/2026 (đề xuất cải tiến P0 KPI / P1 Employee360): KẾ HOẠCH CẢI THIỆN 7/14 NGÀY — chỉ số đầu kỳ (máy lấy), mục tiêu định lượng,
+// nguyên nhân đã phân loại, hoạt động hỗ trợ, người kèm; hết hạn máy tự đo lại → ĐẠT / CHƯA ĐẠT. Ghi nhận hỗ trợ của quản lý trong kỳ.
+const IP_METRIC_UI = { dsDay:"Doanh số / ngày công", hsDay:"Hàng hệ số / ngày công", onTime:"Tỉ lệ việc xong đúng hạn" };
+const IP_CAUSE_UI = { ky_nang:"Thiếu kỹ năng (tư vấn, bán kèm…)", quy_trinh:"Chưa làm đúng quy trình", nguon_luc:"Thiếu nguồn lực (người, hàng, ca) — không phải lỗi nhân viên" };
+function ImprovePlanCard({ me, isAdmin, myStaff, staffList, defaultMetric }){
   const h = React.createElement;
-  const first = causes[0];
-  const [metric, setMetric] = useState(first ? first.label : "");
-  const [days, setDays] = useState(7);
-  const cur = (causes.find(c => c.label===metric) || {}).ratio;
-  const [target, setTarget] = useState(first ? String(Math.min(100, Math.round(first.ratio*100) + 10)) : "85");
-  const [causeType, setCauseType] = useState("unknown");
-  const [support, setSupport] = useState("");
-  const [mentor, setMentor] = useState("");
-  const [managerSupport, setManagerSupport] = useState("");
-  const mentors = staffList.filter(s => s.id!==me.id && s.shop===me.shop);
-  const tgt = Number(target)/100;
-  const valid = metric && cur!=null && Number.isFinite(tgt) && tgt > cur;
-  const fld = (l, c) => h("div", { className:"field", style:{ marginBottom:8 } }, h("label", null, l), c);
-  return h("div", { className:"modalOverlay", onClick:onCancel }, h("div", { className:"modal", onClick:e=>e.stopPropagation() },
-    h("div", { style:{ fontWeight:700, fontSize:17, marginBottom:10 } }, `Kế hoạch cải thiện — ${me.name}`),
-    fld("Chỉ số cần cải thiện (đầu kỳ lấy từ hồ sơ)", h("select", { value:metric, onChange:e=>{ setMetric(e.target.value); const c = causes.find(x => x.label===e.target.value); if(c) setTarget(String(Math.min(100, Math.round(c.ratio*100) + 10))); } }, causes.map(c => h("option", { key:c.label, value:c.label }, `${c.label} — hiện ${ipPct(c.ratio)}`)))),
-    fld("Thời gian", h("select", { value:days, onChange:e=>setDays(Number(e.target.value)) }, h("option", { value:7 }, "7 ngày"), h("option", { value:14 }, "14 ngày"))),
-    fld(`Mục tiêu (%) — đầu kỳ ${ipPct(cur)}`, h("input", { type:"number", value:target, onChange:e=>setTarget(e.target.value) })),
-    fld("Nguyên nhân (phân loại trước khi chọn hỗ trợ)", h("select", { value:causeType, onChange:e=>setCauseType(e.target.value) }, Object.entries(IP_CAUSES).map(([k, v]) => h("option", { key:k, value:k }, v.label)))),
-    h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", margin:"-4px 0 8px" } }, "Gợi ý: " + IP_CAUSES[causeType].support),
-    fld("Hoạt động hỗ trợ cụ thể", h("textarea", { rows:2, value:support, placeholder:IP_CAUSES[causeType].support, onChange:e=>setSupport(e.target.value) })),
-    fld("Người kèm cặp", h("select", { value:mentor, onChange:e=>setMentor(e.target.value) }, h("option", { value:"" }, "— chọn —"), mentors.map(s => h("option", { key:s.id, value:s.name }, `${s.name} · ${s.role||""}`)))),
-    fld("Hỗ trợ của quản lý (ghi nhận)", h("input", { value:managerSupport, onChange:e=>setManagerSupport(e.target.value), placeholder:"VD: điều chỉnh ca, bổ sung hàng, gặp 1-1 thứ 4" })),
-    !valid && h("div", { style:{ fontSize:12, color:"var(--clay)", marginBottom:8 } }, "Mục tiêu phải cao hơn chỉ số đầu kỳ."),
-    h("div", { className:"btnRow", style:{ justifyContent:"flex-end" } },
-      h("button", { type:"button", className:"btn btnGhost", onClick:onCancel }, "Huỷ"),
-      h("button", { type:"button", className:"btn btnPrimary", disabled:!valid, onClick:()=>onSubmit(ipBuild({ metricLabel:metric, baseline:cur, target:tgt, days, startDate:todayISO(), causeType, support, mentor, managerSupport })) }, "Tiếp tục → giao việc"))));
+  const canPlan = isAdmin || (myStaff && isRole(myStaff.role, "Cửa hàng trưởng") && myStaff.shop === me.shop);
+  const API = CF_JOB("improvePlanApiNow");
+  const call = (action, p) => callCf(API, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ action, staffId: me.id, ...(p||{}) }) }, 60000);
+  const [rows, setRows] = useState(null); const [base, setBase] = useState(null); const [open, setOpen] = useState(false); const [busy, setBusy] = useState(false);
+  const [f, setF] = useState({ metric: defaultMetric || "dsDay", days:14, cause:"", target:"", activities:"", coachId:"" });
+  const [sup, setSup] = useState({});
+  const load = () => call("list").then(r => setRows(r.rows || [])).catch(() => setRows([]));
+  useEffect(() => { setRows(null); load(); }, [me && me.id]);
+  const openForm = async () => { setOpen(true); if(!base){ try{ setBase(await call("baseline")); }catch(e){ setBase({ ok:false }); } } };
+  const fmtV = (m, v) => v == null ? "—" : m === "onTime" ? `${v}%` : fmtVND(v);
+  const b0 = base && base.baseline ? base.baseline[f.metric] : null;
+  const suggest = b0 != null ? (f.metric === "onTime" ? Math.min(100, Math.round(b0 + 15)) : Math.round(b0 * 1.15)) : "";
+  async function create(){
+    setBusy(true);
+    try{ await call("create", { ...f, target: Number(f.target || suggest) }); setOpen(false); setF({ ...f, cause:"", target:"", activities:"" }); load(); }
+    catch(e){ window.alert(e.message || "Lỗi"); }
+    setBusy(false);
+  }
+  const coaches = (staffList || []).filter(s => s.shop === me.shop && s.id !== me.id);
+  const resColor = r => r === "ĐẠT" ? "#15803D" : r === "CHƯA ĐẠT" ? "#B91C1C" : "#6B7280";
+  return h("div", { className:"card", style:{ marginBottom:12 } }, [
+    h("div", { key:"h", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, flexWrap:"wrap" } }, [
+      h("div", { key:"t", style:{ fontWeight:700, fontSize:15 } }, "Kế hoạch cải thiện 7/14 ngày"),
+      canPlan && !open && h("button", { key:"b", type:"button", className:"btn btnPrimary", style:{ fontSize:12, padding:"5px 12px" }, onClick:openForm }, "Lập kế hoạch")]),
+    open && h("div", { key:"f", style:{ background:"var(--paper)", borderRadius:8, padding:10, marginTop:8, fontSize:13 } }, [
+      h("div", { key:"m", style:{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:6 } }, Object.entries(IP_METRIC_UI).map(([k, l]) =>
+        h("button", { key:k, type:"button", onClick:()=>setF({ ...f, metric:k, target:"" }), className: f.metric===k ? "btn btnPrimary" : "btn btnGhost", style:{ fontSize:12, padding:"4px 10px" } }, l))),
+      h("div", { key:"bl", style:{ marginBottom:6 } }, !base ? "Đang lấy chỉ số đầu kỳ…" : `Chỉ số đầu kỳ (máy tự lấy): ${fmtV(f.metric, b0)}${f.metric!=="onTime" && base.workedBefore != null ? ` · ${base.workedBefore} ngày công tháng này` : ""}${f.metric==="onTime" && base.onTimeN != null ? ` · ${base.onTimeN} việc 30 ngày qua` : ""}`),
+      h("div", { key:"d", style:{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center", marginBottom:6 } }, [
+        h("span", { key:"l" }, "Thời hạn:"), ...[7, 14].map(d => h("button", { key:d, type:"button", onClick:()=>setF({ ...f, days:d }), className: f.days===d ? "btn btnPrimary" : "btn btnGhost", style:{ fontSize:12, padding:"3px 10px" } }, `${d} ngày`)),
+        h("span", { key:"tl" }, "Mục tiêu:"), h("input", { key:"ti", type:"number", value:f.target, placeholder: suggest !== "" ? String(suggest) : "", onChange:e=>setF({ ...f, target:e.target.value }), style:{ width:120 } }),
+        h("span", { key:"tu", style:{ fontSize:11.5, color:"var(--inkSoft)" } }, f.metric==="onTime" ? "%" : "đồng / ngày công (gợi ý +15%)")]),
+      h("div", { key:"c", style:{ marginBottom:6 } }, [h("div", { key:"l", style:{ fontWeight:600, marginBottom:3 } }, "Nguyên nhân chính (bắt buộc — xác định trước khi kèm cặp/đào tạo):"),
+        ...Object.entries(IP_CAUSE_UI).map(([k, l]) => h("label", { key:k, style:{ display:"block", cursor:"pointer" } }, [h("input", { key:"r", type:"radio", checked:f.cause===k, onChange:()=>setF({ ...f, cause:k }) }), " ", l]))]),
+      h("textarea", { key:"a", rows:3, value:f.activities, onChange:e=>setF({ ...f, activities:e.target.value }), placeholder:"Hoạt động hỗ trợ cụ thể — VD: CHT đứng quầy cùng 2 ca/tuần, luyện 3 tình huống bán kèm, mỗi tối xem lại số đơn bán kèm", style:{ marginBottom:6 } }),
+      h("div", { key:"co", style:{ marginBottom:8 } }, ["Người kèm: ", h("select", { key:"s", value:f.coachId, onChange:e=>setF({ ...f, coachId:e.target.value }) }, [h("option", { key:"", value:"" }, isAdmin ? "Quản lý khu vực" : "Tôi (CHT)"), ...coaches.map(c => h("option", { key:c.id, value:c.id }, `${c.name}${c.role ? " · " + c.role : ""}`))])]),
+      f.cause === "nguon_luc" && h("div", { key:"nl", style:{ color:"#B45309", fontSize:12, marginBottom:6 } }, "Nguyên nhân là thiếu nguồn lực: hoạt động hỗ trợ nên là việc của quản lý (bổ sung người/hàng/ca), không giao thêm chỉ tiêu cho nhân viên."),
+      h("div", { key:"bt", className:"btnRow" }, [h("button", { key:"c", type:"button", className:"btn btnGhost", onClick:()=>setOpen(false) }, "Huỷ"),
+        h("button", { key:"s", type:"button", className:"btn btnPrimary", disabled:busy || !f.cause || f.activities.trim().length < 10, onClick:create }, busy ? "Đang lưu…" : "Lưu & giao kế hoạch")]),
+    ]),
+    rows === null ? h("div", { key:"ld", style:{ fontSize:12.5, color:"var(--inkSoft)", marginTop:6 } }, "Đang tải…")
+      : rows.length === 0 ? h("div", { key:"e", style:{ fontSize:12.5, color:"var(--inkSoft)", marginTop:6 } }, "Chưa có kế hoạch nào. Chỉ tiêu nào dưới 80% nên lập kế hoạch có mục tiêu và ngày đo lại.")
+      : rows.slice(0, 6).map(r => h("div", { key:r.id, style:{ borderTop:"1px solid var(--line)", padding:"7px 0", fontSize:12.5, lineHeight:1.55 } }, [
+          h("div", { key:"t" }, [h("b", { key:"m" }, r.metricLabel), ` · ${r.days} ngày (${String(r.startDate).split("-").reverse().join("/")} – ${String(r.endDate).split("-").reverse().join("/")}) · `,
+            h("span", { key:"st", style:{ fontWeight:700, color: r.status==="active" ? "#2563EB" : resColor(r.result) } }, r.status==="active" ? "Đang thực hiện" : r.status==="cancelled" ? "Đã huỷ" : r.result)]),
+          h("div", { key:"v" }, `Đầu kỳ ${fmtV(r.metric, r.baseline)} → mục tiêu ${fmtV(r.metric, r.target)}${r.endValue !== undefined ? ` → cuối kỳ ${fmtV(r.metric, r.endValue)}${r.deltaPct != null ? ` (${r.deltaPct > 0 ? "+" : ""}${r.deltaPct}%)` : ""} · ${r.endNote || ""}` : ""}`),
+          h("div", { key:"c", style:{ color:"var(--inkSoft)" } }, `Nguyên nhân: ${r.causeLabel} · Người kèm: ${r.coachName || "—"} · Hỗ trợ: ${r.activities}`),
+          (r.supportLog || []).length > 0 && h("div", { key:"sl", style:{ color:"var(--inkSoft)" } }, "Đã hỗ trợ: " + r.supportLog.map(x => `${String(x.at).slice(5,10).split("-").reverse().join("/")} ${x.by}: ${x.note}`).join(" · ")),
+          canPlan && r.status === "active" && h("div", { key:"ad", style:{ display:"flex", gap:6, marginTop:4 } }, [
+            h("input", { key:"i", value:sup[r.id] || "", onChange:e=>setSup({ ...sup, [r.id]:e.target.value }), placeholder:"Ghi nhận buổi hỗ trợ (VD: kèm quầy ca chiều 16/10)", style:{ flex:1, fontSize:12 } }),
+            h("button", { key:"b", type:"button", className:"btn btnGhost", style:{ fontSize:12, padding:"3px 10px" }, disabled:!(sup[r.id]||"").trim(), onClick:async()=>{ try{ await call("support", { id:r.id, note:sup[r.id] }); setSup({ ...sup, [r.id]:"" }); load(); }catch(e){ window.alert(e.message); } } }, "Ghi")]),
+        ])),
+  ]);
 }
 function Employee360View({ isAdmin, myStaff, navParam, onNavigate }){
-  const [ipForm, setIpForm] = useState(false); // 14/10/2026: form kế hoạch cải thiện 7/14 ngày
   const [staffList, setStaffList] = useState([]);
   const [showLeft360, setShowLeft360] = useState(false); // 7/10/2026: mặc định ẩn người đã nghỉ
   const [paceList, setPaceList] = useState([]);
@@ -25552,23 +24877,10 @@ function Employee360View({ isAdmin, myStaff, navParam, onNavigate }){
           title:`Coaching ${weakest.label} — ${me.name}`,
           mota:`${weakest.label} mới đạt ${pct360(weakest.ratio)} (${weakest.detail}). Trao đổi nguyên nhân, đặt mục tiêu cải thiện trong tuần và báo lại kết quả.`,
           extra:{ sourceScreen:"employee360" },
-        }) }, "Tạo coaching task")
+        }) }, "Giao việc coaching nhanh")
       : rc("button", { type:"button", className:"btn", style:{ fontSize:12, padding:"6px 12px" }, onClick:()=>onNavigate && onNavigate("kudos") }, "Đi tới Ghi nhận & Quà"));
-    // 14/10/2026 (P1 Employee360): kế hoạch cải thiện 7/14 ngày của nhân viên này + đánh giá lại tự động
-    const ipTasks = tasks.filter(t => t.improvementPlan).sort((a, b) => String(b.ngayGiao||"").localeCompare(String(a.ngayGiao||"")));
-    const ipCard = rc("div", { key:"ip", className:"card", style:{ marginBottom:12 } }, [
-      rc(Head360, { key:"h", title:`Kế hoạch cải thiện (${ipTasks.length})`, right: isAdmin && causes.length>0 ? rc("button", { type:"button", className:"btn btnPrimary", style:{ fontSize:11.5, padding:"5px 10px" }, onClick:()=>setIpForm(true) }, "＋ Lập kế hoạch 7/14 ngày") : null }),
-      ipTasks.length===0 ? rc("div", { key:"e", style:{ fontSize:12, color:"var(--inkSoft)" } }, causes.length ? "Chưa có kế hoạch cải thiện. Lập kế hoạch khi có chỉ số dưới mục tiêu: chỉ số đầu kỳ, mục tiêu, nguyên nhân, người kèm cặp, hạn." : "Chưa có chỉ số để lập kế hoạch.")
-        : ipTasks.slice(0, 5).map(t => { const p = t.improvementPlan; const curC = causes.find(c => c.label===p.metricLabel); const ev = ipEvaluate(p, curC ? curC.ratio : null, today);
-            const col = { green:CL360.good, yellow:CL360.warn, orange:CL360.warn, red:CL360.bad, grey:CL360.gray }[ev.tone];
-            return rc(Row360, { key:t.id, color:col, title:`${p.metricLabel}: ${ipPct(p.baseline)} → mục tiêu ${ipPct(p.target)} · ${p.days} ngày (${dmy360(p.startDate)}–${dmy360(p.endDate)})`,
-              sub:`${ev.status}${ev.note ? " · " + ev.note : ""} · Nguyên nhân: ${(IP_CAUSES[p.causeType]||IP_CAUSES.unknown).label}${p.mentor ? " · kèm cặp: " + p.mentor : ""}${p.managerSupport ? " · QL hỗ trợ: " + p.managerSupport : ""} · việc: ${t.trangThai||"—"}` }); }),
-    ]);
     body = rc("div", { key:"ov" }, [
-      ipCard,
-      ipForm && rc(ImprovementPlanForm, { key:"ipf", me, causes, staffList:staffWorking, onCancel:()=>setIpForm(false), onSubmit:(plan)=>{ setIpForm(false); setComposer({
-        heading:`Giao kế hoạch cải thiện ${plan.days} ngày`, module:"HR", staffId:me.id, deadline:plan.endDate,
-        title:`Kế hoạch cải thiện ${plan.metricLabel} — ${me.name}`, mota:ipText(plan, me.name), extra:{ sourceScreen:"employee360", improvementPlan:plan } }); } }),
+      me && rc(ImprovePlanCard, { key:"ip", me, isAdmin, myStaff, staffList:staffWorking }),
       me && rc(PeerCompareCard, { key:"peer", me, thang, staffList:staffWorking, assign }),
       // P1-1 (mục XI): cảnh báo vấn đề nhân sự phát hiện được cho nhân viên này.
       staffIssues.length>0 && rc("div", { key:"issues", className:"card", style:{ marginBottom:12, borderColor:CL360.warn } }, [
@@ -27357,357 +26669,6 @@ function StaffProgressPanel({ openTasks, doneTasks, roster, fixedShop, onPick, t
 // ================= ĐO HIỆU QUẢ SAU XỬ LÝ (đặc tả §I Performance Management + P2-18) =================
 // So sánh tình trạng trước–sau khi hoàn thành việc gắn issue (sourceIssueCode).
 // Nguồn: tasks đã hoàn thành 90 ngày gần nhất có truocXuLy / sauXuLy / tacDong / sourceIssueCode.
-// ===== 14/10/2026 (đề xuất cải tiến — mục 5): CHỈ SỐ ĐO HIỆU QUẢ CỦA CHÍNH APP (AM) =====
-// Tính từ dữ liệu sẵn có: tasks (đúng hạn), issueActions (giải quyết đã xác minh, tái diễn, bằng chứng, thời gian phát hiện →
-// giao việc), issueHistory (mở lại), promoOrderAnalytics/_index + opsConfig/promoCampaignReviews (CTKM được đánh giá).
-// Chỉ số chưa có dữ liệu gốc thì trả "chưa đo được" kèm lý do — không ước lượng. Không quy kết kết quả kinh doanh cho app.
-// AM-ENGINE-BEGIN
-function amMs(v){ if(v==null) return null; if(typeof v==="number") return v; if(typeof v.toMillis==="function") return v.toMillis(); if(typeof v.seconds==="number") return v.seconds*1000; const t = Date.parse(v); return Number.isFinite(t) ? t : null; }
-function amRate(n, d){ return d>0 ? n/d : null; }
-function appMetrics(I){
-  const today = I.today, since = I.since;
-  const out = [];
-  const push = (key, group, label, value, detail, meaning, insufficient) => out.push({ key, group, label, value, detail, meaning, insufficient: insufficient || null });
-  // Thực thi: việc hoàn thành đúng hạn
-  const done = (I.tasksDone||[]).filter(t => t.trangThai==="Đã hoàn thành" && t.deadline && t.ngayHoanThanh);
-  const onTime = done.filter(t => String(t.ngayHoanThanh).slice(0,10) <= t.deadline);
-  push("onTime", "Thực thi", "Tỷ lệ công việc đúng hạn", amRate(onTime.length, done.length), `${onTime.length}/${done.length} việc có hạn đã hoàn thành`, "Đo kỷ luật thực hiện, không thay thế kết quả kinh doanh.", done.length ? null : "Chưa có việc hoàn thành có hạn trong kỳ.");
-  // Điều hành: thời gian phát hiện → giao việc
-  const acts = (I.issueActions||[]).filter(a => a && a.status && a.status!=="REJECTED");
-  const lead = acts.map(a => { const d = amMs(a.detectedAtTs), g = amMs(a.assignedAtTs || a.createdAtTs); return d!=null && g!=null && g>=d ? (g-d)/3600000 : null; }).filter(x => x!=null);
-  const leadAvg = lead.length ? lead.reduce((x, y) => x + y, 0)/lead.length : null;
-  push("lead", "Điều hành", "Thời gian từ phát hiện đến giao việc (giờ, trung bình)", leadAvg, lead.length ? `${lead.length} vấn đề có đủ thời điểm phát hiện và giao việc` : "", "Có giảm thời gian tổng hợp và ra quyết định không?",
-    lead.length ? null : "Hồ sơ cũ chưa lưu thời điểm phát hiện — từ 14/10/2026 app lưu khi giao việc, số liệu sẽ có dần.");
-  // Giải quyết: vấn đề được xác minh đã xử lý (đánh giá hiệu quả), không chỉ đóng việc
-  const evaluated = acts.filter(a => a.effectiveness);
-  const resolved = evaluated.filter(a => a.effectiveness==="hieu_qua");
-  const assigned = acts.filter(a => a.assignedTaskId);
-  push("resolved", "Giải quyết", "Tỷ lệ vấn đề được xác minh đã xử lý", amRate(resolved.length, assigned.length), `${resolved.length} hiệu quả / ${evaluated.length} đã đánh giá / ${assigned.length} đã giao việc`, "Vấn đề đã hết hay chỉ đóng công việc?", assigned.length ? null : "Chưa có vấn đề nào được giao việc.");
-  // Tái diễn
-  const recurred = acts.filter(a => a.recurrence===true);
-  const reopens = (I.issueHistory||[]).filter(h => h.action==="REOPEN").length;
-  push("recur", "Tái diễn", "Tỷ lệ vấn đề lặp lại", amRate(recurred.length, assigned.length), `${recurred.length} vấn đề từng đóng rồi xuất hiện lại · ${reopens} lần mở lại do xử lý chưa hiệu quả`, "Biện pháp xử lý nguyên nhân hay triệu chứng?", assigned.length ? null : "Chưa có vấn đề nào được giao việc.");
-  // Chất lượng quyết định: hồ sơ có bằng chứng trước xử lý
-  const withEvidence = assigned.filter(a => a.resultBefore && Array.isArray(a.resultBefore.items) && a.resultBefore.items.length>0);
-  push("evidence", "Chất lượng quyết định", "Tỷ lệ hồ sơ xử lý có bằng chứng số liệu", amRate(withEvidence.length, assigned.length), `${withEvidence.length}/${assigned.length} hồ sơ lưu số liệu trước xử lý`, "Giảm kết luận cảm tính hoặc thiếu dữ liệu.", assigned.length ? null : "Chưa có hồ sơ.");
-  // Hàng hoá: cảnh báo hàng hoá được xử lý hiệu quả
-  const goods = assigned.filter(a => /^HH/.test(a.code||""));
-  const goodsOk = goods.filter(a => a.effectiveness==="hieu_qua");
-  push("goods", "Hàng hoá", "Tỷ lệ cảnh báo hàng hoá xử lý hiệu quả", amRate(goodsOk.length, goods.length), `${goodsOk.length}/${goods.length} vấn đề hàng hoá (HH01/02/03/06)`, "Theo dõi cả kết quả và tồn đọng.", goods.length ? null : "Chưa có vấn đề hàng hoá được giao việc.");
-  // CTKM: đợt được đánh giá sau triển khai
-  const camps = ((I.promoIndex && I.promoIndex.campaigns) || []).filter(c => c.kind==="campaign" && !c.running);
-  const reviewed = camps.filter(c => I.promoReviews && I.promoReviews[c.key]);
-  push("promo", "CTKM", "Tỷ lệ đợt khuyến mại được đánh giá sau triển khai", amRate(reviewed.length, camps.length), `${reviewed.length}/${camps.length} đợt đã kết thúc có quyết định của quản lý`, "Có rút kinh nghiệm cho lần sau không?", camps.length ? null : "Chưa có đợt khuyến mại đã kết thúc.");
-  // KPI & CRM: chưa đủ dữ liệu lịch sử trong app để đo xu hướng → ghi rõ
-  push("kpi", "KPI", "Tỷ lệ nhà thuốc cải thiện khoảng cách mục tiêu", null, "", "Theo dõi xu hướng, không mặc định app là nguyên nhân duy nhất.", "Cần lưu ảnh chụp khoảng cách mục tiêu theo tuần (hiện chỉ có số tháng hiện tại) — chưa đo được.");
-  push("crm", "CRM", "Tỷ lệ chăm sóc thành công / khách quay lại", null, "", "Đánh giá trong cửa sổ thời gian thống nhất.", "Đã có ở tab Khách hàng → Hiệu quả chăm sóc (computeCareOutcomes); không tính lại ở đây để tránh hai nguồn số.");
-  return out;
-}
-// AM-ENGINE-END
-function AppMetricsCard(){
-  const [state, setState] = useState(null);
-  const today = todayISO(), since = addDays(today, -90);
-  useEffect(()=>{
-    let alive = true;
-    (async () => {
-      const safe = async (f, d) => { try{ return await f(); }catch(e){ logSystemError("appMetrics", e); return d; } };
-      const [tasksDone, issueActions, issueHistory, promoIndex, promoReviews] = await Promise.all([
-        safe(async () => (await db.collection("tasks").where("ngayHoanThanh", ">=", since).get()).docs.map(d => d.data()), []),
-        safe(async () => (await db.collection("issueActions").get()).docs.map(d => d.data()), []),
-        safe(async () => (await db.collection("issueHistory").where("action", "==", "REOPEN").get()).docs.map(d => d.data()), []),
-        safe(async () => { const d = await db.collection("promoOrderAnalytics").doc("_index").get(); return d.exists ? d.data() : null; }, null),
-        safe(async () => { const d = await db.collection("opsConfig").doc("promoCampaignReviews").get(); return d.exists ? (d.data().byCampaign || {}) : {}; }, {}),
-      ]);
-      if(alive) setState(appMetrics({ today, since, tasksDone, issueActions, issueHistory, promoIndex, promoReviews }));
-    })();
-    return () => { alive = false; };
-  }, [today]);
-  if(!state) return rc(EmptyState, { kind:"loading" });
-  const fmt = (m) => m.value==null ? "Chưa đo được" : (m.key==="lead" ? `${Math.round(m.value)} giờ` : `${Math.round(m.value*100)}%`);
-  return rc("div", { className:"card", style:{ marginBottom:14 } }, [
-    rc(Head360, { key:"h", title:"Chỉ số đo hiệu quả của app", right:rc("span", { style:{ fontSize:11, color:"var(--inkSoft)" } }, "90 ngày · tính từ dữ liệu sẵn có") }),
-    rc(Table360, { key:"t", head:["Nhóm","Chỉ số","Giá trị","Căn cứ","Ý nghĩa"], rows:state.map(m => ({ cells:[ m.group, m.label,
-      rc("b", { key:"v", style:{ color: m.value==null ? CL360.gray : "inherit" } }, fmt(m)), m.insufficient || m.detail, m.meaning ] })) }),
-    rc("div", { key:"n", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:6 } }, "Các chỉ số này đo việc vận hành app, không chứng minh doanh thu tăng do app — kết quả kinh doanh còn chịu ảnh hưởng của mùa vụ, CTKM, nhân sự, hàng hoá."),
-  ]);
-}
-// =====================================================================================================
-// ===== 14/10/2026 (chị Hà): AI TỰ GIAO VIỆC cho các phần bổ sung (doanh thu, checklist, CTKM, NT mới, số liệu cũ, KPI) =====
-// Quy tắc an toàn (giống "AI điều hành"): chỉ giao khi có số liệu chứng minh và số liệu đã xác nhận / còn mới; chống giao trùng
-// (việc đang mở cùng nguồn → bỏ qua); giao cho cửa hàng trưởng của nhà thuốc, chưa có CHT thì giao cả nhà thuốc; việc NHÂN SỰ
-// (kế hoạch bù KPI) mặc định CHỜ DUYỆT — chỉ tự giao khi quản lý bật. Mỗi ngày chạy 1 lần khi quản lý mở app (khoá theo ngày ở
-// opsConfig/autoAssignLog), có nút "Chạy ngay". Cấu hình bật/tắt từng loại ở opsConfig/autoAssignRules.
-// AA-ENGINE-BEGIN
-const AA_RULES = {
-  dt01:{ label:"Kế hoạch bù doanh thu (nhà thuốc nguy cơ cao không đạt)", def:true },
-  checklist:{ label:"Khắc phục lỗi checklist nghiêm trọng lặp lại ≥ 3 ngày", def:true },
-  promo:{ label:"Kiểm tra triển khai CTKM tại nhà thuốc yếu (đợt đang chạy)", def:true },
-  newshop:{ label:"Tăng tốc nhà thuốc mới dưới kỳ vọng", def:true },
-  stale:{ label:"Đồng bộ lại số tồn kho khi số liệu cũ (giao quản lý)", def:true },
-  kpi:{ label:"Kế hoạch bù KPI nhân viên (việc nhân sự — mặc định chờ duyệt)", def:false },
-};
-function aaRulesOn(cfg){ const r = {}; Object.keys(AA_RULES).forEach(k => { const v = cfg && cfg.rules ? cfg.rules[k] : undefined; r[k] = v===undefined ? AA_RULES[k].def : !!v; }); r.enabled = !(cfg && cfg.enabled===false); return r; }
-function aaTarget(staff, shop){
-  const cht = (staff||[]).find(s => s.shop===shop && s.role==="Cửa hàng trưởng");
-  return cht ? { assignType:"staff", staffId:cht.id, staffName:cht.name, shop } : { assignType:"shop", staffId:null, staffName:"", shop };
-}
-// 15/10/2026 (chị Hà): chỉ tin ca HÔM NAY và NGÀY MAI — nhân viên đăng ký ca trước 1–2 ngày nên lịch xa hơn chưa đầy đủ.
-// GIAO THEO CA LÀM VIỆC — ghép lịch ca (externalShiftWork + externalOverTime, khớp tên đã chuẩn hoá
-// giống normalizeStaffName) với nhân viên của nhà thuốc. mode "now": việc làm ngay → người ĐANG trong ca (ưu tiên CHT), không có
-// thì người vào ca sớm nhất; hạn = giờ hết ca. mode "lead": việc kế hoạch → CHT nếu có ca hôm nay / ngày mai, không thì người
-// đang trong ca. Không giao học việc, không giao người đã hết ca. Không có lịch ca → giao CHT / cả nhà thuốc như cũ (ghi rõ).
-function aaNorm(s){ return String(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/Đ/g, "d").replace(/y/g, "i").replace(/\s+/g, " ").trim(); }
-function aaShiftsOf(I, st){
-  const k = aaNorm(st.name);
-  if(!k) return [];
-  return (I.shifts||[]).filter(r => aaNorm(r.EmployeeName)===k).map(r => {
-    const x = { date:String(r.WorkDate||"").slice(0,10), start:String(r.TimeStart||"").slice(11,16) || "00:00", end:String(r.TimeEnd||"").slice(11,16) || "23:59", ot:!!r.__isOT };
-    if(x.end <= x.start) x.end = "23:59";   // ca qua đêm: tính đến hết ngày
-    return x;
-  }).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
-}
-function aaAssign(I, shop, mode){
-  if(!I.shifts) return { ...aaTarget(I.staff, shop), shift:null, shiftNote: I.shiftsMissing ? "Chưa có dữ liệu lịch ca (đồng bộ ca lỗi?) — giao theo cửa hàng trưởng / nhà thuốc." : "" };
-  const today = I.today, now = I.nowHM || "00:00", tomorrow = addDaysAA(today, 1);
-  const cands = (I.staff||[]).filter(s => s.shop===shop && s.role!=="Nhân viên học việc").map(st => {
-    const sh = aaShiftsOf(I, st).filter(x => x.date <= tomorrow && (x.date > today || (x.date===today && x.end > now)));
-    return sh.length ? { st, sh:sh[0] } : null;
-  }).filter(Boolean).sort((a, b) => (a.sh.date + a.sh.start).localeCompare(b.sh.date + b.sh.start));
-  if(!cands.length) return { ...aaTarget(I.staff, shop), shift:null, shiftNote:"Chưa có ai đăng ký ca hôm nay / ngày mai (còn lại trong hôm nay) — giao theo cửa hàng trưởng / nhà thuốc, cần kiểm tra lịch ca." };
-  const isCHT = c => c.st.role==="Cửa hàng trưởng";
-  const onNow = c => c.sh.date===today && c.sh.start <= now;
-  let pick;
-  if(mode==="lead") pick = cands.find(c => isCHT(c) && c.sh.date <= tomorrow) || cands.find(c => onNow(c) && isCHT(c)) || cands.find(onNow) || cands.find(c => c.sh.date===today) || cands[0];
-  else pick = cands.find(c => onNow(c) && isCHT(c)) || cands.find(onNow) || cands.find(c => c.sh.date===today && isCHT(c)) || cands.find(c => c.sh.date===today) || cands[0];
-  const dm = pick.sh.date.slice(8,10) + "/" + pick.sh.date.slice(5,7);
-  return { assignType:"staff", staffId:pick.st.id, staffName:pick.st.name, shop, shift:pick.sh,
-    shiftNote:`Ca nhận việc: ${pick.st.name} — ${pick.sh.date===today ? "hôm nay" : dm} ${pick.sh.start}–${pick.sh.end}${pick.sh.ot ? " (tăng ca)" : ""}${onNow(pick) ? " (đang trong ca)" : ""}.` };
-}
-function aaIsOpen(openTasks, pred){ return (openTasks||[]).some(t => t.trangThai!=="Đã hoàn thành" && pred(t)); }
-// Trả về danh sách việc CẦN giao (đã lọc trùng). Không ghi dữ liệu.
-function aaPlan(I){
-  const on = aaRulesOn(I.config), out = [], skipped = [];
-  if(!on.enabled) return { tasks:out, skipped:[{ rule:"*", reason:"Đã tắt tự giao" }] };
-  const today = I.today, open = I.openTasks || [];
-  const add = (spec) => {
-    if(aaIsOpen(open, t => t.autoKey===spec.autoKey) || (spec.dupe && aaIsOpen(open, spec.dupe))){ skipped.push({ rule:spec.rule, key:spec.autoKey, reason:"Đã có việc đang mở cùng vấn đề" }); return; }
-    // Loại giao 1 lần (mỗi đợt CTKM / giai đoạn NT mới / mỗi ngày số liệu cũ): đã từng giao (kể cả đã xong) thì thôi
-    if(spec.once && (I.recentAuto||[]).some(t => t.autoKey===spec.autoKey)){ skipped.push({ rule:spec.rule, key:spec.autoKey, reason:"Đã giao trước đó" }); return; }
-    const { dupe, once, mode, ...rest } = spec;
-    // Ánh xạ vào ca: việc làm ngay → hạn = hết ca của người nhận; việc kế hoạch → không để hạn rơi trước ca nhận việc.
-    if(rest.shift){
-      if(mode==="now"){ rest.deadline = rest.shift.date; rest.hanGio = rest.shift.end; }
-      else if(!rest.deadline || rest.deadline < rest.shift.date) rest.deadline = rest.shift.date;
-      rest.extra = { ...(rest.extra||{}), shiftDate:rest.shift.date, shiftStart:rest.shift.start, shiftEnd:rest.shift.end };
-    }
-    if(rest.shiftNote) rest.mota = (rest.mota || "") + "\n\n" + rest.shiftNote;
-    delete rest.shift; delete rest.shiftNote;
-    out.push(rest);
-  };
-  // 1) Doanh thu — chỉ nhà thuốc "Nguy cơ cao", số thực đạt đã xác nhận, số POS còn mới, có kế hoạch bù
-  if(on.dt01 && I.revenue){
-    (I.shops||[]).forEach(shop => {
-      const dx = I.revenue.diagnose(shop);
-      if(!dx || dx.status.code!=="high") return;
-      if(!dx.confirmed || dx.freshness.stale || !dx.plan){ skipped.push({ rule:"dt01", key:shop, reason: !dx.confirmed ? "Số thực đạt chưa xác nhận" : dx.freshness.stale ? "Số POS chưa cập nhật" : "Chưa có kế hoạch bù" }); return; }
-      const act = (I.issueActions||{})[`${shop}__DT01`];
-      if(act && ["IN_PROGRESS","PENDING_VERIFICATION"].includes(act.status)){ skipped.push({ rule:"dt01", key:shop, reason:"Hồ sơ DT01 đang xử lý" }); return; }
-      add({ rule:"dt01", autoKey:`dt01:${shop}:${today.slice(0,7)}`, ...aaAssign(I, shop, "lead"), mode:"lead", module:"Khác", deadline:dx.plan.checkDate,
-        title:`Kế hoạch bù doanh thu — ${String(shop).replace(/^SHOP0*/, "NT")}`, mota:rvdTaskText(dx), dx,
-        extra:{ sourceIssueCode:"DT01", sourceIssueTitle:"Doanh thu dự kiến không đạt chỉ tiêu tháng", sourceShop:shop, issueActionKey:`${shop}__DT01`,
-          commitMetric:"revenuePerDay", commitTarget:Math.round(dx.plan.needPerDay), commitBaseline:Math.round(dx.plan.baselinePerDay||0), commitText:dx.plan.commitment, checkDate:dx.plan.checkDate },
-        dupe: t => t.sourceIssueCode==="DT01" && (t.sourceShop===shop || t.shop===shop) });
-    });
-  }
-  // 2) KPI nhân viên — việc nhân sự: chỉ khi quản lý bật
-  if(on.kpi && I.kpiPace){
-    const byShop = {};
-    I.kpiPace.forEach(p => { const pr = p.kpiPctProjected!=null ? p.kpiPctProjected : p.kpiPct, ds = p.pctDoanhSoProjected; if((pr!=null && pr<0.85) || (ds!=null && ds<0.85)) (byShop[p.shop] = byShop[p.shop] || []).push(p); });
-    Object.entries(byShop).forEach(([shop, rows]) => {
-      const plans = rows.map(p => kbpPlan(p, today)).filter(x => x.plan);
-      if(!plans.length) return;
-      add({ rule:"kpi", autoKey:`kpi:${shop}:${today.slice(0,7)}`, ...aaAssign(I, shop, "lead"), mode:"lead", module:"HR", deadline:plans[0].plan.checkDate,
-        title:`Kế hoạch bù KPI ${plans.length} nhân viên — ${String(shop).replace(/^SHOP0*/, "NT")}`,
-        mota:`AI tự giao. Nhân viên có doanh số/KPI dự kiến dưới 85%:\n${kbpTaskLines(plans)}\n\nBằng chứng cần nộp: nội dung đã trao đổi / kèm cặp từng người và tiến độ tại mốc kiểm tra.`,
-        extra:{ sourceIssueCode:"NS01", sourceShop:shop, commitKind:"kpiRecovery", commitPlans:plans.map(x => ({ staffId:x.staffId, name:x.name, commitment:x.plan.commitment, checkDate:x.plan.checkDate })) },
-        dupe: t => t.sourceIssueCode==="NS01" && (t.sourceShop===shop || t.shop===shop) });
-    });
-  }
-  // 3) Checklist — đầu việc NGHIÊM TRỌNG bị bỏ sót ≥ 3 ngày tại cùng nhà thuốc
-  if(on.checklist && I.checklist){
-    const res = clqAnalyze(I.checklist);
-    res.list.filter(x => x.severity==="critical").forEach(x => x.recurringShops.forEach(shop => {
-      const st = x.fixStatus.find(f => f.shop===shop);
-      if(st && st.state==="fixing") return;
-      if(st && st.state==="fixed"){ skipped.push({ rule:"checklist", key:`${x.id}:${shop}`, reason:"Đã khắc phục, chưa thấy tái diễn" }); return; }
-      add({ rule:"checklist", autoKey:`clq:${x.id}:${shop}`, ...aaAssign(I, shop, "now"), mode:"now", module:"Ops", deadline:addDaysAA(today, 1),
-        title:`Khắc phục: "${x.label}" bị bỏ sót ${x.shops[shop]} lần — ${String(shop).replace(/^SHOP0*/, "NT")}`,
-        mota:`AI tự giao. Đầu việc checklist mức NGHIÊM TRỌNG "${x.label}" (vai trò ${x.role}) bị bỏ sót ${x.shops[shop]} lần trong 14 ngày.${st && st.state==="recurred" ? " Đã từng khắc phục nhưng TÁI DIỄN." : ""}\nYêu cầu: tìm nguyên nhân (quy trình / nguồn lực / kỹ năng), khắc phục, gửi ảnh hoặc mô tả. Hệ thống tiếp tục theo dõi để xác minh không tái diễn.`,
-        extra:{ sourceScreen:"checklistQuality", checklistItemId:x.id, checklistItemLabel:x.label },
-        dupe: t => t.sourceScreen==="checklistQuality" && t.checklistItemId===x.id && t.shop===shop });
-    }));
-  }
-  // 4) CTKM — đợt ĐANG CHẠY, nhà thuốc triển khai yếu
-  if(on.promo && I.promo && I.promo.camp && I.promo.camp.running){
-    const r = pmdDecide(I.promo.camp, I.promo.chainDaily);
-    r.weakShops.forEach(w => add({ rule:"promo", autoKey:`promo:${I.promo.campKey}:${w.shop}`, ...aaAssign(I, w.shop, "now"), mode:"now", module:"Khác", deadline:addDaysAA(today, 2),
-      title:`Kiểm tra triển khai ${I.promo.camp.label || "khuyến mại"} — ${String(w.shop).replace(/^SHOP0*/, "NT")}`,
-      mota:`AI tự giao. Đợt khuyến mại đang chạy, nhà thuốc triển khai yếu: ${w.why}.\nKiểm tra: trưng bày, tư vấn, nhân viên đã biết chương trình chưa, hàng KM có đủ không. Báo lại nguyên nhân và việc đã làm.`,
-      extra:{ sourceScreen:"promoDecision", promoCampaign:I.promo.campKey }, once:true }));
-  }
-  // 5) Nhà thuốc mới — giai đoạn mới nhất dưới kỳ vọng
-  if(on.newshop && I.newShop){
-    (I.newShop.items||[]).forEach(it => {
-      const r = nsTrack(it.input);
-      const last = r.phases.filter(p => p.revDay!=null).slice(-1)[0];
-      if(!last || !(last.tone==="red" || last.tone==="orange")) return;
-      add({ rule:"newshop", autoKey:`ns:${it.planId}:${last.label}`, ...aaAssign(I, it.shop, "lead"), mode:"lead", module:"Khác", deadline:addDaysAA(today, 3),
-        title:`Tăng tốc nhà thuốc mới (${last.label}) — ${String(it.shop).replace(/^SHOP0*/, "NT")}`,
-        mota:`AI tự giao. ${last.label}: doanh thu ${nsMoney(last.revDay)}/ngày = ${Math.round(last.vsExpected)}% kỳ vọng trong kế hoạch${last.vsBench!=null ? `, ${Math.round(last.vsBench)}% nhà thuốc chuẩn` : ""}.\nLập 3 việc tăng tốc (khách hàng, hàng hoá, trưng bày/khuyến mại), có chỉ tiêu và hạn; báo lại sau 7 ngày.`,
-        extra:{ sourceScreen:"newShopTracking", newShopPlanId:it.planId }, once:true });
-    });
-  }
-  // 6) Số tồn kho cũ — giao QUẢN LÝ (không giao nhà thuốc)
-  if(on.stale && I.stale && I.stale.ts!=null){
-    const f = dataFreshness(I.stale.ts, I.nowMs, 30);
-    if(f.stale) add({ rule:"stale", autoKey:`stale:inventory:${today}`, once:true, assignType:"admin", staffId:null, staffName:"", shop:"", module:"Goods", deadline:today,
-      title:"Đồng bộ lại số tồn kho trước khi điều chuyển / đặt hàng", mota:`AI tự giao. ${f.text}`, extra:{ sourceScreen:"staleData" } });
-  }
-  return { tasks:out.slice(0, I.max || 25), skipped, overflow: Math.max(0, out.length - (I.max || 25)) };
-}
-function addDaysAA(iso, n){ const [y,m,d] = String(iso).split("-").map(Number); return new Date(Date.UTC(y, m-1, d+n)).toISOString().slice(0,10); }
-// AA-ENGINE-END
-
-// Gom dữ liệu → aaPlan → ghi việc (tasks) + hồ sơ DT01 (issueActions/issueHistory). Khoá theo ngày để nhiều quản lý mở app không giao trùng.
-// 14/10/2026 (2): dùng CHUNG cho trình duyệt và máy chủ (scripts/auto-assign.js chạy theo lịch 9h20 & 15h20 trên GitHub Actions).
-// Khoá theo "khung" (VD 2026-10-14-AM) để mỗi khung chỉ giao 1 lần dù máy chủ và app cùng chạy.
-async function runAutoAssign({ force, slot, source } = {}){
-  const today = todayISO();
-  const slotKey = slot || today;
-  const logRef = db.collection("opsConfig").doc("autoAssignLog");
-  if(!force){
-    const ok = await db.runTransaction(async tx => { const d = await tx.get(logRef); const x = d.exists ? d.data() : {};
-      if(x.lastRunSlot===slotKey || (!slot && x.lastRunDate===today)) return false;
-      tx.set(logRef, { lastRunDate:today, lastRunSlot:slotKey, runningAt:new Date().toISOString() }, { merge:true }); return true; });
-    if(!ok) return { skippedRun:true, created:[], skipped:[] };
-  }
-  const safe = async (f, d) => { try{ return await f(); }catch(e){ logSystemError("autoAssign", e); return d; } };
-  const get = async (c, id) => { const d = await db.collection(c).doc(id).get(); return d.exists ? d.data() : null; };
-  const month = today.slice(0,7);
-  const [recentAuto, clqFixAll] = await Promise.all([
-    safe(async () => (await db.collection("tasks").where("autoAssigned", "==", true).get()).docs.map(d => d.data()).filter(t => (t.ngayGiao||"") >= addDays(today, -60)), []),
-    safe(async () => (await db.collection("tasks").where("sourceScreen", "==", "checklistQuality").get()).docs.map(d => d.data()), []),
-  ]);
-  const [cfg, staffSnap, openSnap, actsSnap, ra, mt, clTpl, reports, idx, plansSnap, nsTrk, dna, invSum, pace] = await Promise.all([
-    safe(() => get("opsConfig", "autoAssignRules"), null),
-    safe(async () => (await db.collection("staff").get()).docs.map(d => ({ id:d.id, ...d.data() })).filter(s => !isStaffResigned(s)), []),
-    safe(async () => (await db.collection("tasks").where("trangThai", "==", "Đang giao").get()).docs.map(d => d.data()), []),
-    safe(async () => { const o = {}; (await db.collection("issueActions").get()).docs.forEach(d => { o[d.id] = d.data(); }); return o; }, {}),
-    safe(() => get("opsConfig", "revenueAnalytics"), null),
-    safe(async () => { const d = await db.collection("opsConfig").doc("revenueAnalyticsMonths").collection("months").doc(month).get(); return d.exists ? d.data() : null; }, null),
-    safe(() => get("opsConfig", "dailyChecklist"), null),
-    safe(async () => (await db.collection("dailyReports").where("ngay", ">=", addDays(today, -13)).get()).docs.map(d => d.data()), []),
-    safe(() => get("promoOrderAnalytics", "_index"), null),
-    safe(async () => (await db.collection("newPharmacyPlans").orderBy("createdAt", "desc").limit(10).get()).docs.map(d => ({ id:d.id, ...d.data() })), []),
-    safe(() => get("opsConfig", "newPharmacyTracking"), null),
-    safe(() => get("opsConfig", "pharmacyDna"), null),
-    safe(() => get("opsConfig", "inventoryConsumptionSummary"), null),
-    safe(async () => (await db.collection("dailyKpiPace").where("date", "==", today).get()).docs.map(d => d.data()), []),
-  ]);
-  // Lịch ca HÔM NAY + NGÀY MAI (ca thường + tăng ca) — nhân viên đăng ký trước 1–2 ngày nên không dò xa hơn
-  const shiftRange = async (c, ot) => (await db.collection(c).where("WorkDate", ">=", today).where("WorkDate", "<=", addDays(today, 1) + "\uf8ff").get()).docs.map(d => ({ ...d.data(), __isOT:ot }));
-  const shiftsAll = await safe(async () => { const [a, b] = await Promise.all([shiftRange("externalShiftWork", false), shiftRange("externalOverTime", true)]); return a.concat(b); }, null);
-  const staffById = {}; staffSnap.forEach(s => { staffById[s.id] = s; });
-  const running = ((idx && idx.campaigns) || []).find(c => c.kind==="campaign" && c.running);
-  const camp = running ? await safe(() => get("promoOrderAnalytics", running.key), null) : null;
-  const dnaShops = dna ? Object.values(dna.shops||{}) : [];
-  const tracks = (nsTrk && nsTrk.byPlan) || {};
-  const plan = aaPlan({ today, nowHM:nowHM(), shifts: shiftsAll && shiftsAll.length ? shiftsAll : null, shiftsMissing: !(shiftsAll && shiftsAll.length), nowMs:Date.now(), config:cfg, recentAuto, shops:DEFAULT_SHOPS, staff:staffSnap, openTasks:openSnap, issueActions:actsSnap,
-    revenue: ra && mt ? { diagnose:(shop) => rvdDiagnose({ shop, month:mt.month || month, today, daily:(ra.byShop||{})[shop] || {}, computedAt:ra.computedAt, monthRow:(mt.byShop||{})[shop] || null,
-      monthMeta:{ daysElapsed:mt.daysElapsed, daysInMonth:mt.daysInMonth, isCurrentMonth:mt.isCurrentMonth } }) } : null,
-    kpiPace:pace,
-    checklist:{ reports, templatesByRole:(clTpl && clTpl.byRole) || DEFAULT_DAILY_CHECKLISTS, staffById, since:addDays(today, -13), today, fixTasks:clqFixAll },
-    promo: camp ? { campKey:running.key, camp:{ ...camp, label:running.label, running:true }, chainDaily:ra && ra.chainRevenueByDay } : null,
-    newShop:{ items: plansSnap.filter(p => tracks[p.id] && tracks[p.id].shop && tracks[p.id].openDate).map(p => { const t = tracks[p.id]; const bench = dnaShops.find(x => x.shop===p.benchmark);
-      return { planId:p.id, shop:t.shop, input:{ openDate:t.openDate, today, daily:((ra && ra.byShop)||{})[t.shop] || {}, expectedRevDay:p.input && p.input.expectedRevDay, benchmarkRevDay: bench && bench.f ? bench.f.revDay : null } }; }) },
-    stale: invSum ? { ts:invSum.computedAt } : null,
-  });
-  const created = [];
-  for(const t of plan.tasks){
-    try{
-      const { rule, autoKey, assignType, staffId, staffName, shop, module, deadline, hanGio, title, mota, extra, dx } = t;
-      const ref = await addDoc("tasks", { title, mota, deadline, hanGio:hanGio || "", trangThai:"Đang giao", subTrangThai:"Mới giao", ketQua:"", nguoiBaoCao:"", ngayGiao:today,
-        nguoiGiaoViec:"AI tự giao", nguoiGiaoViecRole:"AI", dinhKemFiles:[], dinhKemLink:"", module, assignType, staffId, staffName, shop,
-        autoAssigned:true, autoRule:rule, autoKey, ...(extra||{}) });
-      if(rule==="dt01" && dx){
-        await db.collection("issueActions").doc(`${shop}__DT01`).set({ shop, code:"DT01", title:"Doanh thu dự kiến không đạt chỉ tiêu tháng", status:"IN_PROGRESS", assignedTaskId:ref.id,
-          recommendation:{ assignedTo: staffName || shopLabel(shop), note:dx.conclusion, hypotheses:dx.hypotheses.map(x => ({ key:x.key, text:x.text, evidence:x.evidence||"", confidence:x.confidence||"" })), actions:dx.actions.map(x => x.text),
-            plan:{ gap:Math.round(dx.plan.gap), needPerDay:Math.round(dx.plan.needPerDay), baselinePerDay:Math.round(dx.plan.baselinePerDay||0), commitment:dx.plan.commitment, checkDate:dx.plan.checkDate } },
-          resultBefore:{ capturedAtTs:new Date().toISOString(), items:Object.keys(((ra && ra.byShop && ra.byShop[shop]) || {}).revenueByDay || {}).sort().slice(-14).map(d => ({ key:d, label:d, revenue:ra.byShop[shop].revenueByDay[d] })) },
-          revenuePlan:{ assignedDate:today, baselinePerDay:Math.round(dx.plan.baselinePerDay||0), targetPerDay:Math.round(dx.plan.needPerDay) },
-          assignedAtTs:new Date().toISOString(), autoAssigned:true,
-          updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(), createdAtTs: firebase.firestore.FieldValue.serverTimestamp() }, { merge:true });
-        await logIssueHistory({ shop, code:"DT01", action:"ASSIGN", oldStatus:null, newStatus:"IN_PROGRESS", detail:"AI tự giao kế hoạch bù doanh thu" });
-      }
-      created.push({ rule, title, taskId:ref.id, assignType, staffId, shop });
-    }catch(e){ logSystemError("autoAssignCreate", e); }
-  }
-  const src = source || "app";
-  await logRef.set({ lastRunDate:today, lastRunSlot:slotKey, lastRunAt:new Date().toISOString(), lastSource:src,
-    ...(src==="server" ? { lastServerRunAt:new Date().toISOString() } : {}),
-    by: src==="server" ? "Máy chủ (lịch 9h20 & 15h20)" : ((auth.currentUser && auth.currentUser.email) || ""),
-    last:{ created, skipped:plan.skipped.slice(0, 40), overflow:plan.overflow||0 } }, { merge:true });
-  return { created, skipped:plan.skipped };
-}
-// Chạy nền 1 lần/ngày khi quản lý mở app (sau 20 giây để không tranh tải dữ liệu lúc mở app).
-function AutoAssignRunner({ isAdmin }){
-  useEffect(()=>{
-    if(!isAdmin) return undefined;
-    // Máy chủ (GitHub Actions) giao việc đúng 9h20 & 15h20 và có thông báo đẩy. App chỉ chạy DỰ PHÒNG khi máy chủ
-    // chưa chạy trong 26 giờ qua (chưa cài lịch / lịch bị dừng).
-    const t = setTimeout(async () => { try{
-      const [r, l] = await Promise.all([db.collection("opsConfig").doc("autoAssignRules").get(), db.collection("opsConfig").doc("autoAssignLog").get()]);
-      if(r.exists && r.data().enabled===false) return;
-      const srv = l.exists && l.data().lastServerRunAt ? Date.parse(l.data().lastServerRunAt) : 0;
-      if(Date.now() - srv < 26*3600*1000) return;
-      await runAutoAssign({ source:"app" });
-    }catch(e){ logSystemError("autoAssignRunner", e); } }, 20000);
-    return () => clearTimeout(t);
-  }, [isAdmin]);
-  return null;
-}
-function AutoAssignCard(){
-  const h = React.createElement;
-  const [cfg, setCfg] = useState(undefined);
-  const [log, setLog] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState("");
-  useEffect(()=>{ const u1 = db.collection("opsConfig").doc("autoAssignRules").onSnapshot(d => setCfg(d.exists ? d.data() : {}), () => setCfg({}));
-    const u2 = db.collection("opsConfig").doc("autoAssignLog").onSnapshot(d => setLog(d.exists ? d.data() : null), () => setLog(null)); return () => { u1(); u2(); }; }, []);
-  if(cfg===undefined) return null;
-  const on = aaRulesOn(cfg);
-  const save = (patch) => db.collection("opsConfig").doc("autoAssignRules").set({ ...patch, updatedBy:(auth.currentUser && auth.currentUser.email) || "", updatedAt:new Date().toISOString() }, { merge:true }).catch(e => setMsg("Lỗi lưu: " + e.message));
-  async function runNow(){ setBusy(true); setMsg("Đang chạy…"); try{ const r = await runAutoAssign({ force:true, source:"app" }); setMsg(`Đã giao ${r.created.length} việc, bỏ qua ${r.skipped.length} (trùng / thiếu số liệu).`); }catch(e){ setMsg("Lỗi: " + (e.message||e)); } setBusy(false); }
-  const last = log && log.last;
-  return h("div", { className:"card", style:{ marginBottom:14, borderLeft:"4px solid var(--pine)" } },
-    h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap", alignItems:"center" } },
-      h("b", { style:{ fontSize:14.5 } }, "AI tự giao việc (phần bổ sung 14/10)"),
-      h("label", { style:{ display:"inline-flex", gap:6, alignItems:"center", fontSize:13 } }, h("input", { type:"checkbox", checked:on.enabled, onChange:e=>save({ enabled:e.target.checked }) }), "Bật")),
-    h("div", { style:{ fontSize:12.5, margin:"4px 0 4px", fontWeight:600, color: log && log.lastServerRunAt && Date.now() - Date.parse(log.lastServerRunAt) < 26*3600*1000 ? "var(--pine)" : "var(--amber)" } },
-      log && log.lastServerRunAt && Date.now() - Date.parse(log.lastServerRunAt) < 26*3600*1000
-        ? `Máy chủ đang tự giao đúng 9h20 & 15h20 (lần gần nhất ${new Date(log.lastServerRunAt).toLocaleString("vi-VN")}) — người nhận được thông báo ngay, không cần ai mở app.`
-        : "Lịch máy chủ chưa chạy (chưa cài hoặc bị dừng) — tạm thời app giao khi quản lý mở app. Cài lịch: xem docs/DE_XUAT_CAI_TIEN_DOI_CHIEU_BACKLOG.md mục 9."),
-    h("div", { style:{ fontSize:12, color:"var(--inkSoft)", margin:"0 0 8px", lineHeight:1.5 } }, " Chỉ giao khi có số liệu chứng minh (đã xác nhận, còn mới); việc đang mở cùng vấn đề thì không giao trùng. Giao THEO CA: việc làm ngay → người đang trong ca (ưu tiên CHT), hạn = giờ hết ca; việc kế hoạch → CHT nếu có ca hôm nay / ngày mai, không thì người đang trong ca. Chỉ dùng ca hôm nay và ngày mai (lịch xa hơn chưa đăng ký đủ). Không giao học việc, không giao người đã hết ca. Việc nhân sự mặc định chờ duyệt."),
-    h("div", { style:{ display:"flex", flexDirection:"column", gap:3 } }, Object.entries(AA_RULES).map(([k, v]) => h("label", { key:k, style:{ fontSize:13, display:"inline-flex", gap:6, alignItems:"center" } },
-      h("input", { type:"checkbox", checked:on[k], disabled:!on.enabled, onChange:e=>save({ rules:{ ...((cfg && cfg.rules)||{}), [k]:e.target.checked } }) }), v.label))),
-    h("div", { style:{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap", marginTop:8 } },
-      h("button", { className:"btn btnPrimary", disabled:busy || !on.enabled, onClick:runNow, style:{ fontSize:12.5 } }, busy ? "Đang chạy…" : "Chạy ngay"),
-      msg && h("span", { style:{ fontSize:12.5 } }, msg)),
-    log && log.lastRunAt && h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:8 } }, `Lần chạy gần nhất ${new Date(log.lastRunAt).toLocaleString("vi-VN")}${log.by ? " · " + log.by : ""}: giao ${(last && last.created || []).length} việc`),
-    last && (last.created||[]).length>0 && h("ul", { style:{ margin:"4px 0 0", paddingLeft:18, fontSize:12.5 } }, last.created.slice(0, 12).map((c, i) => h("li", { key:i }, c.title))),
-    last && (last.skipped||[]).length>0 && h("details", { style:{ fontSize:12, marginTop:4 } }, h("summary", { style:{ cursor:"pointer", color:"var(--inkSoft)" } }, `Không giao ${last.skipped.length} trường hợp (lý do)`),
-      h("ul", { style:{ margin:"4px 0 0", paddingLeft:18 } }, last.skipped.map((s, i) => h("li", { key:i }, `${(AA_RULES[s.rule]||{}).label || s.rule}${s.key ? " · " + String(s.key).replace(/SHOP0*/g, "NT") : ""}: ${s.reason}`)))));
-}
 function ImpactEffectivenessPanel({ shopScope }){
   const [rows, setRows] = useState(null); // null = loading
   const [err, setErr] = useState(null);
@@ -28038,9 +26999,7 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
       rc(MiniStat360, { key:"a", label:"Cần chú ý", value:attnN, valueColor:CL360.warn, sub:"Hạn trong 1 ngày hoặc ưu tiên vừa" }),
       rc(MiniStat360, { key:"d", label:"Đã hoàn tất hôm nay", value:doneToday, valueColor:CL360.good }),
     ]),
-    // 14/10/2026: cấu hình + nhật ký "AI tự giao việc (phần bổ sung)" ở tab "Của tôi" của quản lý
-    !shopScope && isAdmin && tab==="mine" && rc(AutoAssignCard, { key:"aa" }),
-    tab==="impact" ? rc(React.Fragment, { key:"impact" }, [!shopScope && rc(AppMetricsCard, { key:"am" }), rc(ImpactEffectivenessPanel, { key:"ip", shopScope:shopScope||null })])
+    tab==="impact" ? rc(ImpactEffectivenessPanel, { key:"impact", shopScope:shopScope||null })
       : tab==="progress" ? progressCard
       : rc("div", { key:"grid", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))", gap:12, alignItems:"start" } }, [ queue, detail ]),
     !shopScope && rc("div", { key:"foot", style:{ position:"sticky", bottom:8, marginTop:14, background:"#fff", border:"1px solid var(--line)", padding:"10px 12px", borderRadius:9, display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap", boxShadow:"0 2px 10px rgba(35,49,41,.08)" } }, [
@@ -28188,7 +27147,7 @@ function OpsOperatorConfig({ onMsg }){
             dirty && h("button", { className:"btn btnPrimary", style:{ padding:"3px 10px", fontSize:12.5 }, disabled:busy===t, onClick:()=>savePb(t) }, busy===t ? "Đang lưu…" : "Lưu"))); })));
 }
 // 5/10/2026 (Phương — "Đề xuất nâng cấp AI 2026"): Học từ kết quả (P0) · Quyết định hàng hoá · Nhà thuốc mẫu & nhân bản (P1)
-const OPS_TYPE_LABEL_UI = { DT01:"Doanh thu tháng dự kiến hụt", DT02:"Doanh thu ngày giảm", NS01:"NV chậm KPI", PP01:"Tăng ca bất thường", PP02:"Thiếu người trực", PP03:"Năng suất thấp", TK01:"Việc tồn đọng", TK02:"Người hay quá hạn", VH01:"Việc quá hạn", KH01:"Khách VIP im lặng", KH02:"Khách nguy cơ rời bỏ", HH01:"Thiếu hàng bán chạy", HH02:"Sắp thiếu hàng", HH03:"Tồn cao bán chậm", HH04:"Hàng không bán", HH06:"Cận date", CP01:"Không nộp checklist", CP02:"Thiếu bằng chứng", CP03:"Sai lệch kiểm kê", prob:"Kèm cặp thử việc", promo:"Bỏ lỡ khuyến mại", transfer:"Điều chuyển hàng", pace:"DT trong ngày dưới nhịp", bp:"Áp dụng thực hành chuẩn" };
+const OPS_TYPE_LABEL_UI = { rv:"Xem lại phương án chưa hiệu quả", DT01:"Doanh thu tháng dự kiến hụt", DT02:"Doanh thu ngày giảm", NS01:"NV chậm KPI", PP01:"Tăng ca bất thường", PP02:"Thiếu người trực", PP03:"Năng suất thấp", TK01:"Việc tồn đọng", TK02:"Người hay quá hạn", VH01:"Việc quá hạn", KH01:"Khách VIP im lặng", KH02:"Khách nguy cơ rời bỏ", HH01:"Thiếu hàng bán chạy", HH02:"Sắp thiếu hàng", HH03:"Tồn cao bán chậm", HH04:"Hàng không bán", HH06:"Cận date", CP01:"Không nộp checklist", CP02:"Thiếu bằng chứng", CP03:"Sai lệch kiểm kê", prob:"Kèm cặp thử việc", promo:"Bỏ lỡ khuyến mại", transfer:"Điều chuyển hàng", pace:"DT trong ngày dưới nhịp", bp:"Áp dụng thực hành chuẩn" };
 const LEARN_API = "https://asia-southeast1-upharma-176d5.cloudfunctions.net/runJobNow?job=aiLearningApiNow";
 const learnCall = (action, payload, ms) => callCf(LEARN_API, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ action, ...(payload||{}) }) }, ms||540000);
 const LC_LABEL = { PROPOSED:"Đề xuất", APPROVED:"Đã duyệt", EXECUTED:"Đã làm", MEASURED:"Đã đo", LEARNED:"Đã học", REJECTED:"Từ chối", EXPIRED:"Hết hạn" };
@@ -28262,79 +27221,7 @@ function InvDecisionView(){
           h("td", { style:{ padding:"4px 6px", whiteSpace:"nowrap" } }, `tồn ${it.qty}${it.doi!=null && it.doi<9999 ? ` · đủ ${Math.round(it.doi)} ngày` : ""}`),
           h("td", { style:{ padding:"4px 6px", whiteSpace:"nowrap", color:"var(--inkSoft)" } }, it.from ? `từ ${shopLabel(it.from)} ×${it.tqty}` : it.to ? `sang ${shopLabel(it.to)} ×${it.tqty}` : it.why ? it.why : unit==="rev" ? (it.rev ? `~${opsFmtV(it.rev)}/ngày` : "") : (it.val ? opsFmtV(it.val) : ""))))))); }));
 }
-// ===== 14/10/2026 (đề xuất cải tiến — P1 Mở nhà thuốc mới): SO KẾ HOẠCH VỚI THỰC TẾ 30/60/90 NGÀY (NS) =====
-// Gắn kế hoạch đã soạn (newPharmacyPlans) với mã nhà thuốc + ngày khai trương → từng giai đoạn 1–30 / 31–60 / 61–90 ngày:
-// doanh thu/ngày, số bill/ngày, TB bill thực tế (POS) so với kỳ vọng trong kế hoạch và với nhà thuốc chuẩn. Nêu rõ giả định;
-// không áp máy móc chuẩn của nhà thuốc khác bối cảnh. Liên kết lưu ở opsConfig/newPharmacyTracking.
-// NS-ENGINE-BEGIN
-function nsAdd(iso, n){ const [y,m,d] = String(iso).split("-").map(Number); return new Date(Date.UTC(y, m-1, d+n)).toISOString().slice(0,10); }
-function nsMoney(v){ if(v==null || !Number.isFinite(Number(v))) return "—"; const a = Math.abs(v); return a>=1e6 ? (v/1e6).toFixed(1).replace(".", ",")+" tr" : Math.round(v/1e3)+"k"; }
-function nsTrack(I){
-  const { openDate, today } = I, D = I.daily || {};
-  const keys = Object.keys(D.revenueByDay || {}).sort();
-  const coverFrom = keys[0] || null;
-  const expected = Number(I.expectedRevDay) > 0 ? Number(I.expectedRevDay) : null;
-  const bench = Number(I.benchmarkRevDay) > 0 ? Number(I.benchmarkRevDay) : null;
-  const phases = [[1, 30, "Ngày 1–30"], [31, 60, "Ngày 31–60"], [61, 90, "Ngày 61–90"]].map(([a, b, label]) => {
-    const from = nsAdd(openDate, a-1), to = nsAdd(openDate, b-1), last = nsAdd(today, -1);
-    const p = { label, from, to, status:"", tone:"grey", revDay:null, billsDay:null, tbb:null, vsExpected:null, vsBench:null };
-    if(from > last){ p.status = "Chưa tới giai đoạn"; return p; }
-    if(!coverFrom || from < coverFrom){ p.status = "Chưa đủ dữ liệu (ngoài vùng số POS đã lưu)"; return p; }
-    const end = to < last ? to : last;
-    let rev = 0, bills = 0, n = 0; for(let d = from; d <= end; d = nsAdd(d, 1)){ rev += Number(D.revenueByDay[d])||0; bills += Number((D.orderCountByDay||{})[d])||0; n++; }
-    p.days = n; p.partial = end < to; p.revDay = rev/n; p.billsDay = D.orderCountByDay ? bills/n : null; p.tbb = bills>0 ? rev/bills : null;
-    if(expected) p.vsExpected = p.revDay/expected*100;
-    if(bench) p.vsBench = p.revDay/bench*100;
-    if(p.vsExpected==null){ p.status = "Kế hoạch chưa có doanh thu kỳ vọng — chỉ so được với nhà thuốc chuẩn"; p.tone = "grey"; }
-    else if(p.vsExpected >= 100){ p.status = "Đạt kỳ vọng"; p.tone = "green"; }
-    else if(p.vsExpected >= 80){ p.status = `Dưới kỳ vọng ${Math.round(100 - p.vsExpected)}%`; p.tone = "orange"; }
-    else { p.status = `Thấp hơn nhiều so với kỳ vọng (${Math.round(p.vsExpected)}%)`; p.tone = "red"; }
-    if(p.partial) p.status += ` · đang diễn ra (${n} ngày)`;
-    return p;
-  });
-  const notes = [
-    "Kỳ vọng lấy từ kế hoạch đã soạn; nhà thuốc chuẩn chỉ để tham khảo — khác quy mô, vị trí, thời gian hoạt động thì không áp máy móc.",
-    "Nhà thuốc mới thường tăng dần trong 90 ngày đầu; xem xu hướng giữa các giai đoạn thay vì chỉ một con số.",
-  ];
-  const done = phases.filter(p => p.revDay!=null);
-  const trend = done.length>=2 ? (done[done.length-1].revDay/done[0].revDay - 1)*100 : null;
-  return { phases, notes, trend, gapTo: expected && done.length ? expected - done[done.length-1].revDay : null };
-}
-// NS-ENGINE-END
-function NewShopTrackingBlock({ plan, track, shopsAll, dnaShops, onSave }){
-  const h = React.createElement;
-  const [shop, setShop] = useState((track && track.shop) || "");
-  const [openDate, setOpenDate] = useState((track && track.openDate) || "");
-  const [lesson, setLesson] = useState((track && track.lesson) || "");
-  const [ra, setRa] = useState(undefined);
-  useEffect(()=>{ if(!(track && track.shop)) return; db.collection("opsConfig").doc("revenueAnalytics").get().then(d => setRa(d.exists ? d.data() : null)).catch(() => setRa(null)); }, [track && track.shop]);
-  const bench = dnaShops.find(x => x.shop===plan.benchmark);
-  const r = track && track.shop && track.openDate && ra ? nsTrack({ openDate:track.openDate, today:todayISO(), daily:(ra.byShop||{})[track.shop] || {}, expectedRevDay: plan.input && plan.input.expectedRevDay, benchmarkRevDay: bench && bench.f ? bench.f.revDay : null }) : null;
-  const col = { green:"#15803D", orange:"#B45309", red:"#B91C1C", grey:"var(--inkSoft)" };
-  return h("div", { style:{ background:"var(--paper)", borderRadius:8, padding:"8px 10px", marginTop:6 } },
-    h("div", { style:{ fontWeight:700, fontSize:12.5, marginBottom:4 } }, "Theo dõi thực tế sau khai trương (so kế hoạch)"),
-    h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", fontSize:12 } },
-      h("select", { value:shop, onChange:e=>setShop(e.target.value), style:{ padding:"3px 6px", fontSize:12 } }, h("option", { value:"" }, "— gắn mã nhà thuốc —"), shopsAll.map(s => h("option", { key:s, value:s }, shopLabel(s)))),
-      h("input", { type:"date", value:openDate, onChange:e=>setOpenDate(e.target.value), style:{ padding:"3px 6px", fontSize:12 }, title:"Ngày khai trương" }),
-      h("input", { value:lesson, onChange:e=>setLesson(e.target.value), placeholder:"Bài học / điều chỉnh kế hoạch", style:{ flex:"1 1 200px", padding:"3px 6px", fontSize:12 } }),
-      h("button", { className:"btn btnGhost", style:{ fontSize:11.5, padding:"3px 8px" }, disabled:!shop || !openDate, onClick:()=>onSave({ shop, openDate, lesson }) }, "Lưu")),
-    track && track.shop && !r && h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:4 } }, "Đang tải số POS…"),
-    r && h("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12, marginTop:6 } },
-      h("thead", null, h("tr", null, ["Giai đoạn","DT/ngày","Bill/ngày","TB bill","So kỳ vọng","So NT chuẩn","Đánh giá"].map(x => h("th", { key:x, style:{ textAlign:"left", padding:"3px 6px", borderBottom:"1px solid var(--line)", color:"var(--inkSoft)" } }, x)))),
-      h("tbody", null, r.phases.map(p => h("tr", { key:p.label },
-        h("td", { style:{ padding:"3px 6px" } }, `${p.label} (${p.from.slice(8,10)}/${p.from.slice(5,7)}–${p.to.slice(8,10)}/${p.to.slice(5,7)})`),
-        h("td", { style:{ padding:"3px 6px" } }, nsMoney(p.revDay)), h("td", { style:{ padding:"3px 6px" } }, p.billsDay==null ? "—" : Math.round(p.billsDay)),
-        h("td", { style:{ padding:"3px 6px" } }, nsMoney(p.tbb)), h("td", { style:{ padding:"3px 6px" } }, p.vsExpected==null ? "—" : Math.round(p.vsExpected)+"%"),
-        h("td", { style:{ padding:"3px 6px" } }, p.vsBench==null ? "—" : Math.round(p.vsBench)+"%"),
-        h("td", { style:{ padding:"3px 6px", fontWeight:700, color:col[p.tone] } }, p.status))))),
-    r && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:4 } }, [r.trend!=null ? `Xu hướng giữa các giai đoạn: ${r.trend>=0?"+":""}${Math.round(r.trend)}%. ` : "", r.gapTo>0 ? `Còn thiếu ${nsMoney(r.gapTo)}/ngày so với kỳ vọng. ` : "", ...r.notes].join(" ")),
-    track && track.lesson && h("div", { style:{ fontSize:12, marginTop:4 } }, h("b", null, "Bài học: "), track.lesson));
-}
 function ReplicationView(){
-  // 14/10/2026: liên kết kế hoạch mở mới ↔ nhà thuốc thật để so kế hoạch với thực tế
-  const [nsTracks, setNsTracks] = useState({});
-  useEffect(()=> db.collection("opsConfig").doc("newPharmacyTracking").onSnapshot(d => setNsTracks(d.exists ? (d.data().byPlan || {}) : {}), () => setNsTracks({})), []);
-  async function saveNsTrack(planId, v){ try{ await db.collection("opsConfig").doc("newPharmacyTracking").set({ byPlan:{ [planId]:{ ...v, updatedBy:(auth.currentUser && auth.currentUser.email) || "", updatedAt:new Date().toISOString() } } }, { merge:true }); }catch(err){ alert("Lưu thất bại: " + (err && err.message ? err.message : err)); } }
   const h = React.createElement;
   const [dna, setDna] = useState(null); const [bps, setBps] = useState(null); const [plans, setPlans] = useState(null); const [busy, setBusy] = useState(""); const [msg, setMsg] = useState("");
   const [sub, setSub] = useState("dna"); const [edit, setEdit] = useState({}); const [dep, setDep] = useState({}); const [np, setNp] = useState({ ten:"", province:"", expectedRevDay:"", staff:"", khuVuc:"", dienTich:"", ghiChu:"" }); const [planOut, setPlanOut] = useState(null);
@@ -28398,8 +27285,7 @@ function ReplicationView(){
         h("button", { className:"btn btnPrimary", style:{ marginTop:8 }, disabled:!!busy, onClick:()=>run("newPlan", { input:np }, "AI đang soạn kế hoạch (30–90 giây)…") }, busy==="newPlan" ? "AI đang soạn…" : "Soạn kế hoạch 30/60/90 ngày")),
       planOut && planOut.plan && h("div", { className:"card", style:{ padding:12, marginBottom:10 } }, h("div", { style:{ fontWeight:800 } }, `Kế hoạch mới · chuẩn theo ${shopLabel(planOut.benchmark)}`), h("div", { style:{ whiteSpace:"pre-wrap", fontSize:13, lineHeight:1.55, marginTop:6 } }, planOut.plan)),
       (plans||[]).length>0 && h("div", { className:"card", style:{ padding:12 } }, h("div", { style:{ fontWeight:800, marginBottom:4 } }, "Kế hoạch đã soạn"), plans.map(p => h("details", { key:p.id, style:{ borderTop:"1px solid var(--line)", padding:"6px 0" } },
-        h("summary", { style:{ cursor:"pointer", fontSize:13 } }, `${(p.input&&p.input.ten)||"NT mới"} · chuẩn ${shopLabel(p.benchmark)} · ${new Date(p.createdAt).toLocaleString("vi-VN")}`), h("div", { style:{ whiteSpace:"pre-wrap", fontSize:12.5, marginTop:4 } }, p.plan),
-        h(NewShopTrackingBlock, { plan:p, track:nsTracks[p.id], shopsAll: Array.from(new Set([...DEFAULT_SHOPS, ...shops.map(x => x.shop)])).sort(), dnaShops:shops, onSave:(v)=>saveNsTrack(p.id, v) }))))));
+        h("summary", { style:{ cursor:"pointer", fontSize:13 } }, `${(p.input&&p.input.ten)||"NT mới"} · chuẩn ${shopLabel(p.benchmark)} · ${new Date(p.createdAt).toLocaleString("vi-VN")}`), h("div", { style:{ whiteSpace:"pre-wrap", fontSize:12.5, marginTop:4 } }, p.plan))))));
 }
 function OpsOperatorView({ onNavigate }){
   const h = React.createElement;
@@ -29229,7 +28115,7 @@ function SystemHubView(){
 // (1) ShopDiagnosisCard: nhà thuốc nào đang thấp hơn KẾ HOẠCH tháng của công ty & vấn đề nằm ở đâu (shopDiagnosis/{ngày}, 7h30)
 // (2) DecisionModal: ra quyết định → giao việc cho nhà thuốc + chốt chỉ số theo dõi, mức nền 14 ngày trước, mục tiêu
 // (3) DecisionsCard: app tự đánh giá sau 7 & 14 ngày (thử nhỏ: so thêm với nhà thuốc đối chứng). Không dùng giá vốn / lợi nhuận.
-const DIAG_STATUS = { nang:{ text:"Thấp nhiều", color:"#B3261E" }, thap:{ text:"Thấp hơn kỳ vọng", color:"#D98A1F" }, giam:{ text:"Đang giảm", color:"#D98A1F" }, ok:{ text:"Đúng tiến độ", color:"#16A34A" }, dau_thang:{ text:"Đầu tháng", color:"#6B7A70" }, chua_co_ke_hoach:{ text:"Chưa có kế hoạch", color:"#6B7A70" } };
+const DIAG_STATUS = { nang:{ text:"Thấp nhiều", color:"#B3261E" }, thap:{ text:"Thấp hơn kỳ vọng", color:"#D98A1F" }, giam:{ text:"Đang giảm", color:"#D98A1F" }, ok:{ text:"Đúng tiến độ", color:"#16A34A" }, dau_thang:{ text:"Đầu tháng", color:"#6B7A70" }, chua_co_ke_hoach:{ text:"Chưa có kế hoạch", color:"#6B7A70" }, thieu_du_lieu:{ text:"Chưa đủ dữ liệu", color:"#6B7A70" } };
 const DECISION_TYPES_UI = { action:"Hành động cải thiện", promo_continue:"Tiếp tục CTKM", promo_adjust:"Điều chỉnh CTKM", pilot:"Thử nghiệm phạm vi nhỏ", promo_stop:"Dừng CTKM" };
 const DECISION_METRICS_UI = { rev:"Doanh thu/ngày", bills:"Số bill/ngày", tbb:"Giá trị bill TB", hhs:"Doanh thu hàng hệ số/ngày" };
 const DECISION_VERDICT_UI = { cai_thien:{ text:"Cải thiện", color:"#16A34A" }, khong_doi:{ text:"Không đổi", color:"#6B7A70" }, xau_di:{ text:"Xấu đi", color:"#B3261E" }, chua_du_lieu:{ text:"Chưa đủ dữ liệu", color:"#6B7A70" } };
@@ -29310,7 +28196,7 @@ function ShopDiagnosisCard({ isAdmin, myStaff, onNavigate }){
     React.createElement("button", { key:"b", type:"button", className:"btn", disabled:busy, onClick:runNow }, busy ? "Đang chẩn đoán…" : "Chẩn đoán ngay")]) : null;
   const list = Object.values(d.shops || {}).filter(x => !myShop || x.shop===myShop)
     .sort((a, b) => ((a.plan && a.plan.projectedPct) ?? 999) - ((b.plan && b.plan.projectedPct) ?? 999));
-  const problems = list.filter(x => !["ok","chua_co_ke_hoach","dau_thang"].includes(x.status));
+  const problems = list.filter(x => !["ok","chua_co_ke_hoach","dau_thang","thieu_du_lieu"].includes(x.status));
   const shown = showAll || myShop ? list : problems;
   const decideFrom = (x, sg) => setPreset({ type:"action", shops:[x.shop], metric:sg ? sg.metric : ((x.issues[0]||{}).key==="tbb" ? "tbb" : (x.issues[0]||{}).key==="hhs" ? "hhs" : (x.issues[0]||{}).key==="bills" ? "bills" : "rev"),
     title:sg ? sg.text.split(":")[0] : "", hypothesis:x.summary, taskNote:sg ? sg.text : (x.issues||[]).map(i=>"• " + i.text).join("\n"), source:{ kind:"diagnosis", date:d.date } });
@@ -29323,7 +28209,8 @@ function ShopDiagnosisCard({ isAdmin, myStaff, onNavigate }){
         React.createElement("span", { key:"t", style:{ fontSize:12.5, color:"var(--inkSoft)", flex:"1 1 260px" } }, x.summary),
       ]),
       isOpen && React.createElement("div", { key:"d", style:{ marginTop:8, background:"var(--paper)", borderRadius:8, padding:"8px 10px", fontSize:12.5, lineHeight:1.6 } }, [
-        x.plan && React.createElement("div", { key:"pl" }, `Kế hoạch tháng ${fmtTr(x.plan.target)} · đã đạt ${fmtTr(x.plan.actual)} (kỳ vọng đến nay ${fmtTr(x.plan.expectedToDate)}, ${x.plan.gapToDate >= 0 ? "vượt" : "thiếu"} ${fmtTr(Math.abs(x.plan.gapToDate))}) · cần ${fmtTr(x.plan.needPerDay)}/ngày cho các ngày còn lại`),
+        x.plan && React.createElement("div", { key:"pl" }, `Kế hoạch tháng ${fmtTr(x.plan.target)} · đã đạt ${fmtTr(x.plan.actual)} (kỳ vọng đến nay ${fmtTr(x.plan.expectedToDate)}, ${x.plan.gapToDate >= 0 ? "vượt" : "thiếu"} ${fmtTr(Math.abs(x.plan.gapToDate))}) ${x.plan.remaining != null ? ` · còn thiếu ${fmtTr(x.plan.remaining)}` : ""} · cần ${fmtTr(x.plan.needPerDay)}/ngày cho các ngày còn lại`),
+        (x.dataGaps || []).length > 0 && React.createElement("div", { key:"gap", style:{ color:"#B45309" } }, `Thiếu hoá đơn ngày ${x.dataGaps.map(d => d.slice(8,10) + "/" + d.slice(5,7)).join(", ")} — các ngày này không tính vào trung bình.`),
         x.plan && React.createElement("div", { key:"pp" }, `So kế hoạch (dự kiến cuối tháng): số bill ${x.plan.invoicePct != null ? Math.round(x.plan.invoicePct) + "%" : "—"} · bill TB ${x.plan.tbbPct != null ? Math.round(x.plan.tbbPct) + "%" : "—"} · hàng hệ số ${x.plan.hhsPct != null ? Math.round(x.plan.hhsPct) + "%" : "—"}${x.plan.customersOldPct != null ? ` · khách cũ ${Math.round(x.plan.customersOldPct)}%` : ""}${x.plan.customersNewPct != null ? ` · khách mới ${Math.round(x.plan.customersNewPct)}%` : ""}`),
         React.createElement("div", { key:"tr" }, `7 ngày qua so với 4 tuần trước: doanh thu/ngày ${fmtTr(x.last7.rev)} (${fmtSignPct(x.trend.rev)}) · bill/ngày ${String(x.last7.bills).replace(".", ",")} (${fmtSignPct(x.trend.bills)}) · bill TB ${fmtTr(x.last7.tbb)} (${fmtSignPct(x.trend.tbb)})`),
         (x.issues || []).length > 0 && React.createElement("div", { key:"is", style:{ marginTop:4 } }, [React.createElement("b", { key:"b" }, "Vấn đề nằm ở: "), React.createElement("ul", { key:"u", style:{ margin:"2px 0 0 16px", padding:0 } }, x.issues.map((i, k) => React.createElement("li", { key:k }, i.text)))]),
@@ -29803,8 +28690,6 @@ function Dashboard({ user, isAdmin, myStaff }){
       // 19/9/2026: banner tiến độ doanh số chỉ hiện ở trang đầu (Checklist ngày) — trước đây hiện
       // xuyên suốt mọi tab, gây trùng lặp/chiếm chỗ khi đang xem các tab khác không liên quan.
       !isAdmin && activeTab==="checklist" && React.createElement(DailyKpiPaceBanner, { key:"kpipace", myStaff, onOpen:()=>setActiveTab("kpi") }),
-      // 14/10/2026: AI tự giao việc cho các phần bổ sung — chạy nền 1 lần/ngày khi quản lý mở app
-      React.createElement(AutoAssignRunner, { key:"autoassign", isAdmin }),
       !isAdmin && activeTab==="checklist" && React.createElement(ReplenishBanner, { key:"replban", myStaff, onOpen:()=>setActiveTab("taimua") }),
       React.createElement(NavBackContext.Provider, { key:"wrapctx", value:{ canGoBack:navHistory.length>0, goBack:goBackTab } }, React.createElement("div", { key:"wrap", className:"wrap mobileContentArea" + (showMobileHome ? " isHiddenMobile" : "") }, [
         // Nút "← Quay lại" ngay dưới tiêu đề trên thanh trên cùng — chỉ hiện khi có màn trước đó để quay về.
