@@ -128,3 +128,35 @@ Không thêm collection mới.
 
 - Các luồng cũ giữ nguyên. Phần mới chỉ thêm khối hiển thị, thêm nội dung giao việc và thêm trường dữ liệu.
 - Thay đổi hành vi duy nhất: "Đo kết quả" của DT01 nay dùng các ngày **sau** khi giao việc. Hồ sơ DT01 đã đo theo cách cũ vẫn hiển thị bảng trước/sau như trước.
+
+## 8. AI tự giao việc cho các phần bổ sung (14/10/2026, theo yêu cầu chị Hà)
+
+**Vị trí:** Việc cần xử lý → tab "Của tôi" → thẻ **"AI tự giao việc (phần bổ sung 14/10)"**. Thẻ có công tắc bật/tắt chung và từng loại, nút "Chạy ngay", nhật ký việc đã giao và lý do bỏ qua.
+
+**Cách chạy:**
+- Chạy 1 lần/ngày khi quản lý mở app, sau 20 giây.
+- Khoá theo ngày ở `opsConfig/autoAssignLog`, nên nhiều quản lý cùng mở app cũng không giao trùng.
+- Việc được ghi vào `tasks` với `nguoiGiaoViec:"AI tự giao"`, `autoAssigned:true`, `autoRule`, `autoKey`. Việc hiện ở Action Center như việc thường và đo hiệu quả theo luồng có sẵn.
+
+| Loại | Khi nào AI giao | Giao cho | Không giao khi |
+|---|---|---|---|
+| Kế hoạch bù doanh thu | Nhà thuốc "Nguy cơ cao không đạt" (dự báo < 90%) | Cửa hàng trưởng (chưa có CHT → cả nhà thuốc). Đồng thời mở hồ sơ DT01 (IN_PROGRESS) và ghi lịch sử | Số thực đạt chưa xác nhận; số POS cũ; đã có việc DT01 đang mở; hồ sơ DT01 đang xử lý / chờ đánh giá |
+| Khắc phục lỗi checklist | Đầu việc NGHIÊM TRỌNG bị bỏ sót ≥ 3 ngày / 14 ngày tại cùng nhà thuốc | CHT / nhà thuốc, hạn 1 ngày | Đang có việc khắc phục mở; đã khắc phục và chưa thấy tái diễn |
+| Kiểm tra triển khai CTKM | Đợt đang chạy, nhà thuốc triển khai yếu | CHT / nhà thuốc, hạn 2 ngày | Đã giao cho nhà thuốc đó trong đợt này |
+| Tăng tốc nhà thuốc mới | Giai đoạn mới nhất < 100% kỳ vọng | CHT / nhà thuốc, hạn 3 ngày | Đã giao cho giai đoạn đó |
+| Đồng bộ lại số tồn kho | Số tiêu thụ tồn kho cũ hơn 30 giờ | Quản lý (việc "Của tôi"), không giao nhà thuốc | Đã giao trong ngày |
+| Kế hoạch bù KPI nhân viên | Nhân viên dự kiến < 85% | CHT | **Mặc định TẮT** vì là việc nhân sự (cùng quy tắc "AI điều hành": nhân sự luôn chờ duyệt). Quản lý bật nếu muốn |
+
+**Không tự giao:**
+- **Kế hoạch cải thiện 7/14 ngày:** cần quản lý phân loại nguyên nhân và chọn người kèm cặp.
+- **Quyết định CTKM tiếp tục / điều chỉnh / dừng:** là quyết định của quản lý.
+- **Chỉ số app:** chỉ để theo dõi, không có việc cần giao.
+
+**Kiểm thử:**
+- `tests/autoAssign.test.js` (6 ca): chỉ giao khi đủ điều kiện, giao đúng người, chống trùng, KPI mặc định chờ duyệt, checklist đã khắc phục không giao lại, CTKM 1 lần/đợt, số tồn cũ giao quản lý, tắt toàn bộ thì không giao gì. **ĐẠT.**
+- Chạy thử `runAutoAssign` với Firestore giả lập: tạo việc cho CHT, mở hồ sơ DT01 kèm lịch sử, giao việc tồn kho cho quản lý; lần chạy thứ hai trong ngày bị khoá. **ĐẠT.**
+
+**Giới hạn:**
+- Bộ tự giao chạy trong app nên cần ít nhất một quản lý mở app trong ngày.
+- Muốn chạy đúng giờ như "AI điều hành" (9h20 / 15h20) thì cần chuyển hàm `aaPlan` sang Cloud Functions; mã máy chủ không có trong repo này.
+- Firestore rules cần cho quản lý ghi `opsConfig/autoAssignRules` và `opsConfig/autoAssignLog`.

@@ -27431,6 +27431,219 @@ function AppMetricsCard(){
     rc("div", { key:"n", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:6 } }, "Các chỉ số này đo việc vận hành app, không chứng minh doanh thu tăng do app — kết quả kinh doanh còn chịu ảnh hưởng của mùa vụ, CTKM, nhân sự, hàng hoá."),
   ]);
 }
+// =====================================================================================================
+// ===== 14/10/2026 (chị Hà): AI TỰ GIAO VIỆC cho các phần bổ sung (doanh thu, checklist, CTKM, NT mới, số liệu cũ, KPI) =====
+// Quy tắc an toàn (giống "AI điều hành"): chỉ giao khi có số liệu chứng minh và số liệu đã xác nhận / còn mới; chống giao trùng
+// (việc đang mở cùng nguồn → bỏ qua); giao cho cửa hàng trưởng của nhà thuốc, chưa có CHT thì giao cả nhà thuốc; việc NHÂN SỰ
+// (kế hoạch bù KPI) mặc định CHỜ DUYỆT — chỉ tự giao khi quản lý bật. Mỗi ngày chạy 1 lần khi quản lý mở app (khoá theo ngày ở
+// opsConfig/autoAssignLog), có nút "Chạy ngay". Cấu hình bật/tắt từng loại ở opsConfig/autoAssignRules.
+// AA-ENGINE-BEGIN
+const AA_RULES = {
+  dt01:{ label:"Kế hoạch bù doanh thu (nhà thuốc nguy cơ cao không đạt)", def:true },
+  checklist:{ label:"Khắc phục lỗi checklist nghiêm trọng lặp lại ≥ 3 ngày", def:true },
+  promo:{ label:"Kiểm tra triển khai CTKM tại nhà thuốc yếu (đợt đang chạy)", def:true },
+  newshop:{ label:"Tăng tốc nhà thuốc mới dưới kỳ vọng", def:true },
+  stale:{ label:"Đồng bộ lại số tồn kho khi số liệu cũ (giao quản lý)", def:true },
+  kpi:{ label:"Kế hoạch bù KPI nhân viên (việc nhân sự — mặc định chờ duyệt)", def:false },
+};
+function aaRulesOn(cfg){ const r = {}; Object.keys(AA_RULES).forEach(k => { const v = cfg && cfg.rules ? cfg.rules[k] : undefined; r[k] = v===undefined ? AA_RULES[k].def : !!v; }); r.enabled = !(cfg && cfg.enabled===false); return r; }
+function aaTarget(staff, shop){
+  const cht = (staff||[]).find(s => s.shop===shop && s.role==="Cửa hàng trưởng");
+  return cht ? { assignType:"staff", staffId:cht.id, staffName:cht.name, shop } : { assignType:"shop", staffId:null, staffName:"", shop };
+}
+function aaIsOpen(openTasks, pred){ return (openTasks||[]).some(t => t.trangThai!=="Đã hoàn thành" && pred(t)); }
+// Trả về danh sách việc CẦN giao (đã lọc trùng). Không ghi dữ liệu.
+function aaPlan(I){
+  const on = aaRulesOn(I.config), out = [], skipped = [];
+  if(!on.enabled) return { tasks:out, skipped:[{ rule:"*", reason:"Đã tắt tự giao" }] };
+  const today = I.today, open = I.openTasks || [];
+  const add = (spec) => {
+    if(aaIsOpen(open, t => t.autoKey===spec.autoKey) || (spec.dupe && aaIsOpen(open, spec.dupe))){ skipped.push({ rule:spec.rule, key:spec.autoKey, reason:"Đã có việc đang mở cùng vấn đề" }); return; }
+    // Loại giao 1 lần (mỗi đợt CTKM / giai đoạn NT mới / mỗi ngày số liệu cũ): đã từng giao (kể cả đã xong) thì thôi
+    if(spec.once && (I.recentAuto||[]).some(t => t.autoKey===spec.autoKey)){ skipped.push({ rule:spec.rule, key:spec.autoKey, reason:"Đã giao trước đó" }); return; }
+    const { dupe, once, ...rest } = spec; out.push(rest);
+  };
+  // 1) Doanh thu — chỉ nhà thuốc "Nguy cơ cao", số thực đạt đã xác nhận, số POS còn mới, có kế hoạch bù
+  if(on.dt01 && I.revenue){
+    (I.shops||[]).forEach(shop => {
+      const dx = I.revenue.diagnose(shop);
+      if(!dx || dx.status.code!=="high") return;
+      if(!dx.confirmed || dx.freshness.stale || !dx.plan){ skipped.push({ rule:"dt01", key:shop, reason: !dx.confirmed ? "Số thực đạt chưa xác nhận" : dx.freshness.stale ? "Số POS chưa cập nhật" : "Chưa có kế hoạch bù" }); return; }
+      const act = (I.issueActions||{})[`${shop}__DT01`];
+      if(act && ["IN_PROGRESS","PENDING_VERIFICATION"].includes(act.status)){ skipped.push({ rule:"dt01", key:shop, reason:"Hồ sơ DT01 đang xử lý" }); return; }
+      add({ rule:"dt01", autoKey:`dt01:${shop}:${today.slice(0,7)}`, ...aaTarget(I.staff, shop), module:"Khác", deadline:dx.plan.checkDate,
+        title:`Kế hoạch bù doanh thu — ${String(shop).replace(/^SHOP0*/, "NT")}`, mota:rvdTaskText(dx), dx,
+        extra:{ sourceIssueCode:"DT01", sourceIssueTitle:"Doanh thu dự kiến không đạt chỉ tiêu tháng", sourceShop:shop, issueActionKey:`${shop}__DT01`,
+          commitMetric:"revenuePerDay", commitTarget:Math.round(dx.plan.needPerDay), commitBaseline:Math.round(dx.plan.baselinePerDay||0), commitText:dx.plan.commitment, checkDate:dx.plan.checkDate },
+        dupe: t => t.sourceIssueCode==="DT01" && (t.sourceShop===shop || t.shop===shop) });
+    });
+  }
+  // 2) KPI nhân viên — việc nhân sự: chỉ khi quản lý bật
+  if(on.kpi && I.kpiPace){
+    const byShop = {};
+    I.kpiPace.forEach(p => { const pr = p.kpiPctProjected!=null ? p.kpiPctProjected : p.kpiPct, ds = p.pctDoanhSoProjected; if((pr!=null && pr<0.85) || (ds!=null && ds<0.85)) (byShop[p.shop] = byShop[p.shop] || []).push(p); });
+    Object.entries(byShop).forEach(([shop, rows]) => {
+      const plans = rows.map(p => kbpPlan(p, today)).filter(x => x.plan);
+      if(!plans.length) return;
+      add({ rule:"kpi", autoKey:`kpi:${shop}:${today.slice(0,7)}`, ...aaTarget(I.staff, shop), module:"HR", deadline:plans[0].plan.checkDate,
+        title:`Kế hoạch bù KPI ${plans.length} nhân viên — ${String(shop).replace(/^SHOP0*/, "NT")}`,
+        mota:`AI tự giao. Nhân viên có doanh số/KPI dự kiến dưới 85%:\n${kbpTaskLines(plans)}\n\nBằng chứng cần nộp: nội dung đã trao đổi / kèm cặp từng người và tiến độ tại mốc kiểm tra.`,
+        extra:{ sourceIssueCode:"NS01", sourceShop:shop, commitKind:"kpiRecovery", commitPlans:plans.map(x => ({ staffId:x.staffId, name:x.name, commitment:x.plan.commitment, checkDate:x.plan.checkDate })) },
+        dupe: t => t.sourceIssueCode==="NS01" && (t.sourceShop===shop || t.shop===shop) });
+    });
+  }
+  // 3) Checklist — đầu việc NGHIÊM TRỌNG bị bỏ sót ≥ 3 ngày tại cùng nhà thuốc
+  if(on.checklist && I.checklist){
+    const res = clqAnalyze(I.checklist);
+    res.list.filter(x => x.severity==="critical").forEach(x => x.recurringShops.forEach(shop => {
+      const st = x.fixStatus.find(f => f.shop===shop);
+      if(st && st.state==="fixing") return;
+      if(st && st.state==="fixed"){ skipped.push({ rule:"checklist", key:`${x.id}:${shop}`, reason:"Đã khắc phục, chưa thấy tái diễn" }); return; }
+      add({ rule:"checklist", autoKey:`clq:${x.id}:${shop}`, ...aaTarget(I.staff, shop), module:"Ops", deadline:addDaysAA(today, 1),
+        title:`Khắc phục: "${x.label}" bị bỏ sót ${x.shops[shop]} lần — ${String(shop).replace(/^SHOP0*/, "NT")}`,
+        mota:`AI tự giao. Đầu việc checklist mức NGHIÊM TRỌNG "${x.label}" (vai trò ${x.role}) bị bỏ sót ${x.shops[shop]} lần trong 14 ngày.${st && st.state==="recurred" ? " Đã từng khắc phục nhưng TÁI DIỄN." : ""}\nYêu cầu: tìm nguyên nhân (quy trình / nguồn lực / kỹ năng), khắc phục, gửi ảnh hoặc mô tả. Hệ thống tiếp tục theo dõi để xác minh không tái diễn.`,
+        extra:{ sourceScreen:"checklistQuality", checklistItemId:x.id, checklistItemLabel:x.label },
+        dupe: t => t.sourceScreen==="checklistQuality" && t.checklistItemId===x.id && t.shop===shop });
+    }));
+  }
+  // 4) CTKM — đợt ĐANG CHẠY, nhà thuốc triển khai yếu
+  if(on.promo && I.promo && I.promo.camp && I.promo.camp.running){
+    const r = pmdDecide(I.promo.camp, I.promo.chainDaily);
+    r.weakShops.forEach(w => add({ rule:"promo", autoKey:`promo:${I.promo.campKey}:${w.shop}`, ...aaTarget(I.staff, w.shop), module:"Khác", deadline:addDaysAA(today, 2),
+      title:`Kiểm tra triển khai ${I.promo.camp.label || "khuyến mại"} — ${String(w.shop).replace(/^SHOP0*/, "NT")}`,
+      mota:`AI tự giao. Đợt khuyến mại đang chạy, nhà thuốc triển khai yếu: ${w.why}.\nKiểm tra: trưng bày, tư vấn, nhân viên đã biết chương trình chưa, hàng KM có đủ không. Báo lại nguyên nhân và việc đã làm.`,
+      extra:{ sourceScreen:"promoDecision", promoCampaign:I.promo.campKey }, once:true }));
+  }
+  // 5) Nhà thuốc mới — giai đoạn mới nhất dưới kỳ vọng
+  if(on.newshop && I.newShop){
+    (I.newShop.items||[]).forEach(it => {
+      const r = nsTrack(it.input);
+      const last = r.phases.filter(p => p.revDay!=null).slice(-1)[0];
+      if(!last || !(last.tone==="red" || last.tone==="orange")) return;
+      add({ rule:"newshop", autoKey:`ns:${it.planId}:${last.label}`, ...aaTarget(I.staff, it.shop), module:"Khác", deadline:addDaysAA(today, 3),
+        title:`Tăng tốc nhà thuốc mới (${last.label}) — ${String(it.shop).replace(/^SHOP0*/, "NT")}`,
+        mota:`AI tự giao. ${last.label}: doanh thu ${nsMoney(last.revDay)}/ngày = ${Math.round(last.vsExpected)}% kỳ vọng trong kế hoạch${last.vsBench!=null ? `, ${Math.round(last.vsBench)}% nhà thuốc chuẩn` : ""}.\nLập 3 việc tăng tốc (khách hàng, hàng hoá, trưng bày/khuyến mại), có chỉ tiêu và hạn; báo lại sau 7 ngày.`,
+        extra:{ sourceScreen:"newShopTracking", newShopPlanId:it.planId }, once:true });
+    });
+  }
+  // 6) Số tồn kho cũ — giao QUẢN LÝ (không giao nhà thuốc)
+  if(on.stale && I.stale && I.stale.ts!=null){
+    const f = dataFreshness(I.stale.ts, I.nowMs, 30);
+    if(f.stale) add({ rule:"stale", autoKey:`stale:inventory:${today}`, once:true, assignType:"admin", staffId:null, staffName:"", shop:"", module:"Goods", deadline:today,
+      title:"Đồng bộ lại số tồn kho trước khi điều chuyển / đặt hàng", mota:`AI tự giao. ${f.text}`, extra:{ sourceScreen:"staleData" } });
+  }
+  return { tasks:out.slice(0, I.max || 25), skipped, overflow: Math.max(0, out.length - (I.max || 25)) };
+}
+function addDaysAA(iso, n){ const [y,m,d] = String(iso).split("-").map(Number); return new Date(Date.UTC(y, m-1, d+n)).toISOString().slice(0,10); }
+// AA-ENGINE-END
+
+// Gom dữ liệu → aaPlan → ghi việc (tasks) + hồ sơ DT01 (issueActions/issueHistory). Khoá theo ngày để nhiều quản lý mở app không giao trùng.
+async function runAutoAssign({ force } = {}){
+  const today = todayISO();
+  const logRef = db.collection("opsConfig").doc("autoAssignLog");
+  if(!force){
+    const ok = await db.runTransaction(async tx => { const d = await tx.get(logRef); if(d.exists && d.data().lastRunDate===today) return false; tx.set(logRef, { lastRunDate:today, runningAt:new Date().toISOString() }, { merge:true }); return true; });
+    if(!ok) return { skippedRun:true };
+  }
+  const safe = async (f, d) => { try{ return await f(); }catch(e){ logSystemError("autoAssign", e); return d; } };
+  const get = async (c, id) => { const d = await db.collection(c).doc(id).get(); return d.exists ? d.data() : null; };
+  const month = today.slice(0,7);
+  const [recentAuto, clqFixAll] = await Promise.all([
+    safe(async () => (await db.collection("tasks").where("autoAssigned", "==", true).get()).docs.map(d => d.data()).filter(t => (t.ngayGiao||"") >= addDays(today, -60)), []),
+    safe(async () => (await db.collection("tasks").where("sourceScreen", "==", "checklistQuality").get()).docs.map(d => d.data()), []),
+  ]);
+  const [cfg, staffSnap, openSnap, actsSnap, ra, mt, clTpl, reports, idx, plansSnap, nsTrk, dna, invSum, pace] = await Promise.all([
+    safe(() => get("opsConfig", "autoAssignRules"), null),
+    safe(async () => (await db.collection("staff").get()).docs.map(d => ({ id:d.id, ...d.data() })).filter(s => !isStaffResigned(s)), []),
+    safe(async () => (await db.collection("tasks").where("trangThai", "==", "Đang giao").get()).docs.map(d => d.data()), []),
+    safe(async () => { const o = {}; (await db.collection("issueActions").get()).docs.forEach(d => { o[d.id] = d.data(); }); return o; }, {}),
+    safe(() => get("opsConfig", "revenueAnalytics"), null),
+    safe(async () => { const d = await db.collection("opsConfig").doc("revenueAnalyticsMonths").collection("months").doc(month).get(); return d.exists ? d.data() : null; }, null),
+    safe(() => get("opsConfig", "dailyChecklist"), null),
+    safe(async () => (await db.collection("dailyReports").where("ngay", ">=", addDays(today, -13)).get()).docs.map(d => d.data()), []),
+    safe(() => get("promoOrderAnalytics", "_index"), null),
+    safe(async () => (await db.collection("newPharmacyPlans").orderBy("createdAt", "desc").limit(10).get()).docs.map(d => ({ id:d.id, ...d.data() })), []),
+    safe(() => get("opsConfig", "newPharmacyTracking"), null),
+    safe(() => get("opsConfig", "pharmacyDna"), null),
+    safe(() => get("opsConfig", "inventoryConsumptionSummary"), null),
+    safe(async () => (await db.collection("dailyKpiPace").where("date", "==", today).get()).docs.map(d => d.data()), []),
+  ]);
+  const staffById = {}; staffSnap.forEach(s => { staffById[s.id] = s; });
+  const running = ((idx && idx.campaigns) || []).find(c => c.kind==="campaign" && c.running);
+  const camp = running ? await safe(() => get("promoOrderAnalytics", running.key), null) : null;
+  const dnaShops = dna ? Object.values(dna.shops||{}) : [];
+  const tracks = (nsTrk && nsTrk.byPlan) || {};
+  const plan = aaPlan({ today, nowMs:Date.now(), config:cfg, recentAuto, shops:DEFAULT_SHOPS, staff:staffSnap, openTasks:openSnap, issueActions:actsSnap,
+    revenue: ra && mt ? { diagnose:(shop) => rvdDiagnose({ shop, month:mt.month || month, today, daily:(ra.byShop||{})[shop] || {}, computedAt:ra.computedAt, monthRow:(mt.byShop||{})[shop] || null,
+      monthMeta:{ daysElapsed:mt.daysElapsed, daysInMonth:mt.daysInMonth, isCurrentMonth:mt.isCurrentMonth } }) } : null,
+    kpiPace:pace,
+    checklist:{ reports, templatesByRole:(clTpl && clTpl.byRole) || DEFAULT_DAILY_CHECKLISTS, staffById, since:addDays(today, -13), today, fixTasks:clqFixAll },
+    promo: camp ? { campKey:running.key, camp:{ ...camp, label:running.label, running:true }, chainDaily:ra && ra.chainRevenueByDay } : null,
+    newShop:{ items: plansSnap.filter(p => tracks[p.id] && tracks[p.id].shop && tracks[p.id].openDate).map(p => { const t = tracks[p.id]; const bench = dnaShops.find(x => x.shop===p.benchmark);
+      return { planId:p.id, shop:t.shop, input:{ openDate:t.openDate, today, daily:((ra && ra.byShop)||{})[t.shop] || {}, expectedRevDay:p.input && p.input.expectedRevDay, benchmarkRevDay: bench && bench.f ? bench.f.revDay : null } }; }) },
+    stale: invSum ? { ts:invSum.computedAt } : null,
+  });
+  const created = [];
+  for(const t of plan.tasks){
+    try{
+      const { rule, autoKey, assignType, staffId, staffName, shop, module, deadline, title, mota, extra, dx } = t;
+      const ref = await addDoc("tasks", { title, mota, deadline, hanGio:"", trangThai:"Đang giao", subTrangThai:"Mới giao", ketQua:"", nguoiBaoCao:"", ngayGiao:today,
+        nguoiGiaoViec:"AI tự giao", nguoiGiaoViecRole:"AI", dinhKemFiles:[], dinhKemLink:"", module, assignType, staffId, staffName, shop,
+        autoAssigned:true, autoRule:rule, autoKey, ...(extra||{}) });
+      if(rule==="dt01" && dx){
+        await db.collection("issueActions").doc(`${shop}__DT01`).set({ shop, code:"DT01", title:"Doanh thu dự kiến không đạt chỉ tiêu tháng", status:"IN_PROGRESS", assignedTaskId:ref.id,
+          recommendation:{ assignedTo: staffName || shopLabel(shop), note:dx.conclusion, hypotheses:dx.hypotheses.map(x => ({ key:x.key, text:x.text, evidence:x.evidence||"", confidence:x.confidence||"" })), actions:dx.actions.map(x => x.text),
+            plan:{ gap:Math.round(dx.plan.gap), needPerDay:Math.round(dx.plan.needPerDay), baselinePerDay:Math.round(dx.plan.baselinePerDay||0), commitment:dx.plan.commitment, checkDate:dx.plan.checkDate } },
+          resultBefore:{ capturedAtTs:new Date().toISOString(), items:Object.keys(((ra && ra.byShop && ra.byShop[shop]) || {}).revenueByDay || {}).sort().slice(-14).map(d => ({ key:d, label:d, revenue:ra.byShop[shop].revenueByDay[d] })) },
+          revenuePlan:{ assignedDate:today, baselinePerDay:Math.round(dx.plan.baselinePerDay||0), targetPerDay:Math.round(dx.plan.needPerDay) },
+          assignedAtTs:new Date().toISOString(), autoAssigned:true,
+          updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(), createdAtTs: firebase.firestore.FieldValue.serverTimestamp() }, { merge:true });
+        await logIssueHistory({ shop, code:"DT01", action:"ASSIGN", oldStatus:null, newStatus:"IN_PROGRESS", detail:"AI tự giao kế hoạch bù doanh thu" });
+      }
+      created.push({ rule, title, taskId:ref.id });
+    }catch(e){ logSystemError("autoAssignCreate", e); }
+  }
+  await logRef.set({ lastRunDate:today, lastRunAt:new Date().toISOString(), by:(auth.currentUser && auth.currentUser.email) || "",
+    last:{ created, skipped:plan.skipped.slice(0, 40), overflow:plan.overflow||0 } }, { merge:true });
+  return { created, skipped:plan.skipped };
+}
+// Chạy nền 1 lần/ngày khi quản lý mở app (sau 20 giây để không tranh tải dữ liệu lúc mở app).
+function AutoAssignRunner({ isAdmin }){
+  useEffect(()=>{
+    if(!isAdmin) return undefined;
+    const t = setTimeout(() => { db.collection("opsConfig").doc("autoAssignRules").get().then(d => { if(d.exists && d.data().enabled===false) return; return runAutoAssign(); }).catch(e => logSystemError("autoAssignRunner", e)); }, 20000);
+    return () => clearTimeout(t);
+  }, [isAdmin]);
+  return null;
+}
+function AutoAssignCard(){
+  const h = React.createElement;
+  const [cfg, setCfg] = useState(undefined);
+  const [log, setLog] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  useEffect(()=>{ const u1 = db.collection("opsConfig").doc("autoAssignRules").onSnapshot(d => setCfg(d.exists ? d.data() : {}), () => setCfg({}));
+    const u2 = db.collection("opsConfig").doc("autoAssignLog").onSnapshot(d => setLog(d.exists ? d.data() : null), () => setLog(null)); return () => { u1(); u2(); }; }, []);
+  if(cfg===undefined) return null;
+  const on = aaRulesOn(cfg);
+  const save = (patch) => db.collection("opsConfig").doc("autoAssignRules").set({ ...patch, updatedBy:(auth.currentUser && auth.currentUser.email) || "", updatedAt:new Date().toISOString() }, { merge:true }).catch(e => setMsg("Lỗi lưu: " + e.message));
+  async function runNow(){ setBusy(true); setMsg("Đang chạy…"); try{ const r = await runAutoAssign({ force:true }); setMsg(`Đã giao ${r.created.length} việc, bỏ qua ${r.skipped.length} (trùng / thiếu số liệu).`); }catch(e){ setMsg("Lỗi: " + (e.message||e)); } setBusy(false); }
+  const last = log && log.last;
+  return h("div", { className:"card", style:{ marginBottom:14, borderLeft:"4px solid var(--pine)" } },
+    h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap", alignItems:"center" } },
+      h("b", { style:{ fontSize:14.5 } }, "AI tự giao việc (phần bổ sung 14/10)"),
+      h("label", { style:{ display:"inline-flex", gap:6, alignItems:"center", fontSize:13 } }, h("input", { type:"checkbox", checked:on.enabled, onChange:e=>save({ enabled:e.target.checked }) }), "Bật")),
+    h("div", { style:{ fontSize:12, color:"var(--inkSoft)", margin:"4px 0 8px", lineHeight:1.5 } }, "Chạy 1 lần/ngày khi quản lý mở app. Chỉ giao khi có số liệu chứng minh (đã xác nhận, còn mới); việc đang mở cùng vấn đề thì không giao trùng; giao cửa hàng trưởng, nhà thuốc chưa có CHT thì giao cả nhà thuốc. Việc nhân sự mặc định chờ duyệt."),
+    h("div", { style:{ display:"flex", flexDirection:"column", gap:3 } }, Object.entries(AA_RULES).map(([k, v]) => h("label", { key:k, style:{ fontSize:13, display:"inline-flex", gap:6, alignItems:"center" } },
+      h("input", { type:"checkbox", checked:on[k], disabled:!on.enabled, onChange:e=>save({ rules:{ ...((cfg && cfg.rules)||{}), [k]:e.target.checked } }) }), v.label))),
+    h("div", { style:{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap", marginTop:8 } },
+      h("button", { className:"btn btnPrimary", disabled:busy || !on.enabled, onClick:runNow, style:{ fontSize:12.5 } }, busy ? "Đang chạy…" : "Chạy ngay"),
+      msg && h("span", { style:{ fontSize:12.5 } }, msg)),
+    log && log.lastRunAt && h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:8 } }, `Lần chạy gần nhất ${new Date(log.lastRunAt).toLocaleString("vi-VN")}${log.by ? " · " + log.by : ""}: giao ${(last && last.created || []).length} việc`),
+    last && (last.created||[]).length>0 && h("ul", { style:{ margin:"4px 0 0", paddingLeft:18, fontSize:12.5 } }, last.created.slice(0, 12).map((c, i) => h("li", { key:i }, c.title))),
+    last && (last.skipped||[]).length>0 && h("details", { style:{ fontSize:12, marginTop:4 } }, h("summary", { style:{ cursor:"pointer", color:"var(--inkSoft)" } }, `Không giao ${last.skipped.length} trường hợp (lý do)`),
+      h("ul", { style:{ margin:"4px 0 0", paddingLeft:18 } }, last.skipped.map((s, i) => h("li", { key:i }, `${(AA_RULES[s.rule]||{}).label || s.rule}${s.key ? " · " + String(s.key).replace(/SHOP0*/g, "NT") : ""}: ${s.reason}`)))));
+}
 function ImpactEffectivenessPanel({ shopScope }){
   const [rows, setRows] = useState(null); // null = loading
   const [err, setErr] = useState(null);
@@ -27761,6 +27974,8 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
       rc(MiniStat360, { key:"a", label:"Cần chú ý", value:attnN, valueColor:CL360.warn, sub:"Hạn trong 1 ngày hoặc ưu tiên vừa" }),
       rc(MiniStat360, { key:"d", label:"Đã hoàn tất hôm nay", value:doneToday, valueColor:CL360.good }),
     ]),
+    // 14/10/2026: cấu hình + nhật ký "AI tự giao việc (phần bổ sung)" ở tab "Của tôi" của quản lý
+    !shopScope && isAdmin && tab==="mine" && rc(AutoAssignCard, { key:"aa" }),
     tab==="impact" ? rc(React.Fragment, { key:"impact" }, [!shopScope && rc(AppMetricsCard, { key:"am" }), rc(ImpactEffectivenessPanel, { key:"ip", shopScope:shopScope||null })])
       : tab==="progress" ? progressCard
       : rc("div", { key:"grid", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))", gap:12, alignItems:"start" } }, [ queue, detail ]),
@@ -29524,6 +29739,8 @@ function Dashboard({ user, isAdmin, myStaff }){
       // 19/9/2026: banner tiến độ doanh số chỉ hiện ở trang đầu (Checklist ngày) — trước đây hiện
       // xuyên suốt mọi tab, gây trùng lặp/chiếm chỗ khi đang xem các tab khác không liên quan.
       !isAdmin && activeTab==="checklist" && React.createElement(DailyKpiPaceBanner, { key:"kpipace", myStaff, onOpen:()=>setActiveTab("kpi") }),
+      // 14/10/2026: AI tự giao việc cho các phần bổ sung — chạy nền 1 lần/ngày khi quản lý mở app
+      React.createElement(AutoAssignRunner, { key:"autoassign", isAdmin }),
       !isAdmin && activeTab==="checklist" && React.createElement(ReplenishBanner, { key:"replban", myStaff, onOpen:()=>setActiveTab("taimua") }),
       React.createElement(NavBackContext.Provider, { key:"wrapctx", value:{ canGoBack:navHistory.length>0, goBack:goBackTab } }, React.createElement("div", { key:"wrap", className:"wrap mobileContentArea" + (showMobileHome ? " isHiddenMobile" : "") }, [
         // Nút "← Quay lại" ngay dưới tiêu đề trên thanh trên cùng — chỉ hiện khi có màn trước đó để quay về.
