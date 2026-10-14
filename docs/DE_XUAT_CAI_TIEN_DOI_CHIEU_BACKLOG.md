@@ -196,3 +196,33 @@ Không thêm collection mới.
 - Chế độ chạy thử không ghi gì.
 
 **Chưa kiểm tra:** chạy trên Firebase thật. Bước 4–5 ở trên chính là bước kiểm tra này.
+
+## 10. Giao việc theo ca làm việc (15/10/2026)
+
+AI tự giao (cả trên máy chủ lẫn trong app) ghép **lịch ca 7 ngày tới** với nhân viên từng nhà thuốc:
+- Lịch ca gồm ca thường (`externalShiftWork`) và tăng ca (`externalOverTime`).
+- Ghép theo tên đã chuẩn hoá, giống cách app đang làm, nên tên có dấu hay không dấu vẫn khớp.
+
+| Loại việc | Giao cho | Hạn |
+|---|---|---|
+| **Làm ngay:** khắc phục checklist, kiểm tra triển khai CTKM | Người **đang trong ca** lúc chạy (ưu tiên CHT). Không ai đang trong ca → người vào ca sớm nhất hôm nay → ca gần nhất các ngày sau | Ngày ca đó, **giờ hết ca** của người nhận |
+| **Kế hoạch:** bù doanh thu, bù KPI, tăng tốc NT mới | **CHT** nếu CHT có ca hôm nay hoặc ngày mai. CHT nghỉ dài → người đang trong ca | Giữ mốc kiểm tra của kế hoạch, nhưng không sớm hơn ngày ca nhận việc |
+
+- Không giao cho **nhân viên học việc**, không giao cho người **đã hết ca**.
+- Lúc 9h20 người ca sáng nhận việc. Lúc 15h20, người ca sáng đã về (ví dụ hết ca 15h) thì người ca chiều nhận.
+- Mỗi việc ghi rõ **"Ca nhận việc: tên — ngày giờ ca (đang trong ca)"**, kèm các trường `shiftDate`, `shiftStart`, `shiftEnd`.
+- Thông báo đẩy đến đúng người đang làm.
+
+**Trường hợp ngoại lệ:**
+- **Không ai của nhà thuốc có ca trong 7 ngày tới:** giao theo CHT hoặc cả nhà thuốc như trước, và ghi "cần kiểm tra lịch ca".
+- **Không tải được lịch ca (đồng bộ lỗi):** giao theo CHT hoặc nhà thuốc, và ghi "Chưa có dữ liệu lịch ca".
+
+**Kiểm thử:** `tests/autoAssign.test.js`, thêm 3 ca, **ĐẠT**.
+- 9h20: CHT hết ca lúc 9h → giao người đang trong ca, hạn 15:00.
+- 15h20: giao người ca chiều, hạn 22:00.
+- Việc kế hoạch: CHT có ca ngày mai → giao CHT, hạn không sớm hơn ngày mai. CHT nghỉ đến 20/10 → giao người đang trong ca.
+- Không có ca hoặc không có dữ liệu ca → ghi rõ lý do.
+
+Chạy script máy chủ với Firestore giả lập: CHT không có ca → giao nhân viên đang trong ca; tên không dấu trong lịch ca vẫn khớp. **ĐẠT.**
+
+**Giới hạn:** lịch ca chỉ có tên nhân viên, không có mã. Hai người trùng tên ở cùng nhà thuốc sẽ không phân biệt được. Màn Hồ sơ nhân viên đã liệt kê các tên trùng chưa ghép được.

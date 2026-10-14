@@ -27451,6 +27451,37 @@ function aaTarget(staff, shop){
   const cht = (staff||[]).find(s => s.shop===shop && s.role==="Cửa hàng trưởng");
   return cht ? { assignType:"staff", staffId:cht.id, staffName:cht.name, shop } : { assignType:"shop", staffId:null, staffName:"", shop };
 }
+// 15/10/2026 (chị Hà): GIAO THEO CA LÀM VIỆC — ghép lịch ca (externalShiftWork + externalOverTime, khớp tên đã chuẩn hoá
+// giống normalizeStaffName) với nhân viên của nhà thuốc. mode "now": việc làm ngay → người ĐANG trong ca (ưu tiên CHT), không có
+// thì người vào ca sớm nhất; hạn = giờ hết ca. mode "lead": việc kế hoạch → CHT nếu có ca hôm nay / ngày mai, không thì người
+// đang trong ca. Không giao học việc, không giao người đã hết ca. Không có lịch ca → giao CHT / cả nhà thuốc như cũ (ghi rõ).
+function aaNorm(s){ return String(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/Đ/g, "d").replace(/y/g, "i").replace(/\s+/g, " ").trim(); }
+function aaShiftsOf(I, st){
+  const k = aaNorm(st.name);
+  if(!k) return [];
+  return (I.shifts||[]).filter(r => aaNorm(r.EmployeeName)===k).map(r => {
+    const x = { date:String(r.WorkDate||"").slice(0,10), start:String(r.TimeStart||"").slice(11,16) || "00:00", end:String(r.TimeEnd||"").slice(11,16) || "23:59", ot:!!r.__isOT };
+    if(x.end <= x.start) x.end = "23:59";   // ca qua đêm: tính đến hết ngày
+    return x;
+  }).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
+}
+function aaAssign(I, shop, mode){
+  if(!I.shifts) return { ...aaTarget(I.staff, shop), shift:null, shiftNote: I.shiftsMissing ? "Chưa có dữ liệu lịch ca (đồng bộ ca lỗi?) — giao theo cửa hàng trưởng / nhà thuốc." : "" };
+  const today = I.today, now = I.nowHM || "00:00", tomorrow = addDaysAA(today, 1);
+  const cands = (I.staff||[]).filter(s => s.shop===shop && s.role!=="Nhân viên học việc").map(st => {
+    const sh = aaShiftsOf(I, st).filter(x => x.date > today || (x.date===today && x.end > now));
+    return sh.length ? { st, sh:sh[0] } : null;
+  }).filter(Boolean).sort((a, b) => (a.sh.date + a.sh.start).localeCompare(b.sh.date + b.sh.start));
+  if(!cands.length) return { ...aaTarget(I.staff, shop), shift:null, shiftNote:"Không có ai trong lịch ca 7 ngày tới — giao theo nhà thuốc (cần kiểm tra lịch ca)." };
+  const isCHT = c => c.st.role==="Cửa hàng trưởng";
+  const onNow = c => c.sh.date===today && c.sh.start <= now;
+  let pick;
+  if(mode==="lead") pick = cands.find(c => isCHT(c) && c.sh.date <= tomorrow) || cands.find(c => onNow(c) && isCHT(c)) || cands.find(onNow) || cands.find(c => c.sh.date===today) || cands[0];
+  else pick = cands.find(c => onNow(c) && isCHT(c)) || cands.find(onNow) || cands.find(c => c.sh.date===today && isCHT(c)) || cands.find(c => c.sh.date===today) || cands[0];
+  const dm = pick.sh.date.slice(8,10) + "/" + pick.sh.date.slice(5,7);
+  return { assignType:"staff", staffId:pick.st.id, staffName:pick.st.name, shop, shift:pick.sh,
+    shiftNote:`Ca nhận việc: ${pick.st.name} — ${pick.sh.date===today ? "hôm nay" : dm} ${pick.sh.start}–${pick.sh.end}${pick.sh.ot ? " (tăng ca)" : ""}${onNow(pick) ? " (đang trong ca)" : ""}.` };
+}
 function aaIsOpen(openTasks, pred){ return (openTasks||[]).some(t => t.trangThai!=="Đã hoàn thành" && pred(t)); }
 // Trả về danh sách việc CẦN giao (đã lọc trùng). Không ghi dữ liệu.
 function aaPlan(I){
@@ -27461,7 +27492,16 @@ function aaPlan(I){
     if(aaIsOpen(open, t => t.autoKey===spec.autoKey) || (spec.dupe && aaIsOpen(open, spec.dupe))){ skipped.push({ rule:spec.rule, key:spec.autoKey, reason:"Đã có việc đang mở cùng vấn đề" }); return; }
     // Loại giao 1 lần (mỗi đợt CTKM / giai đoạn NT mới / mỗi ngày số liệu cũ): đã từng giao (kể cả đã xong) thì thôi
     if(spec.once && (I.recentAuto||[]).some(t => t.autoKey===spec.autoKey)){ skipped.push({ rule:spec.rule, key:spec.autoKey, reason:"Đã giao trước đó" }); return; }
-    const { dupe, once, ...rest } = spec; out.push(rest);
+    const { dupe, once, mode, ...rest } = spec;
+    // Ánh xạ vào ca: việc làm ngay → hạn = hết ca của người nhận; việc kế hoạch → không để hạn rơi trước ca nhận việc.
+    if(rest.shift){
+      if(mode==="now"){ rest.deadline = rest.shift.date; rest.hanGio = rest.shift.end; }
+      else if(!rest.deadline || rest.deadline < rest.shift.date) rest.deadline = rest.shift.date;
+      rest.extra = { ...(rest.extra||{}), shiftDate:rest.shift.date, shiftStart:rest.shift.start, shiftEnd:rest.shift.end };
+    }
+    if(rest.shiftNote) rest.mota = (rest.mota || "") + "\n\n" + rest.shiftNote;
+    delete rest.shift; delete rest.shiftNote;
+    out.push(rest);
   };
   // 1) Doanh thu — chỉ nhà thuốc "Nguy cơ cao", số thực đạt đã xác nhận, số POS còn mới, có kế hoạch bù
   if(on.dt01 && I.revenue){
@@ -27471,7 +27511,7 @@ function aaPlan(I){
       if(!dx.confirmed || dx.freshness.stale || !dx.plan){ skipped.push({ rule:"dt01", key:shop, reason: !dx.confirmed ? "Số thực đạt chưa xác nhận" : dx.freshness.stale ? "Số POS chưa cập nhật" : "Chưa có kế hoạch bù" }); return; }
       const act = (I.issueActions||{})[`${shop}__DT01`];
       if(act && ["IN_PROGRESS","PENDING_VERIFICATION"].includes(act.status)){ skipped.push({ rule:"dt01", key:shop, reason:"Hồ sơ DT01 đang xử lý" }); return; }
-      add({ rule:"dt01", autoKey:`dt01:${shop}:${today.slice(0,7)}`, ...aaTarget(I.staff, shop), module:"Khác", deadline:dx.plan.checkDate,
+      add({ rule:"dt01", autoKey:`dt01:${shop}:${today.slice(0,7)}`, ...aaAssign(I, shop, "lead"), mode:"lead", module:"Khác", deadline:dx.plan.checkDate,
         title:`Kế hoạch bù doanh thu — ${String(shop).replace(/^SHOP0*/, "NT")}`, mota:rvdTaskText(dx), dx,
         extra:{ sourceIssueCode:"DT01", sourceIssueTitle:"Doanh thu dự kiến không đạt chỉ tiêu tháng", sourceShop:shop, issueActionKey:`${shop}__DT01`,
           commitMetric:"revenuePerDay", commitTarget:Math.round(dx.plan.needPerDay), commitBaseline:Math.round(dx.plan.baselinePerDay||0), commitText:dx.plan.commitment, checkDate:dx.plan.checkDate },
@@ -27485,7 +27525,7 @@ function aaPlan(I){
     Object.entries(byShop).forEach(([shop, rows]) => {
       const plans = rows.map(p => kbpPlan(p, today)).filter(x => x.plan);
       if(!plans.length) return;
-      add({ rule:"kpi", autoKey:`kpi:${shop}:${today.slice(0,7)}`, ...aaTarget(I.staff, shop), module:"HR", deadline:plans[0].plan.checkDate,
+      add({ rule:"kpi", autoKey:`kpi:${shop}:${today.slice(0,7)}`, ...aaAssign(I, shop, "lead"), mode:"lead", module:"HR", deadline:plans[0].plan.checkDate,
         title:`Kế hoạch bù KPI ${plans.length} nhân viên — ${String(shop).replace(/^SHOP0*/, "NT")}`,
         mota:`AI tự giao. Nhân viên có doanh số/KPI dự kiến dưới 85%:\n${kbpTaskLines(plans)}\n\nBằng chứng cần nộp: nội dung đã trao đổi / kèm cặp từng người và tiến độ tại mốc kiểm tra.`,
         extra:{ sourceIssueCode:"NS01", sourceShop:shop, commitKind:"kpiRecovery", commitPlans:plans.map(x => ({ staffId:x.staffId, name:x.name, commitment:x.plan.commitment, checkDate:x.plan.checkDate })) },
@@ -27499,7 +27539,7 @@ function aaPlan(I){
       const st = x.fixStatus.find(f => f.shop===shop);
       if(st && st.state==="fixing") return;
       if(st && st.state==="fixed"){ skipped.push({ rule:"checklist", key:`${x.id}:${shop}`, reason:"Đã khắc phục, chưa thấy tái diễn" }); return; }
-      add({ rule:"checklist", autoKey:`clq:${x.id}:${shop}`, ...aaTarget(I.staff, shop), module:"Ops", deadline:addDaysAA(today, 1),
+      add({ rule:"checklist", autoKey:`clq:${x.id}:${shop}`, ...aaAssign(I, shop, "now"), mode:"now", module:"Ops", deadline:addDaysAA(today, 1),
         title:`Khắc phục: "${x.label}" bị bỏ sót ${x.shops[shop]} lần — ${String(shop).replace(/^SHOP0*/, "NT")}`,
         mota:`AI tự giao. Đầu việc checklist mức NGHIÊM TRỌNG "${x.label}" (vai trò ${x.role}) bị bỏ sót ${x.shops[shop]} lần trong 14 ngày.${st && st.state==="recurred" ? " Đã từng khắc phục nhưng TÁI DIỄN." : ""}\nYêu cầu: tìm nguyên nhân (quy trình / nguồn lực / kỹ năng), khắc phục, gửi ảnh hoặc mô tả. Hệ thống tiếp tục theo dõi để xác minh không tái diễn.`,
         extra:{ sourceScreen:"checklistQuality", checklistItemId:x.id, checklistItemLabel:x.label },
@@ -27509,7 +27549,7 @@ function aaPlan(I){
   // 4) CTKM — đợt ĐANG CHẠY, nhà thuốc triển khai yếu
   if(on.promo && I.promo && I.promo.camp && I.promo.camp.running){
     const r = pmdDecide(I.promo.camp, I.promo.chainDaily);
-    r.weakShops.forEach(w => add({ rule:"promo", autoKey:`promo:${I.promo.campKey}:${w.shop}`, ...aaTarget(I.staff, w.shop), module:"Khác", deadline:addDaysAA(today, 2),
+    r.weakShops.forEach(w => add({ rule:"promo", autoKey:`promo:${I.promo.campKey}:${w.shop}`, ...aaAssign(I, w.shop, "now"), mode:"now", module:"Khác", deadline:addDaysAA(today, 2),
       title:`Kiểm tra triển khai ${I.promo.camp.label || "khuyến mại"} — ${String(w.shop).replace(/^SHOP0*/, "NT")}`,
       mota:`AI tự giao. Đợt khuyến mại đang chạy, nhà thuốc triển khai yếu: ${w.why}.\nKiểm tra: trưng bày, tư vấn, nhân viên đã biết chương trình chưa, hàng KM có đủ không. Báo lại nguyên nhân và việc đã làm.`,
       extra:{ sourceScreen:"promoDecision", promoCampaign:I.promo.campKey }, once:true }));
@@ -27520,7 +27560,7 @@ function aaPlan(I){
       const r = nsTrack(it.input);
       const last = r.phases.filter(p => p.revDay!=null).slice(-1)[0];
       if(!last || !(last.tone==="red" || last.tone==="orange")) return;
-      add({ rule:"newshop", autoKey:`ns:${it.planId}:${last.label}`, ...aaTarget(I.staff, it.shop), module:"Khác", deadline:addDaysAA(today, 3),
+      add({ rule:"newshop", autoKey:`ns:${it.planId}:${last.label}`, ...aaAssign(I, it.shop, "lead"), mode:"lead", module:"Khác", deadline:addDaysAA(today, 3),
         title:`Tăng tốc nhà thuốc mới (${last.label}) — ${String(it.shop).replace(/^SHOP0*/, "NT")}`,
         mota:`AI tự giao. ${last.label}: doanh thu ${nsMoney(last.revDay)}/ngày = ${Math.round(last.vsExpected)}% kỳ vọng trong kế hoạch${last.vsBench!=null ? `, ${Math.round(last.vsBench)}% nhà thuốc chuẩn` : ""}.\nLập 3 việc tăng tốc (khách hàng, hàng hoá, trưng bày/khuyến mại), có chỉ tiêu và hạn; báo lại sau 7 ngày.`,
         extra:{ sourceScreen:"newShopTracking", newShopPlanId:it.planId }, once:true });
@@ -27573,12 +27613,15 @@ async function runAutoAssign({ force, slot, source } = {}){
     safe(() => get("opsConfig", "inventoryConsumptionSummary"), null),
     safe(async () => (await db.collection("dailyKpiPace").where("date", "==", today).get()).docs.map(d => d.data()), []),
   ]);
+  // Lịch ca 7 ngày tới (ca thường + tăng ca) để giao đúng người đang / sắp vào ca
+  const shiftRange = async (c, ot) => (await db.collection(c).where("WorkDate", ">=", today).where("WorkDate", "<=", addDays(today, 6) + "\uf8ff").get()).docs.map(d => ({ ...d.data(), __isOT:ot }));
+  const shiftsAll = await safe(async () => { const [a, b] = await Promise.all([shiftRange("externalShiftWork", false), shiftRange("externalOverTime", true)]); return a.concat(b); }, null);
   const staffById = {}; staffSnap.forEach(s => { staffById[s.id] = s; });
   const running = ((idx && idx.campaigns) || []).find(c => c.kind==="campaign" && c.running);
   const camp = running ? await safe(() => get("promoOrderAnalytics", running.key), null) : null;
   const dnaShops = dna ? Object.values(dna.shops||{}) : [];
   const tracks = (nsTrk && nsTrk.byPlan) || {};
-  const plan = aaPlan({ today, nowMs:Date.now(), config:cfg, recentAuto, shops:DEFAULT_SHOPS, staff:staffSnap, openTasks:openSnap, issueActions:actsSnap,
+  const plan = aaPlan({ today, nowHM:nowHM(), shifts: shiftsAll && shiftsAll.length ? shiftsAll : null, shiftsMissing: !(shiftsAll && shiftsAll.length), nowMs:Date.now(), config:cfg, recentAuto, shops:DEFAULT_SHOPS, staff:staffSnap, openTasks:openSnap, issueActions:actsSnap,
     revenue: ra && mt ? { diagnose:(shop) => rvdDiagnose({ shop, month:mt.month || month, today, daily:(ra.byShop||{})[shop] || {}, computedAt:ra.computedAt, monthRow:(mt.byShop||{})[shop] || null,
       monthMeta:{ daysElapsed:mt.daysElapsed, daysInMonth:mt.daysInMonth, isCurrentMonth:mt.isCurrentMonth } }) } : null,
     kpiPace:pace,
@@ -27591,8 +27634,8 @@ async function runAutoAssign({ force, slot, source } = {}){
   const created = [];
   for(const t of plan.tasks){
     try{
-      const { rule, autoKey, assignType, staffId, staffName, shop, module, deadline, title, mota, extra, dx } = t;
-      const ref = await addDoc("tasks", { title, mota, deadline, hanGio:"", trangThai:"Đang giao", subTrangThai:"Mới giao", ketQua:"", nguoiBaoCao:"", ngayGiao:today,
+      const { rule, autoKey, assignType, staffId, staffName, shop, module, deadline, hanGio, title, mota, extra, dx } = t;
+      const ref = await addDoc("tasks", { title, mota, deadline, hanGio:hanGio || "", trangThai:"Đang giao", subTrangThai:"Mới giao", ketQua:"", nguoiBaoCao:"", ngayGiao:today,
         nguoiGiaoViec:"AI tự giao", nguoiGiaoViecRole:"AI", dinhKemFiles:[], dinhKemLink:"", module, assignType, staffId, staffName, shop,
         autoAssigned:true, autoRule:rule, autoKey, ...(extra||{}) });
       if(rule==="dt01" && dx){
@@ -27653,7 +27696,7 @@ function AutoAssignCard(){
       log && log.lastServerRunAt && Date.now() - Date.parse(log.lastServerRunAt) < 26*3600*1000
         ? `Máy chủ đang tự giao đúng 9h20 & 15h20 (lần gần nhất ${new Date(log.lastServerRunAt).toLocaleString("vi-VN")}) — người nhận được thông báo ngay, không cần ai mở app.`
         : "Lịch máy chủ chưa chạy (chưa cài hoặc bị dừng) — tạm thời app giao khi quản lý mở app. Cài lịch: xem docs/DE_XUAT_CAI_TIEN_DOI_CHIEU_BACKLOG.md mục 9."),
-    h("div", { style:{ fontSize:12, color:"var(--inkSoft)", margin:"0 0 8px", lineHeight:1.5 } }, " Chỉ giao khi có số liệu chứng minh (đã xác nhận, còn mới); việc đang mở cùng vấn đề thì không giao trùng; giao cửa hàng trưởng, nhà thuốc chưa có CHT thì giao cả nhà thuốc. Việc nhân sự mặc định chờ duyệt."),
+    h("div", { style:{ fontSize:12, color:"var(--inkSoft)", margin:"0 0 8px", lineHeight:1.5 } }, " Chỉ giao khi có số liệu chứng minh (đã xác nhận, còn mới); việc đang mở cùng vấn đề thì không giao trùng. Giao THEO CA: việc làm ngay → người đang trong ca (ưu tiên CHT), hạn = giờ hết ca; việc kế hoạch → CHT nếu có ca hôm nay / ngày mai, không thì người đang trong ca. Không giao học việc, không giao người đã hết ca. Việc nhân sự mặc định chờ duyệt."),
     h("div", { style:{ display:"flex", flexDirection:"column", gap:3 } }, Object.entries(AA_RULES).map(([k, v]) => h("label", { key:k, style:{ fontSize:13, display:"inline-flex", gap:6, alignItems:"center" } },
       h("input", { type:"checkbox", checked:on[k], disabled:!on.enabled, onChange:e=>save({ rules:{ ...((cfg && cfg.rules)||{}), [k]:e.target.checked } }) }), v.label))),
     h("div", { style:{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap", marginTop:8 } },

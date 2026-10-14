@@ -45,6 +45,7 @@ async function main(){
   const shops = Array.isArray(sl.shops) && sl.shops.length ? sl.shops.filter(s => !test.has(s)) : ["SHOP0058","SHOP0059","SHOP0072","SHOP0074","SHOP0089","SHOP0095","SHOP0121","SHOP0122","SHOP0163"];
   const ctx = vm.createContext({
     db, console, todayISO,
+    nowHM:() => vnNow().toISOString().slice(11,16),   // giờ VN để chọn người đang trong ca
     addDays:(iso, n) => { const [y,m,d] = iso.split("-").map(Number); return new Date(Date.UTC(y, m-1, d+n)).toISOString().slice(0,10); },
     auth:{ currentUser:null },
     firebase:{ firestore:{ FieldValue: admin.firestore.FieldValue } },
