@@ -2866,6 +2866,8 @@ function DailyKpiPaceBanner({ myStaff, onOpen }){
         React.createElement("div", { key:"n" }, mine.kpiPctProjected!=null ? (mine.kpiPctProjected>=KPI_PASS_PCT ? "Đang kịp mốc 85%" : "Chưa kịp mốc 85%") : `Lũy kế ${mine.kpiPct!=null?Math.round(mine.kpiPct*100):"—"}%`),
       ]),
     ]),
+    // 14/10/2026 (P0 KPI): dự báo cuối kỳ phải nêu giả định và thời gian còn lại
+    React.createElement("div", { key:"as", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8 } }, kbpAssumption(mine, todayISO())),
     React.createElement("button", { key:"b", type:"button", className:"btn btnGhost", style:{padding:"7px 13px",fontSize:12.5}, onClick:onOpen }, "Xem chi tiết KPI"),
   ]);
 }
@@ -5132,6 +5134,87 @@ function paceProjected(p){
   const kpi = p.kpiPctProjected!=null ? p.kpiPctProjected : (p.kpiPct!=null ? p.kpiPct : null);
   return { ds: ds==null ? null : ds, kpi };
 }
+// ===== 14/10/2026 (đề xuất cải tiến — P0 KPI): KẾ HOẠCH BÙ KPI TỪNG NHÂN VIÊN + GIẢ ĐỊNH DỰ BÁO (KBP) =====
+// Đầu vào: 1 bản ghi dailyKpiPace (doanhSoTarget/Actual, hesoTarget/Actual, workedBefore, shiftToday, *Projected).
+// Tính theo NGÀY LÀM VIỆC (trừ ngày nghỉ còn lại trong 4 ngày/tháng — cùng quy tắc kpiMakeProjector), nêu rõ giả định,
+// mức thiếu, cần bao nhiêu mỗi ngày làm còn lại, chỉ số yếu nhất (có số chứng minh) và gợi ý huấn luyện theo chỉ số đó.
+// Không quy kết thái độ / năng lực. Khối tự chứa để tests/kpiRecovery.test.js chạy bằng Node.
+// KBP-ENGINE-BEGIN
+function kbpAdd(iso, n){ const [y,m,d] = String(iso).split("-").map(Number); return new Date(Date.UTC(y, m-1, d+n)).toISOString().slice(0,10); }
+function kbpMoney(v){ if(v==null || !Number.isFinite(Number(v))) return "—"; const a = Math.abs(v); return a>=1e6 ? (v/1e6).toFixed(1).replace(".", ",")+" tr" : a>=1e3 ? Math.round(v/1e3)+"k" : Math.round(v)+"đ"; }
+function kbpPct(r){ return r==null || !Number.isFinite(r) ? "—" : Math.round(r*100) + "%"; }
+function kbpWorkdays(p, today, offDays){
+  const off = offDays==null ? 4 : offDays;
+  const thang = p.thang || String(p.date || today).slice(0,7);
+  const D = new Date(Date.UTC(Number(thang.slice(0,4)), Number(thang.slice(5,7)), 0)).getUTCDate();
+  const inMonth = today.slice(0,7)===thang;
+  const day = inMonth ? Number(today.slice(8,10)) : D + 1;
+  const daysBefore = day - 1;
+  const known = p.workedBefore!=null && Number.isFinite(Number(p.workedBefore));
+  const workedBefore = known ? Math.min(daysBefore, Math.max(Number(p.workedBefore), daysBefore - off)) : null;
+  const offLeft = known ? Math.max(0, off - (daysBefore - workedBefore)) : off;
+  const remainingCal = Math.max(0, D - daysBefore);
+  const workLeft = inMonth ? Math.max(remainingCal ? 1 : 0, remainingCal - offLeft) : 0;
+  return { thang, D, daysBefore, workedBefore, known, offLeft, remainingCal, workLeft, inMonth };
+}
+function kbpAssumption(p, today, offDays){
+  const w = kbpWorkdays(p, today, offDays);
+  if(!w.inMonth) return "Tháng đã kết thúc — số liệu là kết quả cuối cùng, không còn dự báo.";
+  if(!w.known) return `Chưa có dữ liệu ca làm → dự báo chiếu theo ngày lịch (${w.daysBefore} ngày đã qua / ${w.D} ngày), có thể lệch nếu nhân viên nghỉ phép hoặc làm ít ca.`;
+  const cur = w.workedBefore>0 && p.doanhSoActual!=null ? Number(p.doanhSoActual)/w.workedBefore : null;
+  return `Dự báo giả định giữ tốc độ ${cur==null ? "hiện tại" : kbpMoney(cur) + "/ngày làm"} của ${w.workedBefore} ngày đã làm cho ${w.workLeft} ngày làm còn lại (đã trừ ${w.offLeft} ngày nghỉ còn lại trong ${offDays==null?4:offDays} ngày/tháng); chưa tính ca đăng ký thêm, nghỉ phép đột xuất.`;
+}
+function kbpPlan(p, today, opts){
+  const o = opts || {}, pass = o.passPct==null ? 0.85 : o.passPct;
+  const w = kbpWorkdays(p, today, o.offDays);
+  const out = { staffId:p.staffId, name:p.staffName || p.staffId, shop:p.shop, workdays:w, assumption:kbpAssumption(p, today, o.offDays), metrics:[], weakest:null, plan:null, insufficient:[], coaching:[], notes:[] };
+  const mk = (key, label, target, actual, projected) => {
+    const t = Number(target), a = Number(actual);
+    if(target==null || !Number.isFinite(t) || t<=0 || actual==null || !Number.isFinite(a)) return null;
+    const gap = Math.max(0, t - a);
+    const cur = w.known && w.workedBefore>0 ? a/w.workedBefore : null;
+    const need = w.workLeft>0 ? gap/w.workLeft : null;
+    return { key, label, target:t, actual:a, pct:a/t, projectedPct: projected!=null ? Number(projected) : null, gap, curPerWorkday:cur, needPerWorkday:need,
+      upliftPct: cur>0 && need!=null ? (need/cur - 1)*100 : null };
+  };
+  const ds = mk("ds", "Doanh số", p.doanhSoTarget, p.doanhSoActual, p.pctDoanhSoProjected);
+  const hs = mk("hs", "Hàng hệ số", p.hesoTarget, p.hesoActual, p.pctHeSoProjected);
+  [ds, hs].forEach(x => { if(x) out.metrics.push(x); });
+  if(!ds) out.insufficient.push("Chưa có chỉ tiêu hoặc thực đạt doanh số cá nhân tháng này.");
+  const kpi = p.kpiPctProjected!=null ? Number(p.kpiPctProjected) : (p.kpiPct!=null ? Number(p.kpiPct) : null);
+  out.kpiProjected = kpi;
+  const low = out.metrics.filter(x => x.projectedPct!=null && x.projectedPct < pass).sort((a, b) => a.projectedPct - b.projectedPct);
+  out.weakest = low[0] || null;
+  if(out.weakest){
+    const x = out.weakest;
+    out.coaching.push(x.key==="ds"
+      ? `Doanh số dự kiến ${kbpPct(x.projectedPct)} — kèm tư vấn bán hàng: hỏi đủ nhu cầu, tư vấn trọn liệu trình và sản phẩm đi kèm (luyện tình huống trên app).`
+      : `Hàng hệ số dự kiến ${kbpPct(x.projectedPct)} — học thẻ sản phẩm hệ số chủ lực, luyện câu tư vấn hàng hệ số.`);
+  }
+  if(kpi!=null && kpi < pass && !out.weakest) out.coaching.push(`KPI tổng dự kiến ${kbpPct(kpi)} nhưng doanh số / hàng hệ số đang kịp — xem chi tiết từng chỉ tiêu KPI (khách phục vụ, số đơn, nâng hạng…) để chọn chỉ tiêu cần hỗ trợ.`);
+  // Ca đăng ký thật ít hơn mức nghỉ cho phép → dự báo đang coi phần thiếu là "đi làm chưa đăng ký" → cần kiểm tra trước khi kết luận.
+  if(w.known && w.inMonth && Number(p.workedBefore) < w.daysBefore - (o.offDays==null ? 4 : o.offDays)) out.notes.push(`Chỉ ghi nhận ${Number(p.workedBefore)} ca trong ${w.daysBefore} ngày đã qua — kiểm tra ca / nghỉ phép trước khi kết luận về hiệu suất.`);
+  out.notes.push("Gợi ý huấn luyện dựa trên chỉ số; không quy kết thái độ hay năng lực khi chưa trao đổi với nhân viên.");
+  if(ds && w.inMonth && w.workLeft>0 && (ds.gap>0) && (out.weakest || (kpi!=null && kpi<pass))){
+    const checkDate = kbpAdd(today, 3);
+    const parts = out.metrics.filter(x => x.gap>0).map(x => `${x.label} ≥ ${kbpMoney(x.needPerWorkday)}/ngày làm (hiện ${x.curPerWorkday==null ? "—" : kbpMoney(x.curPerWorkday)})`);
+    out.plan = { checkDate, commitment:`${parts.join("; ")} trong ${w.workLeft} ngày làm còn lại của tháng.`,
+      checkpoint:`Kiểm tra ${checkDate.slice(8,10)}/${checkDate.slice(5,7)}: KPI dự kiến phải tăng so với ${kbpPct(kpi)} và tiến tới ≥ ${Math.round(pass*100)}%.`,
+      needPerWorkday: ds.needPerWorkday, baselinePerWorkday: ds.curPerWorkday, baselineKpi: kpi };
+  }
+  return out;
+}
+function kbpTaskLines(plans){
+  return plans.map(x => {
+    const L = [`• ${x.name}: KPI dự kiến ${kbpPct(x.kpiProjected)}` + (x.weakest ? `, yếu nhất: ${x.weakest.label} dự kiến ${kbpPct(x.weakest.projectedPct)}` : "")];
+    if(x.plan) L.push(`  Cam kết: ${x.plan.commitment}`, `  ${x.plan.checkpoint}`);
+    x.coaching.forEach(c => L.push(`  Hỗ trợ: ${c}`));
+    x.notes.filter(n => /kiểm tra ca/.test(n)).forEach(n => L.push(`  Lưu ý: ${n}`));
+    if(x.insufficient.length) L.push(`  ${x.insufficient.join(" ")}`);
+    return L.join("\n");
+  }).join("\n");
+}
+// KBP-ENGINE-END
 function paceIsLow(p, threshold){
   const th = threshold==null ? KPI_PASS_PCT : threshold;
   const { ds, kpi } = paceProjected(p);
@@ -13999,6 +14082,9 @@ function StaffPerformanceView({ isAdmin, myStaff, onNavigate }){
   const needsImproveCount = employees.filter(e=>e.rating && e.rating.label==="Cần cải thiện").length;
   return React.createElement("div", { style:{ maxWidth:1200, margin:"0 auto", padding:16 } }, [
     React.createElement(PageTitle, { key:"title" }, "Hiệu suất nhân viên"),
+    // 14/10/2026 (P0 KPI — xét ngày công trước khi so sánh): bảng này là doanh thu 30 ngày, CHƯA chia theo số ca đã làm.
+    React.createElement("div", { key:"wdnote", style:{ fontSize:11.5, color:"var(--inkSoft)", background:"var(--goldSoft)", borderRadius:8, padding:"6px 10px", marginBottom:10 } },
+      "Lưu ý: xếp hạng theo doanh thu 30 ngày, chưa chia theo số ca / ngày công — người làm ít ca (nghỉ phép, mới vào) sẽ bị xếp thấp. Để đánh giá hiệu suất, dùng tab KPI (đã chiếu theo ngày làm việc) và kiểm tra ca trước khi kết luận."),
     React.createElement(RevenueRefreshButton, { key:"rb", refreshing, onRefresh:refresh, computedAt: stats && stats.computedAt, canRefresh:isAdmin }),
     !stats ? React.createElement("div", { key:"empty", className:"card", style:{ fontSize:13, color:"var(--inkSoft)" } }, "Chưa có dữ liệu — bấm \"Tính lại\" ở trên.")
     : React.createElement(React.Fragment, { key:"body" }, [
@@ -23718,13 +23804,15 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
         },
       });
     } else if(kind==="hr"){
-      const itemsTxt = recoItemsHr.map(it => `- ${it.label}: Doanh số dự kiến ${it.pctDoanhSo!=null?Math.round(it.pctDoanhSo*100)+"%":"—"}, KPI dự kiến ${it.kpiPct!=null?Math.round(it.kpiPct*100)+"%":"—"}`).join("\n");
+      // 14/10/2026 (P0 KPI): kế hoạch bù từng nhân viên — mức thiếu, cần/ngày làm còn lại, chỉ số cam kết, mốc kiểm tra, gợi ý huấn luyện theo chỉ số yếu.
+      const plans = (proofList||[]).map(p => kbpPlan(p, todayISO()));
       setComposer({
-        heading:"Giao việc coaching nhân sự",
-        title:`Coaching ${recoItemsHr.length} nhân viên tiến độ thấp — ${shopLabel(shop)}`,
-        mota:`Nhân viên cần hỗ trợ (doanh số/KPI dự kiến cuối tháng dưới 85% — mốc đạt KPI):\n${itemsTxt}`,
+        heading:"Giao kế hoạch bù KPI",
+        title:`Kế hoạch bù KPI ${recoItemsHr.length} nhân viên — ${shopLabel(shop)}`,
+        mota:`Nhân viên có doanh số/KPI dự kiến cuối tháng dưới 85% (mốc đạt KPI). Kế hoạch bù đề xuất — CHT trao đổi với từng nhân viên, chỉnh nếu cần:\n${kbpTaskLines(plans)}\n\nBằng chứng cần nộp: nội dung đã trao đổi / kèm cặp với từng người và tiến độ tại mốc kiểm tra.`,
         module:"HR", ...(cht ? { staffId:cht.id } : { shopOnly:true, shop }), ...slaFields,
-        extra:{ sourceIssueCode:code, sourceIssueTitle:issue.title, sourceShop:shop, sourceIssuePriority:issue.priority, actionInsight:issue.title, issueActionKey:issueActionKeyOf(shop, code), expectedResult },
+        extra:{ sourceIssueCode:code, sourceIssueTitle:issue.title, sourceShop:shop, sourceIssuePriority:issue.priority, actionInsight:issue.title, issueActionKey:issueActionKeyOf(shop, code), expectedResult,
+          commitKind:"kpiRecovery", commitPlans: plans.filter(x => x.plan).map(x => ({ staffId:x.staffId, name:x.name, commitment:x.plan.commitment, checkDate:x.plan.checkDate, needPerWorkday:Math.round(x.plan.needPerWorkday||0), baselinePerWorkday:Math.round(x.plan.baselinePerWorkday||0), baselineKpi:x.plan.baselineKpi })) },
       });
     } else if(kind==="customer"){
       const itemsTxt = recoItemsCust.slice(0,20).map(it => `- ${it.label} (${it.phone})${it.lastPurchaseAt?` — mua gần nhất ${it.lastPurchaseAt}`:""}`).join("\n");
@@ -24032,8 +24120,13 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
           : rc("div", { key:"box", style:{ background:"var(--pineSoft)", borderRadius:10, padding:"10px 12px" } }, [
               rc("div", { key:"a", style:rowStyle }, [ rc("span",{key:"k"},"Giao cho"), rc("b",{key:"v"}, recoTargetLabel) ]),
               rc("div", { key:"c", style:{ ...rowStyle, borderBottom:"none" } }, [ rc("span",{key:"k"},"Số nhân viên cần coaching"), rc("b",{key:"v"}, `${recoItemsHr.length} người`) ]),
-              rc("div", { key:"items", style:{ marginTop:8 } }, recoItemsHr.map(it => rc("div", { key:it.key, style:{ fontSize:12, padding:"3px 0" } },
-                `${it.label}  —  Doanh số ${it.pctDoanhSo!=null?Math.round(it.pctDoanhSo*100)+"%":"—"}, KPI ${it.kpiPct!=null?Math.round(it.kpiPct*100)+"%":"—"}`)) ),
+              rc("div", { key:"items", style:{ marginTop:8 } }, (proofList||[]).map(p => { const x = kbpPlan(p, todayISO()); return rc("div", { key:p.staffId, style:{ fontSize:12, padding:"5px 0", borderBottom:"1px dashed var(--line)" } }, [
+                rc("b", { key:"n" }, x.name), ` — KPI dự kiến ${kbpPct(x.kpiProjected)}`,
+                ...x.metrics.map(m => rc("div", { key:m.key }, `${m.label}: đạt ${kbpPct(m.pct)} (dự kiến ${kbpPct(m.projectedPct)}), thiếu ${kbpMoney(m.gap)}${m.needPerWorkday!=null ? `, cần ${kbpMoney(m.needPerWorkday)}/ngày làm` : ""}${m.curPerWorkday!=null ? ` (hiện ${kbpMoney(m.curPerWorkday)})` : ""}`)),
+                x.plan && rc("div", { key:"c", style:{ color:"var(--amber)" } }, "Cam kết đề xuất: " + x.plan.commitment),
+                ...x.coaching.map((c, i) => rc("div", { key:"h"+i }, "Gợi ý hỗ trợ: " + c)),
+                rc("div", { key:"as", style:{ color:"var(--inkSoft)", fontSize:11 } }, x.assumption + " " + x.notes.join(" ")),
+              ]); }) ),
               rc("div", { key:"impact", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:8 } }, "Ảnh hưởng dự kiến: cải thiện tiến độ doanh số/KPI của các nhân viên nêu trên."),
             ])),
         kind==="customer" && (recoItemsCust.length===0 ? rc("div", { key:"e", className:"emptyState" }, "Không có khách hàng nào thuộc nhóm cảnh báo này hiện tại.")
