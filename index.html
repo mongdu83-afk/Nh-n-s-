@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261014-9";
+window.__APP_BUILD = "20261015-1";
 (function(){
   var busy = false;
   function typing(){ var a = document.activeElement; return a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable); }
@@ -3583,6 +3583,7 @@ function TaskAssignView({ isAdmin, myStaff, navParam, onNavigate, openTasks360 }
   const [dateTo, setDateTo] = useState("");
   const [reportingId, setReportingId] = useState(null);
   const [resultText, setResultText] = useState("");
+  const [ketQuaLoai, setKetQuaLoai] = useState(""); // 14/10/2026: kết quả gọi khách (việc CRM) — bắt buộc chọn
   const [sauXuLyText, setSauXuLyText] = useState("");
   const [uploadingResult, setUploadingResult] = useState({});
   const [viewTask, setViewTask] = useState(null);
@@ -3691,8 +3692,37 @@ function TaskAssignView({ isAdmin, myStaff, navParam, onNavigate, openTasks360 }
   // tính vào tiến độ/KPI của nhân viên ngay. Quản lý/CHT xác nhận (nhận xét) là bước sau, nằm ở
   // mục "Chưa nhận xét", KHÔNG ảnh hưởng tiến độ. Việc thường vẫn qua bước "Chờ kiểm tra".
   async function submitResult(taskId){
-    if(!resultText.trim()) return;
     const tk = tasks.find(x => x.id===taskId);
+    // 14/10/2026 (chị Hà — chặn "hoàn thành giả"): việc CHĂM SÓC KHÁCH phải chọn KẾT QUẢ THẬT.
+    // "Không liên lạc được" KHÔNG tính hoàn thành — dời sang mai thử lại (tối đa 3 lần, sau đó tự đóng là "không liên lạc được", không tính vào tỉ lệ hoàn thành).
+    // "Sai số / không dùng Zalo" → đóng việc (huỷ), cũng không tính hoàn thành.
+    if(tk && taskModule360(tk)==="CRM"){
+      const note = resultText.trim();
+      if(!ketQuaLoai){ alert("Chọn kết quả cuộc gọi trước (khách đã mua / hẹn ghé / chưa có nhu cầu / không liên lạc được / sai số)."); return; }
+      if(/^(đang thực hiện|đang làm|chưa)\.?$/i.test(note)){ alert("Ghi rõ đã trao đổi gì với khách — \"đang thực hiện\" chưa phải là kết quả."); return; }
+      const who = isAdmin ? "Quản lý khu vực" : (myStaff ? myStaff.name : "");
+      if(ketQuaLoai==="Không liên lạc được"){
+        const n = (tk.lanLienHe || 0) + 1; const line = `Lần ${n} (${today}): không liên lạc được${note ? " — " + note : ""}`;
+        if(n >= 3){
+          await updateDoc("tasks", taskId, { trangThai:"Đã huỷ", lyDoHuy:"Không liên lạc được sau 3 lần", ngayHuy:today, nguoiHuy:who, lanLienHe:n, ketQuaLoai, ketQua:line, nguoiBaoCao:who });
+          alert("Đã gọi 3 lần không được — việc được đóng (không tính là hoàn thành).");
+        } else {
+          await updateDoc("tasks", taskId, { subTrangThai:"Đang thực hiện", lanLienHe:n, ketQuaLoai, ketQua:line, deadline: addDays(today, 1), nguoiBaoCao:who });
+          alert(`Chưa tính hoàn thành — việc dời sang ngày mai để gọi lại (lần ${n}/3).`);
+        }
+        setReportingId(null); setResultText(""); setSauXuLyText(""); setKetQuaLoai(""); return;
+      }
+      if(ketQuaLoai==="Sai số / không dùng Zalo"){
+        await updateDoc("tasks", taskId, { trangThai:"Đã huỷ", lyDoHuy:"Sai số điện thoại / không dùng Zalo", ngayHuy:today, nguoiHuy:who, ketQuaLoai, ketQua: note || ketQuaLoai, nguoiBaoCao:who });
+        setReportingId(null); setResultText(""); setSauXuLyText(""); setKetQuaLoai(""); return;
+      }
+      if(note.length < 5){ alert("Ghi thêm 1 câu ngắn khách nói gì (VD: \"hẹn thứ 7 ghé lấy thuốc\")."); return; }
+      const full = `${ketQuaLoai}: ${note}`;
+      await updateDoc("tasks", taskId, { trangThai:"Đã hoàn thành", subTrangThai:"Đã hoàn thành", ngayHoanThanh:today, ketQuaLoai, ketQua:full, ketQuaTruoc:(tk.ketQuaTruoc || tk.ketQua || full), ketQuaSau:full,
+        sauXuLy:sauXuLyText.trim(), ngayNopKetQua:today, lyDoKhongDat:"", nguoiBaoCao:who });
+      setReportingId(null); setResultText(""); setSauXuLyText(""); setKetQuaLoai(""); return;
+    }
+    if(!resultText.trim()) return;
     // 7/10/2026 — BẮT BUỘC KẾT QUẢ CỤ THỂ khi đóng việc (để AI đo được hiệu quả): có con số, hoặc ≥ 20 ký tự mô tả, hoặc đã đính kèm ảnh/file.
     { const t = resultText.trim(); const hasFile = tk && ((tk.ketQuaFiles||[]).length || (tk.dinhKemKetQua||[]).length);
       if(!/\d/.test(t) && t.length < 20 && !hasFile){ alert("Ghi rõ kết quả cụ thể để AI đo được hiệu quả — có con số hoặc mô tả rõ (≥ 20 ký tự), hoặc đính kèm ảnh.\nVD: \"Đã gọi 6/8 khách, 2 khách hẹn ghé\", \"Đặt bổ sung 12 mã, hàng về thứ 5\"."); return; } }
@@ -3834,12 +3864,16 @@ function TaskAssignView({ isAdmin, myStaff, navParam, onNavigate, openTasks360 }
                 : (!isReporting
                   ? React.createElement("div", { key:"b", className:"btnRow" }, [
                       React.createElement("button", { key:"r", type:"button", className:"btn btnAmber", style:{padding:"7px 13px",fontSize:12.5},
-                        onClick:()=> sub==="Không đạt" ? retryTask(t.id) : (()=>{ setReportingId(t.id); setResultText(""); setSauXuLyText(""); })() },
+                        onClick:()=> sub==="Không đạt" ? retryTask(t.id) : (()=>{ setReportingId(t.id); setResultText(""); setSauXuLyText(""); setKetQuaLoai(""); })() },
                         sub==="Không đạt" ? "Làm lại & gửi kết quả" : "Báo cáo kết quả"),
                       blockingId!==t.id && React.createElement("button", { key:"v", type:"button", className:"btn btnGhost", style:{padding:"7px 13px",fontSize:12.5}, onClick:()=>{ setBlockingId(t.id); setBlockText(""); } }, "Báo vướng"),
                     ])
                   : React.createElement("div", { key:"f" }, [
-                      React.createElement("textarea", { key:"i", rows:3, value:resultText, onChange:e=>setResultText(e.target.value), placeholder:"Nhập kết quả đã thực hiện...", style:{ marginBottom:8 } }),
+                      taskModule360(t)==="CRM" && React.createElement("div", { key:"kql", style:{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:8 } },
+                        [["Khách đã mua","#15803D"],["Hẹn ngày ghé/mua","#2563EB"],["Chưa có nhu cầu","#6B7280"],["Không liên lạc được","#B45309"],["Sai số / không dùng Zalo","#B91C1C"]].map(([r,c]) =>
+                          React.createElement("button", { key:r, type:"button", onClick:()=>setKetQuaLoai(r), style:{ fontSize:12.5, padding:"4px 10px", borderRadius:8, border:"1px solid " + c, color: ketQuaLoai===r ? "#fff" : c, background: ketQuaLoai===r ? c : "#fff", cursor:"pointer" } }, r))),
+                      taskModule360(t)==="CRM" && (t.lanLienHe > 0) && React.createElement("div", { key:"lan", style:{ fontSize:12, color:"#B45309", marginBottom:6 } }, `Đã gọi ${t.lanLienHe} lần chưa liên lạc được (đóng việc sau 3 lần).`),
+                      React.createElement("textarea", { key:"i", rows:3, value:resultText, onChange:e=>setResultText(e.target.value), placeholder: taskModule360(t)==="CRM" ? "Khách nói gì? (VD: hẹn thứ 7 ghé lấy thuốc, đã mua 2 hộp Gabafix…)" : "Nhập kết quả đã thực hiện...", style:{ marginBottom:8 } }),
                       // ===== P0-4 (mục XXI): tình trạng SAU khi xử lý — tuỳ chọn, để so sánh với
                       // "Tình trạng trước khi xử lý" đã ghi lúc giao việc (nếu có).
                       t.truocXuLy && React.createElement("div", { key:"truocview", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:6 } }, `Trước khi xử lý: ${t.truocXuLy}`),
@@ -4611,15 +4645,15 @@ function CareTodayCard({ isAdmin, myStaff }){
     h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap" } },
       h("div", { style:{ fontWeight:800, fontSize:15 } }, `Danh sách gọi khách hôm nay (${dn}/${items.length})`),
       h("button", { className:"btn btnGhost", style:{ fontSize:12, padding:"2px 8px" }, onClick:()=>setShowAll(v=>!v) }, showAll ? "Chỉ hiện chưa gọi" : "Xem cả đã gọi")),
-    h("div", { style:{ fontSize:12, color:"var(--inkSoft)", margin:"2px 0 6px" } }, "Hỏi thăm sức khoẻ, nhắc sản phẩm hay mua, mời quay lại. Bấm kết quả sau mỗi cuộc gọi."),
+    h("div", { style:{ fontSize:12, color:"var(--inkSoft)", margin:"2px 0 6px" } }, "Chỉ gồm khách sắp hết thuốc dùng đều và khách vừa trễ nhịp mua quen. Hỏi thăm, nhắc sản phẩm, mời quay lại — bấm kết quả sau mỗi cuộc gọi."),
     shown.length === 0 && h("div", { style:{ fontSize:13, color:"#15803D" } }, "Đã gọi hết danh sách hôm nay."),
     shown.map(it => { const dd = done[it.phone];
       return h("div", { key:it.phone, style:{ borderTop:"1px solid var(--line)", padding:"7px 0" } },
         h("div", { style:{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"baseline" } },
           h("b", null, it.name || "Khách"), h("a", { href:"tel:" + it.phone, style:{ fontSize:13 } }, it.phone),
-          h("span", { style:{ fontSize:11.5, padding:"1px 7px", borderRadius:999, background: it.seg === "VIP im lặng" ? "#FDECEA" : "#FFF4E0" } }, it.seg),
-          h("span", { style:{ fontSize:12, color:"var(--inkSoft)" } }, `mua gần nhất ${it.last ? it.last.split("-").reverse().join("/") : "—"}${it.play ? " · " + it.play : ""}`),
-          h("button", { className:"btn btnGhost", style:{ fontSize:11.5, padding:"2px 8px" }, onClick:()=>setZf({ phone:it.phone, o:{ kind: it.seg === "VIP im lặng" ? "vip" : "risk", name:it.name, shop:L.shop, level:it.level, vouchers:it.vouchers, staffName:(myStaff && myStaff.name) || "" } }) }, "Tin Zalo")),
+          h("span", { style:{ fontSize:11.5, padding:"1px 7px", borderRadius:999, background: it.seg === "Sắp hết thuốc" ? "#E8F0FE" : it.seg === "VIP im lặng" ? "#FDECEA" : "#FFF4E0" } }, it.seg),
+          h("span", { style:{ fontSize:12, color:"var(--inkSoft)" } }, it.why ? it.why : `mua gần nhất ${it.last ? it.last.split("-").reverse().join("/") : "—"}${it.play ? " · " + it.play : ""}`),
+          h("button", { className:"btn btnGhost", style:{ fontSize:11.5, padding:"2px 8px" }, onClick:()=>setZf({ phone:it.phone, o:{ kind: it.kind || (it.seg === "VIP im lặng" ? "vip" : "risk"), items: it.items || [], name:it.name, shop:L.shop, level:it.level, vouchers:it.vouchers, staffName:(myStaff && myStaff.name) || "" } }) }, "Tin Zalo")),
         dd ? h("div", { style:{ fontSize:12.5, color:"#15803D", marginTop:3 } }, `✓ ${dd.staffName || ""}: ${dd.result || dd.note || "đã liên hệ"}`)
            : h("div", { style:{ display:"flex", gap:5, flexWrap:"wrap", marginTop:4 } }, CARE_RESULTS.map(([r, c]) => h("button", { key:r, disabled:busy===it.phone, onClick:()=>log(L, it, r), style:{ fontSize:12, padding:"3px 8px", borderRadius:8, border:"1px solid " + c, color:c, background:"#fff", cursor:"pointer" } }, r))));
     }),
