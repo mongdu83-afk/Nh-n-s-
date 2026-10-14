@@ -24033,6 +24033,8 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
         shop, code, title:issue.title, status:"IN_PROGRESS", assignedTaskId:taskId,
         recommendation, resultBefore:{ capturedAtTs:new Date().toISOString(), items:resultBeforeItems },
         expectedResult: EXPECTED_RESULT_BY_KIND[kind] || "", recurrence,
+        // 14/10/2026 (chỉ số hiệu quả app): thời điểm phát hiện & giao việc để đo "phát hiện → giao việc"
+        detectedAtTs: issue.detectedAtTs || null, assignedAtTs: new Date().toISOString(),
         ...(kind==="revenue" ? { revenuePlan:{ assignedDate:todayISO(), baselinePerDay: dx && dx.plan ? Math.round(dx.plan.baselinePerDay||0) : null, targetPerDay: dx && dx.plan ? Math.round(dx.plan.needPerDay) : null } } : {}),
         updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(), createdAtTs: firebase.firestore.FieldValue.serverTimestamp(),
       }, { merge:true });
@@ -27246,6 +27248,80 @@ function StaffProgressPanel({ openTasks, doneTasks, roster, fixedShop, onPick, t
 // ================= ĐO HIỆU QUẢ SAU XỬ LÝ (đặc tả §I Performance Management + P2-18) =================
 // So sánh tình trạng trước–sau khi hoàn thành việc gắn issue (sourceIssueCode).
 // Nguồn: tasks đã hoàn thành 90 ngày gần nhất có truocXuLy / sauXuLy / tacDong / sourceIssueCode.
+// ===== 14/10/2026 (đề xuất cải tiến — mục 5): CHỈ SỐ ĐO HIỆU QUẢ CỦA CHÍNH APP (AM) =====
+// Tính từ dữ liệu sẵn có: tasks (đúng hạn), issueActions (giải quyết đã xác minh, tái diễn, bằng chứng, thời gian phát hiện →
+// giao việc), issueHistory (mở lại), promoOrderAnalytics/_index + opsConfig/promoCampaignReviews (CTKM được đánh giá).
+// Chỉ số chưa có dữ liệu gốc thì trả "chưa đo được" kèm lý do — không ước lượng. Không quy kết kết quả kinh doanh cho app.
+// AM-ENGINE-BEGIN
+function amMs(v){ if(v==null) return null; if(typeof v==="number") return v; if(typeof v.toMillis==="function") return v.toMillis(); if(typeof v.seconds==="number") return v.seconds*1000; const t = Date.parse(v); return Number.isFinite(t) ? t : null; }
+function amRate(n, d){ return d>0 ? n/d : null; }
+function appMetrics(I){
+  const today = I.today, since = I.since;
+  const out = [];
+  const push = (key, group, label, value, detail, meaning, insufficient) => out.push({ key, group, label, value, detail, meaning, insufficient: insufficient || null });
+  // Thực thi: việc hoàn thành đúng hạn
+  const done = (I.tasksDone||[]).filter(t => t.trangThai==="Đã hoàn thành" && t.deadline && t.ngayHoanThanh);
+  const onTime = done.filter(t => String(t.ngayHoanThanh).slice(0,10) <= t.deadline);
+  push("onTime", "Thực thi", "Tỷ lệ công việc đúng hạn", amRate(onTime.length, done.length), `${onTime.length}/${done.length} việc có hạn đã hoàn thành`, "Đo kỷ luật thực hiện, không thay thế kết quả kinh doanh.", done.length ? null : "Chưa có việc hoàn thành có hạn trong kỳ.");
+  // Điều hành: thời gian phát hiện → giao việc
+  const acts = (I.issueActions||[]).filter(a => a && a.status && a.status!=="REJECTED");
+  const lead = acts.map(a => { const d = amMs(a.detectedAtTs), g = amMs(a.assignedAtTs || a.createdAtTs); return d!=null && g!=null && g>=d ? (g-d)/3600000 : null; }).filter(x => x!=null);
+  const leadAvg = lead.length ? lead.reduce((x, y) => x + y, 0)/lead.length : null;
+  push("lead", "Điều hành", "Thời gian từ phát hiện đến giao việc (giờ, trung bình)", leadAvg, lead.length ? `${lead.length} vấn đề có đủ thời điểm phát hiện và giao việc` : "", "Có giảm thời gian tổng hợp và ra quyết định không?",
+    lead.length ? null : "Hồ sơ cũ chưa lưu thời điểm phát hiện — từ 14/10/2026 app lưu khi giao việc, số liệu sẽ có dần.");
+  // Giải quyết: vấn đề được xác minh đã xử lý (đánh giá hiệu quả), không chỉ đóng việc
+  const evaluated = acts.filter(a => a.effectiveness);
+  const resolved = evaluated.filter(a => a.effectiveness==="hieu_qua");
+  const assigned = acts.filter(a => a.assignedTaskId);
+  push("resolved", "Giải quyết", "Tỷ lệ vấn đề được xác minh đã xử lý", amRate(resolved.length, assigned.length), `${resolved.length} hiệu quả / ${evaluated.length} đã đánh giá / ${assigned.length} đã giao việc`, "Vấn đề đã hết hay chỉ đóng công việc?", assigned.length ? null : "Chưa có vấn đề nào được giao việc.");
+  // Tái diễn
+  const recurred = acts.filter(a => a.recurrence===true);
+  const reopens = (I.issueHistory||[]).filter(h => h.action==="REOPEN").length;
+  push("recur", "Tái diễn", "Tỷ lệ vấn đề lặp lại", amRate(recurred.length, assigned.length), `${recurred.length} vấn đề từng đóng rồi xuất hiện lại · ${reopens} lần mở lại do xử lý chưa hiệu quả`, "Biện pháp xử lý nguyên nhân hay triệu chứng?", assigned.length ? null : "Chưa có vấn đề nào được giao việc.");
+  // Chất lượng quyết định: hồ sơ có bằng chứng trước xử lý
+  const withEvidence = assigned.filter(a => a.resultBefore && Array.isArray(a.resultBefore.items) && a.resultBefore.items.length>0);
+  push("evidence", "Chất lượng quyết định", "Tỷ lệ hồ sơ xử lý có bằng chứng số liệu", amRate(withEvidence.length, assigned.length), `${withEvidence.length}/${assigned.length} hồ sơ lưu số liệu trước xử lý`, "Giảm kết luận cảm tính hoặc thiếu dữ liệu.", assigned.length ? null : "Chưa có hồ sơ.");
+  // Hàng hoá: cảnh báo hàng hoá được xử lý hiệu quả
+  const goods = assigned.filter(a => /^HH/.test(a.code||""));
+  const goodsOk = goods.filter(a => a.effectiveness==="hieu_qua");
+  push("goods", "Hàng hoá", "Tỷ lệ cảnh báo hàng hoá xử lý hiệu quả", amRate(goodsOk.length, goods.length), `${goodsOk.length}/${goods.length} vấn đề hàng hoá (HH01/02/03/06)`, "Theo dõi cả kết quả và tồn đọng.", goods.length ? null : "Chưa có vấn đề hàng hoá được giao việc.");
+  // CTKM: đợt được đánh giá sau triển khai
+  const camps = ((I.promoIndex && I.promoIndex.campaigns) || []).filter(c => c.kind==="campaign" && !c.running);
+  const reviewed = camps.filter(c => I.promoReviews && I.promoReviews[c.key]);
+  push("promo", "CTKM", "Tỷ lệ đợt khuyến mại được đánh giá sau triển khai", amRate(reviewed.length, camps.length), `${reviewed.length}/${camps.length} đợt đã kết thúc có quyết định của quản lý`, "Có rút kinh nghiệm cho lần sau không?", camps.length ? null : "Chưa có đợt khuyến mại đã kết thúc.");
+  // KPI & CRM: chưa đủ dữ liệu lịch sử trong app để đo xu hướng → ghi rõ
+  push("kpi", "KPI", "Tỷ lệ nhà thuốc cải thiện khoảng cách mục tiêu", null, "", "Theo dõi xu hướng, không mặc định app là nguyên nhân duy nhất.", "Cần lưu ảnh chụp khoảng cách mục tiêu theo tuần (hiện chỉ có số tháng hiện tại) — chưa đo được.");
+  push("crm", "CRM", "Tỷ lệ chăm sóc thành công / khách quay lại", null, "", "Đánh giá trong cửa sổ thời gian thống nhất.", "Đã có ở tab Khách hàng → Hiệu quả chăm sóc (computeCareOutcomes); không tính lại ở đây để tránh hai nguồn số.");
+  return out;
+}
+// AM-ENGINE-END
+function AppMetricsCard(){
+  const [state, setState] = useState(null);
+  const today = todayISO(), since = addDays(today, -90);
+  useEffect(()=>{
+    let alive = true;
+    (async () => {
+      const safe = async (f, d) => { try{ return await f(); }catch(e){ logSystemError("appMetrics", e); return d; } };
+      const [tasksDone, issueActions, issueHistory, promoIndex, promoReviews] = await Promise.all([
+        safe(async () => (await db.collection("tasks").where("ngayHoanThanh", ">=", since).get()).docs.map(d => d.data()), []),
+        safe(async () => (await db.collection("issueActions").get()).docs.map(d => d.data()), []),
+        safe(async () => (await db.collection("issueHistory").where("action", "==", "REOPEN").get()).docs.map(d => d.data()), []),
+        safe(async () => { const d = await db.collection("promoOrderAnalytics").doc("_index").get(); return d.exists ? d.data() : null; }, null),
+        safe(async () => { const d = await db.collection("opsConfig").doc("promoCampaignReviews").get(); return d.exists ? (d.data().byCampaign || {}) : {}; }, {}),
+      ]);
+      if(alive) setState(appMetrics({ today, since, tasksDone, issueActions, issueHistory, promoIndex, promoReviews }));
+    })();
+    return () => { alive = false; };
+  }, [today]);
+  if(!state) return rc(EmptyState, { kind:"loading" });
+  const fmt = (m) => m.value==null ? "Chưa đo được" : (m.key==="lead" ? `${Math.round(m.value)} giờ` : `${Math.round(m.value*100)}%`);
+  return rc("div", { className:"card", style:{ marginBottom:14 } }, [
+    rc(Head360, { key:"h", title:"Chỉ số đo hiệu quả của app", right:rc("span", { style:{ fontSize:11, color:"var(--inkSoft)" } }, "90 ngày · tính từ dữ liệu sẵn có") }),
+    rc(Table360, { key:"t", head:["Nhóm","Chỉ số","Giá trị","Căn cứ","Ý nghĩa"], rows:state.map(m => ({ cells:[ m.group, m.label,
+      rc("b", { key:"v", style:{ color: m.value==null ? CL360.gray : "inherit" } }, fmt(m)), m.insufficient || m.detail, m.meaning ] })) }),
+    rc("div", { key:"n", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:6 } }, "Các chỉ số này đo việc vận hành app, không chứng minh doanh thu tăng do app — kết quả kinh doanh còn chịu ảnh hưởng của mùa vụ, CTKM, nhân sự, hàng hoá."),
+  ]);
+}
 function ImpactEffectivenessPanel({ shopScope }){
   const [rows, setRows] = useState(null); // null = loading
   const [err, setErr] = useState(null);
@@ -27576,7 +27652,7 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
       rc(MiniStat360, { key:"a", label:"Cần chú ý", value:attnN, valueColor:CL360.warn, sub:"Hạn trong 1 ngày hoặc ưu tiên vừa" }),
       rc(MiniStat360, { key:"d", label:"Đã hoàn tất hôm nay", value:doneToday, valueColor:CL360.good }),
     ]),
-    tab==="impact" ? rc(ImpactEffectivenessPanel, { key:"impact", shopScope:shopScope||null })
+    tab==="impact" ? rc(React.Fragment, { key:"impact" }, [!shopScope && rc(AppMetricsCard, { key:"am" }), rc(ImpactEffectivenessPanel, { key:"ip", shopScope:shopScope||null })])
       : tab==="progress" ? progressCard
       : rc("div", { key:"grid", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))", gap:12, alignItems:"start" } }, [ queue, detail ]),
     !shopScope && rc("div", { key:"foot", style:{ position:"sticky", bottom:8, marginTop:14, background:"#fff", border:"1px solid var(--line)", padding:"10px 12px", borderRadius:9, display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap", boxShadow:"0 2px 10px rgba(35,49,41,.08)" } }, [
