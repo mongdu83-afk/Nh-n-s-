@@ -27983,7 +27983,79 @@ function InvDecisionView(){
           h("td", { style:{ padding:"4px 6px", whiteSpace:"nowrap" } }, `tồn ${it.qty}${it.doi!=null && it.doi<9999 ? ` · đủ ${Math.round(it.doi)} ngày` : ""}`),
           h("td", { style:{ padding:"4px 6px", whiteSpace:"nowrap", color:"var(--inkSoft)" } }, it.from ? `từ ${shopLabel(it.from)} ×${it.tqty}` : it.to ? `sang ${shopLabel(it.to)} ×${it.tqty}` : it.why ? it.why : unit==="rev" ? (it.rev ? `~${opsFmtV(it.rev)}/ngày` : "") : (it.val ? opsFmtV(it.val) : ""))))))); }));
 }
+// ===== 14/10/2026 (đề xuất cải tiến — P1 Mở nhà thuốc mới): SO KẾ HOẠCH VỚI THỰC TẾ 30/60/90 NGÀY (NS) =====
+// Gắn kế hoạch đã soạn (newPharmacyPlans) với mã nhà thuốc + ngày khai trương → từng giai đoạn 1–30 / 31–60 / 61–90 ngày:
+// doanh thu/ngày, số bill/ngày, TB bill thực tế (POS) so với kỳ vọng trong kế hoạch và với nhà thuốc chuẩn. Nêu rõ giả định;
+// không áp máy móc chuẩn của nhà thuốc khác bối cảnh. Liên kết lưu ở opsConfig/newPharmacyTracking.
+// NS-ENGINE-BEGIN
+function nsAdd(iso, n){ const [y,m,d] = String(iso).split("-").map(Number); return new Date(Date.UTC(y, m-1, d+n)).toISOString().slice(0,10); }
+function nsMoney(v){ if(v==null || !Number.isFinite(Number(v))) return "—"; const a = Math.abs(v); return a>=1e6 ? (v/1e6).toFixed(1).replace(".", ",")+" tr" : Math.round(v/1e3)+"k"; }
+function nsTrack(I){
+  const { openDate, today } = I, D = I.daily || {};
+  const keys = Object.keys(D.revenueByDay || {}).sort();
+  const coverFrom = keys[0] || null;
+  const expected = Number(I.expectedRevDay) > 0 ? Number(I.expectedRevDay) : null;
+  const bench = Number(I.benchmarkRevDay) > 0 ? Number(I.benchmarkRevDay) : null;
+  const phases = [[1, 30, "Ngày 1–30"], [31, 60, "Ngày 31–60"], [61, 90, "Ngày 61–90"]].map(([a, b, label]) => {
+    const from = nsAdd(openDate, a-1), to = nsAdd(openDate, b-1), last = nsAdd(today, -1);
+    const p = { label, from, to, status:"", tone:"grey", revDay:null, billsDay:null, tbb:null, vsExpected:null, vsBench:null };
+    if(from > last){ p.status = "Chưa tới giai đoạn"; return p; }
+    if(!coverFrom || from < coverFrom){ p.status = "Chưa đủ dữ liệu (ngoài vùng số POS đã lưu)"; return p; }
+    const end = to < last ? to : last;
+    let rev = 0, bills = 0, n = 0; for(let d = from; d <= end; d = nsAdd(d, 1)){ rev += Number(D.revenueByDay[d])||0; bills += Number((D.orderCountByDay||{})[d])||0; n++; }
+    p.days = n; p.partial = end < to; p.revDay = rev/n; p.billsDay = D.orderCountByDay ? bills/n : null; p.tbb = bills>0 ? rev/bills : null;
+    if(expected) p.vsExpected = p.revDay/expected*100;
+    if(bench) p.vsBench = p.revDay/bench*100;
+    if(p.vsExpected==null){ p.status = "Kế hoạch chưa có doanh thu kỳ vọng — chỉ so được với nhà thuốc chuẩn"; p.tone = "grey"; }
+    else if(p.vsExpected >= 100){ p.status = "Đạt kỳ vọng"; p.tone = "green"; }
+    else if(p.vsExpected >= 80){ p.status = `Dưới kỳ vọng ${Math.round(100 - p.vsExpected)}%`; p.tone = "orange"; }
+    else { p.status = `Thấp hơn nhiều so với kỳ vọng (${Math.round(p.vsExpected)}%)`; p.tone = "red"; }
+    if(p.partial) p.status += ` · đang diễn ra (${n} ngày)`;
+    return p;
+  });
+  const notes = [
+    "Kỳ vọng lấy từ kế hoạch đã soạn; nhà thuốc chuẩn chỉ để tham khảo — khác quy mô, vị trí, thời gian hoạt động thì không áp máy móc.",
+    "Nhà thuốc mới thường tăng dần trong 90 ngày đầu; xem xu hướng giữa các giai đoạn thay vì chỉ một con số.",
+  ];
+  const done = phases.filter(p => p.revDay!=null);
+  const trend = done.length>=2 ? (done[done.length-1].revDay/done[0].revDay - 1)*100 : null;
+  return { phases, notes, trend, gapTo: expected && done.length ? expected - done[done.length-1].revDay : null };
+}
+// NS-ENGINE-END
+function NewShopTrackingBlock({ plan, track, shopsAll, dnaShops, onSave }){
+  const h = React.createElement;
+  const [shop, setShop] = useState((track && track.shop) || "");
+  const [openDate, setOpenDate] = useState((track && track.openDate) || "");
+  const [lesson, setLesson] = useState((track && track.lesson) || "");
+  const [ra, setRa] = useState(undefined);
+  useEffect(()=>{ if(!(track && track.shop)) return; db.collection("opsConfig").doc("revenueAnalytics").get().then(d => setRa(d.exists ? d.data() : null)).catch(() => setRa(null)); }, [track && track.shop]);
+  const bench = dnaShops.find(x => x.shop===plan.benchmark);
+  const r = track && track.shop && track.openDate && ra ? nsTrack({ openDate:track.openDate, today:todayISO(), daily:(ra.byShop||{})[track.shop] || {}, expectedRevDay: plan.input && plan.input.expectedRevDay, benchmarkRevDay: bench && bench.f ? bench.f.revDay : null }) : null;
+  const col = { green:"#15803D", orange:"#B45309", red:"#B91C1C", grey:"var(--inkSoft)" };
+  return h("div", { style:{ background:"var(--paper)", borderRadius:8, padding:"8px 10px", marginTop:6 } },
+    h("div", { style:{ fontWeight:700, fontSize:12.5, marginBottom:4 } }, "Theo dõi thực tế sau khai trương (so kế hoạch)"),
+    h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", fontSize:12 } },
+      h("select", { value:shop, onChange:e=>setShop(e.target.value), style:{ padding:"3px 6px", fontSize:12 } }, h("option", { value:"" }, "— gắn mã nhà thuốc —"), shopsAll.map(s => h("option", { key:s, value:s }, shopLabel(s)))),
+      h("input", { type:"date", value:openDate, onChange:e=>setOpenDate(e.target.value), style:{ padding:"3px 6px", fontSize:12 }, title:"Ngày khai trương" }),
+      h("input", { value:lesson, onChange:e=>setLesson(e.target.value), placeholder:"Bài học / điều chỉnh kế hoạch", style:{ flex:"1 1 200px", padding:"3px 6px", fontSize:12 } }),
+      h("button", { className:"btn btnGhost", style:{ fontSize:11.5, padding:"3px 8px" }, disabled:!shop || !openDate, onClick:()=>onSave({ shop, openDate, lesson }) }, "Lưu")),
+    track && track.shop && !r && h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:4 } }, "Đang tải số POS…"),
+    r && h("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12, marginTop:6 } },
+      h("thead", null, h("tr", null, ["Giai đoạn","DT/ngày","Bill/ngày","TB bill","So kỳ vọng","So NT chuẩn","Đánh giá"].map(x => h("th", { key:x, style:{ textAlign:"left", padding:"3px 6px", borderBottom:"1px solid var(--line)", color:"var(--inkSoft)" } }, x)))),
+      h("tbody", null, r.phases.map(p => h("tr", { key:p.label },
+        h("td", { style:{ padding:"3px 6px" } }, `${p.label} (${p.from.slice(8,10)}/${p.from.slice(5,7)}–${p.to.slice(8,10)}/${p.to.slice(5,7)})`),
+        h("td", { style:{ padding:"3px 6px" } }, nsMoney(p.revDay)), h("td", { style:{ padding:"3px 6px" } }, p.billsDay==null ? "—" : Math.round(p.billsDay)),
+        h("td", { style:{ padding:"3px 6px" } }, nsMoney(p.tbb)), h("td", { style:{ padding:"3px 6px" } }, p.vsExpected==null ? "—" : Math.round(p.vsExpected)+"%"),
+        h("td", { style:{ padding:"3px 6px" } }, p.vsBench==null ? "—" : Math.round(p.vsBench)+"%"),
+        h("td", { style:{ padding:"3px 6px", fontWeight:700, color:col[p.tone] } }, p.status))))),
+    r && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:4 } }, [r.trend!=null ? `Xu hướng giữa các giai đoạn: ${r.trend>=0?"+":""}${Math.round(r.trend)}%. ` : "", r.gapTo>0 ? `Còn thiếu ${nsMoney(r.gapTo)}/ngày so với kỳ vọng. ` : "", ...r.notes].join(" ")),
+    track && track.lesson && h("div", { style:{ fontSize:12, marginTop:4 } }, h("b", null, "Bài học: "), track.lesson));
+}
 function ReplicationView(){
+  // 14/10/2026: liên kết kế hoạch mở mới ↔ nhà thuốc thật để so kế hoạch với thực tế
+  const [nsTracks, setNsTracks] = useState({});
+  useEffect(()=> db.collection("opsConfig").doc("newPharmacyTracking").onSnapshot(d => setNsTracks(d.exists ? (d.data().byPlan || {}) : {}), () => setNsTracks({})), []);
+  async function saveNsTrack(planId, v){ try{ await db.collection("opsConfig").doc("newPharmacyTracking").set({ byPlan:{ [planId]:{ ...v, updatedBy:(auth.currentUser && auth.currentUser.email) || "", updatedAt:new Date().toISOString() } } }, { merge:true }); }catch(err){ alert("Lưu thất bại: " + (err && err.message ? err.message : err)); } }
   const h = React.createElement;
   const [dna, setDna] = useState(null); const [bps, setBps] = useState(null); const [plans, setPlans] = useState(null); const [busy, setBusy] = useState(""); const [msg, setMsg] = useState("");
   const [sub, setSub] = useState("dna"); const [edit, setEdit] = useState({}); const [dep, setDep] = useState({}); const [np, setNp] = useState({ ten:"", province:"", expectedRevDay:"", staff:"", khuVuc:"", dienTich:"", ghiChu:"" }); const [planOut, setPlanOut] = useState(null);
@@ -28047,7 +28119,8 @@ function ReplicationView(){
         h("button", { className:"btn btnPrimary", style:{ marginTop:8 }, disabled:!!busy, onClick:()=>run("newPlan", { input:np }, "AI đang soạn kế hoạch (30–90 giây)…") }, busy==="newPlan" ? "AI đang soạn…" : "Soạn kế hoạch 30/60/90 ngày")),
       planOut && planOut.plan && h("div", { className:"card", style:{ padding:12, marginBottom:10 } }, h("div", { style:{ fontWeight:800 } }, `Kế hoạch mới · chuẩn theo ${shopLabel(planOut.benchmark)}`), h("div", { style:{ whiteSpace:"pre-wrap", fontSize:13, lineHeight:1.55, marginTop:6 } }, planOut.plan)),
       (plans||[]).length>0 && h("div", { className:"card", style:{ padding:12 } }, h("div", { style:{ fontWeight:800, marginBottom:4 } }, "Kế hoạch đã soạn"), plans.map(p => h("details", { key:p.id, style:{ borderTop:"1px solid var(--line)", padding:"6px 0" } },
-        h("summary", { style:{ cursor:"pointer", fontSize:13 } }, `${(p.input&&p.input.ten)||"NT mới"} · chuẩn ${shopLabel(p.benchmark)} · ${new Date(p.createdAt).toLocaleString("vi-VN")}`), h("div", { style:{ whiteSpace:"pre-wrap", fontSize:12.5, marginTop:4 } }, p.plan))))));
+        h("summary", { style:{ cursor:"pointer", fontSize:13 } }, `${(p.input&&p.input.ten)||"NT mới"} · chuẩn ${shopLabel(p.benchmark)} · ${new Date(p.createdAt).toLocaleString("vi-VN")}`), h("div", { style:{ whiteSpace:"pre-wrap", fontSize:12.5, marginTop:4 } }, p.plan),
+        h(NewShopTrackingBlock, { plan:p, track:nsTracks[p.id], shopsAll: Array.from(new Set([...DEFAULT_SHOPS, ...shops.map(x => x.shop)])).sort(), dnaShops:shops, onSave:(v)=>saveNsTrack(p.id, v) }))))));
 }
 function OpsOperatorView({ onNavigate }){
   const h = React.createElement;
