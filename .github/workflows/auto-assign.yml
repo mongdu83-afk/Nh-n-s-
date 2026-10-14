@@ -1,0 +1,39 @@
+# AI tự giao việc — chạy trên máy chủ GitHub theo lịch 9h20 & 15h20 giờ Việt Nam (02:20 & 08:20 UTC).
+# Cần secret FIREBASE_SERVICE_ACCOUNT (khoá tài khoản dịch vụ Firebase, dạng JSON). Xem docs/DE_XUAT_CAI_TIEN_DOI_CHIEU_BACKLOG.md mục 9.
+# Có thể bấm chạy tay: tab Actions → "AI tự giao việc" → Run workflow (chọn chạy thử nếu chỉ muốn xem số lượng, không ghi).
+name: AI tự giao việc
+on:
+  schedule:
+    - cron: "20 2 * * *"
+    - cron: "20 8 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Chạy thử (không ghi gì, chỉ đếm số việc sẽ giao)"
+        type: boolean
+        default: false
+      force:
+        description: "Chạy lại dù khung giờ này đã chạy"
+        type: boolean
+        default: false
+concurrency:
+  group: auto-assign
+  cancel-in-progress: false
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Cài thư viện
+        run: npm install --no-save --no-audit --no-fund firebase-admin@12.7.0
+      - name: Giao việc
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+          FORCE: ${{ inputs.force && '1' || '0' }}
+          AA_DIRECT_PUSH: ${{ vars.AA_DIRECT_PUSH || '0' }}
+        run: node scripts/auto-assign.js
