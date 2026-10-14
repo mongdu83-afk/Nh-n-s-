@@ -27538,12 +27538,17 @@ function addDaysAA(iso, n){ const [y,m,d] = String(iso).split("-").map(Number); 
 // AA-ENGINE-END
 
 // Gom dữ liệu → aaPlan → ghi việc (tasks) + hồ sơ DT01 (issueActions/issueHistory). Khoá theo ngày để nhiều quản lý mở app không giao trùng.
-async function runAutoAssign({ force } = {}){
+// 14/10/2026 (2): dùng CHUNG cho trình duyệt và máy chủ (scripts/auto-assign.js chạy theo lịch 9h20 & 15h20 trên GitHub Actions).
+// Khoá theo "khung" (VD 2026-10-14-AM) để mỗi khung chỉ giao 1 lần dù máy chủ và app cùng chạy.
+async function runAutoAssign({ force, slot, source } = {}){
   const today = todayISO();
+  const slotKey = slot || today;
   const logRef = db.collection("opsConfig").doc("autoAssignLog");
   if(!force){
-    const ok = await db.runTransaction(async tx => { const d = await tx.get(logRef); if(d.exists && d.data().lastRunDate===today) return false; tx.set(logRef, { lastRunDate:today, runningAt:new Date().toISOString() }, { merge:true }); return true; });
-    if(!ok) return { skippedRun:true };
+    const ok = await db.runTransaction(async tx => { const d = await tx.get(logRef); const x = d.exists ? d.data() : {};
+      if(x.lastRunSlot===slotKey || (!slot && x.lastRunDate===today)) return false;
+      tx.set(logRef, { lastRunDate:today, lastRunSlot:slotKey, runningAt:new Date().toISOString() }, { merge:true }); return true; });
+    if(!ok) return { skippedRun:true, created:[], skipped:[] };
   }
   const safe = async (f, d) => { try{ return await f(); }catch(e){ logSystemError("autoAssign", e); return d; } };
   const get = async (c, id) => { const d = await db.collection(c).doc(id).get(); return d.exists ? d.data() : null; };
@@ -27600,10 +27605,13 @@ async function runAutoAssign({ force } = {}){
           updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(), createdAtTs: firebase.firestore.FieldValue.serverTimestamp() }, { merge:true });
         await logIssueHistory({ shop, code:"DT01", action:"ASSIGN", oldStatus:null, newStatus:"IN_PROGRESS", detail:"AI tự giao kế hoạch bù doanh thu" });
       }
-      created.push({ rule, title, taskId:ref.id });
+      created.push({ rule, title, taskId:ref.id, assignType, staffId, shop });
     }catch(e){ logSystemError("autoAssignCreate", e); }
   }
-  await logRef.set({ lastRunDate:today, lastRunAt:new Date().toISOString(), by:(auth.currentUser && auth.currentUser.email) || "",
+  const src = source || "app";
+  await logRef.set({ lastRunDate:today, lastRunSlot:slotKey, lastRunAt:new Date().toISOString(), lastSource:src,
+    ...(src==="server" ? { lastServerRunAt:new Date().toISOString() } : {}),
+    by: src==="server" ? "Máy chủ (lịch 9h20 & 15h20)" : ((auth.currentUser && auth.currentUser.email) || ""),
     last:{ created, skipped:plan.skipped.slice(0, 40), overflow:plan.overflow||0 } }, { merge:true });
   return { created, skipped:plan.skipped };
 }
@@ -27611,7 +27619,15 @@ async function runAutoAssign({ force } = {}){
 function AutoAssignRunner({ isAdmin }){
   useEffect(()=>{
     if(!isAdmin) return undefined;
-    const t = setTimeout(() => { db.collection("opsConfig").doc("autoAssignRules").get().then(d => { if(d.exists && d.data().enabled===false) return; return runAutoAssign(); }).catch(e => logSystemError("autoAssignRunner", e)); }, 20000);
+    // Máy chủ (GitHub Actions) giao việc đúng 9h20 & 15h20 và có thông báo đẩy. App chỉ chạy DỰ PHÒNG khi máy chủ
+    // chưa chạy trong 26 giờ qua (chưa cài lịch / lịch bị dừng).
+    const t = setTimeout(async () => { try{
+      const [r, l] = await Promise.all([db.collection("opsConfig").doc("autoAssignRules").get(), db.collection("opsConfig").doc("autoAssignLog").get()]);
+      if(r.exists && r.data().enabled===false) return;
+      const srv = l.exists && l.data().lastServerRunAt ? Date.parse(l.data().lastServerRunAt) : 0;
+      if(Date.now() - srv < 26*3600*1000) return;
+      await runAutoAssign({ source:"app" });
+    }catch(e){ logSystemError("autoAssignRunner", e); } }, 20000);
     return () => clearTimeout(t);
   }, [isAdmin]);
   return null;
@@ -27627,13 +27643,17 @@ function AutoAssignCard(){
   if(cfg===undefined) return null;
   const on = aaRulesOn(cfg);
   const save = (patch) => db.collection("opsConfig").doc("autoAssignRules").set({ ...patch, updatedBy:(auth.currentUser && auth.currentUser.email) || "", updatedAt:new Date().toISOString() }, { merge:true }).catch(e => setMsg("Lỗi lưu: " + e.message));
-  async function runNow(){ setBusy(true); setMsg("Đang chạy…"); try{ const r = await runAutoAssign({ force:true }); setMsg(`Đã giao ${r.created.length} việc, bỏ qua ${r.skipped.length} (trùng / thiếu số liệu).`); }catch(e){ setMsg("Lỗi: " + (e.message||e)); } setBusy(false); }
+  async function runNow(){ setBusy(true); setMsg("Đang chạy…"); try{ const r = await runAutoAssign({ force:true, source:"app" }); setMsg(`Đã giao ${r.created.length} việc, bỏ qua ${r.skipped.length} (trùng / thiếu số liệu).`); }catch(e){ setMsg("Lỗi: " + (e.message||e)); } setBusy(false); }
   const last = log && log.last;
   return h("div", { className:"card", style:{ marginBottom:14, borderLeft:"4px solid var(--pine)" } },
     h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap", alignItems:"center" } },
       h("b", { style:{ fontSize:14.5 } }, "AI tự giao việc (phần bổ sung 14/10)"),
       h("label", { style:{ display:"inline-flex", gap:6, alignItems:"center", fontSize:13 } }, h("input", { type:"checkbox", checked:on.enabled, onChange:e=>save({ enabled:e.target.checked }) }), "Bật")),
-    h("div", { style:{ fontSize:12, color:"var(--inkSoft)", margin:"4px 0 8px", lineHeight:1.5 } }, "Chạy 1 lần/ngày khi quản lý mở app. Chỉ giao khi có số liệu chứng minh (đã xác nhận, còn mới); việc đang mở cùng vấn đề thì không giao trùng; giao cửa hàng trưởng, nhà thuốc chưa có CHT thì giao cả nhà thuốc. Việc nhân sự mặc định chờ duyệt."),
+    h("div", { style:{ fontSize:12.5, margin:"4px 0 4px", fontWeight:600, color: log && log.lastServerRunAt && Date.now() - Date.parse(log.lastServerRunAt) < 26*3600*1000 ? "var(--pine)" : "var(--amber)" } },
+      log && log.lastServerRunAt && Date.now() - Date.parse(log.lastServerRunAt) < 26*3600*1000
+        ? `Máy chủ đang tự giao đúng 9h20 & 15h20 (lần gần nhất ${new Date(log.lastServerRunAt).toLocaleString("vi-VN")}) — người nhận được thông báo ngay, không cần ai mở app.`
+        : "Lịch máy chủ chưa chạy (chưa cài hoặc bị dừng) — tạm thời app giao khi quản lý mở app. Cài lịch: xem docs/DE_XUAT_CAI_TIEN_DOI_CHIEU_BACKLOG.md mục 9."),
+    h("div", { style:{ fontSize:12, color:"var(--inkSoft)", margin:"0 0 8px", lineHeight:1.5 } }, " Chỉ giao khi có số liệu chứng minh (đã xác nhận, còn mới); việc đang mở cùng vấn đề thì không giao trùng; giao cửa hàng trưởng, nhà thuốc chưa có CHT thì giao cả nhà thuốc. Việc nhân sự mặc định chờ duyệt."),
     h("div", { style:{ display:"flex", flexDirection:"column", gap:3 } }, Object.entries(AA_RULES).map(([k, v]) => h("label", { key:k, style:{ fontSize:13, display:"inline-flex", gap:6, alignItems:"center" } },
       h("input", { type:"checkbox", checked:on[k], disabled:!on.enabled, onChange:e=>save({ rules:{ ...((cfg && cfg.rules)||{}), [k]:e.target.checked } }) }), v.label))),
     h("div", { style:{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap", marginTop:8 } },

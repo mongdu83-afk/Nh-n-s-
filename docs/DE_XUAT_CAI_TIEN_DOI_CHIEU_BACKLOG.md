@@ -160,3 +160,39 @@ Không thêm collection mới.
 - Bộ tự giao chạy trong app nên cần ít nhất một quản lý mở app trong ngày.
 - Muốn chạy đúng giờ như "AI điều hành" (9h20 / 15h20) thì cần chuyển hàm `aaPlan` sang Cloud Functions; mã máy chủ không có trong repo này.
 - Firestore rules cần cho quản lý ghi `opsConfig/autoAssignRules` và `opsConfig/autoAssignLog`.
+
+## 9. AI tự giao việc trên MÁY CHỦ, đúng 9h20 & 15h20, có thông báo đẩy (không cần ai mở app)
+
+**Cách hoạt động:**
+- GitHub Actions (máy chủ miễn phí của GitHub) chạy `scripts/auto-assign.js` theo lịch trong `.github/workflows/auto-assign.yml`, lúc 9h20 và 15h20 giờ Việt Nam.
+- Script dùng lại nguyên văn bộ giao việc trong `index.html`, nên quy tắc trên máy chủ và trong app luôn giống nhau.
+- Việc được ghi thẳng vào `tasks`. Máy chủ Firebase hiện có sẵn thông báo **"Việc được giao"** (loại người dùng không tắt được), nên người nhận được báo về điện thoại ngay.
+- Mỗi khung giờ chỉ giao 1 lần (khoá `lastRunSlot`, ví dụ `2026-10-14-AM`).
+- App chỉ chạy **dự phòng** khi máy chủ chưa chạy trong 26 giờ qua.
+- Thẻ "AI tự giao việc" hiện rõ máy chủ có đang chạy không.
+
+**Chị cài 1 lần (khoảng 5 phút):**
+1. **Lấy khoá máy chủ Firebase:** vào console.firebase.google.com → dự án **upharma-176d5** → bánh răng ⚙ → *Project settings* → tab *Service accounts* → bấm **Generate new private key** → máy tải về 1 file `.json`.
+2. **Cất khoá vào GitHub, không đưa vào code:** repo **Nh-n-s-** → *Settings* → *Secrets and variables* → *Actions* → **New repository secret**.
+   - Name: `FIREBASE_SERVICE_ACCOUNT`
+   - Secret: mở file `.json` bằng Notepad, dán **toàn bộ** nội dung.
+   - Bấm *Add secret*, rồi xoá file `.json` khỏi máy.
+   - **Không gửi file này qua chat / Zalo**: đây là chìa khoá toàn quyền dữ liệu.
+3. **Gộp nhánh `claude/upharma-app-folder-tlupz4` vào `main`.** GitHub chỉ chạy lịch trên `main`.
+4. **Chạy thử:** tab *Actions* → **AI tự giao việc** → *Run workflow* → tick **Chạy thử** → *Run*. Xem dòng kết quả "giao N việc …" (chưa ghi gì).
+5. **Chạy thật** (bỏ tick Chạy thử), rồi kiểm tra điện thoại người nhận có thông báo. Nếu **không** có thông báo:
+   - Vào *Settings* → *Secrets and variables* → *Actions* → tab **Variables** → *New repository variable*.
+   - Đặt `AA_DIRECT_PUSH` = `1`. Script sẽ tự gửi thông báo.
+
+**Lưu ý:**
+- Repo đang để **công khai**, nên nhật ký GitHub Actions ai cũng xem được. Script chỉ in số lượng việc, không in tên nhân viên hay nội dung việc. Khoá trong *Secrets* thì không ai xem được.
+- Lịch của GitHub có thể trễ 5–15 phút so với giờ đặt.
+- GitHub tạm dừng lịch nếu repo không có cập nhật trong 60 ngày. Khi đó vào tab *Actions* bấm bật lại; thẻ trong app cũng báo "Lịch máy chủ chưa chạy".
+- Muốn tắt, chị có 2 cách: tắt công tắc trong thẻ "AI tự giao việc" (máy chủ đọc công tắc này trước mỗi lần chạy), hoặc *Actions* → *AI tự giao việc* → *Disable workflow*.
+
+**Đã kiểm tra:** chạy script với Firebase giả lập.
+- Giao việc cho CHT, mở hồ sơ DT01 kèm lịch sử, ghi đúng khung giờ, bỏ qua nhà thuốc thử nghiệm.
+- Bật `AA_DIRECT_PUSH` thì gửi thông báo.
+- Chế độ chạy thử không ghi gì.
+
+**Chưa kiểm tra:** chạy trên Firebase thật. Bước 4–5 ở trên chính là bước kiểm tra này.
