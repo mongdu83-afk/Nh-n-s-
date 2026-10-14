@@ -12933,7 +12933,20 @@ function rvdTaskText(dx){
   L.push("BẰNG CHỨNG CẦN NỘP: nguyên nhân xác minh được tại nhà thuốc (đúng/sai với giả thuyết nào), việc đã làm, số liệu kèm theo.");
   return L.join("\n\n");
 }
+// Độ mới của số liệu (dùng chung Hàng hoá / Doanh thu): quá maxHours → "chưa cập nhật", không đưa vào kết luận.
+function dataFreshness(ts, nowMs, maxHours){
+  const t = ts==null ? NaN : (typeof ts==="number" ? ts : Date.parse(ts));
+  if(!Number.isFinite(t)) return { known:false, stale:true, hours:null, text:"Không rõ thời điểm cập nhật số liệu — chưa đủ căn cứ để kết luận." };
+  const hours = Math.max(0, Math.round((nowMs - t)/3600000));
+  const stale = hours > (maxHours==null ? 30 : maxHours);
+  return { known:true, stale, hours, text: stale ? `Số liệu cập nhật cách đây ${hours} giờ — CHƯA CẬP NHẬT. Tồn = 0 hoặc thiếu hàng có thể chỉ do chưa đồng bộ; đồng bộ lại trước khi điều chuyển / đặt hàng.` : `Số liệu cập nhật cách đây ${hours} giờ.` };
+}
 // RVD-ENGINE-END
+function StaleDataNotice({ ts, maxHours, style }){
+  const f = dataFreshness(ts, Date.now(), maxHours);
+  if(!f.stale) return null;
+  return React.createElement("div", { style:{ fontSize:12, fontWeight:600, color:"var(--clay)", background:"var(--claySoft)", borderRadius:8, padding:"6px 10px", margin:"6px 0", ...(style||{}) } }, f.text);
+}
 // ===== 14/10/2026: Khối hiển thị chẩn đoán doanh thu (dùng chung: tab Doanh thu → Theo kỳ và màn vấn đề DT01).
 // Tách rõ 4 lớp: Dữ kiện (số đo được) · Giả thuyết (kèm bằng chứng + mức chắc chắn) · Đề xuất · Kế hoạch bù (chờ duyệt khi giao việc).
 const RVD_TONE = { red:["var(--clay)","var(--claySoft)"], orange:["var(--amber)","var(--amberSoft)"], yellow:["#8a6d1a","var(--goldSoft)"], green:["var(--pine)","var(--pineSoft)"], grey:["var(--inkSoft)","#E7E5DA"] };
@@ -15021,6 +15034,132 @@ function PromoEffectView(){
 const PO_TYPES = { voucher:{ t:"Voucher", icon:"" }, giamgia:{ t:"Giảm giá", icon:"" }, quatang:{ t:"Quà tặng", icon:"" }, doidiem:{ t:"Đổi điểm", icon:"" }, combo:{ t:"Combo", icon:"" } };
 const PO_FAMS = [["sinhnhat","Voucher sinh nhật","Sinh nhật"],["hangthe","Voucher hạng thẻ","Hạng thẻ"],["voucherhd","Voucher theo giá trị hoá đơn","Voucher HĐ"],["coupon","Coupon khách hàng VIP","Coupon VIP"],["combo","Combo 2 sản phẩm","Combo"],["quahd","Quà tặng theo giá trị hoá đơn","Quà HĐ"],["giamgiasp","Giảm giá sản phẩm theo đợt","Giảm giá SP"],["candate","Giảm giá hàng cận date","Cận date"],["doidiem","Đổi điểm tích luỹ","Đổi điểm"],["khac","Chương trình khác (kẹo trẻ em, bán trước cửa, vỏ thuốc, web…)","Khác"]];
 const PO_FAMS_ORDER = PO_FAMS.map(x=>x[0]); const PO_FAM_LABEL = Object.fromEntries(PO_FAMS.map(x=>[x[0],x[1]])); const PO_FAM_SHORT = Object.fromEntries(PO_FAMS.map(x=>[x[0],x[2]]));
+// ===== 14/10/2026 (đề xuất cải tiến — P1 CTKM): ĐÁNH GIÁ ĐỢT KHUYẾN MẠI & GỢI Ý QUYẾT ĐỊNH (PMD) =====
+// Từ số liệu đợt đã tính sẵn (promoOrderAnalytics/{đợt}: chi phí, doanh thu, đơn có KM theo chuỗi & nhà thuốc) + doanh thu
+// chuỗi theo ngày (revenueAnalytics) → so doanh thu/ngày trong đợt với CÙNG SỐ NGÀY ngay trước đợt (kỳ đối chứng), tỷ lệ
+// chi phí/doanh thu, nhà thuốc triển khai yếu, rồi gợi ý Tiếp tục / Điều chỉnh / Dừng để xem xét kèm căn cứ.
+// Thiếu kỳ đối chứng thì KHÔNG khẳng định doanh thu tăng thêm. Khối tự chứa — tests/promoDecision.test.js.
+// PMD-ENGINE-BEGIN
+const PMD_RULES = { liftGoodPct:5, costGoodPct:2, costMaxPct:3, weakShareRel:0.7 };
+function pmdAdd(iso, n){ const [y,m,d] = String(iso).split("-").map(Number); return new Date(Date.UTC(y, m-1, d+n)).toISOString().slice(0,10); }
+function pmdDays(a, b){ const p = s => { const [y,m,d] = s.split("-").map(Number); return Date.UTC(y, m-1, d); }; return Math.round((p(b)-p(a))/86400000) + 1; }
+function pmdPct(v, signed){ if(v==null || !Number.isFinite(v)) return "—"; const r = Math.round(v*10)/10; return (signed && r>0 ? "+" : "") + String(r).replace(".", ",") + "%"; }
+function pmdMoney(v){ if(v==null || !Number.isFinite(Number(v))) return "—"; const a = Math.abs(v); return a>=1e9 ? (v/1e9).toFixed(2).replace(".", ",")+" tỷ" : a>=1e6 ? (v/1e6).toFixed(1).replace(".", ",")+" tr" : Math.round(v/1e3)+"k"; }
+function pmdDecide(camp, chainRevenueByDay, rules){
+  const R = { ...PMD_RULES, ...(rules||{}) };
+  const c = camp.chain || {};
+  const out = { evidence:[], caveats:[], weakShops:[], decision:null, lift:null, costPct:null, baseline:null };
+  const from = camp.dataFrom || camp.from, to = camp.dataTo || camp.to;
+  out.costPct = c.rev>0 && c.cost!=null ? c.cost/c.rev*100 : null;
+  const promoShare = c.orders>0 ? (c.promoOrders||0)/c.orders : null;
+  if(out.costPct!=null) out.evidence.push(`Chi phí KM ${pmdMoney(c.cost)} = ${pmdPct(out.costPct)} doanh thu (${pmdMoney(c.rev)}) trong ${camp.days || (from && to ? pmdDays(from, to) : "?")} ngày có dữ liệu.`);
+  if(promoShare!=null) out.evidence.push(`${pmdPct(promoShare*100)} số đơn có dùng khuyến mại (${(c.promoOrders||0).toLocaleString("vi-VN")}/${(c.orders||0).toLocaleString("vi-VN")}).`);
+  const nonN = (c.orders||0) - (c.promoOrders||0);
+  if(c.promoOrders>0 && nonN>0){ const tP = c.promoRev/c.promoOrders, tN = (c.rev - c.promoRev)/nonN; out.evidence.push(`TB bill đơn có KM ${pmdMoney(tP)} so với đơn thường ${pmdMoney(tN)} (${pmdPct((tP/tN - 1)*100, true)}).`); }
+  // Kỳ đối chứng: cùng số ngày, liền trước đợt, lấy từ doanh thu chuỗi theo ngày
+  if(from && to && chainRevenueByDay){
+    const n = pmdDays(from, to), bFrom = pmdAdd(from, -n), bTo = pmdAdd(from, -1);
+    const keys = Object.keys(chainRevenueByDay).sort();
+    const covered = keys.length && keys[0] <= bFrom && keys[keys.length-1] >= to;
+    if(covered){
+      let a = 0, b = 0; for(let d = from; d <= to; d = pmdAdd(d, 1)) a += Number(chainRevenueByDay[d])||0; for(let d = bFrom; d <= bTo; d = pmdAdd(d, 1)) b += Number(chainRevenueByDay[d])||0;
+      if(b>0){ out.lift = (a/b - 1)*100; out.baseline = { from:bFrom, to:bTo, perDay:b/n, campaignPerDay:a/n };
+        out.evidence.push(`Doanh thu chuỗi/ngày trong đợt ${pmdMoney(a/n)} so với ${n} ngày liền trước (${bFrom.slice(8,10)}/${bFrom.slice(5,7)}–${bTo.slice(8,10)}/${bTo.slice(5,7)}) ${pmdMoney(b/n)}: ${pmdPct(out.lift, true)}.`); }
+    }
+    if(out.lift==null) out.caveats.push("Chưa có đủ doanh thu theo ngày của kỳ đối chứng (cùng số ngày ngay trước đợt) → chưa đủ cơ sở khẳng định doanh thu tăng thêm nhờ khuyến mại.");
+  }
+  if(out.lift!=null) out.caveats.push("So với kỳ liền trước chỉ là ước tính: mùa vụ, ngày lễ, hàng hoá, nhân sự cũng ảnh hưởng doanh thu — không quy toàn bộ chênh lệch cho khuyến mại.");
+  if(camp.running) out.caveats.push("Đợt đang chạy — đây là đánh giá giữa kỳ.");
+  if(camp.partial) out.caveats.push("Thiếu dữ liệu đầu đợt — số liệu chỉ tính phần có dữ liệu.");
+  // Nhà thuốc triển khai yếu: tỷ lệ đơn có KM thấp hơn nhiều so với bình quân chuỗi, hoặc chi phí/doanh thu cao
+  Object.entries(camp.shops||{}).forEach(([s, x]) => {
+    if(!s || !x || !x.n) return;
+    const share = (x.pn||0)/x.n, cost = Object.values(x.cost||{}).reduce((a, v) => a + (Number(v)||0), 0), cp = x.rev>0 ? cost/x.rev*100 : null;
+    const why = [];
+    if(promoShare>0 && share < promoShare*R.weakShareRel) why.push(`chỉ ${pmdPct(share*100)} đơn có KM (chuỗi ${pmdPct(promoShare*100)})`);
+    if(cp!=null && cp > R.costMaxPct) why.push(`chi phí/doanh thu ${pmdPct(cp)}`);
+    if(why.length) out.weakShops.push({ shop:s, why:why.join("; "), share, costPct:cp });
+  });
+  // Gợi ý quyết định
+  const cp = out.costPct, L = out.lift;
+  let code, reason;
+  if(cp==null){ code = "nodata"; reason = "Chưa có chi phí / doanh thu của đợt."; }
+  else if(L!=null){
+    if(L >= R.liftGoodPct && cp <= R.costMaxPct){ code = "continue"; reason = `Doanh thu/ngày ${pmdPct(L, true)} so với kỳ đối chứng, chi phí ${pmdPct(cp)} doanh thu (≤ ${R.costMaxPct}%).`; }
+    else if(L >= 0 && cp > R.costMaxPct){ code = "adjust"; reason = `Doanh thu không giảm (${pmdPct(L, true)}) nhưng chi phí ${pmdPct(cp)} doanh thu (> ${R.costMaxPct}%) → giảm mức ưu đãi / thu hẹp đối tượng, nhóm hàng.`; }
+    else if(L < 0 && cp > R.costMaxPct){ code = "stop"; reason = `Doanh thu/ngày ${pmdPct(L, true)} trong khi chi phí ${pmdPct(cp)} doanh thu → dừng để xem xét lại.`; }
+    else { code = "adjust"; reason = `Doanh thu/ngày ${pmdPct(L, true)} — chi phí chấp nhận được (${pmdPct(cp)}) nhưng chưa tạo tăng trưởng rõ → điều chỉnh cách triển khai (truyền thông, trưng bày, tư vấn).`; }
+  } else {
+    if(cp <= R.costGoodPct){ code = "watch"; reason = `Chi phí thấp (${pmdPct(cp)} doanh thu) — tiếp tục theo dõi, CHƯA khẳng định hiệu quả tăng thêm vì thiếu kỳ đối chứng.`; }
+    else if(cp <= R.costMaxPct){ code = "adjust"; reason = `Chi phí ${pmdPct(cp)} doanh thu, chưa có kỳ đối chứng → điều chỉnh / thu hẹp phạm vi trong khi chờ đủ số liệu.`; }
+    else { code = "review"; reason = `Chi phí ${pmdPct(cp)} doanh thu (> ${R.costMaxPct}%), chưa có kỳ đối chứng → xem xét dừng hoặc điều chỉnh mạnh.`; }
+  }
+  const LABEL = { continue:["Tiếp tục","green"], watch:["Tiếp tục theo dõi","yellow"], adjust:["Điều chỉnh","orange"], stop:["Dừng để xem xét","red"], review:["Xem xét dừng / điều chỉnh","red"], nodata:["Chưa đủ dữ liệu để kết luận","grey"] };
+  out.decision = { code, label:LABEL[code][0], tone:LABEL[code][1], reason };
+  const reviewDate = camp.running && camp.to ? camp.to : null;
+  out.next = { owner:"QLKV + phụ trách marketing", reviewDate, actions: [
+    ...(out.weakShops.length ? [`Kiểm tra cách triển khai tại ${out.weakShops.map(w => w.shop.replace(/^SHOP0*/, "NT")).join(", ")} (trưng bày, tư vấn, nhân viên có biết chương trình).`] : []),
+    ...(code==="adjust" || code==="review" || code==="stop" ? ["Rà các chương trình có chi phí / doanh thu đơn > 10% trong bảng chi tiết bên dưới."] : []),
+    "Ghi quyết định và kỳ vọng cho đợt sau để so sánh dự báo với thực tế.",
+  ] };
+  return out;
+}
+// PMD-ENGINE-END
+// 14/10/2026 (P1 CTKM): thẻ "Đánh giá đợt & quyết định" — gợi ý của hệ thống + quyết định quản lý lưu ở
+// opsConfig/promoCampaignReviews (map theo mã đợt), giữ ảnh chụp số liệu lúc quyết định để so dự báo với thực tế.
+const PMD_DECISIONS = ["Tiếp tục", "Tiếp tục theo dõi", "Điều chỉnh", "Dừng để xem xét"];
+function PromoDecisionCard({ campKey, camp, isAdmin }){
+  const h = React.createElement;
+  const [chainDaily, setChainDaily] = useState(undefined);
+  const [reviews, setReviews] = useState({});
+  const [form, setForm] = useState(null);
+  const [saving, setSaving] = useState(false);
+  useEffect(()=>{ db.collection("opsConfig").doc("revenueAnalytics").get().then(d => setChainDaily(d.exists ? (d.data().chainRevenueByDay || null) : null)).catch(err => { logSystemError("revenueAnalytics(promoDecision)", err); setChainDaily(null); }); }, []);
+  useEffect(()=> db.collection("opsConfig").doc("promoCampaignReviews").onSnapshot(d => setReviews(d.exists ? (d.data().byCampaign || {}) : {}), err => logSystemError("promoCampaignReviews", err)), []);
+  useEffect(()=>{ setForm(null); }, [campKey]);
+  if(!camp || chainDaily===undefined) return null;
+  const r = pmdDecide(camp, chainDaily);
+  const saved = reviews[campKey];
+  const tone = { green:["var(--pine)","var(--pineSoft)"], yellow:["#8a6d1a","var(--goldSoft)"], orange:["var(--amber)","var(--amberSoft)"], red:["var(--clay)","var(--claySoft)"], grey:["var(--inkSoft)","#E7E5DA"] }[r.decision.tone];
+  const ul = (arr) => h("ul", { style:{ margin:"2px 0 6px", paddingLeft:18, fontSize:12.5, lineHeight:1.5 } }, arr.map((t, i) => h("li", { key:i }, t)));
+  async function save(){
+    setSaving(true);
+    try{
+      const entry = { ...form, label: camp.label || campKey, from: camp.from || null, to: camp.to || null,
+        snapshot:{ suggested:r.decision.label, costPct: r.costPct==null ? null : Math.round(r.costPct*10)/10, liftPct: r.lift==null ? null : Math.round(r.lift*10)/10, cost: (camp.chain||{}).cost || null, rev: (camp.chain||{}).rev || null },
+        decidedBy:(auth.currentUser && auth.currentUser.email) || "", decidedAt:new Date().toISOString() };
+      await db.collection("opsConfig").doc("promoCampaignReviews").set({ byCampaign:{ [campKey]: entry } }, { merge:true });
+      setForm(null);
+    }catch(e){ alert("Lưu thất bại: " + (e && e.message ? e.message : e)); }
+    setSaving(false);
+  }
+  const inp = (k, ph, type) => h(type==="area" ? "textarea" : "input", { key:k, rows:2, type: type==="date" ? "date" : undefined, value:(form||{})[k] || "", placeholder:ph, onChange:e=>setForm({ ...form, [k]:e.target.value }), style:{ width:"100%", padding:6, fontSize:12.5, borderRadius:6, border:"1px solid var(--line)", fontFamily:"inherit", marginBottom:6 } });
+  const past = Object.entries(reviews).filter(([k]) => k!==campKey).sort((a, b) => String(b[1].decidedAt||"").localeCompare(String(a[1].decidedAt||""))).slice(0, 6);
+  return h("div", { className:"card", style:{ marginBottom:12, borderLeft:`4px solid ${tone[0]}` } },
+    h("div", { style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", marginBottom:6 } },
+      h("b", { style:{ fontSize:14.5 } }, "Đánh giá đợt & gợi ý quyết định"),
+      h("span", { style:{ fontSize:11.5, fontWeight:800, color:tone[0], background:tone[1], borderRadius:999, padding:"2px 10px" } }, "Gợi ý: " + r.decision.label),
+      saved && h("span", { style:{ fontSize:11.5, fontWeight:800, color:"var(--pine)", background:"var(--pineSoft)", borderRadius:999, padding:"2px 10px" } }, "Quản lý đã quyết: " + saved.decision)),
+    h("div", { style:{ fontSize:12.5, fontWeight:600, marginBottom:4 } }, r.decision.reason),
+    h("div", { style:{ fontSize:12, fontWeight:700, marginTop:4 } }, "Căn cứ (số liệu)"), ul(r.evidence),
+    r.weakShops.length>0 && h("div", { style:{ fontSize:12, fontWeight:700 } }, "Nhà thuốc triển khai yếu"),
+    r.weakShops.length>0 && ul(r.weakShops.map(w => `${w.shop.replace(/^SHOP0*/, "NT")}: ${w.why}`)),
+    h("div", { style:{ fontSize:12, fontWeight:700 } }, `Bước tiếp theo (phụ trách đề xuất: ${r.next.owner}${r.next.reviewDate ? ` · đánh giá lại khi kết thúc đợt ${r.next.reviewDate.slice(8,10)}/${r.next.reviewDate.slice(5,7)}` : ""})`), ul(r.next.actions),
+    r.caveats.length>0 && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, r.caveats.map((t, i) => h("div", { key:i }, "• " + t))),
+    saved && h("div", { style:{ fontSize:12.5, background:"var(--paper)", borderRadius:8, padding:"7px 10px", marginTop:8 } },
+      h("b", null, `Quyết định: ${saved.decision}`), saved.reason ? ` — ${saved.reason}` : "", saved.owner ? ` · phụ trách: ${saved.owner}` : "", saved.reviewDate ? ` · đánh giá lại ${saved.reviewDate.slice(8,10)}/${saved.reviewDate.slice(5,7)}` : "",
+      saved.expected && h("div", null, "Kỳ vọng: " + saved.expected), saved.actual && h("div", null, "Kết quả thực tế: " + saved.actual), saved.lesson && h("div", null, "Bài học: " + saved.lesson),
+      h("div", { style:{ fontSize:11, color:"var(--inkSoft)" } }, `Lúc quyết định: gợi ý "${(saved.snapshot||{}).suggested||"—"}", chi phí ${pmdPct((saved.snapshot||{}).costPct)} doanh thu, so kỳ đối chứng ${pmdPct((saved.snapshot||{}).liftPct, true)} · ${saved.decidedBy||""}`)),
+    isAdmin && !form && h("button", { className:"btn btnGhost", style:{ fontSize:12, marginTop:8 }, onClick:()=>setForm({ decision: saved ? saved.decision : (r.decision.code==="continue" ? "Tiếp tục" : r.decision.code==="watch" ? "Tiếp tục theo dõi" : r.decision.code==="stop" || r.decision.code==="review" ? "Dừng để xem xét" : "Điều chỉnh"), reason: saved ? saved.reason : "", owner: saved ? saved.owner : "", reviewDate: saved ? saved.reviewDate : (camp.to || ""), expected: saved ? saved.expected : "", actual: saved ? saved.actual : "", lesson: saved ? saved.lesson : "" }) }, saved ? "Cập nhật quyết định / kết quả" : "Ghi quyết định của quản lý"),
+    isAdmin && form && h("div", { style:{ marginTop:8, background:"var(--paper)", borderRadius:8, padding:10 } },
+      h("select", { value:form.decision, onChange:e=>setForm({ ...form, decision:e.target.value }), style:{ padding:"5px 8px", fontSize:12.5, borderRadius:6, border:"1px solid var(--line)", marginBottom:6 } }, PMD_DECISIONS.map(x => h("option", { key:x, value:x }, x))),
+      inp("reason", "Lý do quyết định"), inp("owner", "Người phụ trách"), inp("reviewDate", "", "date"),
+      inp("expected", "Kỳ vọng / dự báo cho đợt (VD: chi phí ≤ 2% doanh thu, doanh thu/ngày +5%)", "area"),
+      inp("actual", "Kết quả thực tế (ghi khi đánh giá lại)", "area"), inp("lesson", "Bài học cho lần sau", "area"),
+      h("div", { style:{ display:"flex", gap:8 } }, h("button", { className:"btn btnPrimary", disabled:saving || !form.owner, onClick:save, title: !form.owner ? "Cần người phụ trách" : "" }, saving ? "Đang lưu…" : "Lưu"), h("button", { className:"btn btnGhost", onClick:()=>setForm(null) }, "Huỷ"))),
+    past.length>0 && h("details", { style:{ marginTop:8, fontSize:12 } }, h("summary", { style:{ cursor:"pointer", color:"var(--pine)" } }, `Các đợt đã đánh giá (${past.length}) — so kỳ vọng với thực tế`),
+      ul(past.map(([k, v]) => `${v.label || k}: ${v.decision}${v.expected ? ` · kỳ vọng: ${v.expected}` : ""}${v.actual ? ` · thực tế: ${v.actual}` : " · chưa ghi kết quả thực tế"}${v.lesson ? ` · bài học: ${v.lesson}` : ""}`))));
+}
 function PromoOrderView({ isAdmin }){
   const h = React.createElement;
   const [key, setKey] = useState(null);
@@ -15108,6 +15247,7 @@ function PromoOrderView({ isAdmin }){
   const shown = showAll ? progs : progs.slice(0, 40);
   const shopsList = Object.keys(d.shops||{}).filter(Boolean).sort();
   return h("div", null, head, back,
+    h(PromoDecisionCard, { campKey:key, camp:{ ...d, label:(camps.find(x => x.key===key)||{}).label, running:d.running, partial:d.partial }, isAdmin }),
     h("div", { className:"metrics" },
       kpi("Tổng chi phí khuyến mại", fm(c.cost), `${dm(d.dataFrom)} – ${dm(d.dataTo)} · ${fm(c.cost/(d.days||1))}/ngày`),
       kpi("Chi phí / doanh thu", pcs(pc(c.cost, c.rev)), `doanh thu ${fm(c.rev)} · ${(c.orders||0).toLocaleString("vi-VN")} đơn`),
@@ -20777,6 +20917,7 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
       React.createElement("div", { key:"head", className:"card", style:{ marginBottom:16, display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10 } }, [
         React.createElement("div", { key:"info", style:{ fontSize:12.5, color:"var(--inkSoft)" } }, [
           React.createElement("div", { key:"a" }, `${fmtNum(s.totalSKU||0)} mã×nhà thuốc đang theo dõi${consShop!=="Tất cả" ? ` tại ${nt(consShop)}` : ""} · tính lúc ${s.computedAt ? new Date(s.computedAt).toLocaleString("vi-VN") : "—"}`),
+          React.createElement(StaleDataNotice, { key:"stale", ts:s.computedAt, maxHours:30 }),
           consShop!=="Tất cả" && !shopHasDetail && React.createElement("div", { key:"b", style:{ color:"var(--clay)" } }, isAdmin ? "Dashboard & ma trận đang hiện số TOÀN CHUỖI — bấm \"Tính lại\" 1 lần để có số riêng từng nhà thuốc. Danh sách bên dưới đã lọc đúng nhà thuốc." : "Dashboard & ma trận đang hiện số TOÀN CHUỖI (chưa có số riêng nhà thuốc). Danh sách bên dưới đã lọc đúng nhà thuốc của bạn."),
         ]),
         React.createElement("div", { key:"flt", style:{ display:"flex", gap:6, flexWrap:"wrap" } },
@@ -20919,6 +21060,8 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
                 React.createElement("div", { key:"a", style:{ fontSize:13, fontWeight:600 } }, `Lần phân tích gần nhất: ${new Date(data.generatedAtTs).toLocaleString("vi-VN")}`),
                 React.createElement("div", { key:"b", style:{ fontSize:12, color:"var(--inkSoft)", marginTop:2 } },
                   `Đối chiếu tốc độ bán ${data.periodFrom} → ${data.periodTo} · Dư khi tồn >${data.surplusDays} ngày bán · Thiếu khi tồn <${data.shortageDays} ngày bán`),
+                // 14/10/2026 (P0 Hàng hoá): phân biệt "tồn = 0" với "số liệu chưa cập nhật"
+                React.createElement(StaleDataNotice, { key:"stale", ts:data.generatedAtTs, maxHours:30 }),
               ]
             : React.createElement("div", { style:{ fontSize:13, color:"var(--inkSoft)" } }, loaded ? (isAdmin ? "Chưa có dữ liệu — bấm \"Phân tích ngay\" để chạy lần đầu." : "Chưa có dữ liệu phân tích — quản lý sẽ cập nhật sau.") : "Đang tải...")
         ),
@@ -24105,6 +24248,7 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
       // Đề xuất xử lý
       rc("div", { key:"reco", style:{ marginTop:16 } }, [
         rc("div", { key:"t", style:{ fontWeight:700, fontSize:15.5, marginBottom:6 } }, "Đề xuất xử lý"),
+        isGoodsKind && transferDoc && rc(StaleDataNotice, { key:"stale", ts:transferDoc.generatedAtTs, maxHours:30 }),
         isGoodsKind && (!transferDoc ? rc("div", { key:"e", className:"emptyState" }, "Đang tải đề xuất điều chuyển...")
           : !primarySource ? rc("div", { key:"e", className:"emptyState" }, kind==="goods_overstock" ? "Chưa có đề xuất điều chuyển đi phù hợp — có thể cân nhắc khuyến mãi/giảm giá để đẩy hàng." : "Chưa có đề xuất điều chuyển phù hợp từ dữ liệu hiện có — có thể cần đặt hàng NCC, hoặc bấm \"Phân tích ngay\" ở tab Hàng hoá → Điều chuyển để tính lại.")
           : rc("div", { key:"box", style:{ background:"var(--pineSoft)", borderRadius:10, padding:"10px 12px" } }, [

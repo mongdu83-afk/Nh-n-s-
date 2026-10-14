@@ -132,3 +132,13 @@ test("Nội dung giao việc có đủ: vấn đề, dữ kiện, giả thuyết
   const t = rvdTaskText(r);
   ["VẤN ĐỀ:", "DỮ KIỆN:", "GIẢ THUYẾT CẦN XÁC MINH:", "HÀNH ĐỘNG ĐỀ XUẤT:", "CHỈ SỐ CAM KẾT:", "MỐC KIỂM TRA:", "BẰNG CHỨNG CẦN NỘP:"].forEach(k => assert.ok(t.includes(k), k));
 });
+
+test("Độ mới số liệu: quá ngưỡng → 'chưa cập nhật'; không có thời điểm → chưa đủ căn cứ", () => {
+  const { dataFreshness } = vm.runInContext("({ dataFreshness })", ctx);
+  const now = Date.parse("2026-10-15T12:00:00Z");
+  assert.equal(dataFreshness("2026-10-15T06:00:00Z", now, 30).stale, false);
+  const old = dataFreshness("2026-10-13T06:00:00Z", now, 30);
+  assert.equal(old.stale, true); assert.equal(old.hours, 54); assert.match(old.text, /CHƯA CẬP NHẬT/);
+  const none = dataFreshness(null, now, 30);
+  assert.equal(none.known, false); assert.equal(none.stale, true);
+});
