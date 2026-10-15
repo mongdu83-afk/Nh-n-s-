@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261015-3";
+window.__APP_BUILD = "20261015-4";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -14287,6 +14287,64 @@ function PromoDecisionCard({ campKey, camp, isAdmin }){
     past.length>0 && h("details", { style:{ marginTop:8, fontSize:12 } }, h("summary", { style:{ cursor:"pointer", color:"var(--pine)" } }, `Các đợt đã đánh giá (${past.length}) — so kỳ vọng với thực tế`),
       ul(past.map(([k, v]) => `${v.label || k}: ${v.decision}${v.expected ? ` · kỳ vọng: ${v.expected}` : ""}${v.actual ? ` · thực tế: ${v.actual}` : " · chưa ghi kết quả thực tế"}${v.lesson ? ` · bài học: ${v.lesson}` : ""}`))));
 }
+// 15/10/2026 (chị Hà): TẢI EXCEL BÁO CÁO CHI PHÍ KHUYẾN MẠI theo đợt chiến dịch — để báo cáo kết quả với công ty.
+// Số tiền xuất NGUYÊN SỐ (đồng) để công ty cộng/lọc được; tỉ lệ là %. Gồm: Tổng quan · Theo loại · Theo nhà thuốc · Theo nhóm CT ·
+// Chi tiết chương trình · Chương trình × nhà thuốc · Theo nhân viên · So sánh các đợt (nếu có).
+async function exportPromoCampaignExcel(d, label, camps){
+  const X = await ensureXlsx();
+  const R = (v) => Math.round(Number(v) || 0);
+  const P = (a, b) => b ? Math.round(a / b * 1000) / 10 : null;
+  const dd = (x) => x ? x.slice(8,10) + "/" + x.slice(5,7) + "/" + x.slice(0,4) : "";
+  const sn = (x) => String(x||"").replace("SHOP0","NT");
+  const tName = (t) => (PO_TYPES[t] || {}).t || t || "";
+  const famName = (k) => PO_FAM_LABEL[k] || k || "Khác";
+  const clean = (n) => String(n||"").replace(/^\[CTKM T\d+[^\]]*\]\s*/,"");
+  const c = d.chain || {}; const bt = c.byType || {}; const nonN = (c.orders||0) - (c.promoOrders||0);
+  const wb = X.utils.book_new();
+  const add = (name, rows, opts) => { if(!rows.length) return; const ws = X.utils.json_to_sheet(rows); styleExportSheet(ws, rows); if(opts && opts.cols) ws["!cols"] = opts.cols; X.utils.book_append_sheet(wb, ws, name.slice(0, 31)); };
+  add("Tổng quan", [
+    { "Chỉ tiêu":"Đợt chiến dịch", "Giá trị": label || "" },
+    { "Chỉ tiêu":"Thời gian đợt", "Giá trị": `${dd(d.from)} – ${dd(d.to)}` },
+    { "Chỉ tiêu":"Kỳ có số liệu", "Giá trị": `${dd(d.dataFrom)} – ${dd(d.dataTo)} (${d.days || 0} ngày)${d.running ? " — đợt đang chạy" : ""}${d.partial ? " — thiếu dữ liệu đầu đợt" : ""}` },
+    { "Chỉ tiêu":"Tổng chi phí khuyến mại (đ)", "Giá trị": R(c.cost) },
+    { "Chỉ tiêu":"Chi phí khuyến mại / ngày (đ)", "Giá trị": R((c.cost||0) / (d.days||1)) },
+    { "Chỉ tiêu":"Doanh thu toàn bộ đơn (đ)", "Giá trị": R(c.rev) },
+    { "Chỉ tiêu":"Chi phí / doanh thu (%)", "Giá trị": P(c.cost, c.rev) },
+    { "Chỉ tiêu":"Tổng số đơn", "Giá trị": R(c.orders) },
+    { "Chỉ tiêu":"Số đơn có khuyến mại", "Giá trị": R(c.promoOrders) },
+    { "Chỉ tiêu":"% đơn có khuyến mại", "Giá trị": P(c.promoOrders, c.orders) },
+    { "Chỉ tiêu":"Doanh thu đơn có khuyến mại (đ)", "Giá trị": R(c.promoRev) },
+    { "Chỉ tiêu":"TB bill có khuyến mại (đ)", "Giá trị": R(c.promoOrders ? c.promoRev / c.promoOrders : 0) },
+    { "Chỉ tiêu":"TB bill không khuyến mại (đ)", "Giá trị": R(nonN ? ((c.rev||0) - (c.promoRev||0)) / nonN : 0) },
+    { "Chỉ tiêu":"Số liệu tính lúc", "Giá trị": d.computedAt ? new Date(d.computedAt).toLocaleString("vi-VN") : "" },
+    { "Chỉ tiêu":"Cách tính", "Giá trị":"Tự động từ hoá đơn POS. Voucher = dòng mã VOUCHER; giảm giá = dòng KM02 theo mã CTKM; quà tặng = dòng 0đ có mã CTKM × giá bán lẻ; đổi điểm = dòng DDTL; combo = giảm trong giá (không tính chi phí riêng). Doanh thu là doanh thu bán, chưa phải lợi nhuận." },
+  ], { cols:[{ wch:34 }, { wch:70 }] });
+  add("Theo loại", Object.keys(PO_TYPES).filter(t => bt[t]).map(t => ({ "Loại khuyến mại": tName(t), "Số chương trình": R(bt[t].progs), "Số lượng": R(bt[t].qty), "Số hoá đơn": R(bt[t].orders),
+    "Chi phí (đ)": t==="combo" ? 0 : R(bt[t].cost), "% tổng chi phí": t==="combo" ? null : P(bt[t].cost, c.cost), "Doanh thu cả đơn (đ)": R(bt[t].r), "Chi phí / DT đơn (%)": t==="combo" ? null : P(bt[t].cost, bt[t].r), "Ghi chú": t==="combo" ? "Giảm trong giá combo" : "" })));
+  const fams = (d.families || []);
+  add("Theo nhà thuốc", Object.entries(d.shops || {}).filter(([k]) => k).sort((a, b) => a[0].localeCompare(b[0])).map(([k, x]) => { const tot = Object.values(x.cost||{}).reduce((a, v) => a + v, 0); const nn = (x.n||0) - (x.pn||0);
+    const row = { "Nhà thuốc": sn(k), "Mã": k };
+    fams.filter(f => f.c > 0).forEach(f => { row["CP " + (PO_FAM_SHORT[f.key] || f.label)] = R((x.cost||{})[f.key]); });
+    return Object.assign(row, { "Tổng chi phí (đ)": R(tot), "Doanh thu (đ)": R(x.rev), "CP / DT (%)": P(tot, x.rev), "Tổng đơn": R(x.n), "Đơn có KM": R(x.pn), "% đơn có KM": P(x.pn, x.n),
+      "TB bill có KM (đ)": R(x.pn ? x.prev / x.pn : 0), "TB bill không KM (đ)": R(nn ? ((x.rev||0) - (x.prev||0)) / nn : 0) }); }));
+  add("Theo nhóm CT", fams.map(f => ({ "Nhóm chương trình": f.label, "Số chương trình": R(f.progs), "Số hoá đơn": R(f.o), "Số lượng": R(f.q), "Chi phí (đ)": R(f.c), "% tổng chi phí": P(f.c, c.cost),
+    "DT sản phẩm trong CT (đ)": R(f.sku), "DT cả đơn (đ)": R(f.r), "TB bill (đ)": R(f.o ? f.r / f.o : 0), "Chi phí / DT đơn (%)": f.c ? P(f.c, f.r) : null })));
+  const progs = (d.programs || []).slice().sort((a, b) => (b.c||0) - (a.c||0));
+  add("Chi tiết chương trình", progs.map(p => ({ "Chương trình": clean(p.name) + (p.named === false ? " (chưa tra được tên)" : ""), "Loại": tName(p.type), "Nhóm": famName(p.family || "khac"),
+    "Từ ngày": p.time && p.time[0] ? dd(p.time[0]) : "", "Đến ngày": p.time && p.time[1] ? dd(p.time[1]) : (p.time && p.time[0] ? "" : "Thường xuyên"),
+    "Số hoá đơn": R(p.o), "Số lượng": R(p.q), "Chi phí (đ)": p.type==="combo" ? 0 : R(p.c), "DT SP trong CT (đ)": R(p.sku), "Giảm / DT SP (%)": p.sku && p.type!=="combo" ? P(p.c, p.sku) : null,
+    "DT cả đơn (đ)": R(p.r), "TB bill (đ)": R(p.o ? p.r / p.o : 0), "Chi phí / DT đơn (%)": p.type==="combo" ? null : P(p.c, p.r), "Số mã CTKM": R(p.ids || 1) })));
+  const ps = []; progs.forEach(p => Object.entries(p.byShop || {}).forEach(([k, b]) => ps.push({ "Chương trình": clean(p.name), "Loại": tName(p.type), "Nhà thuốc": sn(k),
+    "Số hoá đơn": R(b.o), "Số lượng": R(b.q), "Chi phí (đ)": p.type==="combo" ? 0 : R(b.c), "DT cả đơn (đ)": R(b.r), "Chi phí / DT (%)": p.type==="combo" ? null : P(b.c, b.r) })));
+  add("CT theo nhà thuốc", ps);
+  add("Theo nhân viên", (d.staff || []).slice().sort((a, b) => String(a.s).localeCompare(String(b.s)) || (b.pn||0) - (a.pn||0)).map(x => ({ "Nhân viên": x.nv, "Nhà thuốc": sn(x.s), "Tổng đơn": R(x.n), "Đơn có KM": R(x.pn),
+    "% đơn có KM": P(x.pn, x.n), "Chi phí KM (đ)": R(x.c), "DT đơn có KM (đ)": R(x.prev), "Chi phí / DT (%)": x.c ? P(x.c, x.prev) : null })));
+  const cmpC = (camps || []).filter(x => x.kind === "campaign");
+  if(cmpC.length > 1) add("So sánh các đợt", cmpC.map(x => ({ "Đợt": x.label, "Từ ngày": dd(x.from), "Đến ngày": dd(x.to), "Số ngày có dữ liệu": R(x.days), "Tổng chi phí (đ)": R(x.cost), "Chi phí / ngày (đ)": R((x.cost||0) / (x.days||1)),
+    "Doanh thu (đ)": R(x.rev), "Chi phí / DT (%)": P(x.cost, x.rev), "Ghi chú": `${x.running ? "Đang chạy" : ""}${x.partial ? " Thiếu đầu đợt" : ""}`.trim() })));
+  const safe = String(label || "dot").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/g,"d").replace(/Đ/g,"D").replace(/[^A-Za-z0-9]+/g, "_").replace(/^_|_$/g, "");
+  X.writeFile(wb, `Bao_cao_chi_phi_CTKM_${safe}_${(d.dataFrom||"").replace(/-/g,"")}-${(d.dataTo||"").replace(/-/g,"")}.xlsx`);
+}
 function PromoOrderView({ isAdmin }){
   const h = React.createElement;
   const [key, setKey] = useState(null);
@@ -14303,6 +14361,7 @@ function PromoOrderView({ isAdmin }){
   const [od, setOd] = useState(null);
   const [q, setQ] = useState("");
   const [lim, setLim] = useState(100);
+  const [xBusy, setXBusy] = useState(false);
   // Danh sách chiến dịch (đợt) — promoOrderAnalytics/_index
   useEffect(()=> db.collection("promoOrderAnalytics").doc("_index").onSnapshot(s => setIdx(s.exists ? s.data() : null), () => setIdx(null)), []);
   const camps = (idx && idx.campaigns) || [];
@@ -14341,6 +14400,7 @@ function PromoOrderView({ isAdmin }){
         h("div", { style:{ fontWeight:800, fontSize:12.5 } }, "Chọn khoảng ngày"), h("div", { style:{ fontSize:11, color:"var(--inkSoft)" } }, "Đơn bỏ lỡ KM · đánh giá & gợi ý CTKM"))),
     h("div", { style:{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" } },
       isAdmin && h("button", { className:"btn btnPrimary", disabled:busy, onClick:compute }, busy ? "Đang tính…" : "↻ Tính lại"),
+      isAdmin && d && key!=="__range" && h("button", { className:"btn", disabled:xBusy, onClick:async()=>{ setXBusy(true); try{ await exportPromoCampaignExcel(d, (camps.find(x => x.key===key)||{}).label, camps); }catch(e){ window.alert("Không tải được file Excel: " + (e.message||e)); } setXBusy(false); } }, xBusy ? "Đang tạo file…" : "⬇ Tải Excel báo cáo chi phí"),
       d && h("span", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, `Tính lúc ${new Date(d.computedAt).toLocaleString("vi-VN")} · tự tính 0h50 mỗi đêm · dữ liệu bán hàng từ ${dm((idx||{}).dataFrom)}`),
       msg && h("span", { style:{ fontSize:12 } }, msg)));
   const warnBox = (t) => h("div", { style:{ fontSize:12, color:"#b4720a", background:"#FFF8E6", border:"1px solid #F3DDA8", borderRadius:8, padding:"6px 10px", marginBottom:10 } }, t);
