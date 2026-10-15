@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261015-4";
+window.__APP_BUILD = "20261015-5";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -9125,14 +9125,19 @@ async function ttsClipToUrl(b64, mime){
     const ab = new ArrayBuffer(44 + d.length * 2); const v = new DataView(ab); const w = (o, t) => { for(let i=0;i<t.length;i++) v.setUint8(o+i, t.charCodeAt(i)); };
     w(0,"RIFF"); v.setUint32(4, 36 + d.length*2, true); w(8,"WAVE"); w(12,"fmt "); v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true); v.setUint32(24,rate,true); v.setUint32(28,rate*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true); w(36,"data"); v.setUint32(40, d.length*2, true);
     for(let i=0;i<d.length;i++){ const x = Math.max(-1, Math.min(1, d[i])); v.setInt16(44 + i*2, x < 0 ? x*0x8000 : x*0x7FFF, true); }
-    return URL.createObjectURL(new Blob([ab], { type:"audio/wav" }));
-  } catch(e){ return URL.createObjectURL(new Blob([u8], { type: mime || "audio/webm" })); }
+    const wu = URL.createObjectURL(new Blob([ab], { type:"audio/wav" })); TTS_CLIP_EXT[wu] = "wav"; return wu;
+  } catch(e){ const ou = URL.createObjectURL(new Blob([u8], { type: mime || "audio/webm" })); TTS_CLIP_EXT[ou] = /mp4|aac|m4a/.test(mime||"") ? "m4a" : /ogg/.test(mime||"") ? "ogg" : "webm"; return ou; }
+}
+// 15/10/2026: nút tải file ghi âm tình huống về máy
+const TTS_CLIP_EXT = {};
+function ttsDlBtn(h, url, name){
+  return h("a", { href:url, download:`${name}.${TTS_CLIP_EXT[url] || "wav"}`, className:"btn", style:{ padding:"4px 12px", fontSize:12.5, whiteSpace:"nowrap", textDecoration:"none", display:"inline-flex", alignItems:"center" }, title:"Tải đoạn ghi âm về máy" }, "⬇ Tải ghi âm");
 }
 function TtsReplayBtn({ hireId, id }){
   const h = React.createElement; const [b, setB] = useState(false); const [e, setE] = useState(""); const [url, setUrl] = useState(null);
   async function load(){ setB(true); setE(""); try{ const r = await pbCall("practiceVoiceClip", { hireId, id, n:1 }, 60000); if(r.ok===false) throw new Error(r.error); setUrl(await ttsClipToUrl(r.audio, r.mime)); }
     catch(er){ setE(er.message||String(er)); } setB(false); }
-  return h("div", { style:{ marginTop:8 } }, url ? h("audio", { src:url, controls:true, autoPlay:true, style:{ width:"100%" } }) : h("button", { className:"btn", disabled:b, onClick:load }, b ? "Đang tải ghi âm…" : "🎧 Nghe lại cuộc gọi"), e && h("span", { style:{ fontSize:12, color:CL360.bad, marginLeft:8 } }, e));
+  return h("div", { style:{ marginTop:8 } }, url ? h("div", { style:{ display:"flex", gap:8, alignItems:"center" } }, h("audio", { src:url, controls:true, autoPlay:true, style:{ flex:1, minWidth:0 } }), ttsDlBtn(h, url, `ghi-am-tinh-huong-${id}`)) : h("button", { className:"btn", disabled:b, onClick:load }, b ? "Đang tải ghi âm…" : "🎧 Nghe lại cuộc gọi"), e && h("span", { style:{ fontSize:12, color:CL360.bad, marginLeft:8 } }, e));
 }
 function TtsVoiceDetail({ it, hireId }){
   const h = React.createElement; const [busy, setBusy] = useState(null); const [err, setErr] = useState(null); const [urls, setUrls] = useState({});
@@ -9147,7 +9152,7 @@ function TtsVoiceDetail({ it, hireId }){
     fb.comm && h(TtsCommBlock, { comm:fb.comm }),
     (it.voiceClips||[]).length > 0 && h("div", null, secT(it.voiceClips.length === 1 && it.mode === "voice" && it.liveSec != null ? "Ghi âm cuộc gọi" : "Ghi âm của nhân viên"),
       it.voiceClips.map(v => h("div", { key:v.n, style:{ display:"flex", gap:8, alignItems:"flex-start", fontSize:12.5, marginBottom:4 } },
-        !v.has ? null : urls[v.n] ? h("audio", { src:urls[v.n], controls:true, autoPlay:true, style:{ width: it.voiceClips.length === 1 ? "100%" : 220, height:36 } })
+        !v.has ? null : urls[v.n] ? h("div", { style:{ display:"flex", gap:8, alignItems:"center", flex: it.voiceClips.length === 1 ? 1 : "none", minWidth:0 } }, h("audio", { src:urls[v.n], controls:true, autoPlay:true, style:{ width: it.voiceClips.length === 1 ? "100%" : 220, height:36 } }), ttsDlBtn(h, urls[v.n], `ghi-am-tinh-huong-${it.id}` + (it.voiceClips.length > 1 ? `-luot${v.n}` : "")))
         : h("button", { className:"btn btnPrimary", disabled:busy===v.n, style:{ padding:"4px 12px", fontSize:12.5, whiteSpace:"nowrap" }, onClick:()=>play(v.n) }, busy===v.n ? "Đang tải…" : (it.voiceClips.length === 1 ? "🎧 Nghe lại cuộc gọi" : "▶ Lượt " + v.n)),
         !v.has && h("span", { style:{ color:"var(--inkSoft)" } }, `Lượt ${v.n} (file đã tự xoá sau thời hạn lưu)`),
         it.voiceClips.length > 1 && h("span", null, v.text))),
