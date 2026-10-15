@@ -64,5 +64,35 @@ messaging.onBackgroundMessage((payload) => {
   });
 });
 
+// ===== 15/10/2026 TỐI ƯU TỐC ĐỘ MỞ APP (chị Hà): lưu sẵn trang app (index.html ~730KB) trên máy =====
+// Mở app → hiện NGAY bản đã lưu (không phải tải lại 730KB mỗi lần, nhất là trên 4G), đồng thời tải bản mới ở nền để lần sau dùng.
+// App vẫn tự kiểm tra bản mới (fetch ?_v=… — KHÔNG đi qua bộ nhớ này) → có bản mới thì hiện "Có bản app mới" / tự tải lại.
+// Chỉ áp dụng cho trang chính; mọi dữ liệu (Firestore, Cloud Functions) vẫn lấy trực tiếp từ máy chủ như cũ.
+const SHELL_CACHE = "upharma-shell-v1";
+function isShellRequest(req) {
+  if (req.method !== "GET" || req.mode !== "navigate") return false;
+  const u = new URL(req.url);
+  if (u.origin !== self.location.origin) return false;
+  if (u.searchParams.has("_v") || u.searchParams.has("nocache")) return false;
+  return u.pathname === "/" || u.pathname === "/index.html";
+}
+self.addEventListener("fetch", (event) => {
+  const req = event.request;
+  if (!isShellRequest(req)) return; // mọi yêu cầu khác: để trình duyệt xử lý bình thường
+  event.respondWith((async () => {
+    const cache = await caches.open(SHELL_CACHE);
+    const cached = await cache.match("/");
+    const network = fetch("/", { cache: "no-cache", credentials: "same-origin" }).then(async (res) => {
+      if (res && res.ok && (res.headers.get("content-type") || "").includes("text/html")) await cache.put("/", res.clone());
+      return res;
+    });
+    if (cached) { event.waitUntil(network.catch(() => {})); return cached; }
+    try { return await network; } catch (e) { return cached || Response.error(); }
+  })());
+});
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "CLEAR_SHELL") event.waitUntil(caches.delete(SHELL_CACHE));
+});
+
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => event.waitUntil(clients.claim()));
