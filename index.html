@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261016-11";
+window.__APP_BUILD = "20261016-12";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -6207,7 +6207,7 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
             React.createElement("div", { key:"tt", style:{ fontWeight:700, fontSize:13 } }, `Hiệu quả CSKH theo nhân viên${!isAllShops ? ` · ${shopFilter}` : ""}`),
             React.createElement("div", { key:"s", style:{ fontSize:11.5, color:"var(--inkSoft)" } },
               staffEffectiveness
-                ? `% khách mua lại trong ${staffEffectiveness.returnWindowDays||30} ngày sau khi hoàn thành việc CSKH (${staffEffectiveness.lookbackDays||90} ngày gần nhất) · tính lúc ${staffEffectiveness.computedAt ? new Date(staffEffectiveness.computedAt).toLocaleString("vi-VN") : "—"}`
+                ? `% khách mua lại trong ${staffEffectiveness.returnWindowDays||30} ngày sau khi hoàn thành việc CSKH (${staffEffectiveness.lookbackDays||90} ngày gần nhất; chỉ tính việc đã đủ ${staffEffectiveness.returnWindowDays||30} ngày và liên lạc được khách${staffEffectiveness.pendingWindow ? `, ${staffEffectiveness.pendingWindow} việc chưa đủ ngày chưa tính` : ""}) · tính lúc ${staffEffectiveness.computedAt ? new Date(staffEffectiveness.computedAt).toLocaleString("vi-VN") : "—"}`
                 : "Chưa có dữ liệu — bấm \"Tính lại\" bên cạnh."),
           ]),
           React.createElement("button", { key:"refresh", className:"btn btnGhost", disabled:staffEffRefreshing, onClick:refreshStaffEffectiveness, style:{ fontSize:12, padding:"4px 10px" } }, staffEffRefreshing ? "Đang tính..." : "↻ Tính lại"),
@@ -14203,6 +14203,10 @@ const PE_VERDICT = {
   no_lift: { text:"Không tăng doanh thu", color:"#D98A1F", order:2 },
   new:     { text:"SKU mới — chưa so được", color:"#6B7A70", order:4 },
   no_data: { text:"Chưa đủ dữ liệu", color:"#6B7A70", order:5 },
+  // 16/10/2026 (audit KM-1)
+  base_overlap: { text:"Kỳ so sánh trùng đợt KM khác — chưa kết luận", color:"#6B7A70", order:4 },
+  small_sample: { text:"Mẫu còn nhỏ — chưa kết luận", color:"#6B7A70", order:4 },
+  no_cost: { text:"Chưa có chi phí — chưa kết luận", color:"#6B7A70", order:4 },
 };
 /* 15/10/2026 tối ưu tốc độ: bỏ PromoEffectView — không còn nơi nào dùng */
 
@@ -14244,6 +14248,10 @@ function pmdDecide(camp, chainRevenueByDay, rules){
     }
     if(out.lift==null) out.caveats.push("Chưa có đủ doanh thu theo ngày của kỳ đối chứng (cùng số ngày ngay trước đợt) → chưa đủ cơ sở khẳng định doanh thu tăng thêm nhờ khuyến mại.");
   }
+  // 16/10/2026 (audit KM-1): kỳ đối chứng trùng đợt KM khác → mức nền không sạch, không kết luận "Tiếp tục".
+  let baseOverlap = [];
+  if(out.baseline && Array.isArray(R.otherCampaigns)) baseOverlap = R.otherCampaigns.filter(o => o && o.from && o.to && o.from <= out.baseline.to && o.to >= out.baseline.from).map(o => o.name || o.from);
+  if(baseOverlap.length) out.caveats.push(`Kỳ đối chứng trùng đợt khuyến mại khác (${baseOverlap.slice(0,3).join(", ")}) → mức nền không sạch, chưa kết luận hiệu quả tăng thêm.`);
   if(out.lift!=null) out.caveats.push("So với kỳ liền trước chỉ là ước tính: mùa vụ, ngày lễ, hàng hoá, nhân sự cũng ảnh hưởng doanh thu — không quy toàn bộ chênh lệch cho khuyến mại.");
   if(camp.running) out.caveats.push("Đợt đang chạy — đây là đánh giá giữa kỳ.");
   if(camp.partial) out.caveats.push("Thiếu dữ liệu đầu đợt — số liệu chỉ tính phần có dữ liệu.");
@@ -14261,7 +14269,9 @@ function pmdDecide(camp, chainRevenueByDay, rules){
   let code, reason;
   if(cp==null){ code = "nodata"; reason = "Chưa có chi phí / doanh thu của đợt."; }
   else if(L!=null){
-    if(L >= R.liftGoodPct && cp <= R.costMaxPct){ code = "continue"; reason = `Doanh thu/ngày ${pmdPct(L, true)} so với kỳ đối chứng, chi phí ${pmdPct(cp)} doanh thu (≤ ${R.costMaxPct}%).`; }
+    if(L >= R.liftGoodPct && cp <= R.costMaxPct && baseOverlap.length){ code = "watch"; reason = `Doanh thu/ngày ${pmdPct(L, true)} nhưng kỳ đối chứng trùng đợt KM khác → tiếp tục theo dõi, chưa khẳng định hiệu quả.`; }
+    else if(L >= R.liftGoodPct && cp <= R.costMaxPct && (c.promoOrders||0) < (R.minPromoOrders||30)){ code = "watch"; reason = `Doanh thu/ngày ${pmdPct(L, true)} nhưng mới có ${(c.promoOrders||0)} đơn dùng KM (< ${R.minPromoOrders||30}) → chưa đủ mẫu để kết luận.`; }
+    else if(L >= R.liftGoodPct && cp <= R.costMaxPct){ code = "continue"; reason = `Doanh thu/ngày ${pmdPct(L, true)} so với kỳ đối chứng, chi phí ${pmdPct(cp)} doanh thu (≤ ${R.costMaxPct}%).`; }
     else if(L >= 0 && cp > R.costMaxPct){ code = "adjust"; reason = `Doanh thu không giảm (${pmdPct(L, true)}) nhưng chi phí ${pmdPct(cp)} doanh thu (> ${R.costMaxPct}%) → giảm mức ưu đãi / thu hẹp đối tượng, nhóm hàng.`; }
     else if(L < 0 && cp > R.costMaxPct){ code = "stop"; reason = `Doanh thu/ngày ${pmdPct(L, true)} trong khi chi phí ${pmdPct(cp)} doanh thu → dừng để xem xét lại.`; }
     else { code = "adjust"; reason = `Doanh thu/ngày ${pmdPct(L, true)} — chi phí chấp nhận được (${pmdPct(cp)}) nhưng chưa tạo tăng trưởng rõ → điều chỉnh cách triển khai (truyền thông, trưng bày, tư vấn).`; }
@@ -14284,7 +14294,7 @@ function pmdDecide(camp, chainRevenueByDay, rules){
 // 14/10/2026 (P1 CTKM): thẻ "Đánh giá đợt & quyết định" — gợi ý của hệ thống + quyết định quản lý lưu ở
 // opsConfig/promoCampaignReviews (map theo mã đợt), giữ ảnh chụp số liệu lúc quyết định để so dự báo với thực tế.
 const PMD_DECISIONS = ["Tiếp tục", "Tiếp tục theo dõi", "Điều chỉnh", "Dừng để xem xét"];
-function PromoDecisionCard({ campKey, camp, isAdmin }){
+function PromoDecisionCard({ campKey, camp, isAdmin, otherCamps }){
   const h = React.createElement;
   const [chainDaily, setChainDaily] = useState(undefined);
   const [reviews, setReviews] = useState({});
@@ -14294,7 +14304,7 @@ function PromoDecisionCard({ campKey, camp, isAdmin }){
   useEffect(()=> db.collection("opsConfig").doc("promoCampaignReviews").onSnapshot(d => setReviews(d.exists ? (d.data().byCampaign || {}) : {}), err => logSystemError("promoCampaignReviews", err)), []);
   useEffect(()=>{ setForm(null); }, [campKey]);
   if(!camp || chainDaily===undefined) return null;
-  const r = pmdDecide(camp, chainDaily);
+  const r = pmdDecide(camp, chainDaily, { otherCampaigns: (otherCamps || []).filter(x => x && x.key!==campKey).map(x => ({ from:x.from || x.dataFrom, to:x.to || x.dataTo, name:x.label || x.key })) });
   const saved = reviews[campKey];
   const tone = { green:["var(--pine)","var(--pineSoft)"], yellow:["#8a6d1a","var(--goldSoft)"], orange:["var(--amber)","var(--amberSoft)"], red:["var(--clay)","var(--claySoft)"], grey:["var(--inkSoft)","#E7E5DA"] }[r.decision.tone];
   const ul = (arr) => h("ul", { style:{ margin:"2px 0 6px", paddingLeft:18, fontSize:12.5, lineHeight:1.5 } }, arr.map((t, i) => h("li", { key:i }, t)));
@@ -14483,7 +14493,7 @@ function PromoOrderView({ isAdmin }){
   const shown = showAll ? progs : progs.slice(0, 40);
   const shopsList = Object.keys(d.shops||{}).filter(Boolean).sort();
   return h("div", null, head, back,
-    h(PromoDecisionCard, { campKey:key, camp:{ ...d, label:(camps.find(x => x.key===key)||{}).label, running:d.running, partial:d.partial }, isAdmin }),
+    h(PromoDecisionCard, { campKey:key, camp:{ ...d, label:(camps.find(x => x.key===key)||{}).label, running:d.running, partial:d.partial }, isAdmin, otherCamps:camps.filter(x => x.kind==="campaign") }),
     h("div", { className:"metrics" },
       kpi("Tổng chi phí khuyến mại", fm(c.cost), `${dm(d.dataFrom)} – ${dm(d.dataTo)} · ${fm(c.cost/(d.days||1))}/ngày`),
       kpi("Chi phí / doanh thu", pcs(pc(c.cost, c.rev)), `doanh thu ${fm(c.rev)} · ${(c.orders||0).toLocaleString("vi-VN")} đơn`),
@@ -15674,7 +15684,7 @@ function OpsPulseView({ isAdmin, myStaff }){
       tile("② AI tự xử lý (7 ngày)", dec.autoPct == null ? "—" : dec.autoPct + "%", `${dec.preventivePct != null ? "phòng ngừa " + dec.preventivePct + "% · " : ""}${dec.total||0} đề xuất · tự giao ${dec.auto||0} · quản lý duyệt ${dec.manual||0} · từ chối ${dec.rejected||0} · hết hạn ${dec.expired||0} · đang chờ ${dec.pending||0}`, col(dec.autoPct, 60, 30)),
       tile("③ Việc đúng hạn (14 ngày)", ex.onTimeRate == null ? "—" : ex.onTimeRate + "%", `${ex.assigned||0} việc giao · xong ${ex.done||0} (${ex.doneRate ?? "—"}%) · đang quá hạn ${ex.overdue||0}`, col(ex.onTimeRate, 85, 65)),
       tile("④ Rủi ro cần xử lý", rk.actionable ?? "—", `quá hạn ${rk.overdue ?? "—"} · chưa ai nhận ${rk.unacked ?? "—"} · lượt quét gần nhất tự đóng ${rk.autoClosed ?? 0}`, col(rk.actionable == null ? null : 100 - rk.actionable * 2, 60, 30)),
-      tile("⑤ Gọi khách theo danh sách (7 ngày)", lp.care && lp.care.pct != null ? lp.care.pct + "%" : "—", (lp.care && lp.care.quota ? `${lp.care.done}/${lp.care.quota} khách đã liên hệ` : "Danh sách bắt đầu từ sáng mai 7h30") + (lp.care && lp.care.returns && lp.care.returns.n ? ` · quay lại mua trong 14 ngày: đã gọi ${lp.care.returns.calledRate}% vs chưa gọi ${lp.care.returns.notCalledRate}% (${lp.care.returns.upliftPts >= 0 ? "+" : ""}${lp.care.returns.upliftPts} điểm)` : ""), col(lp.care && lp.care.pct, 80, 50)),
+      tile("⑤ Gọi khách theo danh sách (7 ngày)", lp.care && lp.care.pct != null ? lp.care.pct + "%" : "—", (lp.care && lp.care.quota ? `${lp.care.done}/${lp.care.quota} khách đã liên hệ` : "Danh sách bắt đầu từ sáng mai 7h30") + (lp.care && lp.care.returns && lp.care.returns.n ? ` · quay lại mua trong 14 ngày: liên lạc được ${lp.care.returns.calledRate}% vs chưa gọi ${lp.care.returns.notCalledRate}%` + (lp.care.returns.upliftPts != null ? ` (chênh ${lp.care.returns.upliftPts >= 0 ? "+" : ""}${lp.care.returns.upliftPts} điểm, số quan sát)` : " (chưa đủ mẫu để kết luận)") : ""), col(lp.care && lp.care.pct, 80, 50)),
       TRANSFER_FLOW_ON && tile("⑥ Điều chuyển khép kín (30 ngày)", lp.transfer && lp.transfer.total ? lp.transfer.total + " phiếu" : "—", lp.transfer && lp.transfer.total ? `chờ gửi ${lp.transfer.CHO_GUI||0} · đang chuyển ${lp.transfer.DA_GUI||0} · gửi TB ${lp.transfer.avgSendH ?? "—"}h · có hàng sau 3 ngày ${lp.transfer.measured ? Math.round(lp.transfer.ok/lp.transfer.measured*100)+"%" : "—"}` : "Phiếu tạo khi AI giao việc điều chuyển", "#2563EB"),
       tile("⑦ Mất doanh thu do hết hàng", fm(mo.lostPerDay) + "/ngày", `đầu tháng ${fm(mo.lostAtMonthStart)}/ngày${TRANSFER_FLOW_ON ? ` · xử lý được bằng điều chuyển ${fm(mo.transferablePerDay)}/ngày` : " · đặt hàng bổ sung các mã đang hết"}`, mo.lostAtMonthStart && mo.lostPerDay > mo.lostAtMonthStart ? "#B91C1C" : "#15803D"),
       tile("⑧ Việc AI giao có hiệu quả (30 ngày)", mo.measured ? Math.round(mo.success/mo.measured*100) + "%" : "—", mo.measured ? `${mo.success}/${mo.measured} việc đo được đạt kỳ vọng · giữ ~${fm(mo.savedPerDay)}/ngày` : "Chưa có việc đo được kết quả", "#7C3AED")),
@@ -22063,9 +22073,9 @@ function DataQualityCommandBanner({ onNavigate }){
   const KEY_LABEL = {
     salesOrders:"Đơn bán", inventory:"Tồn kho", workRegistrations:"Đăng ký ca",
     employeePlan:"Chỉ tiêu NV", inventoryExpiry:"Hàng cận date", customerUpgrades:"Nâng hạng KH", replenishment:"Tái mua",
-    orderFulfillment:"Đối soát gọi hàng",
+    orderFulfillment:"Đối soát gọi hàng", kpiPaceLock:"Chốt KPI 6h35",
   };
-  const keys = ["salesOrders","inventory","workRegistrations","employeePlan","inventoryExpiry","customerUpgrades","replenishment","orderFulfillment"];
+  const keys = ["salesOrders","inventory","workRegistrations","employeePlan","inventoryExpiry","customerUpgrades","replenishment","orderFulfillment","kpiPaceLock"];
   const rows = keys.map(k => {
     const h = health && health[k];
     const fatal = h && h.ok !== true && (h.fatalError || h.error); // ok===true: lỗi cũ còn sót, bỏ qua
@@ -26570,6 +26580,7 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
   // 27/9/2026 (Phương): dùng lại màn này cho CỬA HÀNG TRƯỞNG (shopScope = mã nhà thuốc) — chỉ thấy
   // việc của nhân viên nhà thuốc mình, không thấy việc "đề xuất lên QLKV" và việc của chính CHT.
   const [doneAll, setDone] = useState([]);
+  const [cancelled, setCancelled] = useState([]); // 16/10/2026 (đặc tả P1.2): việc đã huỷ / hết hiệu lực 30 ngày
   const [tab, setTab] = useState(shopScope ? "awaiting" : "team");
   const [search, setSearch] = useState("");
   const [fLevel, setFLevel] = useState("Tất cả");
@@ -26587,6 +26598,13 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
     return db.collection("tasks").where("ngayHoanThanh", ">=", addDays(today, -30))
       .onSnapshot(s => setDone(s.docs.map(d => ({ id:d.id, ...d.data() })).filter(t => t.trangThai==="Đã hoàn thành")), err => logSystemError("tasks", err));
   }, [today]);
+  useEffect(()=>{
+    const since = addDays(today, -30);
+    // CHT: lọc theo shop (luật phân quyền chỉ cho đọc việc nhà thuốc mình); quản lý: theo ngày huỷ.
+    const q = shopScope ? db.collection("tasks").where("shop","==",shopScope).where("trangThai","==","Đã huỷ")
+      : db.collection("tasks").where("ngayHuy", ">=", since);
+    return q.onSnapshot(s => setCancelled(s.docs.map(d => ({ id:d.id, ...d.data() })).filter(t => t.trangThai==="Đã huỷ" && (t.ngayHuy||"") >= since)), err => logSystemError("tasks", err));
+  }, [today, shopScope]);
   useEffect(()=>{
     if(!navParam) return;
     if(navParam.tab) setTab(navParam.tab);
@@ -26628,6 +26646,16 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
     // 16/10/2026 (audit TASK-3): việc đã nộp kết quả, đang chờ kiểm tra KHÔNG tính quá hạn (đã có tab "Chờ xác minh")
     overdue: open.filter(t => t.deadline && taskDeadlineTs360(t) < nowTs && taskSubStatus(t)!=="Chờ kiểm tra").sort(sortOpen),
     done: done.slice().sort((a,b) => (b.ngayHoanThanh||"").localeCompare(a.ngayHoanThanh||"")),
+    // 16/10/2026 (đặc tả P1.2 / audit TASK-3): Bị vướng · Đã huỷ / Hết hiệu lực · Tái diễn
+    blocked: open.filter(t => taskSubStatus(t)==="Bị vướng").sort(sortOpen),
+    expired: cancelled.filter(inScope).sort((a,b) => (b.ngayHuy||"").localeCompare(a.ngayHuy||"")),
+    // Tái diễn = vấn đề đã có việc HOÀN THÀNH trong 30 ngày qua nhưng nay lại phát sinh việc mới cùng nguồn (cùng rủi ro, cùng mã vấn đề hoặc cùng loại việc AI ở cùng nhà thuốc).
+    recurring: (() => {
+      const key = t => t.sourceRiskId ? "r:" + t.sourceRiskId : t.sourceIssueCode ? `i:${t.shop||""}:${t.sourceIssueCode}` : t.opsType ? `o:${t.shop||""}:${t.opsType}` : null;
+      const doneKeys = {};
+      done.forEach(t => { const k = key(t); if(k) doneKeys[k] = (doneKeys[k] || 0) + 1; });
+      return open.filter(t => { const k = key(t); return k && doneKeys[k]; }).map(t => ({ ...t, _recurN: doneKeys[key(t)] })).sort(sortOpen);
+    })(),
   };
   const tabs = shopScope ? [
     { id:"today", label:`Hôm nay (${lists.today.length})` },
@@ -26635,8 +26663,11 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
     { id:"team", label:`Đang thực hiện (${lists.team.length})` },
     { id:"dueSoon", label:`Nguy cơ trễ (${lists.dueSoon.length})` },
     { id:"overdue", label:`Quá hạn (${lists.overdue.length})` },
+    { id:"blocked", label:`Bị vướng (${lists.blocked.length})` },
+    { id:"recurring", label:`Tái diễn (${lists.recurring.length})` },
     { id:"review", label:`Chưa nhận xét (${lists.review.length})` },
     { id:"done", label:`Đã hoàn tất (${lists.done.length})` },
+    { id:"expired", label:`Đã huỷ / Hết hiệu lực (${lists.expired.length})` },
     { id:"progress", label:"Tiến độ nhân viên" },
     { id:"impact", label:"Hiệu quả sau xử lý" },
   ] : [
@@ -26647,8 +26678,11 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
     { id:"dueSoon", label:`Nguy cơ trễ (${lists.dueSoon.length})` },
     { id:"review", label:`Chưa nhận xét (${lists.review.length})` },
     { id:"overdue", label:`Quá hạn (${lists.overdue.length})` },
+    { id:"blocked", label:`Bị vướng (${lists.blocked.length})` },
+    { id:"recurring", label:`Tái diễn (${lists.recurring.length})` },
     { id:"doneWeak", label:`Xong chưa đạt (${lists.doneWeak.length})` },
     { id:"done", label:`Đã hoàn tất (${lists.done.length})` },
+    { id:"expired", label:`Đã huỷ / Hết hiệu lực (${lists.expired.length})` },
     { id:"progress", label:"Tiến độ nhân viên" },
     { id:"impact", label:"Hiệu quả sau xử lý" },
   ];
@@ -26713,7 +26747,8 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
     detail = rc("div", { key:"det", className:"card" }, rc("div", { className:"emptyState" }, "Chọn một việc ở danh sách bên trái."));
   } else {
     const isDone = sel.trangThai==="Đã hoàn thành";
-    const subSel = taskSubStatus(sel);
+    const isCancelled = sel.trangThai==="Đã huỷ";
+    const subSel = isCancelled ? "Đã huỷ" : taskSubStatus(sel);
     const isAwaiting = subSel==="Chờ kiểm tra";
     const level = isDone ? null : taskLevel360(sel, nowTs, today);
     const files = sel.ketQuaFiles || [];
@@ -26738,6 +26773,11 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
         st.ok && rc("span", { key:"k", style:{ color:CL360.good, fontWeight:700 } }, "✓"),
       ])),
       files.length>0 && rc("div", { key:"fl", style:{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:10 } }, files.map(chip)),
+      sel._recurN && rc("div", { key:"rc", style:{ background:"#FEF3C7", borderRadius:8, padding:"8px 12px", marginBottom:10, fontSize:12.5 } },
+        `Tái diễn: vấn đề này đã có ${sel._recurN} việc hoàn thành trong 30 ngày qua nhưng lại phát sinh — nên xem lại cách xử lý gốc.`),
+      isCancelled && rc("div", { key:"cx", style:{ background:"var(--paper)", borderRadius:8, padding:"9px 12px", marginBottom:10, fontSize:12.5 } }, [
+        rc("div", { key:"l", style:{ fontWeight:700, marginBottom:2 } }, `Đã huỷ ${dmy360(sel.ngayHuy)||""}${sel.nguoiHuy ? " · " + sel.nguoiHuy : ""}`), safeReactText(sel.lyDoHuy, "Không ghi lý do"),
+      ]),
       isAwaiting && rc("div", { key:"aw", style:{ background:"var(--paper)", borderRadius:8, padding:"9px 12px", marginBottom:10, fontSize:12.5 } }, [
         rc("div", { key:"l", style:{ fontWeight:700, marginBottom:2 } }, `Kết quả (${sel.nguoiBaoCao||"?"} · ${sel.ngayNopKetQua||"?"})`), safeReactText(sel.ketQua, ""),
       ]),
@@ -26748,7 +26788,7 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
           rc("button", { key:"no", type:"button", className:"btn btnGhost", style:{ flex:1 }, disabled:busy || !verifyText.trim(), onClick:()=>rejectAwaiting(sel) }, "✕ Không đạt, cần làm lại"),
         ]),
       ]),
-      !isDone && !isAwaiting && rc("div", { key:"cf" }, [
+      !isDone && !isAwaiting && !isCancelled && rc("div", { key:"cf" }, [
         rc("textarea", { key:"ta", rows:2, value:resultText, onChange:e=>setResultText(e.target.value), placeholder:"Kết quả thực hiện (bắt buộc)...", style:{ width:"100%", padding:"8px 10px", border:"1px solid var(--line)", borderRadius:8, fontSize:13, marginBottom:8 } }),
         rc("div", { key:"bt", style:{ display:"flex", gap:8, flexWrap:"wrap" } }, [
           rc("label", { key:"up", className:"uploadBtn" }, uploading ? "Đang tải..." : "Đính kèm bằng chứng", rc("input", { type:"file", multiple:true, accept:"image/*,.pdf,.doc,.docx,.xls,.xlsx", style:{ display:"none" }, disabled:uploading, onChange:e=>{ const fs = Array.from(e.target.files||[]); e.target.value=""; if(fs.length) uploadEvidence(sel, fs); } })),
@@ -26762,7 +26802,7 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
           rc("button", { key:"ok", type:"button", className:"btn btnPrimary", style:{ flex:1 }, disabled:busy || !verifyText.trim(), onClick:()=>verifyTask(sel) }, "Xác nhận đã kiểm tra"),
         ]),
       ]),
-      isDone && rc("button", { key:"ro", type:"button", className:"btn btnGhost", style:{ marginTop:8, fontSize:12 }, disabled:busy, onClick:()=>reopen(sel) }, "Giao lại (mở lại việc)"),
+      (isDone || isCancelled) && rc("button", { key:"ro", type:"button", className:"btn btnGhost", style:{ marginTop:8, fontSize:12 }, disabled:busy, onClick:()=>reopen(sel) }, "Giao lại (mở lại việc)"),
       !shopScope && rc("div", { key:"lnk", style:{ marginTop:10, fontSize:11.5 } }, [
         rc("span", { key:"a", style:{ color:CL360.info, cursor:"pointer" }, onClick:()=>onNavigate && onNavigate("tasks", isDone ? { status:"Đã hoàn thành" } : null) }, "Mở trong tab Giao việc ›"),
         sel.staffId && rc("span", { key:"b", style:{ color:CL360.info, cursor:"pointer", marginLeft:14 }, onClick:()=>onNavigate && onNavigate("emp360", { staffId:sel.staffId }) }, "Hồ sơ nhân viên ›"),
@@ -26777,11 +26817,11 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
     list.length===0 ? rc("div", { key:"e", className:"emptyState" }, tab==="done" ? "Chưa có việc hoàn tất trong 30 ngày qua." : "Không có việc nào ở mục này.")
       : list.slice(0, 60).map(t => {
           const isDone = t.trangThai==="Đã hoàn thành"; const subT = taskSubStatus(t);
-          const lv = isDone ? { text:"Hoàn tất", color:CL360.good } : (subT==="Chờ kiểm tra" ? { text:"Chờ kiểm tra", color:CL360.warn } : (subT==="Không đạt" ? { text:"Không đạt", color:CL360.bad } : (lvlInfo[t._level] || lvlInfo.assigned || { text:"Đã giao", color:CL360.gray })));
+          const lv = t.trangThai==="Đã huỷ" ? { text:"Đã huỷ", color:CL360.gray } : t._recurN ? { text:`Tái diễn ×${t._recurN + 1}`, color:CL360.bad } : subT==="Bị vướng" ? { text:"Bị vướng", color:CL360.bad } : isDone ? { text:"Hoàn tất", color:CL360.good } : (subT==="Chờ kiểm tra" ? { text:"Chờ kiểm tra", color:CL360.warn } : (subT==="Không đạt" ? { text:"Không đạt", color:CL360.bad } : (lvlInfo[t._level] || lvlInfo.assigned || { text:"Đã giao", color:CL360.gray })));
           return rc("div", { key:t.id, onClick:()=>setSelId(t.id), style:{ display:"flex", alignItems:"center", gap:10, padding:"10px 10px 10px 12px", marginBottom:6, borderRadius:8, cursor:"pointer",
             borderLeft:`3px solid ${lv.color}`, background: sel && sel.id===t.id ? "var(--pineSoft)" : "transparent", borderBottom:"1px solid var(--line)" } }, [
             rc("div", { key:"t", style:{ flex:1, minWidth:0 } }, [ rc("div", { key:"a", style:{ fontWeight:600, fontSize:12.5 } }, safeReactText(t.title,"(không tên)")),
-              rc("div", { key:"b", style:{ color:"var(--inkSoft)", fontSize:11, marginTop:2 } }, `${moduleLabelVI(taskModule360(t))} · ${taskScope360(t)} · ${isDone ? "hoàn tất "+dmy360(t.ngayHoanThanh) : "hạn "+dmy360(t.deadline)+(t.hanGio ? " "+t.hanGio : "")}`) ]),
+              rc("div", { key:"b", style:{ color:"var(--inkSoft)", fontSize:11, marginTop:2 } }, `${moduleLabelVI(taskModule360(t))} · ${taskScope360(t)} · ${t.trangThai==="Đã huỷ" ? "huỷ "+dmy360(t.ngayHuy)+(t.lyDoHuy ? " · "+String(t.lyDoHuy).slice(0,60) : "") : isDone ? "hoàn tất "+dmy360(t.ngayHoanThanh) : "hạn "+dmy360(t.deadline)+(t.hanGio ? " "+t.hanGio : "")}`) ]),
             rc(Pill360, { key:"p", text:lv.text, color:lv.color }),
           ]);
         }),
