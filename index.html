@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261016-6";
+window.__APP_BUILD = "20261016-7";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -1312,7 +1312,7 @@ function AiTrustNote({ validation, promptVersion, dataAsOf, fallback, showFallba
   const items = [];
   if(v && v.status==="warn" && (v.unverified||[]).length) items.push(React.createElement("div", { key:"w", style:{ fontSize:11.5, background:"#FFF4E0", border:"1px solid #F3D19C", borderRadius:6, padding:"5px 8px", marginTop:6 } },
     `AI nêu ${v.unverified.length} con số không tìm thấy trong số liệu hệ thống: ${v.unverified.join(", ")} — kiểm tra lại trước khi dùng.`));
-  if(v && v.status==="ok" && v.checked>0) items.push(React.createElement("div", { key:"o", style:{ fontSize:11, color:"#16A34A", marginTop:6 } }, `✓ ${v.checked} con số AI nêu đều khớp số liệu hệ thống.`));
+  if(v && v.status==="ok" && v.checked>0) items.push(React.createElement("div", { key:"o", style:{ fontSize:11, color:"#16A34A", marginTop:6 } }, `✓ ${v.checked} con số AI nêu có trong số liệu hệ thống (máy chỉ dò con số, chưa kiểm cách AI diễn giải).`));
   const meta = [promptVersion && `prompt ${promptVersion}`, dataAsOf && `dữ liệu lúc ${new Date(dataAsOf).toLocaleString("vi-VN")}`].filter(Boolean).join(" · ");
   if(meta || (fallback && showFallbackToggle!==false)) items.push(React.createElement("div", { key:"m", style:{ fontSize:10.5, color:"var(--inkSoft)", marginTop:5, display:"flex", gap:10, flexWrap:"wrap" } }, [
     meta && React.createElement("span", { key:"t" }, meta),
@@ -3821,7 +3821,9 @@ function TaskAssignView({ isAdmin, myStaff, navParam, onNavigate, openTasks360 }
       }
       if(note.length < 5){ alert("Ghi thêm 1 câu ngắn khách nói gì (VD: \"hẹn thứ 7 ghé lấy thuốc\")."); return; }
       const full = `${ketQuaLoai}: ${note}`;
-      await updateDoc("tasks", taskId, { trangThai:"Đã hoàn thành", subTrangThai:"Đã hoàn thành", ngayHoanThanh:today, ketQuaLoai, ketQua:full, ketQuaTruoc:(tk.ketQuaTruoc || tk.ketQua || full), ketQuaSau:full,
+      // 16/10/2026 (audit TASK-1): việc CRM sinh từ RỦI RO / AI / vấn đề nhà thuốc (VD KH01) phải qua "Chờ kiểm tra", không tự đóng
+      const needVerify = !!(tk.sourceRiskId || tk.opsProposalId || tk.sourceIssueCode);
+      await updateDoc("tasks", taskId, { ...(needVerify ? { subTrangThai:"Chờ kiểm tra" } : { trangThai:"Đã hoàn thành", subTrangThai:"Đã hoàn thành", ngayHoanThanh:today }), ketQuaLoai, ketQua:full, ketQuaTruoc:(tk.ketQuaTruoc || tk.ketQua || full), ketQuaSau:full,
         sauXuLy:sauXuLyText.trim(), ngayNopKetQua:today, lyDoKhongDat:"", nguoiBaoCao:who });
       setReportingId(null); setResultText(""); setSauXuLyText(""); setKetQuaLoai(""); return;
     }
@@ -3829,7 +3831,7 @@ function TaskAssignView({ isAdmin, myStaff, navParam, onNavigate, openTasks360 }
     // 7/10/2026 — BẮT BUỘC KẾT QUẢ CỤ THỂ khi đóng việc (để AI đo được hiệu quả): có con số, hoặc ≥ 20 ký tự mô tả, hoặc đã đính kèm ảnh/file.
     { const t = resultText.trim(); const hasFile = tk && ((tk.ketQuaFiles||[]).length || (tk.dinhKemKetQua||[]).length);
       if(!/\d/.test(t) && t.length < 20 && !hasFile){ alert("Ghi rõ kết quả cụ thể để AI đo được hiệu quả — có con số hoặc mô tả rõ (≥ 20 ký tự), hoặc đính kèm ảnh.\nVD: \"Đã gọi 6/8 khách, 2 khách hẹn ghé\", \"Đặt bổ sung 12 mã, hàng về thứ 5\"."); return; } }
-    const isCrmCare = !!tk && taskModule360(tk)==="CRM";
+    const isCrmCare = !!tk && taskModule360(tk)==="CRM" && !(tk.sourceRiskId || tk.opsProposalId || tk.sourceIssueCode); // 16/10/2026 (audit TASK-1)
     const prev = (tk && (tk.ketQuaTruoc || tk.ketQua)) || "";
     await updateDoc("tasks", taskId, {
       ...(isCrmCare ? { trangThai:"Đã hoàn thành", subTrangThai:"Đã hoàn thành", ngayHoanThanh:today, ketQuaSau:resultText.trim() } : { subTrangThai:"Chờ kiểm tra" }),
@@ -3850,6 +3852,7 @@ function TaskAssignView({ isAdmin, myStaff, navParam, onNavigate, openTasks360 }
       ketQuaDat: true,
       ketQuaSau: (tk && (tk.ketQuaSau || tk.ketQua)) || "",
       verifiedAtTs: new Date().toISOString(),
+      verifiedBy: isAdmin ? "Quản lý khu vực" : (myStaff ? myStaff.name : ""), // 16/10/2026 (audit G4): ghi người xác nhận
     });
   }
   async function rejectTask(taskId, reason){
@@ -10793,7 +10796,7 @@ async function findOpenTaskBySource({ sourceRiskId, sourceCode, sourceType, shop
 }
 // 7/10/2026 (mục 4): nhật ký thao tác do máy chủ ghi — nhân sự, KPI, rủi ro, xử lý vấn đề, cấu hình, xoá việc / xoá khách.
 const AUDIT_ACTION_LABELS = { create:"Tạo", update:"Sửa", delete:"Xoá", set:"Lưu" };
-const AUDIT_COL_LABELS = { staff:"Nhân sự", kpiAssignments:"KPI", risks:"Rủi ro", issueActions:"Xử lý vấn đề", opsConfig:"Cấu hình", tasks:"Việc", crmCustomers:"Khách hàng", config:"Cấu hình" };
+const AUDIT_COL_LABELS = { claims:"Quyền tài khoản", staff:"Nhân sự", kpiAssignments:"KPI", risks:"Rủi ro", issueActions:"Xử lý vấn đề", opsConfig:"Cấu hình", tasks:"Việc", crmCustomers:"Khách hàng", config:"Cấu hình" };
 function AuditLogViewer(){
   const [rows, setRows] = useState([]);
   const [loaded, setLoaded] = useState(false);
@@ -12452,6 +12455,16 @@ function StatTile({ label, value, sub, tint, onClick, source, updatedAt }){
     meta && React.createElement("div", { key:"m", style:{ fontSize:10.5, color:"var(--inkSoft)", marginTop:6, opacity:0.9 } }, meta),
   ]);
 }
+// 16/10/2026 (audit G6/FRESH-2): mốc "Cập nhật" chung cho các thẻ — đọc computedAt (tên trường backend thật ghi),
+// dự phòng updatedAtTs/generatedAtTs; quá 26 giờ thì gắn cảnh báo "cũ".
+function asOfLabel(doc, maxHours){
+  const ts = doc && (doc.computedAt || doc.updatedAtTs || doc.generatedAtTs);
+  if(!ts) return "—";
+  const d = new Date(ts); if(isNaN(d.getTime())) return "—";
+  const label = d.toLocaleString("vi-VN",{ hour:"2-digit", minute:"2-digit", day:"2-digit", month:"2-digit" });
+  const ageH = (Date.now() - d.getTime()) / 3600000;
+  return ageH > (maxHours || 26) ? `${label} ⚠ cũ ${Math.round(ageH)} giờ` : label;
+}
 // B1 — thẻ KPI đầy đủ: thực tế / mục tiêu / chênh lệch / kỳ / nguồn / cập nhật (đặc tả §3).
 function KpiMetricCard({ label, actual, target, unit, period, source, updatedAt, onClick, better }){
   // better: "higher" (mặc định) | "lower" — chiều tốt của chênh lệch
@@ -13288,7 +13301,7 @@ function InsightBox({ items }){
 function StatGrid({ children }){
   return React.createElement("div", { style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:10, marginBottom:16 } }, children);
 }
-function StatTile({ label, value, sub, delta, accent }){
+function StatTileAccent({ label, value, sub, delta, accent }){
   const CK = React.createElement;
   return CK("div", { style:{ border:"1px solid var(--line)", borderRadius:12, padding:"12px 14px", background:"#fff", borderTop:`3px solid ${accent||"var(--pine)"}` } }, [
     CK("div", { key:"l", style:{ fontSize:11.5, color:"var(--inkSoft)", fontWeight:600 } }, label),
@@ -13346,10 +13359,10 @@ function BehaviorInsights({ stats, shopFilter, isAllShops, headerRight }){
     if(hiAvg && rev>0 && totalEv>0) insights.push(`Đơn giá trị cao nhất rơi vào khoảng ${hiAvg.h}h (TB ${fmtVNDCompact(hiAvg.v)}/đơn so với TB chung ${fmtVNDCompact(rev/totalEv)}).`); }
 
   const tiles = CK(StatGrid, { key:"tiles" }, [
-    CK(StatTile, { key:"a", label:`Số đơn (${win} ngày)`, value:fmtNum(totalEv), sub:`TB ${avgPerDay.toFixed(0)} đơn/ngày` }),
-    CK(StatTile, { key:"b", accent:"#3B7DD8", label:"Khách hàng mua", value:fmtNum(S.customersTotal || S.customersCounted), sub: S.repeatRate!=null ? `${Math.round(S.repeatRate*100)}% quay lại ≥2 lần` : "" }),
-    CK(StatTile, { key:"c", accent:CAT_PALETTE.tpcn, label:"Giá trị TB/đơn", value: deep && totalEv>0 ? fmtVNDCompact(rev/totalEv) : "—", sub: deep ? `Doanh thu ${fmtVNDCompact(rev)}` : "bấm Tính lại" }),
-    CK(StatTile, { key:"d", accent:CAT_PALETTE.mp, label:"Giờ cao điểm", value: topHours.length ? `${topHours[0]}h–${topHours[0]+1}h` : "—", sub: topHours.length && withHour ? `${Math.round(hourCnt[topHours[0]]/withHour*100)}% đơn · tiếp theo ${topHours.slice(1).map(h=>h+"h").join(", ")}` : "" }),
+    CK(StatTileAccent, { key:"a", label:`Số đơn (${win} ngày)`, value:fmtNum(totalEv), sub:`TB ${avgPerDay.toFixed(0)} đơn/ngày` }),
+    CK(StatTileAccent, { key:"b", accent:"#3B7DD8", label:"Khách hàng mua", value:fmtNum(S.customersTotal || S.customersCounted), sub: S.repeatRate!=null ? `${Math.round(S.repeatRate*100)}% quay lại ≥2 lần` : "" }),
+    CK(StatTileAccent, { key:"c", accent:CAT_PALETTE.tpcn, label:"Giá trị TB/đơn", value: deep && totalEv>0 ? fmtVNDCompact(rev/totalEv) : "—", sub: deep ? `Doanh thu ${fmtVNDCompact(rev)}` : "bấm Tính lại" }),
+    CK(StatTileAccent, { key:"d", accent:CAT_PALETTE.mp, label:"Giờ cao điểm", value: topHours.length ? `${topHours[0]}h–${topHours[0]+1}h` : "—", sub: topHours.length && withHour ? `${Math.round(hourCnt[topHours[0]]/withHour*100)}% đơn · tiếp theo ${topHours.slice(1).map(h=>h+"h").join(", ")}` : "" }),
   ]);
 
   const metricToggle = CK(SegToggle, { key:"m", value:metric, onChange:setMetric, options:[{id:"cnt",label:"Số đơn"},{id:"rev",label:"Doanh thu"},{id:"avg",label:"Giá trị/đơn"}] });
@@ -13708,14 +13721,14 @@ function RevenueTheoNganh({ shopFilter, isAll, isAdmin, onPickShop }){
 
   // ---------- 1. Thẻ số ----------
   const tiles = CK(StatGrid, { key:"tiles" }, [
-    CK(StatTile, { key:"a", label:`Doanh thu 30 ngày`, value:fmtVNDCompact(totCur), delta:CK(DeltaBadge, { pct:ckPct(totCur,totPrev), small:true }), sub:"so 30 ngày trước" }),
-    CK(StatTile, { key:"b", accent:"#3B7DD8", label:"Bill có từ 2 ngành trở lên", value: fp(cross.multiPct),
+    CK(StatTileAccent, { key:"a", label:`Doanh thu 30 ngày`, value:fmtVNDCompact(totCur), delta:CK(DeltaBadge, { pct:ckPct(totCur,totPrev), small:true }), sub:"so 30 ngày trước" }),
+    CK(StatTileAccent, { key:"b", accent:"#3B7DD8", label:"Bill có từ 2 ngành trở lên", value: fp(cross.multiPct),
       delta: CK(DeltaBadge, { pp: cross.multiPct!=null && crossPrev.multiPct!=null ? Math.round((cross.multiPct-crossPrev.multiPct)*10)/10 : null, small:true }),
       sub: !isAll && chainCross.multiPct!=null ? `chuỗi ${fp(chainCross.multiPct)}` : `${fmtNum(cross.bills)} bill` }),
-    CK(StatTile, { key:"c", accent:CAT_PALETTE.tpcn, label:"Bill thuốc có kèm TPCN", value: fp(cross.tpcnPct),
+    CK(StatTileAccent, { key:"c", accent:CAT_PALETTE.tpcn, label:"Bill thuốc có kèm TPCN", value: fp(cross.tpcnPct),
       delta: CK(DeltaBadge, { pp: cross.tpcnPct!=null && crossPrev.tpcnPct!=null ? Math.round((cross.tpcnPct-crossPrev.tpcnPct)*10)/10 : null, small:true }),
       sub: `kèm mỹ phẩm ${fp(cross.mpPct)}` }),
-    CK(StatTile, { key:"d", accent:CAT_PALETTE.mp, label:"Giá trị trung bình / bill", value: fmtVNDCompact(cross.avgBill),
+    CK(StatTileAccent, { key:"d", accent:CAT_PALETTE.mp, label:"Giá trị trung bình / bill", value: fmtVNDCompact(cross.avgBill),
       delta: CK(DeltaBadge, { pct: ckPct(cross.avgBill||0, crossPrev.avgBill||0), small:true }), sub: cross.linesPerBill!=null ? `${String(cross.linesPerBill).replace(".",",")} dòng hàng/bill` : "" }),
   ]);
 
@@ -16265,7 +16278,8 @@ function LostSalesView({ isAdmin, myStaff }){
   const isAll = shop==="all";
   const sb = isAll ? { perDay:doc.perDay, lost30:doc.lost30, skuCount:(doc.distinctSkuCount != null ? doc.distinctSkuCount : doc.skuCount), skuRows:doc.skuCount, transferable:doc.transferablePerDay } : ((doc.byShop||{})[shop] || { perDay:0, lost30:0, skuCount:0, transferable:0 });
   const qs = lsStrip(q.trim());
-  const allItems = (doc.items||[]).filter(it => isAll || it.shop===shop);
+  // 16/10/2026 (audit INV-3): điều chuyển đang TẮT (TRANSFER_FLOW_ON=false) → không gợi ý / giao việc điều chuyển, mọi mã hiện "Đặt hàng NCC"
+  const allItems = (doc.items||[]).filter(it => isAll || it.shop===shop).map(it => (!TRANSFER_FLOW_ON && it.action==="transfer") ? { ...it, action:"order" } : it);
   const items = allItems.filter(it => (act==="all" || it.action===act) && (!qs || lsStrip(it.pid+" "+it.name).includes(qs)));
   const maxShop = Math.max(1, ...shopsAll.map(s => (doc.byShop[s]||{}).perDay||0));
   const trend = (doc.trend||[]).map(t => ({ date:t.date, v: isAll ? t.perDay : ((t.byShop||{})[shop]||0) }));
@@ -16303,7 +16317,7 @@ function LostSalesView({ isAdmin, myStaff }){
     }
     return h("div", null,
       h(Pill360, { text:"Đặt hàng NCC", color:CL360.warn }),
-      h("div", { style:{ fontSize:11, marginTop:3 } }, it.sources.length ? `Shop khác có tồn nhưng không dư (${it.sources.map(x=>shopLabel(x.shop)).join(", ")})` : "Cả chuỗi không shop nào dư"),
+      h("div", { style:{ fontSize:11, marginTop:3 } }, !TRANSFER_FLOW_ON ? "Điều chuyển đang tạm tắt — đặt hàng NCC" : it.sources.length ? `Shop khác có tồn nhưng không dư (${it.sources.map(x=>shopLabel(x.shop)).join(", ")})` : "Cả chuỗi không shop nào dư"),
       h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)" } }, `Cần ~${fmtNum(it.need7)} cho 7 ngày`));
   }
   function openCompose(it){
@@ -16338,7 +16352,7 @@ function LostSalesView({ isAdmin, myStaff }){
       h("div", { className:"metric" }, h("div", { className:"label" }, "Nếu kéo dài 30 ngày"), h("div", { className:"value" }, fmtVNDCompact((sb.perDay||0)*30))),
       h("div", { className:"metric" }, h("div", { className:"label" }, "Đã mất (ước tính 30 ngày qua)"), h("div", { className:"value" }, fmtVNDCompact(sb.lost30))),
       h("div", { className:"metric" }, h("div", { className:"label" }, "Mã đang hết (có bán)"), h("div", { className:"value" }, fmtNum(sb.skuCount)), isAll && sb.skuRows != null && sb.skuRows !== sb.skuCount && h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)" } }, `mã khác nhau · ${fmtNum(sb.skuRows)} lượt mã×nhà thuốc`)),
-      h("div", { className:"metric good" }, h("div", { className:"label" }, "Gỡ được ngay bằng điều chuyển"), h("div", { className:"value" }, fmtVND(sb.transferable)), h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)" } }, "/ngày — shop khác đang dư"))),
+      TRANSFER_FLOW_ON && h("div", { className:"metric good" }, h("div", { className:"label" }, "Gỡ được ngay bằng điều chuyển"), h("div", { className:"value" }, fmtVND(sb.transferable)), h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)" } }, "/ngày — shop khác đang dư"))),
     h("div", { style:{ display:"grid", gridTemplateColumns: isAdmin && isAll ? "repeat(auto-fit,minmax(320px,1fr))" : "1fr", gap:12, marginBottom:16 } },
       isAdmin && isAll && h("div", { className:"card", style:{ margin:0 } },
         h("div", { className:"cardTitle", style:{ marginBottom:8 } }, "Theo nhà thuốc (đ/ngày)"),
@@ -16361,7 +16375,7 @@ function LostSalesView({ isAdmin, myStaff }){
           h("b", null, p.name), ` · hết ở ${p.shopCount} shop · ${fmtVND(p.perDay)}/ngày`, p.allOut && h("span", { style:{ color:CL360.bad, fontWeight:700 } }, " · không shop nào dư"))))),
     h("div", { style:{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center", marginBottom:10 } },
       h("input", { value:q, onChange:e=>setQ(e.target.value), placeholder:"Tìm mã / tên hàng…", style:{ flex:"1 1 200px", maxWidth:320, padding:"7px 10px", border:"1px solid var(--line)", borderRadius:8 } }),
-      [["all","Tất cả"],["transfer","Điều chuyển được"],["order","Phải đặt hàng"]].map(([k,l]) =>
+      (TRANSFER_FLOW_ON ? [["all","Tất cả"],["transfer","Điều chuyển được"],["order","Phải đặt hàng"]] : [["all","Tất cả"]]).map(([k,l]) =>
         h("button", { key:k, className:"btn"+(act===k?" btnPrimary":""), style:{ fontSize:12, padding:"5px 11px" }, onClick:()=>setAct(k) },
           `${l} (${allItems.filter(it => k==="all" || it.action===k).length}${isAll ? " dòng" : ""})`))),
     !items.length ? h("div", { className:"card", style:{ fontSize:13 } }, allItems.length ? "Không có mã nào khớp bộ lọc." : "Không có mã bán được nào đang hết hàng ")
@@ -20936,10 +20950,10 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate, aiOnly }){
     // AREA OVERVIEW — KPI khu vực theo đặc tả §II (xanh/vàng/đỏ/xám)
     rc("div", { key:"areaOverview", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:10, marginBottom:16 } }, [
       rc(StatTile, { key:"t1", label:"Nhà thuốc trong phạm vi", value:summary?fmtNum(totalShopsInScope):"—", sub:isAll?"Toàn bộ chuỗi":shopLabel(adminShop), tint:"var(--pineSoft)", onClick:()=>go("shop360", isAll ? undefined : { shop:adminShop }), source:"shopList", updatedAt:todayStr }),
-      rc(StatTile, { key:"t2", label:`Xanh · Đạt KPI (≥${kpiGreen})`, value:shopsAtKpiCount==null?"—":fmtNum(shopsAtKpiCount), sub:shopsAtKpiCount==null?"Chưa có dữ liệu":`/${totalShopsInScope} NT`, tint:"var(--pineSoft)", onClick:()=>go("shop360") }),
-      rc(StatTile, { key:"t3", label:"Đỏ · Nghiêm trọng", value:shopsRedCount==null?"—":fmtNum(shopsRedCount), sub:shopsRedCount==null?"Chưa có dữ liệu":`/${totalShopsInScope} NT`, tint:(shopsRedCount||0)>0?"#fdecec":"var(--pineSoft)", onClick:()=>go("risk") }),
-      rc(StatTile, { key:"t4", label:"Xám · Thiếu dữ liệu", value:shopsGrayCount==null?"—":fmtNum(shopsGrayCount), sub:"Không báo đạt KPI", tint:(shopsGrayCount||0)>0?"#E7E5DA":"var(--pineSoft)" }),
-      rc(StatTile, { key:"t5", label:"Có cảnh báo", value:shopsWithAlertCount==null?"—":fmtNum(shopsWithAlertCount), sub:issues.length?`${issues.length} vấn đề mở`:"—", tint:(shopsWithAlertCount||0)>0?"#fff4e0":"var(--pineSoft)", onClick:()=>go("risk"), source:"shopHealth", updatedAt:computedLabel||"—"}),
+      rc(StatTile, { key:"t2", label:`Xanh · Đạt KPI (≥${kpiGreen})`, value:shopsAtKpiCount==null?"—":fmtNum(shopsAtKpiCount), sub:shopsAtKpiCount==null?"Chưa có dữ liệu":`/${totalShopsInScope} NT`, tint:"var(--pineSoft)", onClick:()=>go("shop360"), source:"shopHealth", updatedAt:asOfLabel(summary) }),
+      rc(StatTile, { key:"t3", label:"Đỏ · Nghiêm trọng", value:shopsRedCount==null?"—":fmtNum(shopsRedCount), sub:shopsRedCount==null?"Chưa có dữ liệu":`/${totalShopsInScope} NT`, tint:(shopsRedCount||0)>0?"#fdecec":"var(--pineSoft)", onClick:()=>go("risk"), source:"shopHealth", updatedAt:asOfLabel(summary) }),
+      rc(StatTile, { key:"t4", label:"Xám · Thiếu dữ liệu", value:shopsGrayCount==null?"—":fmtNum(shopsGrayCount), sub:"Không báo đạt KPI", tint:(shopsGrayCount||0)>0?"#E7E5DA":"var(--pineSoft)", source:"shopHealth", updatedAt:asOfLabel(summary) }),
+      rc(StatTile, { key:"t5", label:"Có cảnh báo", value:shopsWithAlertCount==null?"—":fmtNum(shopsWithAlertCount), sub:issues.length?`${issues.length} vấn đề mở`:"—", tint:(shopsWithAlertCount||0)>0?"#fff4e0":"var(--pineSoft)", onClick:()=>go("risk"), source:"shopHealth", updatedAt:asOfLabel(summary) }),
       rc(StatTile, { key:"t6", label:"Hoàn thành đúng hạn (hôm nay)", value:onTimeTodayPct==null?"—":`${onTimeTodayPct}%`, sub:onTimeTodayPct==null?"Chưa có việc xong hôm nay":`${onTimeTodayCount}/${doneTodayN} việc`, tint:"var(--pineSoft)", onClick:()=>go("action", { tab:"done" }), source:"tasks", updatedAt:todayStr }),
     ]),
 
@@ -20953,7 +20967,7 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate, aiOnly }){
         unit: "đ",
         period: monthKey,
         source: "revenueAnalytics / monthTracking",
-        updatedAt: (revStats && (revStats.updatedAtTs || revStats.generatedAtTs)) ? String(revStats.updatedAtTs || revStats.generatedAtTs).replace("T"," ").slice(0,16) : "—",
+        updatedAt: asOfLabel(revStats),
         onClick: ()=>go("revenueAnalytics"),
       }),
       rc(KpiMetricCard, {
@@ -20964,7 +20978,7 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate, aiOnly }){
         unit: "%",
         period: "Hôm qua · người có ca",
         source: "shopHealthSummary.ops.checklistYesterday",
-        updatedAt: (summary && summary.generatedAtTs) ? String(summary.generatedAtTs).replace("T"," ").slice(0,16) : "—",
+        updatedAt: asOfLabel(summary),
         onClick: ()=>go("checklist"),
       }),
       rc(KpiMetricCard, {
@@ -24453,7 +24467,7 @@ function AiReportsPanel(){
         ]),
         v && v.status==="warn" && rc("div", { key:"val", style:{ fontSize:12, background:"#FFF4E0", border:"1px solid #F3D19C", borderRadius:8, padding:"7px 10px", marginBottom:8 } },
           `AI nêu ${v.unverified.length} con số KHÔNG tìm thấy trong số liệu hệ thống: ${v.unverified.join(", ")} — không dùng các số này khi chưa kiểm tra lại.`),
-        v && v.status==="ok" && rc("div", { key:"valok", style:{ fontSize:11.5, color:CL360.good, marginBottom:8 } }, `✓ ${v.checked} con số trong nhận xét AI đều khớp số liệu hệ thống.`),
+        v && v.status==="ok" && rc("div", { key:"valok", style:{ fontSize:11.5, color:CL360.good, marginBottom:8 } }, `✓ ${v.checked} con số trong nhận xét AI có trong số liệu hệ thống (máy chỉ dò con số, chưa kiểm cách AI diễn giải).`),
         sel.aiStatus==="ok" && sel.ai
           ? rc("div", { key:"ai", style:{ fontSize:12.8, lineHeight:1.55, background:"linear-gradient(135deg,#F5F1FE,#EEF2FF)", border:"1px solid #DDD6FE", borderRadius:10, padding:"10px 12px", marginBottom:10 } }, aiMdLite(sel.ai))
           : rc("div", { key:"aif", style:{ fontSize:12, color:CL360.warn, marginBottom:6 } }, "AI không trả lời được lần này — dưới đây là tóm tắt theo quy tắc từ số liệu hệ thống."),
@@ -24634,7 +24648,7 @@ function RiskDetailModal({ risk, policy, domainLabels, staffList, onClose, onNav
           rc("label", { key:"l" }, isAdmin ? "Xác nhận đóng rủi ro (Quản lý khu vực)" : "Đề nghị đóng rủi ro (chờ Quản lý khu vực xác nhận)"),
           risk.closeRequest && rc("div", { key:"cr", style:{ fontSize:12, background:"#fff4e0", borderRadius:8, padding:"6px 9px", marginBottom:6 } },
             `${risk.closeRequest.by} đề nghị đóng lúc ${fmtTs360(risk.closeRequest.at)} — ${RISK_RESOLUTION_VI[risk.closeRequest.resolution] || risk.closeRequest.resolution}${risk.closeRequest.note ? `: ${risk.closeRequest.note}` : ""}`),
-          risk.awaitingCloseConfirm && rc("div", { key:"aw", style:{ fontSize:12, background:"var(--pineSoft)", borderRadius:8, padding:"6px 9px", marginBottom:6 } }, "Điều kiện rủi ro đã hết đủ lâu — hệ thống KHÔNG tự đóng, chờ xác nhận."),
+          risk.awaitingCloseConfirm && rc("div", { key:"aw", style:{ fontSize:12, background:"var(--pineSoft)", borderRadius:8, padding:"6px 9px", marginBottom:6 } }, "Điều kiện rủi ro đã hết đủ lâu — chờ Quản lý khu vực xác nhận đóng. Quá 7 ngày không ai xác nhận thì hệ thống tự đóng (ghi là \"Tự đóng\")."),
           rc("select", { key:"s", value:resolution, onChange:e=>setResolution(e.target.value), style:{ marginBottom:6 } }, [
             rc("option", { key:"f", value:"FIXED", disabled:!canFix }, canFix ? "Đã khắc phục (điều kiện đã hết)" : "Đã khắc phục — CHƯA được: dữ liệu nguồn vẫn vượt ngưỡng"),
             rc("option", { key:"fp", value:"FALSE_POSITIVE" }, "Báo động giả (tạm ngừng phát hiện lại trong thời gian chờ của quy tắc)"),
@@ -24646,7 +24660,9 @@ function RiskDetailModal({ risk, policy, domainLabels, staffList, onClose, onNav
       ]),
       !risk.isOpen && rc("div", { key:"closed", style:{ fontSize:12.5, marginBottom:10, background:"var(--paper)", borderRadius:8, padding:"8px 10px" } }, [
         rc("div", { key:"a" }, `Đã đóng ${fmtTs360(risk.resolvedAt)}${risk.resolvedBy ? ` bởi ${risk.resolvedBy}` : ""} — ${RISK_RESOLUTION_VI[risk.resolution] || risk.resolution || "—"}${risk.resolutionNote ? `: ${risk.resolutionNote}` : ""}`),
-        rc("button", { key:"b", type:"button", className:"btn", style:{ marginTop:6, fontSize:12 }, onClick:()=>transition("REOPENED", { isOpen:true, resolvedAt:null, resolution:null, resolutionNote:null, suppressUntil:null, reopenCount:(risk.reopenCount||0)+1 }, "REOPEN_MANUAL") }, "Mở lại"),
+        rc("button", { key:"b", type:"button", className:"btn", style:{ marginTop:6, fontSize:12 }, onClick:()=>transition("REOPENED", { isOpen:true, resolvedAt:null, resolution:null, resolutionNote:null, suppressUntil:null, reopenCount:(risk.reopenCount||0)+1,
+          // 16/10/2026 (audit RISK-3): xoá mốc "điều kiện đã hết" — nếu giữ, lượt quét sau thấy mốc cũ và tự đóng lại ngay
+          conditionClearedAt:null, consecutiveMisses:0, awaitingCloseConfirm:false, awaitingCloseSince:null }, "REOPEN_MANUAL") }, "Mở lại"),
       ]),
       rc("div", { key:"hist", style:{ fontSize:12, marginBottom:10 } }, [
         rc("b", { key:"t" }, `Nhật ký (${events.length})`),
@@ -26587,7 +26603,8 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
     review: done.filter(t => !t.nhanXetQuanLy).sort((a,b) => (b.ngayHoanThanh||"").localeCompare(a.ngayHoanThanh||"")),
     // Hoàn thành nhưng có thể chưa đạt mục tiêu (có flag / không đạt trước đó)
     doneWeak: done.filter(t => t.ketQuaDat === false || t.subTrangThai === "Không đạt" || (t.mucTieuDat === false)).sort((a,b) => (b.ngayHoanThanh||"").localeCompare(a.ngayHoanThanh||"")),
-    overdue: open.filter(t => t.deadline && taskDeadlineTs360(t) < nowTs).sort(sortOpen),
+    // 16/10/2026 (audit TASK-3): việc đã nộp kết quả, đang chờ kiểm tra KHÔNG tính quá hạn (đã có tab "Chờ xác minh")
+    overdue: open.filter(t => t.deadline && taskDeadlineTs360(t) < nowTs && taskSubStatus(t)!=="Chờ kiểm tra").sort(sortOpen),
     done: done.slice().sort((a,b) => (b.ngayHoanThanh||"").localeCompare(a.ngayHoanThanh||"")),
   };
   const tabs = shopScope ? [
@@ -26936,8 +26953,8 @@ function OpsOperatorConfig({ onMsg }){
 const OPS_TYPE_LABEL_UI = { rv:"Xem lại phương án chưa hiệu quả", DT01:"Doanh thu tháng dự kiến hụt", DT02:"Doanh thu ngày giảm", NS01:"NV chậm KPI", PP01:"Tăng ca bất thường", PP02:"Thiếu người trực", PP03:"Năng suất thấp", TK01:"Việc tồn đọng", TK02:"Người hay quá hạn", VH01:"Việc quá hạn", KH01:"Khách VIP im lặng", KH02:"Khách nguy cơ rời bỏ", HH01:"Thiếu hàng bán chạy", HH02:"Sắp thiếu hàng", HH03:"Tồn cao bán chậm", HH04:"Hàng không bán", HH06:"Cận date", CP01:"Không nộp checklist", CP02:"Thiếu bằng chứng", CP03:"Sai lệch kiểm kê", prob:"Kèm cặp thử việc", promo:"Bỏ lỡ khuyến mại", transfer:"Điều chuyển hàng", pace:"DT trong ngày dưới nhịp", bp:"Áp dụng thực hành chuẩn" };
 const LEARN_API = "https://asia-southeast1-upharma-176d5.cloudfunctions.net/runJobNow?job=aiLearningApiNow";
 const learnCall = (action, payload, ms) => callCf(LEARN_API, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ action, ...(payload||{}) }) }, ms||540000);
-const LC_LABEL = { PROPOSED:"Đề xuất", APPROVED:"Đã duyệt", EXECUTED:"Đã làm", MEASURED:"Đã đo", LEARNED:"Đã học", REJECTED:"Từ chối", EXPIRED:"Hết hạn" };
-const LC_COLOR = { PROPOSED:"#B45309", APPROVED:"#2563EB", EXECUTED:"#7C3AED", MEASURED:"#0F766E", LEARNED:"#15803D", REJECTED:"#B91C1C", EXPIRED:"#64748B" };
+const LC_LABEL = { PROPOSED:"Đề xuất", APPROVED:"Đã duyệt", EXECUTED:"Đã làm", MEASURED:"Đã đo", LEARNED:"Đã học", UNMEASURED:"Chưa đo được", REJECTED:"Từ chối", EXPIRED:"Hết hạn" };
+const LC_COLOR = { PROPOSED:"#B45309", APPROVED:"#2563EB", EXECUTED:"#7C3AED", MEASURED:"#0F766E", LEARNED:"#15803D", UNMEASURED:"#64748B", REJECTED:"#B91C1C", EXPIRED:"#64748B" };
 function opsFmtV(v){ if(v==null) return "—"; if(typeof v==="number") return Math.abs(v)>=1e5 ? (Math.abs(v)>=1e6 ? (Math.round(v/1e5)/10).toString().replace(".",",")+"tr" : Math.round(v/1000)+"k") : String(Math.round(v*100)/100).replace(".",","); return String(v); }
 function OpsLearningView(){
   const h = React.createElement;
@@ -27253,7 +27270,7 @@ function OpsOperatorView({ onNavigate }){
       return keys.length ? keys.map(k => { const list = g[k]; const root = (list.find(r => r.rootCause && r.date===today) || list.find(r => r.rootCause) || {}).rootCause; const money = list.reduce((x,r)=>x+(r.impactPerDay||0),0);
         return h("div", { key:k, className:"card", style:{ padding:"10px 12px", marginBottom:10 } },
           h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap" } }, h("div", { style:{ fontWeight:800, fontSize:15 } }, k==="Chuỗi" ? k : shopLabel(k)), money>0 && h("div", { style:{ fontWeight:800, color:"#B45309", fontSize:13 } }, `Tác động ~${fmM(money)}/ngày`)),
-          root && h("div", { style:{ fontSize:13, margin:"4px 0 6px", padding:"6px 9px", background:"#FFFBEB", borderRadius:8 } }, h("b", null, "Nguyên nhân gốc: "), root),
+          root && h("div", { style:{ fontSize:13, margin:"4px 0 6px", padding:"6px 9px", background:"#FFFBEB", borderRadius:8 } }, h("b", null, "Giả thuyết của AI (chưa kiểm chứng): "), root),
           list.sort((a,b)=>(b.impactPerDay||0)-(a.impactPerDay||0)).map(r => h("div", { key:r.id, style:{ fontSize:13, padding:"4px 0", borderTop:"1px solid var(--line)", display:"flex", gap:8, justifyContent:"space-between" } },
             h("span", null, h("b", { style:{ color: r.status==="pending" ? "#B45309" : r.status==="overdue" ? "#B91C1C" : "#2563EB", fontSize:11.5 } }, (OPS_ST[r.status]||r.status) + " · "), r.title, r.money && h("span", { style:{ color:"var(--inkSoft)" } }, " · " + r.money.label)),
             h("span", { style:{ fontSize:12, color:"var(--inkSoft)", whiteSpace:"nowrap" } }, who(r))))); }) : h("div", { className:"emptyState" }, "Chưa có việc nào."); })()),
