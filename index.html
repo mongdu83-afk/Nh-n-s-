@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261016-13";
+window.__APP_BUILD = "20261016-14";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -24553,6 +24553,12 @@ function AiAgentStatsCard(){
       rc(MiniStat360, { key:"s", label:"Hành động đạt cam kết", value:pctTxt(pr.successRatePct), sub:`${fmtNum(pr.success||0)}/${fmtNum(pr.measured||0)} việc đã đo` }),
       rc(MiniStat360, { key:"x", label:"AI tự giao", value:fmtNum(Object.values(pr.auto||{}).reduce((a,x)=>a+x,0)), sub:`${fmtNum(pr.autoBlocked||0)} bị chặn vì số chưa khớp` }),
       rc(MiniStat360, { key:"p", label:"Chi phí / việc được duyệt", value: pr.costPerApprovedUsd!=null ? `$${pr.costPerApprovedUsd}` : "—", sub:"Chỉ tính AI điều hành" }),
+    ]),
+    // lỗi AI hay gặp nhất (500 lượt gần nhất) + model đang chạy — để biết lỗi do đâu
+    st.calls && (st.calls.topErrors||[]).length > 0 && rc("div", { key:"er", style:{ fontSize:12, border:"1px solid var(--line)", borderRadius:10, padding:"8px 10px", marginBottom:10 } }, [
+      rc("div", { key:"h", style:{ fontWeight:700, marginBottom:4 } }, `Lỗi AI hay gặp (${fmtNum(st.calls.sample||0)} lượt gần nhất · trễ p50 ${st.calls.latencyP50!=null ? (st.calls.latencyP50/1000).toFixed(1)+"s" : "—"}, p95 ${st.calls.latencyP95!=null ? (st.calls.latencyP95/1000).toFixed(1)+"s" : "—"})`),
+      ...st.calls.topErrors.map((e, i) => rc("div", { key:i, style:{ color:"var(--inkSoft)" } }, `${e.n} lần — ${e.m}`)),
+      rc("div", { key:"m", style:{ marginTop:4, color:"var(--inkSoft)" } }, "Model: " + Object.entries(st.calls.byModel||{}).sort((a,b)=>b[1]-a[1]).map(([m,n]) => `${m} ${n}`).join(" · ")),
     ]),
     pend.length > 0 && rc("div", { key:"pd", style:{ border:"1px solid #FCD34D", background:"#FFFBEB", borderRadius:10, padding:"8px 10px", marginBottom:10 } }, [
       rc("div", { key:"h", style:{ fontWeight:700, fontSize:13, marginBottom:4 } }, "AI đề xuất mở quyền tự giao — chờ chị duyệt"),
