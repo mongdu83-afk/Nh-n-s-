@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261016-7";
+window.__APP_BUILD = "20261016-8";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -1744,7 +1744,7 @@ function ChecklistQualityPanel({ templates, staff, scopeShop, isAdmin, giver }){
       setData(snap.docs.map(d => d.data()));
     }catch(e){ logSystemError("checklistQuality", e); setData({ error:e.message }); }
   }
-  useEffect(()=> db.collection("tasks").where("sourceScreen", "==", "checklistQuality").onSnapshot(s => setFixTasks(s.docs.map(d => d.data())), err => logSystemError("checklistQualityTasks", err)), []);
+  useEffect(()=> (scopeShop && !isAdmin ? db.collection("tasks").where("sourceScreen", "==", "checklistQuality").where("shop", "==", scopeShop) : db.collection("tasks").where("sourceScreen", "==", "checklistQuality")).onSnapshot(s => setFixTasks(s.docs.map(d => d.data())), err => logSystemError("checklistQualityTasks", err)), []);
   const staffById = {}; staff.forEach(s => { staffById[s.id] = s; });
   const res = Array.isArray(data) ? clqAnalyze({ reports:data, templatesByRole:templates, staffById, since, today, shop: shopF==="Tất cả" ? null : shopF, fixTasks }) : null;
   const tone = (t) => ({ red:"sev-critical", orange:"sev-warning", yellow:"sev-monitor", green:"sev-healthy" })[t] || "sev-neutral";
@@ -10777,8 +10777,9 @@ function KpiFormulaHelpCard(){
 /** Chống trùng nhiệm vụ từ cùng nguồn cảnh báo (P1 Action Center). */
 async function findOpenTaskBySource({ sourceRiskId, sourceCode, sourceType, shop }){
   try{
-    let q = db.collection("tasks").where("trangThai","==","Đang giao").limit(80);
-    const snap = await q.get();
+    let q = db.collection("tasks").where("trangThai","==","Đang giao");
+    if(shop && !window.__isAdmin) q = q.where("shop","==",shop); // 16/10/2026 (audit G1): nhân viên/CHT chỉ đọc được việc nhà thuốc mình
+    const snap = await q.limit(80).get();
     const code = sourceCode || null;
     const rid = sourceRiskId || null;
     const st = sourceType || null;
@@ -22404,6 +22405,8 @@ async function searchProducts360(q){
 // nhà thuốc / cùng khách / cùng mã hàng điều chuyển / cùng vấn đề của nhân viên). Truy vấn 1 trường (không cần
 // index ghép), lọc trạng thái + nhà thuốc trên máy. Lỗi quyền đọc (nhân viên) → bỏ qua, không chặn việc giao.
 async function findOpenDuplicateTask(extra, opts){
+  opts = opts || {};
+  if(!opts.restrictShop && !window.__isAdmin && opts.shop) opts = { ...opts, restrictShop: opts.shop }; // 16/10/2026 (audit G1)
   const x = extra || {}; const o = opts || {};
   let field = null, value = null, match = () => true;
   if(x.sourceIssueCode){ field = "sourceIssueCode"; value = x.sourceIssueCode; const sh = x.sourceShop || o.shop; match = t => !sh || t.shop===sh || t.sourceShop===sh; }
@@ -24562,7 +24565,7 @@ function RiskDetailModal({ risk, policy, domainLabels, staffList, onClose, onNav
   const [snooze, setSnooze] = useState("");
   const [busy, setBusy] = useState(false);
   useEffect(()=> db.collection("riskEvents").where("riskId","==",risk.riskId).onSnapshot(s => setEvents(s.docs.map(d => d.data()).sort((a,b) => String(b.at).localeCompare(String(a.at)))), err => logSystemError("riskEvents", err)), [risk.riskId]);
-  useEffect(()=> db.collection("tasks").where("sourceRiskId","==",risk.riskId).onSnapshot(s => setTasks(s.docs.map(d => ({ id:d.id, ...d.data() }))), err => logSystemError("tasks-risk", err)), [risk.riskId]);
+  useEffect(()=> (window.__isAdmin || !risk.shop ? db.collection("tasks").where("sourceRiskId","==",risk.riskId) : db.collection("tasks").where("sourceRiskId","==",risk.riskId).where("shop","==",risk.shop)).onSnapshot(s => setTasks(s.docs.map(d => ({ id:d.id, ...d.data() }))), err => logSystemError("tasks-risk", err)), [risk.riskId]);
   const nowIso = new Date().toISOString();
   const ref = db.collection("risks").doc(risk.riskId);
   async function transition(status, extra, evAction, evExtra){
@@ -26475,9 +26478,11 @@ function ImpactEffectivenessPanel({ shopScope }){
   const today = todayISO();
   useEffect(()=>{
     setRows(null); setErr(null);
-    let q = db.collection("tasks").where("ngayHoanThanh", ">=", addDays(today, -90));
+    // 16/10/2026 (audit G1): CHT chỉ đọc được việc nhà thuốc mình → lọc theo shop ở truy vấn, lọc ngày ở trình duyệt (khỏi cần chỉ mục ghép)
+    let q = shopScope ? db.collection("tasks").where("shop", "==", shopScope) : db.collection("tasks").where("ngayHoanThanh", ">=", addDays(today, -90));
+    const since90 = addDays(today, -90);
     const unsub = q.onSnapshot(snap => {
-      let list = snap.docs.map(d => ({ id:d.id, ...d.data() })).filter(t => t.trangThai==="Đã hoàn thành");
+      let list = snap.docs.map(d => ({ id:d.id, ...d.data() })).filter(t => t.trangThai==="Đã hoàn thành" && (t.ngayHoanThanh||"") >= since90);
       if(shopScope) list = list.filter(t => t.shop===shopScope);
       // Chỉ việc có liên kết vấn đề hoặc có ghi trước/sau/tác động
       list = list.filter(t => t.sourceIssueCode || t.truocXuLy || t.sauXuLy || t.tacDong);
@@ -28668,6 +28673,7 @@ function App(){
       try{ const tr = await user.getIdTokenResult(); staffClaim = !!(tr.claims && tr.claims.staffId); } catch(e){}
       setHasStaffClaim(staffClaim);
       setIsAdmin(admin);
+      window.__isAdmin = !!admin; // 16/10/2026 (audit G1): hàm dùng chung biết có cần lọc theo nhà thuốc (luật Firestore theo shop) hay không
       setClaimsReady(true);
     });
     return unsub;
