@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261016-2";
+window.__APP_BUILD = "20261016-4";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -9921,7 +9921,7 @@ function ProbationView({ isAdmin, myStaff, trainStats, navParam }){
 
 function TrainingView({ isAdmin, myStaff, navParam }){
   // 4/10/2026 (Phương): mọi thứ về đào tạo ở 1 chỗ — Nhân sự › Đào tạo.
-  const TR_SUBS = ["tracuu","phacdo","trieuchung","tinhhuong","khoahoc","checklist","thuviec"];
+  const TR_SUBS = ["tracuu","tailieu","phacdo","trieuchung","tinhhuong","khoahoc","checklist","thuviec"];
   const [trSub, setTrSub] = useState((navParam && TR_SUBS.includes(navParam.sub)) ? navParam.sub : (isAdmin ? "checklist" : "tracuu"));
   useEffect(()=>{ if(navParam && TR_SUBS.includes(navParam.sub)) setTrSub(navParam.sub); }, [navParam]);
   const [hires, setHires] = useState([]);
@@ -10108,8 +10108,11 @@ function TrainingView({ isAdmin, myStaff, navParam }){
   // 30/9/2026: tiến độ checklist + điểm buddy TB → truyền sang màn Thử việc
   const trainStats = {};
   hires.forEach(hh => { const st = hireStats(hh); const rs = reports.filter(r=>r.hireId===hh.id && r.danhGia); trainStats[hh.id] = { pct:st.pct, verifiedPct:st.verifiedPct, star: rs.length ? rs.reduce((a,r)=>a+Number(r.danhGia||0),0)/rs.length : null }; });
-  const trTabs = [{ id:"tracuu", label:"Thẻ sản phẩm" }, { id:"phacdo", label:"Phác đồ cắt liều" }, { id:"trieuchung", label:"Tư vấn theo triệu chứng" },
+  const trTabs = [{ id:"tracuu", label:"Thẻ sản phẩm" }, { id:"tailieu", label:"Tài liệu & Quy định" }, { id:"phacdo", label:"Phác đồ cắt liều" }, { id:"trieuchung", label:"Tư vấn theo triệu chứng" },
     { id:"tinhhuong", label:"Tình huống luyện tập" }, { id:"khoahoc", label:"Khoá học" }, { id:"checklist", label:"Checklist & buddy" }, { id:"thuviec", label:"Thử việc" }];
+  if(trSub==="tailieu") return React.createElement(React.Fragment, null,
+    React.createElement(SubTabBar, { key:"sub", tabs:trTabs, active:trSub, onChange:setTrSub }),
+    React.createElement(ProductDocsView, { key:"docs" }));
   if(trSub==="tinhhuong") return React.createElement(React.Fragment, null,
     React.createElement(SubTabBar, { key:"sub", tabs:trTabs, active:trSub, onChange:setTrSub }),
     React.createElement(TtsCaseLibraryView, { key:"tl", isAdmin }));
@@ -15387,6 +15390,44 @@ function SubTabBar({ tabs, active, onChange, style }){
         background: active===t.id ? "var(--pine)" : "#fff", color: active===t.id ? "#fff" : "var(--ink)" },
     }, subTabLabel(t))),
   ]);
+}
+// 16/10/2026 (chị Hà): TÀI LIỆU SẢN PHẨM + QUY ĐỊNH lấy từ upharma.com.vn (đồng bộ mỗi đêm 2:25 — productDocsSyncDaily).
+// Tra cứu KHÔNG dùng AI: gõ tên sản phẩm/quy định → mở PDF, Google Drive hoặc trang gốc.
+function ProductDocsView(){
+  const h = React.createElement;
+  const [docs, setDocs] = useState(null); const [regs, setRegs] = useState([]); const [q, setQ] = useState(""); const [kind, setKind] = useState("all"); const [limit, setLimit] = useState(60);
+  useEffect(()=>{ let off = false;
+    Promise.all([db.collection("productDocs").get(), db.collection("regulations").get().catch(()=>null)]).then(([a, b]) => { if(off) return;
+      setDocs(a.docs.map(d => ({ ...d.data(), _k:"doc" })).sort((x,y)=>String(y.createdAtSrc||"").localeCompare(String(x.createdAtSrc||""))));
+      setRegs(b ? b.docs.map(d => ({ ...d.data(), _k:"reg" })).filter(r => String(r.status ?? "1") === "1").sort((x,y)=>String(y.timeCreate||"").localeCompare(String(x.timeCreate||""))) : []); })
+      .catch(() => { if(!off) setDocs([]); });
+    return () => { off = true; }; }, []);
+  useEffect(()=>{ setLimit(60); }, [q, kind]);
+  if(docs === null) return h(EmptyState, { kind:"loading" });
+  const nq = normalizeName(q.trim());
+  const words = nq.split(/\s+/).filter(Boolean);
+  const hay = (it) => normalizeName([it.title, it.number, ...(it.products||[]).map(p => p.name + " " + p.id), ...(it.productIds||[])].join(" "));
+  const all = (kind === "all" ? regs.concat(docs) : kind === "reg" ? regs : docs);
+  const rows = words.length ? all.filter(it => { const t = hay(it); return words.every(w => t.includes(w)); }) : all;
+  const btn = (href, label, primary) => href ? h("a", { href, target:"_blank", rel:"noopener noreferrer", className:"btn" + (primary ? " btnPrimary" : ""), style:{ fontSize:12, padding:"4px 10px", textDecoration:"none", whiteSpace:"nowrap" } }, label) : null;
+  const fmtD = (s) => { const m = String(s||"").match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[3]}/${m[2]}/${m[1]}` : ""; };
+  const chip = (k, l, n) => h("button", { key:k, type:"button", className:"btn" + (kind===k ? " btnPrimary" : ""), style:{ fontSize:12, padding:"5px 11px" }, onClick:()=>setKind(k) }, `${l} (${n})`);
+  return h("div", null,
+    h("div", { className:"card", style:{ marginBottom:12 } },
+      h("input", { type:"text", value:q, onChange:e=>setQ(e.target.value), placeholder:"Gõ tên sản phẩm hoặc quy định — VD: zentokid, trả hàng, thưởng…", style:{ width:"100%", fontSize:15, padding:"10px 12px", borderRadius:10, border:"1px solid var(--line)" } }),
+      h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", marginTop:8 } }, chip("all", "Tất cả", regs.length + docs.length), chip("doc", "Tài liệu sản phẩm", docs.length), chip("reg", "Quy định", regs.length)),
+      h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:6 } }, "Nguồn: upharma.com.vn (Đào tạo › Tài liệu và Quy định), tự cập nhật mỗi đêm. Mở file/quy định cần đăng nhập upharma.com.vn nếu trang yêu cầu.")),
+    !rows.length ? h("div", { className:"emptyState" }, words.length ? "Không tìm thấy — thử gõ ngắn hơn (VD chỉ tên thương hiệu)." : "Chưa có dữ liệu — chờ lần đồng bộ đêm nay.")
+    : h("div", { className:"card", style:{ padding:0 } }, rows.slice(0, limit).map((it, i) => h("div", { key:it._k + it.id, style:{ display:"flex", gap:10, alignItems:"center", justifyContent:"space-between", padding:"10px 14px", borderTop: i ? "1px solid var(--line)" : "none", flexWrap:"wrap" } },
+        h("div", { style:{ flex:"1 1 260px", minWidth:0 } },
+          h("div", { style:{ fontWeight:700, fontSize:14 } }, h("span", { style:{ fontSize:10.5, fontWeight:700, color: it._k==="reg" ? "#7C3AED" : "var(--pine)", marginRight:6, textTransform:"uppercase" } }, it._k==="reg" ? "Quy định" : "Tài liệu"), it.title || "(không tên)"),
+          h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:2 } },
+            it._k==="reg" ? [fmtD(it.timeCreate) && `Ngày văn bản ${fmtD(it.timeCreate)}`, fmtD(it.timeEnd) && `hiệu lực ${fmtD(it.timeEnd)}`, it.office].filter(Boolean).join(" · ")
+            : [(it.products||[]).slice(0,3).map(p => p.name).join(" · "), fmtD(it.createdAtSrc) && `cập nhật ${fmtD(it.createdAtSrc)}`].filter(Boolean).join(" — "))),
+        h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap" } },
+          it._k==="reg" ? btn(`https://upharma.com.vn/quy-dinh/xem-quy-dinh/${encodeURIComponent(it.id)}`, "Mở quy định", true)
+          : [h(React.Fragment, { key:"f" }, btn(it.file, "Tài liệu PDF", true)), h(React.Fragment, { key:"l" }, btn(it.link, "Google Drive")), h(React.Fragment, { key:"v" }, /^https?:/.test(it.video||"") ? btn(it.video, "Video") : null)])))),
+    rows.length > limit && h("div", { style:{ textAlign:"center", marginTop:10 } }, h("button", { className:"btn btnGhost", onClick:()=>setLimit(limit + 60) }, `Xem thêm (${rows.length - limit})`)));
 }
 function HangHoaView({ isAdmin, myStaff, navParam }){
   const subTabsAll = [
