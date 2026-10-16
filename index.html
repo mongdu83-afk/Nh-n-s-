@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261016-4";
+window.__APP_BUILD = "20261016-5";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -3460,6 +3460,7 @@ function WeeklyReportView({ isAdmin, myStaff }){
       const days = []; for(let d = currentMonday; d <= todayISO(); d = addDays(d, 1)) days.push(d);
       const rev = days.reduce((a, d) => a + (Number((b.revenueByDay||{})[d]) || 0), 0);
       const ord = days.reduce((a, d) => a + (Number((b.orderCountByDay||{})[d]) || 0), 0);
+      const hhs = days.reduce((a, d) => a + (Number((b.hhsRevenueByDay||{})[d]) || 0), 0); // 16/10/2026: điền sẵn cả hàng hệ số
       let mtShop = null;
       try{ const mt = (await db.collection("opsConfig").doc("revenueAnalyticsMonths").collection("months").doc(monthOf(currentMonday)).get()).data(); mtShop = mt && mt.byShop && mt.byShop[selfShop]; }catch(e){}
       const tg = k => mtShop && mtShop[k] && Number(mtShop[k].target) > 0 ? String(Math.round(Number(mtShop[k].target))) : "";
@@ -3468,6 +3469,7 @@ function WeeklyReportView({ isAdmin, myStaff }){
         const put = (key, field, v) => { if(v==="" || v==null) return; const cur = (n[key]||{})[field]; if(force || cur==="" || cur==null) n[key] = { ...(n[key]||weeklyProgressEmpty()), [field]:String(v) }; };
         if(rev > 0) put("revenueProgress", "actualWeek", Math.round(rev));
         if(ord > 0 && rev > 0) put("avgBillProgress", "actualWeek", Math.round(rev / ord));
+        if(hhs > 0) put("heSoProgress", "actualWeek", Math.round(hhs));
         put("revenueProgress", "target", tg("revenue")); put("avgBillProgress", "target", tg("tbb")); put("heSoProgress", "target", tg("hangHeSo"));
         return n;
       });
@@ -17720,18 +17722,17 @@ const OPS_TABS = [
 // appLink, nút "Mở ..." trong các màn, badge chưa đọc, navParam) chạy như cũ. Không đổi dữ liệu,
 // công thức hay phân quyền (danh sách tab được phép của nhân viên vẫn là STAFF_TABS).
 // Bản trước khi tái cấu trúc: xem MENU_LEGACY_* bên dưới (hoàn nguyên = đổi USE_LEGACY_MENU = true).
+// 16/10/2026 (chị Hà — rà soát QLKV): gọn menu quản lý 11 → 6 nhóm (+ Hệ thống). Không xoá màn nào, chỉ gom lại.
+//  Tổng quan = điều hành + nhịp + rủi ro + AI (đọc 15 phút mỗi sáng) · Nhà thuốc = hồ sơ + kiểm tra khi đi thăm + checklist/ảnh
+//  Con người = KPI/NV/đào tạo/ghi nhận · Khách hàng & Kinh doanh · Hàng hoá & Báo cáo · Hệ thống (+ lịch sử kinh nghiệm)
 const OPS_GROUPS_ADMIN_V2 = [
-  { id:"command",      label:"Tổng quan điều hành",   tabs:["command","nhipvanhanh"] },
-  { id:"nhathuoc",     label:"Nhà thuốc",    tabs:["shop360","kiemtra","homnay","checklist","photos"] },
-  { id:"congviec",     label:"Công việc",    tabs:["tasks"] }, // 3/10/2026: gộp "Việc cần xử lý" vào Công việc (tab con Cần xử lý)
-  { id:"nhansu",       label:"Nhân sự",      tabs:["emp360","nhanvien","kpi","training","kudos"] },
-  { id:"khachhang",    label:"Khách hàng",   tabs:["taimua","crm"] }, // 3/10/2026: Customer 360 mở từ danh sách khách; "Cần chăm sóc hôm nay" gộp tái mua + rời bỏ + VIP + sinh nhật
-  { id:"hanghoagroup", label:"Hàng hoá",     tabs:["hanghoa","prod360","donthuoc"] }, // 4/10/2026: Từ điển sản phẩm dồn về Nhân sự › Đào tạo
-  { id:"kinhdoanh",    label:"Kinh doanh & Marketing", tabs:["revenueAnalytics","ctkm","temgia"] },
-  { id:"baocao",       label:"Báo cáo & Phân tích",   tabs:["baocaotuan","baocaolanhdao"] }, // 3/10/2026: "Kết quả ngày" gộp vào Doanh thu (tab con Hôm nay)
-  { id:"ruiro",        label:"Rủi ro & Tuân thủ",     tabs:["risk","kinhnghiem"] },
-  { id:"ai",           label:"AI điều hành",          tabs:["ai"] },
-  { id:"hethong",      label:"Hệ thống",              tabs:["hethong"] },
+  { id:"command",      label:"Tổng quan",                  tabs:["command","nhipvanhanh","risk","ai"] },
+  { id:"nhathuoc",     label:"Nhà thuốc",                  tabs:["shop360","kiemtra","checklist","photos","homnay"] },
+  { id:"congviec",     label:"Công việc",                  tabs:["tasks"] },
+  { id:"nhansu",       label:"Con người",                  tabs:["kpi","emp360","training","nhanvien","kudos"] },
+  { id:"khachhang",    label:"Khách hàng & Kinh doanh",    tabs:["taimua","crm","revenueAnalytics","ctkm","temgia"] },
+  { id:"hanghoagroup", label:"Hàng hoá & Báo cáo",         tabs:["hanghoa","prod360","baocaotuan","baocaolanhdao","donthuoc"] },
+  { id:"hethong",      label:"Hệ thống",                   tabs:["hethong","kinhnghiem"] },
 ];
 const OPS_GROUPS_STAFF_V2 = [
   { id:"nhathuoc",     label:"Nhà thuốc",    tabs:["homnay","checklist","photos","shop360","kiemtra","risk"] }, // shop360/kiemtra/risk: chỉ CHT (lọc ở leafTabs)
@@ -27848,13 +27849,15 @@ function UsagePanel(){
     setLayout(next); setLayoutMsg("Đã đánh dấu các màn vai trò đó KHÔNG mở lần nào trong kỳ — xem lại rồi bấm Lưu menu.");
   }
   const [rows, setRows] = useState(null);
+  const [staffAll, setStaffAll] = useState([]); // 16/10/2026: so với danh sách nhân viên → ai CHƯA dùng app trong kỳ
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   async function load(d){
     setBusy(true); setErr(null);
     try{
       const since = addDays(todayISO(), -(d - 1));
-      const s = await db.collection("usageDaily").where("date", ">=", since).get();
+      const [s, st] = await Promise.all([db.collection("usageDaily").where("date", ">=", since).get(), db.collection("staff").get()]);
+      setStaffAll(st.docs.map(x => ({ id:x.id, ...x.data() })).filter(x => !x.ngayNghiViec && x.shop && /^SHOP/.test(x.shop)));
       setRows(s.docs.map(x => x.data()));
     } catch(e){ setErr(e.message || String(e)); }
     setBusy(false);
@@ -27875,7 +27878,11 @@ function UsagePanel(){
     });
     OPS_TABS.forEach(t => { if(!by[t.id] && !["sales","donthuoc","action","ketquangay","cust360"].includes(t.id)) by[t.id] = { tab:t.id, opens:0, sec:0, users:new Set(), ql:0, cht:0, nv:0 }; });
     tabStats = Object.values(by).sort((a, b) => b.opens - a.opens);
-    shopStats = Object.entries(shops).map(([shop, v]) => ({ shop, users:v.users.size, avgDays:Math.round(v.userDays / Math.max(1, v.users.size) * 10) / 10 })).sort((a, b) => a.shop.localeCompare(b.shop));
+    const activeIds = new Set(rows.map(r => r.staffId).filter(Boolean));
+    staffAll.forEach(x => { if(!shops[x.shop]) shops[x.shop] = { users:new Set(), userDays:0 }; });
+    shopStats = Object.entries(shops).map(([shop, v]) => { const ss = staffAll.filter(x => x.shop === shop); const idle = ss.filter(x => !activeIds.has(x.id));
+      return { shop, users:v.users.size, total:ss.length, idle:idle.map(x => x.name), avgDays:Math.round(v.userDays / Math.max(1, v.users.size) * 10) / 10 }; })
+      .sort((a, b) => (b.idle.length - a.idle.length) || a.shop.localeCompare(b.shop));
   }
   const labelOf = id => (OPS_TABS.find(t => t.id === id) || {}).label || id;
   const th = (x, i) => React.createElement("th", { key:i, style:{ textAlign:i ? "right" : "left" } }, x);
@@ -27917,9 +27924,10 @@ function UsagePanel(){
       shopStats.length > 0 && React.createElement("div", { key:"sh" }, [
         React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:13.5, marginBottom:6 } }, "Theo nhà thuốc"),
         React.createElement("div", { key:"tb", className:"tableWrap" }, React.createElement("table", { className:"data tblCompact" }, [
-          React.createElement("thead", { key:"h" }, React.createElement("tr", null, ["Nhà thuốc", "Số người dùng", "TB ngày dùng / người"].map(th))),
+          React.createElement("thead", { key:"h" }, React.createElement("tr", null, ["Nhà thuốc", "Số người dùng", "TB ngày dùng / người", "Chưa dùng trong kỳ"].map(th))),
           React.createElement("tbody", { key:"b" }, shopStats.map(s => React.createElement("tr", { key:s.shop }, [
-            React.createElement("td", { key:"n" }, s.shop), tdR("u", s.users), tdR("d", s.avgDays),
+            React.createElement("td", { key:"n" }, s.shop), tdR("u", s.total ? `${s.users}/${s.total}` : s.users), tdR("d", s.avgDays),
+            React.createElement("td", { key:"i", style:{ textAlign:"right", color: s.idle.length ? CL360.bad : undefined, fontSize:12 } }, s.idle.length ? s.idle.join(", ") : "Tất cả đã dùng"),
           ]))),
         ])),
       ]),
