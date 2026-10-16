@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261016-12";
+window.__APP_BUILD = "20261016-13";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -3670,7 +3670,8 @@ function TaskAssignView({ isAdmin, myStaff, navParam, onNavigate, openTasks360 }
   const [form, setForm] = useState({ scope:"one", shop:DEFAULT_SHOPS[0], staffIds:[], recipientMode:"", title:"", mota:"", truocXuLy:"", deadline:addDays(todayISO(),3), hanGio:"17:00", dinhKemFiles:[], dinhKemLink:"", module:"Ops", mucDoAnhHuong:"Trung bình" });
   // 26/9/2026 (Task Intelligence): tab con quản lý + trạng thái nhập lý do "Bị vướng"/"Huỷ việc".
   // 3/10/2026: gộp "Việc cần xử lý" vào đây — quản lý mặc định mở hộp "Cần xử lý"
-  const [adminView, setAdminView] = useState(isAdmin ? ((navParam && navParam.sub) || (navParam && navParam.status ? "list" : "inbox")) : "list");
+  const [adminView, setAdminView] = useState(isAdmin ? ((navParam && navParam.sub) || (navParam && (navParam.status || navParam.tab || navParam.taskId) ? (navParam.status ? "list" : "inbox") : "board")) : "list");
+  const [adminFocusId, setAdminFocusId] = useState(null); const [adminTab, setAdminTab] = useState(null); // từ "Theo nhân viên" mở 1 việc / 1 nhóm việc
   const [chtStaffFilter, setChtStaffFilter] = useState(null); // { staffId, name } — CHT lọc việc theo 1 nhân viên
   const [chtFocusTaskId, setChtFocusTaskId] = useState(null);
   const [blockingId, setBlockingId] = useState(null);
@@ -4343,8 +4344,12 @@ function TaskAssignView({ isAdmin, myStaff, navParam, onNavigate, openTasks360 }
     (isAdmin || myStaff) && React.createElement("div", { key:"actions", className:"btnRow", style:{ marginBottom:16 } }, [
       React.createElement("button", { key:"add", className:"btn btnPrimary", onClick:()=>setShowForm(true) }, "＋ Giao việc mới"),
     ]),
-    isAdmin && React.createElement(SubTabBar, { key:"atabs", tabs:[{ id:"inbox", label:"Cần xử lý" }, { id:"list", label:"Danh sách & giao việc" }, { id:"intel", label:"Phân tích công việc" }], active:adminView, onChange:setAdminView }),
-    isAdmin && adminView==="inbox" && React.createElement(ActionCenterView, { key:"inbox", isAdmin, myStaff, navParam, onNavigate, openTasks:openTasks360 || [] }),
+    isAdmin && React.createElement(SubTabBar, { key:"atabs", tabs:[{ id:"board", label:"Theo nhân viên" }, { id:"inbox", label:"Cần xử lý" }, { id:"list", label:"Danh sách & giao việc" }, { id:"intel", label:"Phân tích công việc" }], active:adminView, onChange:setAdminView }),
+    // 16/10/2026: "Theo nhân viên" — 1 bảng gom mọi việc đang mở của từng nhân viên (xem StaffWorkBoard)
+    isAdmin && adminView==="board" && React.createElement(StaffWorkBoard, { key:"board", tasks, staffList,
+      onOpenTask: id => { const t = tasks.find(x => x.id===id); if(t) setViewTask(t); },
+      onGoInbox: tab => { setAdminFocusId(null); setAdminTab({ tab }); setAdminView("inbox"); } }),
+    isAdmin && adminView==="inbox" && React.createElement(ActionCenterView, { key:"inbox", isAdmin, myStaff, navParam: adminTab || navParam, onNavigate, openTasks:openTasks360 || [], focusTaskId: adminFocusId }),
     // 27/9/2026 (Phương): CỬA HÀNG TRƯỞNG xem tiến độ thực hiện của nhân viên nhà thuốc mình.
     isCHT && React.createElement(SubTabBar, { key:"ctabs", tabs:[{ id:"review", label:`Kiểm tra kết quả NV${chtAwaitingN ? ` (${chtAwaitingN})` : ""}` }, { id:"list", label:"Việc của nhà thuốc" }, { id:"progress", label:"Tiến độ nhân viên" }], active:(adminView==="progress"||adminView==="review") ? adminView : "list", onChange:v=>{ setAdminView(v); } }),
     // 27/9/2026 (Phương): CHT có màn "Công việc cần xử lý" giống quản lý — xem kết quả NV nộp, duyệt / trả lại.
@@ -26111,6 +26116,115 @@ function ReplenishView({ isAdmin, myStaff, onNavigate }){
   return rc("div", {}, [ head, shopChips, tiles, filters, body, modalEl, assignEl, zaloEl ]);
 }
 
+// 16/10/2026 (Phương: "công việc nằm rải rác khắp nơi, chị không kiểm soát được hết việc cần làm với nhân viên"):
+// BẢNG VIỆC THEO NHÂN VIÊN — 1 màn gom mọi việc đang mở của từng nhân viên (mọi nguồn: chị giao, CHT giao, AI điều hành,
+// AI tự giao theo quy tắc, CRM, nhắc tái mua, kế hoạch tuần) + checklist hôm nay + danh sách gọi khách + đề xuất AI chờ duyệt.
+// Chỉ ĐỌC dữ liệu đang có (tasks, dailyReports, careDaily, crmInteractions, opsProposals) — không đổi cách giao/duyệt việc.
+function taskOriginLabel(t){
+  const g = String(t.nguoiGiaoViec || "");
+  if(/^AI điều hành/.test(g)) return /AI tự giao/.test(g) ? "AI tự giao" : "AI điều hành";
+  if(/^AI tự giao/.test(g) || t.autoAssigned) return "AI tự giao";
+  if(t.source==="replenish") return "Nhắc tái mua";
+  if(/CRM/i.test(g) || t.crmCustomerId || t.crmCustomerName) return "Chăm sóc khách";
+  if(/Kế hoạch tuần/.test(g)) return "Kế hoạch tuần";
+  if(/cửa hàng trưởng/i.test(t.nguoiGiaoViecRole || "")) return "CHT giao";
+  return "Quản lý giao";
+}
+const ORIGIN_COLOR = { "Quản lý giao":"#2563EB", "CHT giao":"#0F766E", "AI điều hành":"#7C3AED", "AI tự giao":"#A855F7", "Chăm sóc khách":"#15803D", "Nhắc tái mua":"#B45309", "Kế hoạch tuần":"#64748B" };
+function StaffWorkBoard({ tasks, staffList, onOpenTask, onGoInbox }){
+  const rc = React.createElement; const today = todayISO(); const nowTs = `${today}T${nowHM()}`;
+  const [reports, setReports] = useState({}); const [care, setCare] = useState([]); const [called, setCalled] = useState({}); const [aiPend, setAiPend] = useState([]);
+  const [shopF, setShopF] = useState("Tất cả"); const [q, setQ] = useState(""); const [onlyIssue, setOnlyIssue] = useState(false); const [open, setOpen] = useState({});
+  useEffect(()=>{
+    const u1 = db.collection("dailyReports").where("ngay","==",today).onSnapshot(s => { const m = {}; s.forEach(d => { const x = d.data(); if(x.staffId) m[x.staffId] = x.trangThai || "Nháp"; }); setReports(m); }, err => logSystemError("swb dailyReports", err));
+    const u2 = db.collection("careDaily").where("date","==",today).onSnapshot(s => setCare(s.docs.map(d => d.data())), () => setCare([]));
+    const start = new Date(today + "T00:00:00+07:00").toISOString();
+    const u3 = db.collection("crmInteractions").where("createdAtTs", ">=", start).onSnapshot(s => { const m = {}; s.forEach(d => { const x = d.data(); if(x.phone) m[x.phone] = 1; }); setCalled(m); }, () => {});
+    const u4 = db.collection("opsProposals").where("status","==","pending").onSnapshot(s => setAiPend(s.docs.map(d => d.data())), () => setAiPend([]));
+    return () => { u1(); u2(); u3(); u4(); };
+  }, [today]);
+  const open0 = (tasks||[]).filter(t => t.trangThai==="Đang giao");
+  const isOver = t => t.deadline && `${t.deadline}T${t.hanGio||"23:59"}` < nowTs;
+  const active = (staffList||[]).filter(st => !isStaffResigned(st) && st.shop);
+  const byStaff = {}; active.forEach(st => { byStaff[st.id] = { st, tasks:[] }; });
+  const shopTasks = {}; const upTasks = [];
+  open0.forEach(t => {
+    if(t.assignType==="admin"){ upTasks.push(t); return; }
+    if(t.assignType==="staff" && t.staffId && byStaff[t.staffId]){ byStaff[t.staffId].tasks.push(t); return; }
+    const sh = t.shop || "?"; (shopTasks[sh] = shopTasks[sh] || []).push(t);
+  });
+  const cnt = (arr) => { const o = { open:arr.length, over:0, cho:0, vuong:0, src:{} }; arr.forEach(t => { const st = taskSubStatus(t); if(isOver(t) && st!=="Chờ kiểm tra") o.over++; if(st==="Chờ kiểm tra") o.cho++; if(st==="Bị vướng") o.vuong++; const k = taskOriginLabel(t); o.src[k] = (o.src[k]||0)+1; }); return o; };
+  const careBy = {}; care.forEach(L => { const n = (L.items||[]).length, d = (L.items||[]).filter(it => called[it.phone]).length; careBy[L.shop] = { n, d }; });
+  const aiBy = {}; aiPend.forEach(p => { if(p.shop) aiBy[p.shop] = (aiBy[p.shop]||0)+1; });
+  const allOpenStaff = Object.values(byStaff).flatMap(x => x.tasks).concat(Object.values(shopTasks).flat());
+  const T = cnt(allOpenStaff);
+  const shops = Array.from(new Set(active.map(st => st.shop).concat(Object.keys(shopTasks)))).filter(x => x && x!=="?").sort();
+  const s0 = q.trim().toLowerCase();
+  const chip = (label, n) => rc("span", { key:label, style:{ fontSize:11, padding:"1px 7px", borderRadius:999, border:`1px solid ${ORIGIN_COLOR[label]||"#94A3B8"}`, color:ORIGIN_COLOR[label]||"#475569", whiteSpace:"nowrap" } }, `${label} ${n}`);
+  const numC = (v, color) => v ? rc("b", { style:{ color } }, v) : rc("span", { style:{ color:"var(--inkSoft)" } }, "0");
+  const taskLine = (t) => { const st = taskSubStatus(t); const ov = isOver(t) && st!=="Chờ kiểm tra";
+    return rc("div", { key:t.id, style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", fontSize:12.5, padding:"5px 0", borderTop:"1px dashed var(--line)" } }, [
+      rc("span", { key:"o", style:{ fontSize:11, color:ORIGIN_COLOR[taskOriginLabel(t)]||"#475569", minWidth:92 } }, taskOriginLabel(t)),
+      rc("span", { key:"t", style:{ flex:"1 1 220px" } }, t.title || "(không tiêu đề)"),
+      rc("span", { key:"s", style:{ fontSize:11.5, color: st==="Chờ kiểm tra" ? CL360.warn : st==="Bị vướng" ? CL360.bad : "var(--inkSoft)" } }, st),
+      rc("span", { key:"d", style:{ fontSize:11.5, color: ov ? CL360.bad : "var(--inkSoft)", fontWeight: ov ? 700 : 400 } }, t.deadline ? `hạn ${t.deadline.slice(8,10)}/${t.deadline.slice(5,7)}${ov ? " · quá hạn" : ""}` : "không hạn"),
+      rc("button", { key:"b", type:"button", className:"btn btnGhost", style:{ padding:"2px 8px", fontSize:11.5 }, onClick:()=>onOpenTask && onOpenTask(t.id) }, "Mở"),
+    ]); };
+  const stat = (key, label, value, color, onClick) => rc(MiniStat360, { key, label, value:fmtNum(value), valueColor: value ? color : undefined, onClick });
+  return rc("div", null, [
+    rc("div", { key:"me", className:"card", style:{ marginBottom:12 } }, [
+      rc(Head360, { key:"h", title:"Việc chị cần xử lý", right: rc("span", { style:{ fontSize:11, color:"var(--inkSoft)" } }, "Cập nhật trực tiếp") }),
+      rc("div", { key:"g", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:10 } }, [
+        stat("c", "Kết quả chờ kiểm tra", T.cho, CL360.warn, onGoInbox && (()=>onGoInbox("awaiting"))),
+        stat("u", "Đề xuất NV/CHT gửi lên", upTasks.length, CL360.warn, onGoInbox && (()=>onGoInbox("mine"))),
+        stat("a", "Đề xuất AI chờ duyệt", aiPend.length, CL360.warn),
+        stat("v", "Việc bị vướng", T.vuong, CL360.bad, onGoInbox && (()=>onGoInbox("blocked"))),
+        stat("o", "Việc quá hạn", T.over, CL360.bad, onGoInbox && (()=>onGoInbox("overdue"))),
+      ]),
+      aiPend.length > 0 && rc("div", { key:"n", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:6 } }, "Đề xuất AI chờ duyệt: mở AI → AI điều hành để duyệt."),
+    ]),
+    rc("div", { key:"f", style:{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center", marginBottom:10 } }, [
+      rc("select", { key:"s", value:shopF, onChange:e=>setShopF(e.target.value), style:{ padding:"7px 9px", border:"1px solid var(--line)", borderRadius:8, fontSize:12 } }, ["Tất cả", ...shops].map(x => rc("option", { key:x, value:x }, x==="Tất cả" ? "Tất cả nhà thuốc" : shopLabel(x)))),
+      rc("input", { key:"q", value:q, onChange:e=>setQ(e.target.value), placeholder:"Tìm nhân viên…", style:{ padding:"7px 9px", border:"1px solid var(--line)", borderRadius:8, fontSize:12, minWidth:160 } }),
+      rc("label", { key:"o", style:{ fontSize:12, display:"flex", gap:4, alignItems:"center" } }, [ rc("input", { key:"c", type:"checkbox", checked:onlyIssue, onChange:e=>setOnlyIssue(e.target.checked) }), "Chỉ người có việc quá hạn / vướng / chờ kiểm tra" ]),
+    ]),
+    ...shops.filter(sh => shopF==="Tất cả" || sh===shopF).map(sh => {
+      const rows = Object.values(byStaff).filter(x => x.st.shop===sh && (!s0 || String(x.st.name||"").toLowerCase().includes(s0))).map(x => ({ ...x, c:cnt(x.tasks) }))
+        .filter(x => !onlyIssue || x.c.over || x.c.vuong || x.c.cho).sort((a,b) => (b.c.over-a.c.over) || (b.c.open-a.c.open) || String(a.st.name).localeCompare(String(b.st.name), "vi"));
+      const shared = shopTasks[sh] || []; const sc = cnt(shared); const cr = careBy[sh];
+      if(!rows.length && !(shared.length && !s0)) return null;
+      const subm = rows.filter(x => reports[x.st.id]==="Đã nộp").length;
+      return rc("div", { key:sh, className:"card", style:{ marginBottom:12 } }, [
+        rc("div", { key:"h", style:{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"baseline", marginBottom:6 } }, [
+          rc("b", { key:"n", style:{ fontSize:15 } }, shopLabel(sh)),
+          rc("span", { key:"c", style:{ fontSize:12, color:"var(--inkSoft)" } }, `Checklist hôm nay ${subm}/${rows.length} đã nộp`),
+          cr && rc("span", { key:"k", style:{ fontSize:12, color: cr.d >= cr.n ? CL360.good : "var(--inkSoft)" } }, `· Gọi khách ${cr.d}/${cr.n}`),
+          aiBy[sh] ? rc("span", { key:"a", style:{ fontSize:12, color:CL360.warn } }, `· ${aiBy[sh]} đề xuất AI chờ duyệt`) : null,
+        ]),
+        rc("div", { key:"t", className:"tableWrap" }, rc("table", { className:"data tblCompact" }, [
+          rc("thead", { key:"h" }, rc("tr", null, ["Nhân viên","Đang mở","Quá hạn","Chờ kiểm tra","Bị vướng","Checklist hôm nay","Việc từ đâu"].map(x => rc("th", { key:x }, x)))),
+          rc("tbody", { key:"b" }, [
+            ...rows.flatMap(x => { const k = x.st.id; const ck = reports[k];
+              const main = rc("tr", { key:k, style:{ cursor: x.tasks.length ? "pointer" : "default" }, onClick:()=> x.tasks.length && setOpen(o => ({ ...o, [k]: !o[k] })) }, [
+                rc("td", { key:"n" }, [ rc("b", { key:"n" }, (x.tasks.length ? (open[k] ? "▾ " : "▸ ") : "") + (x.st.name||"(không tên)")), rc("div", { key:"r", style:{ fontSize:11, color:"var(--inkSoft)" } }, x.st.role||"") ]),
+                rc("td", { key:"o" }, numC(x.c.open)), rc("td", { key:"v" }, numC(x.c.over, CL360.bad)), rc("td", { key:"c" }, numC(x.c.cho, CL360.warn)), rc("td", { key:"g" }, numC(x.c.vuong, CL360.bad)),
+                rc("td", { key:"k", style:{ fontSize:12, color: ck==="Đã nộp" ? CL360.good : "var(--inkSoft)" } }, ck==="Đã nộp" ? "✓ Đã nộp" : ck ? "Đang làm" : "Chưa mở"),
+                rc("td", { key:"s" }, rc("div", { style:{ display:"flex", gap:4, flexWrap:"wrap" } }, Object.entries(x.c.src).map(([l, n]) => chip(l, n)))),
+              ]);
+              return open[k] ? [main, rc("tr", { key:k+"_d" }, rc("td", { colSpan:7, style:{ background:"var(--paper)" } }, x.tasks.slice().sort((a,b)=>String(a.deadline||"9").localeCompare(String(b.deadline||"9"))).map(taskLine)))] : [main]; }),
+            shared.length > 0 && !s0 ? rc("tr", { key:"shared", style:{ cursor:"pointer" }, onClick:()=>setOpen(o => ({ ...o, ["sh_"+sh]: !o["sh_"+sh] })) }, [
+              rc("td", { key:"n" }, rc("b", null, (open["sh_"+sh] ? "▾ " : "▸ ") + "Việc chung cả nhà thuốc")),
+              rc("td", { key:"o" }, numC(sc.open)), rc("td", { key:"v" }, numC(sc.over, CL360.bad)), rc("td", { key:"c" }, numC(sc.cho, CL360.warn)), rc("td", { key:"g" }, numC(sc.vuong, CL360.bad)), rc("td", { key:"k" }, "—"),
+              rc("td", { key:"s" }, rc("div", { style:{ display:"flex", gap:4, flexWrap:"wrap" } }, Object.entries(sc.src).map(([l, n]) => chip(l, n)))),
+            ]) : null,
+            shared.length > 0 && !s0 && open["sh_"+sh] ? rc("tr", { key:"shared_d" }, rc("td", { colSpan:7, style:{ background:"var(--paper)" } }, shared.map(taskLine))) : null,
+          ]),
+        ])),
+      ]);
+    }),
+  ]);
+}
+
 function StaffProgressPanel({ openTasks, doneTasks, roster, fixedShop, onPick, title }){
   const rc = React.createElement;
   const [progShop, setProgShop] = useState("Tất cả");
@@ -26664,7 +26778,7 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
     const all = [...(openTasks||[]), ...(shopDoneTasks||[])];
     const t = all.find(x => x.id===focusTaskId);
     if(!t) return;
-    setTab(t.trangThai==="Đã hoàn thành" ? "done" : (taskSubStatus(t)==="Chờ kiểm tra" ? "awaiting" : "team"));
+    setTab(t.trangThai==="Đã hoàn thành" ? "done" : (taskSubStatus(t)==="Chờ kiểm tra" ? "awaiting" : (!shopScope && t.assignType==="admin" ? "mine" : "team")));
     setSelId(t.id); setSearch("");
   }, [focusTaskId, (openTasks||[]).length, (shopDoneTasks||[]).length]);
 
