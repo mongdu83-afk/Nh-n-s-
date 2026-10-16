@@ -58,3 +58,10 @@ test("Không có chi phí/doanh thu → Chưa đủ dữ liệu để kết lu�
   const r = pmdDecide({ chain:{} }, null);
   assert.equal(r.decision.code, "nodata");
 });
+
+test("Kỳ đối chứng trùng đợt KM khác → không kết luận Tiếp tục (audit KM-1)", () => {
+  const D = chainDaily("2026-09-15", 30, (d) => d >= "2026-10-01" ? 120e6 : 100e6);
+  const r = pmdDecide(camp(), D, { otherCampaigns: [{ from:"2026-09-20", to:"2026-09-25", name:"Đợt tháng 9" }] });
+  assert.equal(r.decision.code, "watch");
+  assert.ok(r.caveats.some(c => c.includes("trùng đợt khuyến mại khác")));
+});
