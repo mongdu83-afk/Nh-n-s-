@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261015-5";
+window.__APP_BUILD = "20261016-2";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -4664,7 +4664,7 @@ function PosDraftCard({ isAdmin, myStaff }){
     h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap", alignItems:"baseline" } },
       h("div", { style:{ fontWeight:800, fontSize:15 } }, `Rà dự trù tự động POS (${String(R.date||"").split("-").reverse().join("/")})`),
       h("button", { className:"btn btnGhost", style:{ fontSize:12, padding:"2px 8px" }, onClick:()=>setOpen(v=>!v) }, open ? "Thu gọn" : "Xem chi tiết")),
-    h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", margin:"2px 0 6px" } }, `POS đã tự dự trù ${tot.pos} mã theo tốc độ bán. Cần chỉnh: ${tot.m} mã POS bỏ sót · ${tot.u} mã đặt thiếu · ${tot.o} mã đặt dư/mã dừng. POS tự duyệt dự trù 1 lần/tuần → chỉnh trên POS (Kho hàng › Gọi hàng › Dự trù tự động) TRƯỚC lượt tự duyệt.${!isAdmin && myShop ? " Nhà thuốc: " + dayInfo(myShop) + "." : ""}`),
+    h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", margin:"2px 0 6px" } }, `POS đã tự dự trù ${tot.pos} ${shops.length > 1 ? "lượt mã×nhà thuốc" : "mã"} theo tốc độ bán. Cần chỉnh: ${tot.m} ${shops.length > 1 ? "lượt " : ""}mã POS bỏ sót · ${tot.u} mã đặt thiếu · ${tot.o} mã đặt dư/mã dừng${shops.length > 1 ? " (cộng các nhà thuốc — 1 mã ở nhiều nhà thuốc tính nhiều lần)" : ""}. POS tự duyệt dự trù 1 lần/tuần → chỉnh trên POS (Kho hàng › Gọi hàng › Dự trù tự động) TRƯỚC lượt tự duyệt.${!isAdmin && myShop ? " Nhà thuốc: " + dayInfo(myShop) + "." : ""}`),
     open && h("div", null,
       isAdmin && h("div", { style:{ fontSize:12.5, margin:"4px 0 8px", padding:8, background:"#F5F3FF", borderRadius:8 } },
         h("div", { style:{ fontWeight:700, marginBottom:4 } }, "Ngày POS TỰ DUYỆT dự trù hàng tuần của từng nhà thuốc (AI giao việc chỉnh dự trù vào hôm trước và sáng ngày tự duyệt):"),
@@ -7703,7 +7703,7 @@ function KpiView({ isAdmin, myStaff }){
           if(any){ await mergeDotFields("kpiAssignments", kpiAssignmentId(s.id, thang), payload); matched++; }
         }
       }
-      const skuMsg = skuShopsUpdated>0 ? ` Đã cập nhật danh sách hàng thường trực cho ${skuShopsUpdated} nhà thuốc (${skuTotal} mã).` : "";
+      const skuMsg = skuShopsUpdated>0 ? ` Đã cập nhật danh sách hàng thường trực cho ${skuShopsUpdated} nhà thuốc (${skuTotal} lượt mã, cộng các nhà thuốc).` : "";
       setImportMsg(`Đã nhập chỉ tiêu cho ${matched} nhân viên.${unmatched.length? " Không khớp tên: "+unmatched.join(", ") : ""}${skuMsg}`);
     } catch(err){
       console.error("Nhập Excel lỗi:", err);
@@ -9336,6 +9336,11 @@ function TtsLiveCall({ row, cur, onDone, onFallback }){
       ws.onmessage = async (ev) => { let m; try{ m = JSON.parse(typeof ev.data === "string" ? ev.data : await ev.data.text()); }catch(e){ return; }
         if(m.setupComplete){ r.setupDone = true; onReady(); return; }
         if(m.goAway){ finish("Hết thời lượng cuộc gọi"); return; }
+        // 15/10/2026: cộng token thực tế Google tính (mỗi lượt Google tính lại toàn bộ hội thoại trước đó) → máy chủ ghi đúng chi phí
+        if(m.usageMetadata){ const u = m.usageMetadata, U = r.use || (r.use = { inA:0, inT:0, outA:0, outT:0, n:0 }); U.n++;
+          const sumBy = (arr, mod) => (arr || []).filter(d => String(d.modality||"").toUpperCase() === mod).reduce((a, d) => a + (Number(d.tokenCount) || 0), 0);
+          const pIn = Number(u.promptTokenCount) || 0, pA = sumBy(u.promptTokensDetails, "AUDIO"); U.inA += pA; U.inT += Math.max(0, pIn - pA);
+          const rOut = (Number(u.responseTokenCount) || Number(u.candidatesTokenCount) || 0), rA = sumBy(u.responseTokensDetails || u.candidatesTokensDetails, "AUDIO"); U.outA += rA; U.outT += Math.max(0, rOut - rA) + (Number(u.thoughtsTokenCount) || 0); }
         const sc = m.serverContent; if(!sc) return;
         if(sc.interrupted){ stopPlayback(); closeTurn(); }
         if(sc.inputTranscription && sc.inputTranscription.text){ push("nv", sc.inputTranscription.text); r.lastAct = Date.now(); }
@@ -9358,9 +9363,14 @@ function TtsLiveCall({ row, cur, onDone, onFallback }){
       const outN = Math.floor((f.length + carry) / ratio); const out = new Float32Array(outN);
       for(let k=0;k<outN;k++){ const a = Math.floor(k*ratio - carry), b = Math.min(f.length, Math.floor((k+1)*ratio - carry)); let s2 = 0, c2 = 0; for(let j=Math.max(0,a); j<b; j++){ s2 += f[j]; c2++; } out[k] = c2 ? (gate ? 0 : s2 / c2) : 0; }
       carry = (f.length + carry) - outN * ratio;
-      acc.push(out); accN += outN;
+      acc.push(out); accN += outN; if(rms > (r.playing ? 0.05 : 0.012)) r.lastVoice = Date.now();
       if(accN >= 1600){ const all = new Float32Array(accN); let o = 0; acc.forEach(a => { all.set(a, o); o += a.length; }); acc = []; accN = 0;
-        ws.send(JSON.stringify({ realtimeInput:{ audio:{ data: ttsF32ToB64Pcm16(all), mimeType:"audio/pcm;rate=16000" } } })); } };
+        // 15/10/2026 (giảm phí): KHÔNG gửi lúc im lặng / lúc khách đang nói — Google tính phí mọi giây âm thanh gửi lên và tính lại ở mỗi lượt sau.
+        // Giữ 0,3 giây trước khi nói (không mất chữ đầu) và gửi thêm 1,5 giây im sau khi nói để Google nhận biết đã nói xong.
+        const msg = JSON.stringify({ realtimeInput:{ audio:{ data: ttsF32ToB64Pcm16(all), mimeType:"audio/pcm;rate=16000" } } });
+        const active = r.lastVoice && Date.now() - r.lastVoice < 1500;
+        if(active){ (r.pre || []).forEach(x => ws.send(x)); r.pre = []; ws.send(msg); }
+        else { r.pre = (r.pre || []).concat([msg]).slice(-3); } } };
     try{
       if(ctx.audioWorklet){ const url = URL.createObjectURL(new Blob([TTS_LIVE_WORKLET], { type:"application/javascript" })); await ctx.audioWorklet.addModule(url);
         const node = new AudioWorkletNode(ctx, "upharma-pcm"); node.port.onmessage = (e) => onFrame(e.data); src.connect(node); const g = ctx.createGain(); g.gain.value = 0; node.connect(g); g.connect(ctx.destination); r.node = node; }
@@ -9379,7 +9389,7 @@ function TtsLiveCall({ row, cur, onDone, onFallback }){
     cleanup();
     const transcript = (r.lines || []).map(x => ({ who:x.who, t:x.t.trim() })).filter(x => x.t);
     try{ const audio = blob && blob.size > 2000 ? await ttsBlobToB64(blob) : "";
-      const res = await pbCall("practiceLiveEnd", { hireId:row.id, id:cur.id, transcript, durationSec:dur, audio, mime: blob ? blob.type : "" }, 120000); if(res.ok === false) throw new Error(res.error);
+      const res = await pbCall("practiceLiveEnd", { hireId:row.id, id:cur.id, transcript, durationSec:dur, audio, mime: blob ? blob.type : "", usage: r.use || null }, 120000); if(res.ok === false) throw new Error(res.error);
       setSt("done"); onDone && onDone(transcript); }
     catch(e){ setErr("Không lưu được cuộc gọi: " + (e.message || e)); setSt("done"); onDone && onDone(transcript); }
   }
@@ -9623,7 +9633,8 @@ function TtsVoiceLimitSetting(){
     h("label", null, "xoá ghi âm sau ", h("input", { type:"number", min:7, max:365, defaultValue: cfg.keepDays ?? 60, style:{ width:52 }, onBlur:e=>save({ keepDays: Math.max(7, Number(e.target.value)||60) }) }), " ngày"),
     h("label", { style:{ display:"inline-flex", gap:4, alignItems:"center" } }, h("input", { type:"checkbox", checked: cfg.enabled !== false, onChange:e=>save({ enabled:e.target.checked }) }), cfg.enabled === false ? h("b", { style:{ color:"#B91C1C" } }, "đang TẮT — tích để bật") : "đang bật"),
     h("label", { style:{ display:"inline-flex", gap:4, alignItems:"center" } }, h("input", { type:"checkbox", checked: cfg.liveEnabled !== false, onChange:e=>save({ liveEnabled:e.target.checked }) }), "nói liên tục (gọi điện)"),
-    h("label", null, "tối đa ", h("input", { type:"number", min:2, max:14, defaultValue: Math.round((cfg.liveMaxSec ?? 480)/60), style:{ width:44 }, onBlur:e=>save({ liveMaxSec: Math.max(2, Math.min(14, Number(e.target.value)||8)) * 60 }) }), " phút/cuộc gọi"),
+    h("label", null, "tối đa ", h("input", { type:"number", min:2, max:14, defaultValue: Math.round((cfg.liveMaxSec ?? 300)/60), style:{ width:44 }, onBlur:e=>save({ liveMaxSec: Math.max(2, Math.min(14, Number(e.target.value)||5)) * 60 }) }), " phút/cuộc gọi"),
+    h("span", { style:{ fontSize:12, color:"var(--inkSoft)" } }, "Gọi điện tính phí theo độ dài và tính lại cả đoạn trước ở mỗi lượt — 5 phút là đủ cho 1 tình huống."),
     msg && h("span", { style:{ color:"var(--pine)" } }, msg));
 }
 // 14/10/2026 (chị Hà): quản lý / CHT xem lịch sử luyện tình huống của TẤT CẢ nhân viên (trước chỉ xem được học việc)
@@ -15171,7 +15182,10 @@ function InventoryHealthView({ isAdmin, myStaff }){
   const expiredValue = expiredRows.reduce((s,r)=>s+(r.value||0),0);
   const near90Value = near90Rows.reduce((s,r)=>s+(r.value||0),0);
   const totalValue = shopsToShow.reduce((s,sh)=>s+((expiryByShop[sh]&&expiryByShop[sh].totalValue)||0),0);
-  const totalSKU = isAll ? (summary && summary.totalSKU) : (summary && summary.byShop && summary.byShop[shopFilter] && summary.byShop[shopFilter].totalSKU);
+  // 16/10/2026 (chị Hà): "mã hàng" = số MÃ KHÁC NHAU đang có tồn — không cộng trùng 1 mã ở nhiều nhà thuốc (totalSKU cũ là số dòng mã×nhà thuốc)
+  const shopSum = summary && summary.byShop && summary.byShop[shopFilter];
+  const totalSKU = isAll ? (summary && summary.distinctSKU) : (shopSum && (shopSum.skuInStock != null ? shopSum.skuInStock : shopSum.totalSKU));
+  const skuLabel = isAll && summary && summary.distinctSKU == null && summary.totalSKU != null ? `${fmtNum(summary.totalSKU)} dòng mã×nhà thuốc (số mã riêng cập nhật ở lần tính tồn kho tới)` : null;
   const latestSync = shopsToShow.map(sh=>expiryByShop[sh]&&expiryByShop[sh].syncedAtTs).filter(Boolean).sort().slice(-1)[0];
   const chartItems = shopsToShow.map(sh => {
     const v = expiryByShop[sh] || {};
@@ -15199,7 +15213,7 @@ function InventoryHealthView({ isAdmin, myStaff }){
     React.createElement(ShopFilterBar, { key:"filter", isAdmin, adminShop, setAdminShop, shopFilter }),
     // Thẻ KPI
     React.createElement("div", { key:"tiles", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:10, marginBottom:16 } }, [
-      React.createElement(StatTile, { key:"t1", label:"Tổng giá trị tồn kho", value:fmtVND(totalValue), sub: totalSKU!=null?`${fmtNum(totalSKU)} mã hàng`:undefined }),
+      React.createElement(StatTile, { key:"t1", label:"Tổng giá trị tồn kho", value:fmtVND(totalValue), sub: totalSKU!=null?`${fmtNum(totalSKU)} mã hàng đang có tồn`:(skuLabel||undefined) }),
       React.createElement(StatTile, { key:"t2", label:"Đã hết hạn còn trong kho", value:`${fmtNum(expiredRows.length)} lô`, sub:fmtVND(expiredValue), tint: expiredRows.length>0?"#fdecec":"var(--pineSoft)" }),
       React.createElement(StatTile, { key:"t3", label:"Cận hạn trong 90 ngày", value:`${fmtNum(near90Rows.length)} lô`, sub:fmtVND(near90Value), tint: near90Rows.length>0?"#fff4e0":"var(--pineSoft)" }),
       React.createElement(StatTile, { key:"t4", label:"Kỳ dữ liệu", value: latestSync ? new Date(latestSync).toLocaleDateString("vi-VN") : "—", sub: latestSync ? `Đồng bộ ${new Date(latestSync).toLocaleTimeString("vi-VN",{hour:"2-digit",minute:"2-digit"})}` : "Chưa đồng bộ" }),
@@ -15818,7 +15832,9 @@ function buildLeaderReportHtml(D, M){
   const pmT = shops.reduce((a, s) => a + pmWeekT((pm[s]||{}).n || 0), 0);
   // --- hàng hoá
   const ls = D.lost || {}; const lsBy = ls.byShop || {}; const ic = (D.inv || {}).byShop || {};
-  const urgentAll = sum(s => (ic[s]||{}).urgent);
+  // 16/10/2026: toàn khu vực đếm MÃ KHÁC NHAU (distinct) — cộng từng nhà thuốc sẽ tính 1 mã nhiều lần
+  const icD = (D.inv || {}).distinct || null;
+  const urgentAll = icD ? (icD.urgent||0) : sum(s => (ic[s]||{}).urgent);
   const lostDay = ls.perDay || 0, lostTr = ls.transferablePerDay || 0;
   const lostTrend = (ls.trend || []).filter(t => !monthStart || t.date >= monthStart);
   const allOut = (ls.topProducts || []).filter(p => p.allOut).slice(0, 3);
@@ -15852,7 +15868,7 @@ function buildLeaderReportHtml(D, M){
     ["p-b","Khách hàng",`Gọi lại ${lrInt(csAll.silentVip)} khách VIP lâu chưa quay lại; ghi kết quả trên app.`, vipTop ? vipTop.replace(/: \d+/g,"") + "…" : "Tất cả","Nhà thuốc trưởng",lrDM(lrAdd(W1,3)),"100% VIP được liên hệ"],
     ["p-b","Khách hàng","Chăm sóc 25% khách nguy cơ rời bỏ theo danh sách trên app.","Tất cả, trọng tâm " + custRows.slice(0,2).map(r=>lrShop(r.s)).join(", "),"Nhân viên bán hàng",lrDM(W2),`≥ ${lrInt(careT)} lượt chăm sóc ghi nhận`],
     ["p-amb","Hàng hoá",`Chỉnh dự trù tự động trên POS trước lượt POS tự duyệt hàng tuần: thêm mã POS bỏ sót, tăng mã đặt thiếu, bỏ mã đặt dư/mã dừng${allOut.length ? "; ưu tiên " + allOut.map(p=>lrEsc(p.name)).join(", ") : ""}.`,"Tất cả","Nhà thuốc trưởng",lrDM(lrAdd(W1,1)),"0 mã bán chạy bị POS bỏ sót"],
-    ["p-amb","Hàng hoá","Chọn 20 mã tồn lâu không bán/nhà thuốc để trưng bày, tư vấn đẩy bán hoặc trả hàng.","Tất cả","Nhà thuốc trưởng",lrDM(W2),`${shops.length*20} mã có phương án`],
+    ["p-amb","Hàng hoá","Chọn 20 mã tồn lâu không bán/nhà thuốc để trưng bày, tư vấn đẩy bán hoặc trả hàng.","Tất cả","Nhà thuốc trưởng",lrDM(W2),`${shops.length*20} lượt mã có phương án (20 mã/NT)`],
   ];
   if (hireN) actions.push(["p-v","Nhân sự",`Đăng tuyển ${hireN} vị trí, sàng lọc và phỏng vấn.`, hires.map(x=>lrShop(x.s)).join(", "),"QLKV + Phòng nhân sự",lrDM(W2),`≥ ${hireN*2} ứng viên phỏng vấn`]);
   if (ovAll) actions.push(["p-v","Nhân sự",`Đóng ${ovAll} việc quá hạn; nhà thuốc nào còn việc quá hạn thì báo nguyên nhân.`, ovTop.map(lrShop).join(", "),"Nhà thuốc trưởng",lrDM(lrAdd(W1,3)),"0 việc quá hạn trên 2 ngày"]);
@@ -15931,12 +15947,12 @@ function buildLeaderReportHtml(D, M){
   // hàng hoá
   h += H("Hàng hoá") + `<div class="scroll"><table class="tbl"><thead><tr><th>Nhà thuốc</th><th class="num">Mất DT do hết hàng</th><th class="num">Xử lý được bằng điều chuyển</th><th class="num">Mã hết hàng</th><th class="num">Cần gọi gấp</th><th class="num">Sắp cần gọi</th><th class="num">Mã tồn không bán</th><th class="num">Mã tồn cao</th></tr></thead><tbody>`;
   h += shops.slice().sort((a,b)=>((lsBy[b]||{}).perDay||0)-((lsBy[a]||{}).perDay||0)).map(s => { const l = lsBy[s]||{}, c = ic[s]||{}; return `<tr><td>${lrShop(s)}</td><td class="num">${lrTr(l.perDay)}/ngày</td><td class="num">${lrTr(l.transferable)}</td><td class="num">${lrInt(l.skuCount)}</td><td class="num">${lrInt(c.urgent)}</td><td class="num">${lrInt(c.soon)}</td><td class="num">${lrInt(c.dead)}</td><td class="num">${lrInt(c.overstock)}</td></tr>`; }).join("");
-  h += `<tr class="total"><td>Toàn khu vực</td><td class="num">${lrTr(lostDay)}/ngày</td><td class="num">${lrTr(lostTr)}</td><td class="num">${lrInt(sum(s => (lsBy[s]||{}).skuCount))}</td><td class="num">${lrInt(urgentAll)}</td><td class="num">${lrInt(sum(s => (ic[s]||{}).soon))}</td><td class="num">${lrInt(sum(s => (ic[s]||{}).dead))}</td><td class="num">${lrInt(sum(s => (ic[s]||{}).overstock))}</td></tr></tbody></table></div>`;
+  h += `<tr class="total"><td>Toàn khu vực</td><td class="num">${lrTr(lostDay)}/ngày</td><td class="num">${lrTr(lostTr)}</td><td class="num">${lrInt(ls.distinctSkuCount != null ? ls.distinctSkuCount : sum(s => (lsBy[s]||{}).skuCount))}</td><td class="num">${lrInt(urgentAll)}</td><td class="num">${lrInt(icD ? icD.soon : sum(s => (ic[s]||{}).soon))}</td><td class="num">${lrInt(icD ? icD.dead : sum(s => (ic[s]||{}).dead))}</td><td class="num">${lrInt(icD ? icD.overstock : sum(s => (ic[s]||{}).overstock))}</td></tr></tbody></table></div>${icD ? '<p class="sub">Dòng Toàn khu vực đếm số mã khác nhau (1 mã thiếu ở nhiều nhà thuốc chỉ tính 1 lần), nên nhỏ hơn tổng các dòng.</p>' : ''}`;
   h += `<p class="sub">${lostTrend.length >= 2 ? `Mức mất doanh thu từ đầu tháng: ${lrTr(lostTrend[0].perDay)}/ngày (${lrDM(lostTrend[0].date)}) → ${lrTr(lostDay)}/ngày hiện tại. ` : ""}${lostDay ? `Khoảng ${Math.round(lostTr/lostDay*100)}% xử lý được ngay bằng điều chuyển. ` : ""}Đã loại hàng thiết bị y tế bán lẻ tẻ, mã ngừng kinh doanh và hàng điều chuyển khỏi cách tính.</p>`;
   if (D.posd && D.posd.byShop) { const pb = D.posd.byShop; const ks = shops.filter(s => pb[s]); const sm = (f) => ks.reduce((a, s) => a + (f(pb[s])||0), 0);
     h += `<h3>Đối chiếu dự trù tự động POS (${lrDM(D.posd.date)})</h3><div class="scroll"><table class="tbl"><thead><tr><th>Nhà thuốc</th><th class="num">Mã POS dự trù</th><th class="num">POS bỏ sót</th><th class="num">POS đặt thiếu</th><th class="num">POS đặt dư / mã dừng</th><th class="num">DT mất ở mã bỏ sót</th></tr></thead><tbody>`
       + ks.map(s => { const v = pb[s], c = v.counts || {}; return `<tr><td>${lrShop(s)}</td><td class="num">${lrInt(v.posLines)}</td><td class="num">${lrInt(c.missed)}</td><td class="num">${lrInt(c.under)}</td><td class="num">${lrInt(c.over)}</td><td class="num">${lrTr(v.missedPerDay)}/ngày</td></tr>`; }).join("")
-      + `<tr class="total"><td>Toàn khu vực</td><td class="num">${lrInt(sm(v => v.posLines))}</td><td class="num">${lrInt(sm(v => (v.counts||{}).missed))}</td><td class="num">${lrInt(sm(v => (v.counts||{}).under))}</td><td class="num">${lrInt(sm(v => (v.counts||{}).over))}</td><td class="num">${lrTr(sm(v => v.missedPerDay))}/ngày</td></tr></tbody></table></div><p class="sub">POS tự dự trù theo tốc độ bán và tự duyệt đi hàng 1 lần/tuần; bảng này chỉ nêu phần POS chưa đúng để nhà thuốc chỉnh trước lượt tự duyệt — không đặt hàng trùng.</p>`;
+      + `<tr class="total"><td>Toàn khu vực (cộng lượt mã×NT)</td><td class="num">${lrInt(sm(v => v.posLines))}</td><td class="num">${lrInt(sm(v => (v.counts||{}).missed))}</td><td class="num">${lrInt(sm(v => (v.counts||{}).under))}</td><td class="num">${lrInt(sm(v => (v.counts||{}).over))}</td><td class="num">${lrTr(sm(v => v.missedPerDay))}/ngày</td></tr></tbody></table></div><p class="sub">POS tự dự trù theo tốc độ bán và tự duyệt đi hàng 1 lần/tuần; bảng này chỉ nêu phần POS chưa đúng để nhà thuốc chỉnh trước lượt tự duyệt — không đặt hàng trùng.</p>`;
   }
   if (allOut.length || trf.length) h += `<h3>Mã cần xử lý ngay</h3><div class="grid g3">` + allOut.map(p => `<div class="card"><span class="pill p-red">Hết, không còn hàng điều chuyển</span><p><b>${lrEsc(p.name)}</b><br><span class="sub">Hết ở ${p.shopCount} nhà thuốc (${(p.shops||[]).slice(0,3).map(lrShop).join(", ")}…) · mất ~${lrK(p.perDay)}/ngày → cần mua hàng.</span></p></div>`).join("") + trf.map(p => `<div class="card"><span class="pill p-amb">Điều chuyển</span><p><b>${lrEsc(p.name)}</b><br><span class="sub">Hết ở ${p.shopCount} nhà thuốc (${(p.shops||[]).slice(0,3).map(lrShop).join(", ")}…), nhà thuốc khác còn hàng để điều chuyển.</span></p></div>`).join("") + `</div>`;
   // kế hoạch hành động
@@ -16204,7 +16220,7 @@ function LostSalesView({ isAdmin, myStaff }){
 
   const shopsAll = Object.keys(doc.byShop||{}).sort();
   const isAll = shop==="all";
-  const sb = isAll ? { perDay:doc.perDay, lost30:doc.lost30, skuCount:doc.skuCount, transferable:doc.transferablePerDay } : ((doc.byShop||{})[shop] || { perDay:0, lost30:0, skuCount:0, transferable:0 });
+  const sb = isAll ? { perDay:doc.perDay, lost30:doc.lost30, skuCount:(doc.distinctSkuCount != null ? doc.distinctSkuCount : doc.skuCount), skuRows:doc.skuCount, transferable:doc.transferablePerDay } : ((doc.byShop||{})[shop] || { perDay:0, lost30:0, skuCount:0, transferable:0 });
   const qs = lsStrip(q.trim());
   const allItems = (doc.items||[]).filter(it => isAll || it.shop===shop);
   const items = allItems.filter(it => (act==="all" || it.action===act) && (!qs || lsStrip(it.pid+" "+it.name).includes(qs)));
@@ -16278,7 +16294,7 @@ function LostSalesView({ isAdmin, myStaff }){
       h("div", { className:"metric warn" }, h("div", { className:"label" }, "Doanh thu mất / ngày"), h("div", { className:"value" }, fmtVND(sb.perDay))),
       h("div", { className:"metric" }, h("div", { className:"label" }, "Nếu kéo dài 30 ngày"), h("div", { className:"value" }, fmtVNDCompact((sb.perDay||0)*30))),
       h("div", { className:"metric" }, h("div", { className:"label" }, "Đã mất (ước tính 30 ngày qua)"), h("div", { className:"value" }, fmtVNDCompact(sb.lost30))),
-      h("div", { className:"metric" }, h("div", { className:"label" }, "Mã đang hết (có bán)"), h("div", { className:"value" }, fmtNum(sb.skuCount))),
+      h("div", { className:"metric" }, h("div", { className:"label" }, "Mã đang hết (có bán)"), h("div", { className:"value" }, fmtNum(sb.skuCount)), isAll && sb.skuRows != null && sb.skuRows !== sb.skuCount && h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)" } }, `mã khác nhau · ${fmtNum(sb.skuRows)} lượt mã×nhà thuốc`)),
       h("div", { className:"metric good" }, h("div", { className:"label" }, "Gỡ được ngay bằng điều chuyển"), h("div", { className:"value" }, fmtVND(sb.transferable)), h("div", { style:{ fontSize:10.5, color:"var(--inkSoft)" } }, "/ngày — shop khác đang dư"))),
     h("div", { style:{ display:"grid", gridTemplateColumns: isAdmin && isAll ? "repeat(auto-fit,minmax(320px,1fr))" : "1fr", gap:12, marginBottom:16 } },
       isAdmin && isAll && h("div", { className:"card", style:{ margin:0 } },
@@ -16304,7 +16320,7 @@ function LostSalesView({ isAdmin, myStaff }){
       h("input", { value:q, onChange:e=>setQ(e.target.value), placeholder:"Tìm mã / tên hàng…", style:{ flex:"1 1 200px", maxWidth:320, padding:"7px 10px", border:"1px solid var(--line)", borderRadius:8 } }),
       [["all","Tất cả"],["transfer","Điều chuyển được"],["order","Phải đặt hàng"]].map(([k,l]) =>
         h("button", { key:k, className:"btn"+(act===k?" btnPrimary":""), style:{ fontSize:12, padding:"5px 11px" }, onClick:()=>setAct(k) },
-          `${l} (${allItems.filter(it => k==="all" || it.action===k).length})`))),
+          `${l} (${allItems.filter(it => k==="all" || it.action===k).length}${isAll ? " dòng" : ""})`))),
     !items.length ? h("div", { className:"card", style:{ fontSize:13 } }, allItems.length ? "Không có mã nào khớp bộ lọc." : "Không có mã bán được nào đang hết hàng ")
     : h("div", { className:"tableWrap" }, h("table", { className:"data tblCompact" },
         h("thead", null, h("tr", null,
@@ -16320,7 +16336,7 @@ function LostSalesView({ isAdmin, myStaff }){
           h("td", { className:"num" }, fmtVND(it.lost30)),
           h("td", { style:{ minWidth:190 } }, actionCell(it)),
           isAdmin && h("td", null, h("button", { className:"btn btnGhost", style:{ fontSize:11, padding:"4px 9px" }, onClick:()=>openCompose(it) }, "Giao việc"))))))),
-    items.length > limit && h("div", { style:{ textAlign:"center" } }, h("button", { className:"btn btnGhost", onClick:()=>setLimit(limit+50) }, `Xem thêm (${items.length-limit} mã)`)),
+    items.length > limit && h("div", { style:{ textAlign:"center" } }, h("button", { className:"btn btnGhost", onClick:()=>setLimit(limit+50) }, `Xem thêm (${items.length-limit} ${isAll ? "dòng" : "mã"})`)),
     compose && h(TaskComposer360, { preset:compose, onClose:()=>setCompose(null), onSaved:()=>setCompose(null) }));
 }
 
@@ -20031,7 +20047,7 @@ function TransferSuggestionsView({ navParam, myStaff, isAdmin } = {}){
                 ? React.createElement("div", { className:"emptyState" }, "Không có SKU nào ở trạng thái này.")
                 : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
                     React.createElement("caption", { key:"cap", style:{ captionSide:"bottom", fontSize:11.5, color:"var(--inkSoft)", textAlign:"left", paddingTop:6 } },
-                      `Hiển thị ${fmtNum(flaggedItems.length)}/${fmtNum((s.byStatus||{})[flaggedStatus]||flaggedItems.length)} mã${flaggedItems.length < ((s.byStatus||{})[flaggedStatus]||0) ? " — chọn 1 nhà thuốc để xem đầy đủ hơn" : ""}.`),
+                      `Hiển thị ${fmtNum(flaggedItems.length)}/${fmtNum((s.byStatus||{})[flaggedStatus]||flaggedItems.length)} ${consShop==="Tất cả" ? "dòng mã×nhà thuốc" : "mã"}${flaggedItems.length < ((s.byStatus||{})[flaggedStatus]||0) ? " — chọn 1 nhà thuốc để xem đầy đủ hơn" : ""}.`),
                     React.createElement("thead",{key:"h"}, React.createElement("tr",null,
                       ["Mã hàng","Tên hàng","Nhà thuốc","Tồn","ADS 7n","ADS 30n","DOI (ngày)","Rủi ro tồn","Gọi hàng / Về"+(ofPeriod ? ` (${ofPeriod})` : ""),"Việc"].map((h,i)=>React.createElement("th",{key:i},h)))),
                     React.createElement("tbody",{key:"b"}, flaggedItems.map((it,i) => {
@@ -20677,6 +20693,8 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate, aiOnly }){
   const revenueBlock = mt ? (isAll ? mt.chain.revenue : ((mt.byShop[adminShop]||{}).revenue||null)) : null;
 
   const goods = (() => {
+    // 16/10/2026: toàn chuỗi dùng số MÃ KHÁC NHAU (distinct) — cộng từng nhà thuốc sẽ tính 1 mã nhiều lần
+    if(invSummary && invSummary.byShop && isAll && invSummary.distinct) return { ...sumObjects(invSummary.byShop), ...invSummary.distinct, totalSKU: invSummary.distinct.inStock };
     if(invSummary && invSummary.byShop) return isAll ? sumObjects(invSummary.byShop) : (invSummary.byShop[adminShop] || null);
     if(isAll && invSummary){ const st = invSummary.byStatus||{}, vel = invSummary.byVelocity||{};
       return { totalSKU:invSummary.totalSKU||0, urgent:st.URGENT_REPLENISH||0, soon:st.REPLENISH_SOON||0, overstock:st.OVERSTOCK||0, dead:st.DEAD_STOCK||0, slow:(vel.SLOW||0)+(vel.VERY_SLOW||0) }; }
@@ -22642,12 +22660,15 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
   }) : [];
   const recoTotalQty = recoItemsGoods.reduce((s,it) => s+(it.qty||0), 0);
   const avgFromDays = recoItemsGoods.length ? Math.round(recoItemsGoods.reduce((s,it)=>s+(it.fromDaysStock||0),0) / recoItemsGoods.length) : null;
-  const coveragePct = (proofList && isGoodsKind && proofList.length) ? Math.round((matched.length / proofList.length) * 100) : null;
+  const matchedIds = new Set(matched.map(t => t.productId)); // 16/10/2026: 1 mã có thể lấy từ nhiều nguồn → đếm mã khác nhau
+  const coveragePct = (proofList && isGoodsKind && proofList.length) ? Math.min(100, Math.round((matchedIds.size / proofList.length) * 100)) : null;
   const minDoi = (proofList && isGoodsKind && proofList.length) ? Math.min(...proofList.map(u => u.doi==null ? 9999 : Math.round(u.doi))) : null;
 
   const recoItemsHr = kind==="hr" ? (proofList||[]).map(p => ({ key:p.staffId, staffId:p.staffId, label:p.staffName||p.staffId, pctDoanhSo:paceProjected(p).ds, kpiPct:paceProjected(p).kpi })) : []; // số DỰ KIẾN cuối tháng
   const recoItemsCust = kind==="customer" ? (proofList||[]).map(c => ({ key:c.id, phone:c.id, label:c.name||c.id, lastPurchaseAt:(c.stats&&c.stats.lastPurchaseAt)||null, amountRank:c.amountRank||0 })) : [];
-  const recoItemsExpiry = kind==="expiry" ? (proofList||[]).map(it => ({ key:it.productId||it.productName, productId:it.productId, label:it.productName||it.productId, qty:it.qty, expirationDate:it.expirationDate, value:it.value })) : [];
+  const recoItemsExpiry = kind==="expiry" ? (proofList||[]).map((it, i) => ({ key:(it.productId||it.productName) + "|" + (it.lotCode||i), lotCode:it.lotCode, productId:it.productId, label:it.productName||it.productId, qty:it.qty, expirationDate:it.expirationDate, value:it.value })) : [];
+  const expiryMaN = new Set(recoItemsExpiry.map(x => x.productId || x.label)).size; // 16/10/2026: mỗi dòng là 1 LÔ — 1 mã có thể nhiều lô
+  const expiryLbl = `${expiryMaN} mã` + (recoItemsExpiry.length > expiryMaN ? ` (${recoItemsExpiry.length} lô)` : "");
   const recoItemsOps = kind==="ops" ? (proofList||[]).map(t => ({ key:t.id, id:t.id, label:t.title||"(không tên)", deadline:t.deadline, hanGio:t.hanGio })) : [];
   // Doanh thu (DT01): hệ thống KHÔNG tự suy diễn nguyên nhân khi chưa đủ dữ liệu — chỉ đề xuất giao
   // CHT rà soát trực tiếp; luôn "có đề xuất" (luôn có người để giao rà soát).
@@ -22760,7 +22781,7 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
       const itemsTxt = recoItemsExpiry.slice(0,20).map(it => `- ${it.label} x${fmtNum(it.qty)} — hạn ${it.expirationDate}`).join("\n");
       setComposer({
         heading:"Giao việc xử lý hàng cận hạn",
-        title:`Xử lý ${recoItemsExpiry.length} mã hàng sắp hết hạn — ${shopLabel(shop)}`,
+        title:`Xử lý ${expiryLbl} hàng sắp hết hạn — ${shopLabel(shop)}`,
         mota:`Danh sách hàng cận hạn (≤ 6 tháng), cần đẩy bán/khuyến mãi hoặc trả nhà cung cấp trước hạn:\n${itemsTxt}`,
         module:"Goods", ...(cht ? { staffId:cht.id } : { shopOnly:true, shop }), ...slaFields,
         extra:{ sourceIssueCode:code, sourceIssueTitle:issue.title, sourceShop:shop, sourceIssuePriority:issue.priority, actionInsight:issue.title, issueActionKey:issueActionKeyOf(shop, code), expectedResult },
@@ -22933,7 +22954,7 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
       phamViApDung = "Các nhà thuốc có khách VIP/khách nguy cơ rời bỏ tương tự.";
     } else if(kind==="expiry"){
       nguyenNhan = "Nhiều mã hàng sắp hết hạn (≤ 6 tháng) chưa được xử lý.";
-      cachXuLy = `Giao ${(action.recommendation&&action.recommendation.items&&action.recommendation.items.length)||""} mã hàng cận hạn cho ${(action.recommendation&&action.recommendation.assignedTo)||""} đẩy bán/khuyến mãi hoặc trả NCC.`;
+      cachXuLy = `Giao ${(() => { const its = (action.recommendation&&action.recommendation.items)||[]; const n = new Set(its.map(x => x.productId || x.label)).size; return n ? (its.length > n ? `${n} mã (${its.length} lô)` : `${n} mã`) : ""; })()} hàng cận hạn cho ${(action.recommendation&&action.recommendation.assignedTo)||""} đẩy bán/khuyến mãi hoặc trả NCC.`;
       ketQua = after ? `Sau xử lý: ${(action.resultAfter.items||[]).filter(x=>x.cleared).length}/${(action.resultAfter.items||[]).length} mã đã xử lý xong (không còn tồn).` : "";
       phamViApDung = "Các nhà thuốc có tỷ lệ giá trị tồn cận hạn cao tương tự.";
     } else if(kind==="ops"){
@@ -23047,7 +23068,7 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
               rc("div", { key:"a", style:rowStyle }, [ rc("span",{key:"k"}, kind==="goods_overstock"?"Đích nhận":"Nguồn"), rc("b",{key:"v"}, shopLabel(primarySource)) ]),
               avgFromDays!=null && rc("div", { key:"b", style:rowStyle }, [ rc("span",{key:"k"}, kind==="goods_overstock"?"Tồn tại nhà thuốc":"Tồn tại nguồn"), rc("b",{key:"v"}, `~${avgFromDays} ngày`) ]),
               rc("div", { key:"c", style:rowStyle }, [ rc("span",{key:"k"},"Tổng số lượng đề xuất"), rc("b",{key:"v"}, `${fmtNum(recoTotalQty)} sản phẩm`) ]),
-              coveragePct!=null && rc("div", { key:"d", style:{ ...rowStyle, borderBottom:"none" } }, [ rc("span",{key:"k"},"Độ phủ đề xuất"), rc("b",{key:"v"}, `${matched.length}/${(proofList||[]).length} mã có nguồn (${coveragePct}%)`) ]),
+              coveragePct!=null && rc("div", { key:"d", style:{ ...rowStyle, borderBottom:"none" } }, [ rc("span",{key:"k"},"Độ phủ đề xuất"), rc("b",{key:"v"}, `${matchedIds.size}/${(proofList||[]).length} mã có nguồn (${coveragePct}%)`) ]),
               rc("div", { key:"items", style:{ marginTop:8 } }, recoItemsGoods.map(it => rc("div", { key:it.productId, style:{ fontSize:12, padding:"3px 0" } },
                 `${it.productName||it.productId}  x${fmtNum(it.qty)}${it.unit?" "+it.unit:""}${it.projectedDoi!=null?`  →  sau điều chuyển ~${it.projectedDoi} ngày tồn`:""}`)) ),
               rc("div", { key:"impact", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:8 } }, kind==="goods_overstock" ? "Ảnh hưởng dự kiến: giảm tồn cao, tránh cận hạn/ứ đọng vốn." : "Ảnh hưởng dự kiến: giảm nguy cơ hết hàng cho các mã bán nhanh nêu trên."),
@@ -23076,7 +23097,7 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
         kind==="expiry" && (recoItemsExpiry.length===0 ? rc("div", { key:"e", className:"emptyState" }, "Không có mã hàng nào cần xử lý.")
           : rc("div", { key:"box", style:{ background:"var(--pineSoft)", borderRadius:10, padding:"10px 12px" } }, [
               rc("div", { key:"a", style:rowStyle }, [ rc("span",{key:"k"},"Giao cho"), rc("b",{key:"v"}, recoTargetLabel) ]),
-              rc("div", { key:"c", style:{ ...rowStyle, borderBottom:"none" } }, [ rc("span",{key:"k"},"Số mã cận hạn"), rc("b",{key:"v"}, `${recoItemsExpiry.length} mã`) ]),
+              rc("div", { key:"c", style:{ ...rowStyle, borderBottom:"none" } }, [ rc("span",{key:"k"},"Số mã cận hạn"), rc("b",{key:"v"}, expiryLbl) ]),
               rc("div", { key:"items", style:{ marginTop:8, maxHeight:160, overflowY:"auto" } }, recoItemsExpiry.slice(0,20).map(it => rc("div", { key:it.key, style:{ fontSize:12, padding:"3px 0" } },
                 `${it.label}  x${fmtNum(it.qty)}  —  hạn ${it.expirationDate}`)) ),
               rc("div", { key:"impact", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:8 } }, "Ảnh hưởng dự kiến: đẩy bán/khuyến mãi hoặc trả NCC trước hạn, giảm giá trị tồn cận hạn."),
