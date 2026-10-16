@@ -24520,6 +24520,53 @@ function AiReportsPanel(){
   ]);
 }
 
+// 16/10/2026 (AI Agent): SỐ LIỆU AI THẬT — đọc aiUsageDaily/agentStats do máy chủ tính (runAiAgentStats, 21h05 mỗi ngày
+// hoặc bấm "Tính lại"). Mọi ô đều từ dữ liệu hệ thống, ghi rõ khoảng thời gian. Kèm: duyệt đề xuất "mở tự giao" của AI, trần chi phí/ngày.
+const AI_STATS_API = "https://asia-southeast1-upharma-176d5.cloudfunctions.net/runJobNow?job=aiAgentStatsNow";
+const AI_OPS_API = "https://asia-southeast1-upharma-176d5.cloudfunctions.net/runJobNow?job=opsOperatorApiNow";
+function AiAgentStatsCard(){
+  const [st, setSt] = useState(null); const [busy, setBusy] = useState(""); const [msg, setMsg] = useState(""); const [budget, setBudget] = useState("");
+  useEffect(()=> db.collection("aiUsageDaily").doc("agentStats").onSnapshot(s => setSt(s.exists ? s.data() : {}), err => { logSystemError("agentStats", err); setSt({}); }), []);
+  useEffect(()=>{ if(st && st.usage && budget==="") setBudget(st.usage.dailyBudgetUsd ? String(st.usage.dailyBudgetUsd) : ""); }, [st]);
+  const recompute = async () => { setBusy("r"); setMsg(""); try{ await callCf(AI_STATS_API, { method:"POST" }, 300000); setMsg("Đã tính lại."); } catch(e){ setMsg("Lỗi: " + (e.message||e)); } setBusy(""); };
+  const decide = async (type, decision) => { setBusy(type); setMsg(""); try{ const r = await callCf(AI_OPS_API, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ action:"autonomyDecide", type, decision }) }, 60000);
+    if(r && r.ok===false) throw new Error(r.error||"lỗi"); setMsg(decision==="approve" ? "Đã mở tự giao. Bấm Tính lại để cập nhật." : "Đã từ chối."); } catch(e){ setMsg("Lỗi: " + (e.message||e)); } setBusy(""); };
+  const saveBudget = async () => { const v = Math.max(0, Number(String(budget).replace(",", ".")) || 0); setBusy("b");
+    try{ await db.collection("opsConfig").doc("aiGovernance").set({ dailyBudgetUsd: v, dailyBudgetBy: (auth.currentUser && auth.currentUser.email) || "", dailyBudgetAt: new Date().toISOString() }, { merge:true }); setMsg(v ? `Đã đặt trần ${v} USD/ngày.` : "Đã bỏ trần chi phí."); } catch(e){ setMsg("Lỗi: " + (e.message||e)); } setBusy(""); };
+  if(!st) return rc("div", { className:"card", style:{ marginBottom:12 } }, "Đang tải số liệu AI…");
+  const u = st.usage || {}, pr = st.proposals || {}, au = st.autonomy || {}, w = st.window || {};
+  const pend = Object.entries(au.pending || {});
+  const pctTxt = (v) => v==null ? "—" : String(v).replace(".", ",") + "%";
+  return rc("div", { className:"card", style:{ marginBottom:12 } }, [
+    rc(Head360, { key:"h", title:"AI Agent — số liệu thật", right: rc("button", { type:"button", className:"btn btnGhost", style:{ padding:"3px 10px", fontSize:12 }, disabled:!!busy, onClick:recompute }, busy==="r" ? "Đang tính…" : "Tính lại") }),
+    rc("div", { key:"src", style:{ fontSize:11, color:"var(--inkSoft)", marginBottom:8 } }, st.computedAt
+      ? `Nguồn: nhật ký AI (aiUsageDaily ${w.usageFrom||""} → ${w.to||""}), đề xuất AI điều hành (opsProposals từ ${w.proposalsFrom||""}). Tính lúc ${fmtTs360(st.computedAt)}.`
+      : "Chưa có số liệu — bấm Tính lại (cần bản máy chủ mới đã deploy)."),
+    st.computedAt && rc("div", { key:"t", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:10, marginBottom:10 } }, [
+      rc(MiniStat360, { key:"c", label:"Chi phí AI (30 ngày)", value:`$${(u.costUsd||0).toFixed(2)}`, sub:`${fmtNum(u.calls||0)} lượt · lỗi ${pctTxt(u.errorRatePct)}` }),
+      rc(MiniStat360, { key:"a", label:"Quản lý duyệt đề xuất", value:pctTxt(pr.humanApproveRatePct), sub:`${fmtNum(pr.humanApproved||0)} duyệt · ${fmtNum(pr.humanRejected||0)} từ chối · ${fmtNum(pr.editedBeforeApprove||0)} có sửa` }),
+      rc(MiniStat360, { key:"s", label:"Hành động đạt cam kết", value:pctTxt(pr.successRatePct), sub:`${fmtNum(pr.success||0)}/${fmtNum(pr.measured||0)} việc đã đo` }),
+      rc(MiniStat360, { key:"x", label:"AI tự giao", value:fmtNum(Object.values(pr.auto||{}).reduce((a,x)=>a+x,0)), sub:`${fmtNum(pr.autoBlocked||0)} bị chặn vì số chưa khớp` }),
+      rc(MiniStat360, { key:"p", label:"Chi phí / việc được duyệt", value: pr.costPerApprovedUsd!=null ? `$${pr.costPerApprovedUsd}` : "—", sub:"Chỉ tính AI điều hành" }),
+    ]),
+    pend.length > 0 && rc("div", { key:"pd", style:{ border:"1px solid #FCD34D", background:"#FFFBEB", borderRadius:10, padding:"8px 10px", marginBottom:10 } }, [
+      rc("div", { key:"h", style:{ fontWeight:700, fontSize:13, marginBottom:4 } }, "AI đề xuất mở quyền tự giao — chờ chị duyệt"),
+      ...pend.map(([t, x]) => rc("div", { key:t, style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", fontSize:12.5, padding:"3px 0" } }, [
+        rc("span", { key:"l", style:{ flex:"1 1 220px" } }, `${(typeof OPS_TYPE_LABEL_UI!=="undefined" && OPS_TYPE_LABEL_UI[t]) || t}: ${x.reason||""}`),
+        rc("button", { key:"y", type:"button", className:"btn btnPrimary", style:{ padding:"3px 10px", fontSize:12 }, disabled:!!busy, onClick:()=>decide(t, "approve") }, "Duyệt"),
+        rc("button", { key:"n", type:"button", className:"btn btnGhost", style:{ padding:"3px 10px", fontSize:12 }, disabled:!!busy, onClick:()=>decide(t, "reject") }, "Từ chối"),
+      ])),
+    ]),
+    rc("div", { key:"bg", style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", fontSize:12.5 } }, [
+      "Trần chi phí AI mỗi ngày (USD, để trống = không giới hạn):",
+      rc("input", { key:"i", type:"number", min:0, step:0.5, value:budget, onChange:e=>setBudget(e.target.value), style:{ width:90 } }),
+      rc("button", { key:"b", type:"button", className:"btn btnGhost", style:{ padding:"3px 10px", fontSize:12 }, disabled:!!busy, onClick:saveBudget }, "Lưu"),
+      rc("span", { key:"n", style:{ color:"var(--inkSoft)", fontSize:11 } }, "Vượt trần: phân tích không gấp dùng tóm tắt theo quy tắc, chức năng an toàn thuốc vẫn chạy."),
+    ]),
+    msg && rc("div", { key:"m", style:{ fontSize:12, marginTop:6 } }, msg),
+  ]);
+}
+
 function AiGovernancePanel(){
   const [usage, setUsage] = useState([]); const [logs, setLogs] = useState([]); const [fb, setFb] = useState([]);
   const since = addDays(todayISO(), -6);
@@ -24532,6 +24579,7 @@ function AiGovernancePanel(){
   const lats = logs.filter(l => l.ok && l.latencyMs).map(l => l.latencyMs).sort((a,b)=>a-b);
   const p = (q) => lats.length ? lats[Math.min(lats.length-1, Math.floor(q*lats.length))] : null;
   return rc("div", null, [
+    rc(AiAgentStatsCard, { key:"agent" }),
     rc("div", { key:"t", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:10, marginBottom:12 } }, [
       rc(MiniStat360, { key:"c", label:"Lượt gọi AI (7 ngày)", value:fmtNum(tot.calls), sub:`${fmtNum(tot.tok)} token` }),
       rc(MiniStat360, { key:"e", label:"Tỷ lệ lỗi", value: tot.calls ? pct360(tot.errors/tot.calls) : "—", valueColor: tot.calls && tot.errors/tot.calls > 0.05 ? CL360.bad : CL360.good, sub:`${fmtNum(tot.errors)} lượt lỗi` }),
