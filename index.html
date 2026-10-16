@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261016-8";
+window.__APP_BUILD = "20261016-9";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -5181,7 +5181,14 @@ function kpiElapsedDays(thang, today, timeHM){
 // ký lúc 8h sáng: workedBefore/shiftToday). CHT (chỉ tiêu cả nhà thuốc) hoặc không có dữ liệu ca →
 // chiếu theo ngày lịch. PHẢI giữ giống kpiMakeProjector trong Cloud Functions.
 const KPI_OFF_DAYS_PER_MONTH = 4;
+// 16/10/2026 (audit KPI-1, Phương duyệt): số DỰ KIẾN chốt 1 lần lúc 6h35 sáng ở server (số thực tế và số ngày đã qua đều tính
+// tới hết hôm qua), lưu ở dailyKpiPace.projActuals. Có bản chốt hôm nay thì mọi màn dùng đúng số đó → cùng 1 % ở mọi nơi.
 function kpiMakeProjector(thang, wdInfo){
+  const f = kpiMakeProjectorBase(thang, wdInfo);
+  if(wdInfo && wdInfo.projActuals && thang===todayISO().slice(0,7)) f.projActuals = wdInfo.projActuals;
+  return f;
+}
+function kpiMakeProjectorBase(thang, wdInfo){
   const today = todayISO(), timeHM = nowHM();
   const D = daysInMonthOf(`${thang}-01`);
   if(!thang || today.slice(0,7)!==thang) return a => a;
@@ -5205,12 +5212,16 @@ function kpiMakeProjector(thang, wdInfo){
 }
 // Thông tin ngày làm của 1 nhân viên từ bản ghi dailyKpiPace — chỉ dùng bản ghi ĐÚNG hôm nay, chỉ NVBH.
 function kpiWorkdayInfoFromPace(p, role){
-  if(!p || isRole(role || p.role, "Cửa hàng trưởng")) return null;
-  if(p.workedBefore==null || p.date!==todayISO()) return null;
-  return { workedBefore:p.workedBefore, shiftToday:!!p.shiftToday };
+  if(!p || p.date!==todayISO()) return null;
+  const projActuals = p.projActuals || null;
+  // CHT: chiếu theo ngày lịch nhưng vẫn dùng số dự kiến đã chốt sáng nay.
+  if(isRole(role || p.role, "Cửa hàng trưởng")) return projActuals ? { workedBefore:null, projActuals } : null;
+  if(p.workedBefore==null) return projActuals ? { workedBefore:null, projActuals } : null;
+  return { workedBefore:p.workedBefore, shiftToday:!!p.shiftToday, projActuals };
 }
 function kpiProjectActual(item, actual, thang, wdInfo){
   if(!kpiIsCumulativeItem(item)) return actual;
+  if(wdInfo && wdInfo.projActuals && wdInfo.projActuals[item.id]!=null && thang===todayISO().slice(0,7)) return wdInfo.projActuals[item.id];
   const a = Number(actual);
   if(actual===""||actual==null||isNaN(a)) return actual;
   return Math.round(kpiMakeProjector(thang, wdInfo)(a) * 100) / 100;
@@ -7114,7 +7125,10 @@ function KpiView({ isAdmin, myStaff }){
   // cùng 1 khoảng thời gian ngắn, CHỈ ĐÚNG 1 người thực sự gọi API hệ thống ngoài, những người còn
   // lại chỉ chờ đọc dữ liệu mới đã có sẵn — tránh dội quá nhiều request cùng lúc lên hệ thống ngoài
   // (đặc biệt là API nâng hạng khách hàng, vốn có thể chạy khá lâu vì phải quét nhiều nhà thuốc).
+  // 16/10/2026 (audit SEC-7, Phương duyệt): nhân viên mở tab KPI KHÔNG còn tự gọi đồng bộ toàn chuỗi — số tự cập nhật theo lịch
+  // mỗi giờ ở server. Chỉ quản lý (admin) mở tab mới tự lấy số mới.
   useEffect(()=>{
+    if(!isAdmin) return;
     let cancelled = false;
     const REALTIME_SYNC_ENDPOINTS = [
       "https://asia-southeast1-upharma-176d5.cloudfunctions.net/syncEmployeePlanNow",       // chỉ tiêu nhân viên
@@ -7149,7 +7163,7 @@ function KpiView({ isAdmin, myStaff }){
     }
     autoSyncOnOpen();
     return ()=>{ cancelled = true; };
-  }, []);
+  }, [isAdmin]);
 
   // Bấm nút "Phân tích" để AI phân tích KPI toàn khu vực ngay lúc đó (tháng hiện tại) — không
   // còn chạy tự động theo lịch cố định (trước đây là sáng thứ Hai hàng tuần).
