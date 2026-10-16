@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261016-17";
+window.__APP_BUILD = "20261016-18";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -27571,8 +27571,10 @@ function OpsOperatorView({ onNavigate }){
               h("div", { style:{ display:"flex", gap:8, alignItems:"center", marginTop:4, fontSize:12.5 } }, "Hạn:", h("input", { type:"date", value:val(r,"deadline"), min:today, onChange:e=>ed(r.id,"deadline",e.target.value) })))
             : h("div", { style:{ fontSize:13, whiteSpace:"pre-wrap", marginTop:6, lineHeight:1.5 } }, val(r,"huongDan")),
           r.ketQua && h("div", { style:{ fontSize:12.5, marginTop:4 } }, h("b", null, "Kết quả mong đợi: "), r.ketQua),
-          (r.expected || r.confidence!=null) && h("div", { style:{ fontSize:12, marginTop:4, display:"flex", gap:10, flexWrap:"wrap", color:"var(--inkSoft)" } },
-            r.confidence!=null && h("span", null, "Độ tin cậy ", h("b", { style:{ color: r.confidence>=65 ? "#15803D" : r.confidence>=45 ? "#B45309" : "#B91C1C" } }, r.confidence + "%")),
+          (r.expected || r.confidence!=null || r.confidenceBasis) && h("div", { style:{ fontSize:12, marginTop:4, display:"flex", gap:10, flexWrap:"wrap", color:"var(--inkSoft)" } },
+            // 16/10/2026: độ tin cậy chỉ hiện khi có căn cứ (kết quả đo / tỉ lệ làm xong), kèm lý do; chưa có thì ghi rõ "Chưa đủ dữ liệu"
+            r.confidence!=null ? h("span", { title:r.confidenceBasis||"" }, "Độ tin cậy ", h("b", { style:{ color: r.confidence>=65 ? "#15803D" : r.confidence>=45 ? "#B45309" : "#B91C1C" } }, r.confidence + "%"), r.confidenceBasis ? ` (${r.confidenceBasis})` : "")
+              : r.confidenceBasis ? h("span", null, "Độ tin cậy: chưa đủ dữ liệu") : null,
             r.expected && r.expected.metric && h("span", null, `Đo: ${r.expected.metric} ${opsFmtV(r.expected.baseline)} → ${opsFmtV(r.expected.target)} sau ${r.expected.horizonDays||0} ngày`),
             r.risk && h("span", { style:{ color:"#B45309" } }, "" + r.risk),
             r.evidence && r.evidence.source && h("span", null, `Nguồn: ${r.evidence.source}${r.evidence.dataAsOf ? " · số liệu " + new Date(r.evidence.dataAsOf).toLocaleString("vi-VN") : ""}`)),
@@ -27580,7 +27582,11 @@ function OpsOperatorView({ onNavigate }){
         h("div", { style:{ display:"flex", flexDirection:"column", gap:4 } },
           h("button", { className:"btn btnPrimary", disabled:!!busy, style:{ padding:"4px 10px", fontSize:12.5 }, onClick:()=>call("approve", { ids:[r.id], edits: edits[r.id] ? { [r.id]: edits[r.id] } : {} }, "Đang giao việc…") }, "Duyệt & giao"),
           h("button", { className:"btn", style:{ padding:"4px 10px", fontSize:12.5 }, onClick:()=>setOpen(isOpen ? null : r.id) }, isOpen ? "Xong sửa" : "Sửa"),
-          h("button", { className:"btn", disabled:!!busy, style:{ padding:"4px 10px", fontSize:12.5, color:"#B91C1C" }, onClick:()=>{ const reason = window.prompt("Lý do từ chối (để AI rút kinh nghiệm, có thể bỏ trống):", ""); if(reason!==null) call("reject", { ids:[r.id], reason }, "Đang từ chối…"); } }, "Từ chối")))); };
+          // 16/10/2026 (rà soát AI): TỪ CHỐI 1 CHẠM kèm lý do sẵn — mỗi lần bấm là 1 bài học cho AI (đưa vào "BÀI HỌC" lần soạn sau)
+          h("div", { style:{ fontSize:11, color:"var(--inkSoft)", marginTop:2 } }, "Từ chối vì:"),
+          ...[["wrongData","Sai số liệu"],["notNeeded","Không cần"],["alreadyDone","Đã làm rồi"]].map(([code, label]) =>
+            h("button", { key:code, className:"btn", disabled:!!busy, style:{ padding:"3px 8px", fontSize:12, color:"#B91C1C" }, onClick:()=>call("reject", { ids:[r.id], code, reason:label }, "Đang từ chối…") }, label)),
+          h("button", { className:"btn", disabled:!!busy, style:{ padding:"3px 8px", fontSize:12, color:"#B91C1C" }, onClick:()=>{ const reason = window.prompt("Lý do khác (để AI rút kinh nghiệm):", ""); if(reason!==null && reason.trim()) call("reject", { ids:[r.id], code:"other", reason:reason.trim() }, "Đang từ chối…"); } }, "Lý do khác…")))); };
   const tRow = (r) => h("div", { key:r.id, className:"card", style:{ padding:"9px 12px", marginBottom:6, borderLeft:`4px solid ${r.status==="overdue" ? "#B91C1C" : r.status==="done" ? "#15803D" : "#2563EB"}` } },
     h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap" } },
       h("div", { style:{ fontWeight:700, fontSize:13.5 } }, r.title),
