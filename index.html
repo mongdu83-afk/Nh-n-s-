@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261017-18";
+window.__APP_BUILD = "20261017-20";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -26589,7 +26589,7 @@ function ReplenishView({ isAdmin, myStaff, onNavigate }){
             rc("div", { key:"i", style:{ flex:"1 1 280px", minWidth:0 } }, [
               rc("div", { key:"n", style:{ fontWeight:600, fontSize:13.5 } }, ["", it.productName, rc("span", { key:"st", style:{ marginLeft:8, fontSize:11, fontWeight:700, padding:"2px 8px", borderRadius:10, color:st.color, background:st.bg } }, st.text)]),
               rc("div", { key:"d", style:{ fontSize:12, color:"var(--inkSoft)", marginTop:2 } },
-                `Mua ${replDmy(it.lastDate)} · ${fmtNum(it.lastQty)} ${it.unit||""} · ${fmtVND(it.lastAmount)} · đã mua ${it.timesBought} lần → dự kiến hết ${replDmy(it.runOutDate)} (dùng ~${it.expectedDays} ngày)`),
+                `Mua ${replDmy(it.lastDate)} · ${fmtNum(it.lastQty)} ${it.unit||""}${it.unitConverted && it.lastBaseQty!=null && it.baseUnit && it.baseUnit!==it.unit ? ` (= ${fmtNum(it.lastBaseQty)} ${it.baseUnit})` : ""} · ${fmtVND(it.lastAmount)} · đã mua ${it.timesBought} lần → dự kiến hết ${replDmy(it.runOutDate)} (dùng ~${it.expectedDays} ngày)`),
               (it.history||[]).length>0 && rc("div", { key:"h", style:{ fontSize:11.5, marginTop:2 } }, [
                 rc("span", { key:"l", style:{ color:"var(--inkSoft)" } }, "Các lần mua gần nhất: "),
                 ...it.history.map((h, i) => rc("span", { key:i, style:{ display:"inline-block", marginRight:6, padding:"1px 7px", borderRadius:8, background: i===0 ? "var(--pineSoft)" : "var(--paper)", fontWeight: i===0 ? 700 : 500 } },
@@ -28123,6 +28123,10 @@ function OpsOperatorView({ onNavigate }){
             r.expected && r.expected.metric && h("span", null, `Đo: ${r.expected.metric} ${opsFmtV(r.expected.baseline)} → ${opsFmtV(r.expected.target)} sau ${r.expected.horizonDays||0} ngày`),
             r.risk && h("span", { style:{ color:"#B45309" } }, "" + r.risk),
             r.evidence && r.evidence.source && h("span", null, `Nguồn: ${r.evidence.source}${r.evidence.dataAsOf ? " · số liệu " + new Date(r.evidence.dataAsOf).toLocaleString("vi-VN") : ""}`)),
+          // 17/10/2026 (AI tự tra cứu): nguồn AI đã tự tra thêm trước khi viết việc (máy chủ chỉ giữ dòng khớp công cụ AI thật sự gọi)
+          (r.aiSources||[]).length>0 && h("div", { style:{ fontSize:12, marginTop:4, background:"#F8FAFC", border:"1px solid var(--line)", borderRadius:8, padding:"6px 8px" } },
+            h("b", null, `AI đã tra cứu thêm${r.aiResearch && r.aiResearch.toolCalls ? ` (${r.aiResearch.toolCalls} lượt)` : ""}:`),
+            ...r.aiSources.map((s, i) => h("div", { key:i, style:{ color:"var(--inkSoft)", marginTop:2 } }, "• " + s))),
           h("details", { style:{ marginTop:4 } }, h("summary", { style:{ fontSize:12, color:"var(--inkSoft)", cursor:"pointer" } }, "Số liệu AI dựa vào"), h("div", { style:{ fontSize:12, color:"var(--inkSoft)", whiteSpace:"pre-wrap", marginTop:4 } }, r.why)),
           (r.experienceIds||[]).length>0 && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:3 } }, `AI có tham khảo ${r.experienceIds.length} kinh nghiệm vận hành đã được xác nhận`)),
         h("div", { style:{ display:"flex", flexDirection:"column", gap:4 } },
