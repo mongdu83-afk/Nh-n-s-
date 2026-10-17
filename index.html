@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261017-16";
+window.__APP_BUILD = "20261017-17";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -16311,6 +16311,67 @@ function lrWithStaff(D, M){
   Object.entries((M && M.hires) || {}).forEach(([s, v]) => { if (v && v.cur !== undefined && v.cur !== null && v.cur !== "" && !isNaN(Number(v.cur))) { o[s] = Number(v.cur); changed = true; } });
   return changed ? { ...D, staffByShop: o } : D;
 }
+// ===== 17/10/2026 (4c, đặc tả Upharma Ops): BÁO CÁO THÁNG — số hệ thống tính (opsMonthlyReports/{YYYY-MM}), không có phần AI viết.
+// Kinh doanh so kế hoạch & tháng trước (theo doanh thu/ngày), việc AI giao từ đề xuất tới kết quả đo, vấn đề, quyết định, kinh nghiệm,
+// "Cần quan tâm tháng tới" theo quy tắc cố định (ghi rõ quy tắc). Máy chủ tự tính 07:50 mỗi sáng; bấm "Tính lại" để tính ngay.
+const MONTH_REV_API = "https://asia-southeast1-upharma-176d5.cloudfunctions.net/runJobNow?job=monthlyReviewNow";
+// MONTHUI-ENGINE-BEGIN
+function mrFmtPct(v, sign){ return v==null ? "—" : (sign && v>0 ? "+" : "") + String(Math.round(v*10)/10).replace(".", ",") + "%"; }
+function mrRate(a, b){ return b ? Math.round(a/b*100) + "%" : "—"; }
+function mrMonthsBack(today, n){ const out = []; let [y, m] = today.slice(0,7).split("-").map(Number); for(let i=0;i<n;i++){ out.push(`${y}-${String(m).padStart(2,"0")}`); m--; if(m===0){ m=12; y--; } } return out; }
+// MONTHUI-ENGINE-END
+function MonthlyReportView({ isAdmin, onNavigate }){
+  const h = React.createElement;
+  const months = mrMonthsBack(todayISO(), 6);
+  const [mk, setMk] = useState(months[0]); const [R, setR] = useState(undefined); const [busy, setBusy] = useState(false); const [msg, setMsg] = useState("");
+  useEffect(()=>{ setR(undefined); return db.collection("opsMonthlyReports").doc(mk).onSnapshot(d => setR(d.exists ? d.data() : null), err => { logSystemError("opsMonthlyReports", err); setR(null); }); }, [mk]);
+  const run = async () => { setBusy(true); setMsg(""); try{ const r = await callCf(`${MONTH_REV_API}&month=${mk}`, { method:"POST" }, 180000); setMsg(r && r.ok ? "Đã tính lại." : "Không tính được: " + ((r && r.error) || "")); } catch(e){ setMsg("Lỗi: " + (e.message||e)); } setBusy(false); };
+  const th = { textAlign:"left", padding:"5px 7px", borderBottom:"1px solid var(--line)", fontSize:11.5, color:"var(--inkSoft)", whiteSpace:"nowrap" }, td = { padding:"5px 7px", borderBottom:"1px solid var(--line)", fontSize:12.5 };
+  const card = (k, title, sub, body) => h("div", { key:k, className:"card", style:{ marginBottom:12 } }, h("div", { style:{ fontWeight:700, fontSize:14.5 } }, title), sub && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:6 } }, sub), body);
+  const stat = (k, label, val, tone) => h("div", { key:k, style:{ border:"1px solid var(--line)", borderRadius:8, padding:"6px 10px", minWidth:120 } }, h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, label), h("div", { style:{ fontWeight:800, fontSize:16, color:tone } }, val));
+  const tbl = (head, rows) => h("div", { style:{ overflowX:"auto" } }, h("table", { style:{ width:"100%", borderCollapse:"collapse" } }, h("thead", null, h("tr", null, head.map(x => h("th", { key:x, style:th }, x)))), h("tbody", null, rows)));
+  const pctCol = v => v==null ? undefined : v>=100 ? "#15803D" : v>=90 ? "#B45309" : "#B91C1C";
+  const head = h("div", { style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", marginBottom:12 } },
+    h("select", { value:mk, onChange:e=>setMk(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } }, months.map(m => h("option", { key:m, value:m }, "Tháng " + m.slice(5) + "/" + m.slice(0,4)))),
+    isAdmin && h("button", { type:"button", className:"btn btnPrimary", disabled:busy, onClick:run, style:{ fontSize:12.5 } }, busy ? "Đang tính..." : "Tính lại"),
+    R && h("button", { type:"button", className:"btn btnGhost", onClick:()=>window.print(), style:{ fontSize:12.5 } }, "In / lưu PDF"),
+    msg && h("span", { style:{ fontSize:12, color:"var(--inkSoft)" } }, msg));
+  if(R===undefined) return h("div", null, h(PageTitle, null, "Báo cáo tháng"), head, h(EmptyState, { kind:"loading" }));
+  if(R===null) return h("div", null, h(PageTitle, null, "Báo cáo tháng"), head, h("div", { className:"emptyState" }, "Chưa có báo cáo tháng này. " + (isAdmin ? "Chị bấm “Tính lại” để tính ngay, hoặc chờ máy chủ tự tính lúc 7h50 sáng." : "")));
+  const A = R.ai || {}; const C = A.control || {}; const shops = Object.values(R.shops || {}).sort((a,b) => ((a.revenue||{}).projectedPct ?? 999) - ((b.revenue||{}).projectedPct ?? 999));
+  const chain = R.chain || {}; const cr = chain.revenue || {};
+  return h("div", null,
+    h(PageTitle, null, "Báo cáo tháng"), head,
+    h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } }, `${R.isFinal ? "Đã chốt cả tháng" : `Tạm tính ${R.daysElapsed||"—"}/${R.daysInMonth||"—"} ngày có số bán hàng`} · tính lúc ${opsWhen(R.computedAt)}. Toàn bộ là số hệ thống tính, không có phần AI viết.`),
+    (R.flags||[]).length>0 && card("flags", "Cần quan tâm tháng tới", "Hệ thống tự lọc theo quy tắc cố định trên số liệu, mỗi dòng ghi rõ quy tắc. Đây là chỗ cần xem, chưa phải kết luận nguyên nhân.",
+      h("div", null, R.flags.map((f,i) => h("div", { key:i, style:{ fontSize:12.5, padding:"4px 0", borderTop: i ? "1px dashed var(--line)" : "none" } },
+        h("b", null, f.shop ? shopLabel(f.shop) + ": " : f.type ? ((OPS_TYPE_LABEL_UI && OPS_TYPE_LABEL_UI[f.type]) || f.type) + ": " : ""), `${f.rule} (${typeof f.value==="number" && f.kind!=="issue" && f.kind!=="exp" ? f.value + "%" : f.value})`)))),
+    card("kd", "1. Kinh doanh", "So kế hoạch tháng (POS) và so tháng trước theo doanh thu bình quân mỗi ngày, vì tháng đang chạy chưa đủ ngày.",
+      h("div", null,
+        h("div", { style:{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:8 } }, stat("a","Cả chuỗi: đã đạt kế hoạch", mrFmtPct(cr.pct)), stat("b","Dự kiến cả tháng", mrFmtPct(cr.projectedPct), pctCol(cr.projectedPct)), stat("c","Doanh thu/ngày so tháng trước", mrFmtPct(chain.vsPrevPerDayPct, true))),
+        tbl(["Nhà thuốc","Đã đạt","Dự kiến","DT/ngày so tháng trước","Số bill","Việc AI giao","Làm xong","Hơn NT đối chứng","Vấn đề đã xử lý"], shops.map(s => { const r = s.revenue||{}, a = s.ai||{};
+          return h("tr", { key:s.shop }, h("td", { style:{ ...td, fontWeight:700 } }, shopLabel(s.shop)), h("td", { style:td }, mrFmtPct(r.pct)), h("td", { style:{ ...td, fontWeight:700, color:pctCol(r.projectedPct) } }, mrFmtPct(r.projectedPct)),
+            h("td", { style:td }, mrFmtPct(s.vsPrevPerDayPct, true)), h("td", { style:td }, mrFmtPct(s.invoicePct)), h("td", { style:td }, a.assigned||0), h("td", { style:{ ...td, color: a.assigned && a.done/a.assigned<0.5 ? "#B91C1C" : undefined } }, mrRate(a.done||0, a.assigned||0)),
+            h("td", { style:td }, a.withControl ? `${a.credited||0}/${a.withControl}` : "—"), h("td", { style:td }, s.issuesHandled||0)); })))),
+    card("ai", "2. Việc AI giao: từ đề xuất tới kết quả", "Làm xong không có nghĩa là vấn đề đã được giải quyết, nên kết quả đo và so với nhà thuốc đối chứng được tách riêng.",
+      h("div", null,
+        h("div", { style:{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:8 } },
+          stat("p","Đề xuất", A.proposed||0), stat("h","Quản lý duyệt", A.humanApproved||0), stat("au","AI tự giao", A.autoAssigned||0), stat("r","Từ chối", A.rejected||0),
+          stat("d","Làm xong", `${A.done||0} (${mrRate(A.done||0, (A.humanApproved||0)+(A.autoAssigned||0))})`), stat("o","Đang quá hạn", A.overdue||0, A.overdue ? "#B91C1C" : undefined),
+          stat("m","Đo được: đạt kỳ vọng", `${A.success||0}/${A.measured||0}`), stat("c1","Hơn hẳn NT đối chứng", C.co_tac_dong||0, "#15803D"), stat("c2","Không rõ do việc này", C.khong_ro||0, "#B45309"), stat("c3","Kém hơn NT đối chứng", C.kem_hon||0, "#B91C1C")),
+        (R.byType||[]).length>0 && tbl(["Loại việc","Đề xuất","Đã giao","Làm xong","Đạt kỳ vọng","Hơn NT đối chứng"], R.byType.map(y => h("tr", { key:y.type },
+          h("td", { style:td }, (OPS_TYPE_LABEL_UI && OPS_TYPE_LABEL_UI[y.type]) || y.type), h("td", { style:td }, y.proposed), h("td", { style:td }, y.assigned), h("td", { style:td }, mrRate(y.done, y.assigned)),
+          h("td", { style:td }, y.measured ? `${y.success}/${y.measured}` : "—"), h("td", { style:td }, y.withControl ? `${y.credited}/${y.withControl}` : "—")))))),
+    card("iss", "3. Vấn đề nhà thuốc", null, h("div", { style:{ display:"flex", gap:8, flexWrap:"wrap" } },
+      stat("a","Có cập nhật xử lý", (R.issues||{}).handled||0), stat("b","Đã đóng", (R.issues||{}).closed||0), stat("c","Phải mở lại", (R.issues||{}).reopened||0, (R.issues||{}).reopened ? "#B91C1C" : undefined),
+      stat("d","Đánh giá hiệu quả", `${((R.issues||{}).effect||{}).hieu_qua||0} / ${((R.issues||{}).effect||{}).mot_phan||0} / ${((R.issues||{}).effect||{}).khong_hieu_qua||0}`))),
+    h("div", { style:{ fontSize:11, color:"var(--inkSoft)", margin:"-6px 0 12px 4px" } }, "Đánh giá hiệu quả: hiệu quả / một phần / không hiệu quả."),
+    card("dec", "4. Quyết định và kết quả sau 7/14 ngày", null, (R.decisions||{}).created ? h("div", null, (R.decisions.list||[]).map((d,i) => h("div", { key:i, style:{ fontSize:12.5, padding:"3px 0" } }, h("b", null, d.title), ` · ${(d.shops||[]).map(shopLabel).join(", ")} · `, d.text || (d.verdict==="chua_danh_gia" ? "Chưa đủ ngày để đánh giá" : d.verdict))))
+      : h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)" } }, "Tháng này chưa ghi quyết định nào trong Sổ quyết định.")),
+    card("exp", "5. Kinh nghiệm vận hành", null, h("div", { style:{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" } },
+      stat("a","Được xác nhận trong tháng", (R.experiences||{}).confirmed||0), stat("b","Không dùng", (R.experiences||{}).rejected||0), stat("c","Đang chờ xác nhận", (R.experiences||{}).pending||0, (R.experiences||{}).pending ? "#B45309" : undefined),
+      onNavigate && h("button", { type:"button", className:"btn btnGhost", style:{ fontSize:12 }, onClick:()=>onNavigate("kinhnghiem") }, "Mở Kinh nghiệm vận hành"))));
+}
 function LeaderReportView({ isAdmin }){
   const h = React.createElement;
   const today = todayISO();
@@ -17959,6 +18020,7 @@ const OPS_TABS = [
   { id:"ketquangay", label:"Kết quả ngày" },
   { id:"baocaotuan", label:"Báo cáo tuần" },
   { id:"baocaolanhdao", label:"Báo cáo tổng hợp" },
+  { id:"baocaothang", label:"Báo cáo tháng" },
   { id:"nhipvanhanh", label:"Nhịp vận hành" },
   { id:"sales", label:"Báo cáo doanh số ngày" },
   { id:"tasks", label:"Công việc" },
@@ -18000,7 +18062,7 @@ const OPS_GROUPS_ADMIN_V2 = [
   { id:"khachhang",    label:"Khách hàng",                 tabs:["taimua","crm"] },
   { id:"kinhdoanh",    label:"Kinh doanh - MKT",           tabs:["revenueAnalytics","ctkm","temgia"] },
   { id:"hanghoagroup", label:"Hàng hoá",                   tabs:["hanghoa","prod360","donthuoc"] },
-  { id:"baocao",       label:"Báo cáo",                    tabs:["baocaotuan","baocaolanhdao"] },
+  { id:"baocao",       label:"Báo cáo",                    tabs:["baocaotuan","baocaolanhdao","baocaothang"] },
   { id:"hethong",      label:"Hệ thống",                   tabs:["hethong","kinhnghiem"] },
 ];
 const OPS_GROUPS_STAFF_V2 = [
@@ -20752,6 +20814,7 @@ const TAB_STYLE = {
   nhanvien:         { icon:"", color:"#475569" },
   baocaotuan:       { icon:"", color:"#4f46e5" },
   baocaolanhdao:    { icon:"", color:"#178a43" },
+  baocaothang:      { icon:"", color:"#0f766e" },
   nhipvanhanh:      { icon:"", color:"#B91C1C" },
   ketquangay:       { icon:"", color:"#c8503a" },
 };
@@ -20796,7 +20859,7 @@ const TAB_ICON_SVG = {
   nhipvanhanh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>',
   ketquangay: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>',
 };
-const TAB_ICON_ALIAS = { xemthem:"hethong", kiemtra:"checklist", congviec:"tasks", kinhdoanh:"revenueAnalytics", baocao:"baocaotuan", ruiro:"risk" };
+const TAB_ICON_ALIAS = { baocaothang:"baocaolanhdao", xemthem:"hethong", kiemtra:"checklist", congviec:"tasks", kinhdoanh:"revenueAnalytics", baocao:"baocaotuan", ruiro:"risk" };
 function renderTabIcon(id, sizePx, extraProps){
   const markup = (TAB_ICON_SVG[id] || TAB_ICON_SVG[TAB_ICON_ALIAS[id]] || TAB_ICON_SVG.staff).replace("<svg ", '<svg width="' + sizePx + '" height="' + sizePx + '" ');
   return React.createElement("span", Object.assign({
@@ -29664,6 +29727,7 @@ function Dashboard({ user, isAdmin, myStaff }){
         activeTab==="temgia" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(TemGiaView, { key:viewResetKey })),
         activeTab==="baocaotuan" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(BaoCaoTuanView, { key:viewResetKey, isAdmin, myStaff })),
         activeTab==="baocaolanhdao" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(LeaderReportView, { key:viewResetKey, isAdmin })),
+        activeTab==="baocaothang" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(MonthlyReportView, { key:viewResetKey, isAdmin, onNavigate:setActiveTab })),
         activeTab==="nhipvanhanh" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(OpsPulseView, { key:viewResetKey, isAdmin, myStaff })),
         activeTab==="kinhnghiem" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(KinhNghiemVanHanhView, { key:viewResetKey, isAdmin, myStaff, navParam })),
         activeTab==="revenueAnalytics" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(RevenueAnalyticsView, { key:viewResetKey, isAdmin, myStaff, navParam })),
