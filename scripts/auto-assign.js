@@ -30,7 +30,10 @@ function dryDb(real){
     get:() => q.get(), doc:(id) => wrapDoc(q.doc(id)), add: async () => ({ id:"dry-run" }) });
   return { collection:(c) => wrapCol(real.collection(c)), runTransaction: async (fn) => fn({ get:(r) => r.get(), set:() => {} }) };
 }
-const db = DRY ? dryDb(fdb) : fdb;
+const baseDb = DRY ? dryDb(fdb) : fdb;
+// Code app chạy trong vm (vùng JS riêng) → Promise do nó trả về KHÔNG phải Promise của Node chính, nên firebase-admin
+// từ chối ("You must return a Promise in your transaction()-callback"). Bọc lại để luôn trả Promise của Node chính.
+const db = { collection:(c) => baseDb.collection(c), runTransaction:(fn) => baseDb.runTransaction((tx) => Promise.resolve().then(() => fn(tx))) };
 
 const HTML = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
 const block = (n) => { const a = HTML.indexOf(`\n// ${n}-ENGINE-BEGIN\n`), b = HTML.indexOf(`\n// ${n}-ENGINE-END`); if(a < 0 || b < a) throw new Error("Không tìm thấy khối " + n); return HTML.slice(a, b); };
