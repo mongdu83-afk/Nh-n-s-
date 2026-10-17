@@ -41,15 +41,12 @@ test("Việc nhân sự (KPI) mặc định không tự giao; bật mới giao",
   assert.equal(on.length, 1); assert.equal(on[0].module, "HR");
 });
 
-test("Checklist: giao khắc phục lỗi nghiêm trọng lặp lại; nhà thuốc chưa có CHT → giao cả nhà thuốc; đã khắc phục thì thôi", () => {
+test("Checklist: KHÔNG còn AI tự giao việc (17/10/2026) — kể cả khi có lỗi nghiêm trọng lặp lại / cấu hình cũ còn bật", () => {
   const tpl = { "Nhân viên bán hàng":[ { id:"a", label:"Kiểm tra hạn sử dụng" } ] };
   const reports = ["2026-10-10","2026-10-11","2026-10-12"].map(d => ({ staffId:"n72", ngay:d, doneIds:{} }));
   const cl = { reports, templatesByRole:tpl, staffById:{ n72:staff[1] }, since:"2026-10-02", today:TODAY, fixTasks:[] };
-  const r = aaPlan(base({ revenue:null, checklist:cl }));
-  const t = r.tasks.find(x => x.rule === "checklist");
-  assert.ok(t); assert.equal(t.assignType, "shop"); assert.equal(t.shop, "SHOP0072");
-  const fixed = aaPlan(base({ revenue:null, checklist:{ ...cl, fixTasks:[{ checklistItemId:"a", shop:"SHOP0072", trangThai:"Đã hoàn thành", ngayHoanThanh:"2026-10-13" }] } }));
-  assert.equal(fixed.tasks.filter(x => x.rule==="checklist").length, 0);
+  const r = aaPlan(base({ revenue:null, checklist:cl, config:{ rules:{ checklist:true } } }));
+  assert.equal(r.tasks.filter(x => x.rule === "checklist").length, 0);
 });
 
 test("CTKM: chỉ đợt đang chạy; mỗi nhà thuốc yếu giao 1 lần cho mỗi đợt", () => {
@@ -76,16 +73,16 @@ const shStaff = [
   { id:"h59", name:"Học Việc", role:"Nhân viên học việc", shop:"SHOP0059" },
 ];
 const sh = (name, date, s, e, ot) => ({ EmployeeName:name, WorkDate:date, TimeStart:`${date} ${s}:00`, TimeEnd:`${date} ${e}:00`, __isOT:!!ot });
-const clIn = () => ({ reports:["2026-10-12","2026-10-13","2026-10-14"].map(d => ({ staffId:"a59", ngay:d, doneIds:{} })),
-  templatesByRole:{ "Nhân viên bán hàng":[ { id:"a", label:"Kiểm tra hạn sử dụng" } ] }, staffById:{ a59:shStaff[1] }, since:"2026-10-02", today:TODAY, fixTasks:[] });
+// việc "làm ngay" mẫu: CTKM đang chạy, NT59 triển khai yếu
+const promoIn = () => ({ campKey:"c10", chainDaily:null, camp:{ running:true, label:"CTKM T10", from:"2026-10-01", to:"2026-10-31", chain:{ cost:10e6, rev:1000e6, orders:10000, promoOrders:3000, promoRev:400e6 }, shops:{ SHOP0059:{ n:1500, pn:150, rev:150e6, cost:{ v:1e6 } } } } });
 
 test("Việc làm ngay giao người ĐANG trong ca; hạn = giờ hết ca; không giao học việc / người đã hết ca", () => {
   const shifts = [ sh("Tran Thi Ha", TODAY, "06:00", "09:00"), sh("Nguyễn Văn An", TODAY, "07:00", "15:00"), sh("Lê Bình", TODAY, "15:00", "22:00"), sh("Học Việc", TODAY, "07:00", "22:00") ];
-  const t = aaPlan(base({ revenue:null, staff:shStaff, shifts, nowHM:"09:20", checklist:clIn() })).tasks.find(x => x.rule==="checklist");
+  const t = aaPlan(base({ revenue:null, staff:shStaff, shifts, nowHM:"09:20", promo:promoIn() })).tasks.find(x => x.rule==="promo");
   assert.equal(t.staffId, "a59", "CHT đã hết ca 9h → giao An đang trong ca");
   assert.equal(t.deadline, TODAY); assert.equal(t.hanGio, "15:00");
   assert.match(t.mota, /Ca nhận việc: Nguyễn Văn An — hôm nay 07:00–15:00 \(đang trong ca\)/);
-  const pm = aaPlan(base({ revenue:null, staff:shStaff, shifts, nowHM:"15:20", checklist:clIn() })).tasks.find(x => x.rule==="checklist");
+  const pm = aaPlan(base({ revenue:null, staff:shStaff, shifts, nowHM:"15:20", promo:promoIn() })).tasks.find(x => x.rule==="promo");
   assert.equal(pm.staffId, "b59", "15h20: An hết ca → giao Bình ca chiều"); assert.equal(pm.hanGio, "22:00");
 });
 
@@ -101,14 +98,14 @@ test("Việc kế hoạch ưu tiên cửa hàng trưởng có ca hôm nay / ngà
 
 test("Chỉ dùng ca hôm nay & ngày mai: ca ngày kia bị bỏ qua", () => {
   const far = [ sh("Nguyễn Văn An", "2026-10-17", "07:00", "15:00") ];
-  const t = aaPlan(base({ revenue:null, staff:shStaff, shifts:far, nowHM:"09:20", checklist:clIn() })).tasks.find(x => x.rule==="checklist");
+  const t = aaPlan(base({ revenue:null, staff:shStaff, shifts:far, nowHM:"09:20", promo:promoIn() })).tasks.find(x => x.rule==="promo");
   assert.equal(t.staffId, "c59", "ca 17/10 (ngày kia) không được dùng → quay về CHT"); assert.match(t.mota, /Chưa có ai đăng ký ca hôm nay/);
 });
 
 test("Không ai có ca hôm nay / ngày mai / không có dữ liệu ca → giao theo nhà thuốc và ghi rõ", () => {
-  const t = aaPlan(base({ revenue:null, staff:shStaff, shifts:[ sh("Người Khác", TODAY, "07:00", "15:00") ], nowHM:"09:20", checklist:clIn() })).tasks.find(x => x.rule==="checklist");
+  const t = aaPlan(base({ revenue:null, staff:shStaff, shifts:[ sh("Người Khác", TODAY, "07:00", "15:00") ], nowHM:"09:20", promo:promoIn() })).tasks.find(x => x.rule==="promo");
   assert.equal(t.staffId, "c59"); assert.match(t.mota, /Chưa có ai đăng ký ca hôm nay \/ ngày mai/);
-  const t2 = aaPlan(base({ revenue:null, staff:shStaff, shifts:null, shiftsMissing:true, nowHM:"09:20", checklist:clIn() })).tasks.find(x => x.rule==="checklist");
+  const t2 = aaPlan(base({ revenue:null, staff:shStaff, shifts:null, shiftsMissing:true, nowHM:"09:20", promo:promoIn() })).tasks.find(x => x.rule==="promo");
   assert.match(t2.mota, /Chưa có dữ liệu lịch ca/);
 });
 
