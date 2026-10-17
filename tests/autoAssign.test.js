@@ -129,3 +129,15 @@ test("Quản lý đã bỏ qua DT01 trong tháng → AI không tự giao lại; 
   assert.equal(dt({ SHOP0059__DT01:{ status:"REJECTED", updatedAtTs:{ toDate:() => new Date("2026-10-02T03:00:00Z") } } }), 0);
   assert.equal(dt({ SHOP0059__DT01:{ status:"REJECTED", rejectedAt:"2026-09-20T03:00:00Z" } }), 1);
 });
+
+test("Giao theo ca: 2 người trùng tên tách ca nhờ tên trên hệ thống chấm công", () => {
+  const st = [ { id:"x1", name:"Nguyễn Văn Nam", role:"Nhân viên bán hàng", shop:"SHOP0059", tenHeThong:"Nguyễn Văn Nam A" },
+               { id:"c59", name:"CHT 59", role:"Cửa hàng trưởng", shop:"SHOP0059" },
+               { id:"x2", name:"Nguyễn Văn Nam", role:"Nhân viên bán hàng", shop:"SHOP0072" } ];
+  // trên hệ thống chấm công: người NT72 tên "Nguyễn Văn Nam", người NT59 tên "Nguyễn Văn Nam A"
+  const shifts = [ { WorkDate:TODAY, EmployeeName:"Nguyễn Văn Nam", TimeStart:TODAY + " 07:00:00", TimeEnd:TODAY + " 22:00:00" } ];
+  // chỉ người ở NT72 có ca → NT59 không ai có ca (không được lấy nhầm ca của người trùng tên ở NT72)
+  const r = aaPlan(base({ staff:st, shifts, nowHM:"12:00" }));
+  const t59 = r.tasks.find(t => t.shop === "SHOP0059");
+  assert.ok(!t59 || t59.staffId !== "x1", "không được giao cho x1 theo ca của người trùng tên");
+});

@@ -23,6 +23,15 @@ Trạng thái: ✅ đã sửa (có kiểm thử) · 🟡 sửa một phần · �
 
 ---
 
+## Đợt 2 — P0 đã triển khai (17/10/2026)
+
+| # | Hiện trạng đã xác minh | Đã làm | Nghiệm thu / kiểm thử | Còn lại | TT |
+|---|---|---|---|---|---|
+| P0-8 | Ghép nhân viên theo tên: ca làm, chỉ tiêu, nâng hạng, nhập Excel; trường "Tên trên hệ thống" có nhưng không dùng; nhập Excel không có cột nhà thuốc → lấy người trùng tên đầu tiên | `staffNameKeys()` dùng "Tên trên hệ thống" (nhiều tên, dấu phẩy) cho ca làm, chỉ tiêu, nâng hạng, AI giao theo ca; nâng hạng ghép tên + nhà thuốc; nhập Excel trùng tên → báo "trùng tên — cần cột Nhà thuốc", không ghi; Danh sách nhân viên cảnh báo nhóm trùng tên | `tests/staffMatching.test.js` (3), ca mới trong `autoAssign.test.js` (FAIL trên mã cũ) | Ca làm từ hệ thống ngoài không có mã nhà thuốc → người trùng tên **bắt buộc** điền "Tên trên hệ thống" khác nhau; khớp theo mã nhân viên cần máy chủ (MC) | 🟡 |
+| P0-10 | Đóng vấn đề đi tắt; giao việc từ Tổng quan không ghi hồ sơ; "Chi tiết" mở bằng chứng tồn kho cho mã không liên quan; trạng thái ACKNOWLEDGED mất nút giao việc; CHT báo xong việc AI/rủi ro ở Action Center tự đóng | Shop360: vấn đề đo được đang xử lý → nút "Đo & đánh giá kết quả" (không đóng tắt); Tổng quan/Shop360: vấn đề đo được → giao trong hồ sơ (lưu số liệu trước), mã khác → tạo việc + `markIssueAssigned()` ghi ĐÃ GIAO VIỆC, xoá đánh giá chu kỳ cũ, đánh dấu tái diễn; "Chi tiết" chỉ mở hồ sơ cho mã có bằng chứng; ACKNOWLEDGED giao việc được; CHT báo xong việc có nguồn → "Chờ kiểm tra" | `tests/issueLifecycle.test.js` (3) | Rủi ro (risks) tạo việc chưa chuyển trạng thái — phụ thuộc máy chủ (MC); máy trạng thái chung (P1) | ✅ |
+| P0-9 (bước 1) | ≥ 5 công thức "dự kiến %"; ngưỡng 0.85 / 95–80 viết cứng nhiều nơi; Tổng quan ghi "Dự kiến cả tháng" cho cả số lũy kế | `KPI_DEFS` (định nghĩa, ngưỡng, kỳ, nguồn) — các ngưỡng ở Tổng quan, KPI, Employee360 đọc từ đây; nhãn "Đã đạt tới hôm nay (chưa có số dự kiến)" khi máy chủ chưa có số dự kiến | 58/58 kiểm thử | Gom công thức dự kiến về 1 hàm; khối ENGINE (máy chủ cũng chạy) phải tự chứa nên giữ số riêng có ghi chú | 🟡 |
+| P0-7 | `saveConfigDoc` ghi đè | **Hạ xuống P1**: chỉ 1–2 quản lý sửa cấu hình, màn hình cập nhật thời gian thực; sửa đúng cần khoá phiên bản theo từng màn sửa → làm cùng P1 | — | — | ⬜ |
+
 ## Tồn đọng — chưa làm (theo thứ tự ưu tiên)
 
 ### P0 còn lại
@@ -64,7 +73,7 @@ Trạng thái: ✅ đã sửa (có kiểm thử) · 🟡 sửa một phần · �
 
 ## Kiểm thử hồi quy đợt 1
 - Cú pháp khối script chính: OK.
-- `node --test tests/*.test.js`: 9 tệp, **51/51 đạt** (thêm `autoAssignRunner.test.js` 5 ca, 1 ca DT01 bỏ qua).
+- `node --test tests/*.test.js`: đợt 1 **51/51**; sau đợt 2: 11 tệp, **58/58 đạt** (thêm `staffMatching`, `issueLifecycle`, 1 ca trùng tên trong `autoAssign`).
 - Ca mới chạy trên mã cũ (`origin/main` trước đợt 1): 3/5 ca **thất bại** → chứng minh kiểm thử bắt đúng lỗi.
 - `scripts/check-release.js` chạy lại trên commit lỗi `52a542d` → báo lỗi đúng.
 - **Chưa kiểm thử được** (cần tài khoản/thiết bị thật): màn chặn nhân viên đã nghỉ, thông báo lỗi về điện thoại, tự điền KPI trên dữ liệu thật.
@@ -82,3 +91,10 @@ Trạng thái: ✅ đã sửa (có kiểm thử) · 🟡 sửa một phần · �
 - [ ] Thẻ "AI tự giao việc": sau 9h20 / 15h20 có dòng lần chạy gần nhất; nếu lỗi có dòng đỏ và điện thoại quản lý nhận thông báo.
 - [ ] Bỏ qua DT01 của 1 nhà thuốc → lần chạy AI sau không giao lại DT01 nhà thuốc đó trong tháng.
 - [ ] GitHub → Actions → "Kiểm tra bản phát hành" xanh sau khi gộp.
+
+## Checklist nghiệm thu cho QLKV (đợt 2)
+- [ ] Nhân viên → nếu có khung vàng "TRÙNG TÊN": Sửa từng người, điền "Tên trên hệ thống bán hàng/chấm công" đúng như trên hệ thống chấm công → khung biến mất.
+- [ ] Nhập chỉ tiêu Excel có 2 người trùng tên mà không có cột Nhà thuốc → thông báo "trùng tên — cần cột Nhà thuốc", không ghi nhầm.
+- [ ] Tổng quan → "＋ Việc" ở 1 vấn đề hàng hoá/nhân sự/khách hàng → mở hồ sơ vấn đề (có số liệu trước); giao xong hồ sơ = "ĐÃ GIAO VIỆC".
+- [ ] Shop360 → vấn đề đang giao việc không còn nút "✓ Đã xử lý xong", chỉ "Đo & đánh giá kết quả".
+- [ ] CHT báo xong 1 việc AI tự giao ở Action Center → việc sang "Chờ kiểm tra".
