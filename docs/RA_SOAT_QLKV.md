@@ -116,3 +116,17 @@ Trạng thái: ✅ đã sửa (có kiểm thử) · 🟡 sửa một phần · �
   và hồ sơ có bài luyện. Không đổi dữ liệu; chỉ nới điều kiện đọc.
 - **Nghiệm thu:** quản lý bấm "Xem bài" ở dòng Lưu Thị Liên thấy 8 bài; nhân viên Liên vào "Tự luyện tình huống → Bài đã làm"
   thấy bài cũ. App (bản `20261017-08` trở đi) đã sẵn sàng — không cần sửa thêm phía app.
+
+---
+
+## P1 — đã triển khai
+
+### P1-1 "5 việc hôm nay" (17/10/2026) ✅
+- **Trước:** Tổng quan điều hành có nhiều khối; danh sách nhà thuốc cần ưu tiên nằm cuối trang; 2 cách đếm "quá hạn" khác nhau (theo ngày ở thẻ Trọng tâm, theo ngày + giờ ở Tổng quan).
+- **Đã làm:** thẻ "Trọng tâm hôm nay" (đầu Tổng quan) có danh sách **tối đa 5 việc** xếp theo mức nghiêm trọng, mỗi việc 1 nút:
+  rủi ro cao/nghiêm trọng chưa giao việc → vấn đề ĐỎ chưa ai xử lý → vấn đề đến hạn đo & đánh giá (việc đã xong / chờ đánh giá) →
+  việc quá hạn → kết quả chờ kiểm tra → đề xuất AI chờ duyệt → vấn đề cam chưa xử lý.
+  "Việc quá hạn" ở thẻ này nay dùng **cùng định nghĩa** với Công việc / Tổng quan (ngày + giờ; đã nộp kết quả thì không tính).
+- **Mã:** khối `TOP5-ENGINE` (`top5Today`, `top5Overdue`) + `OpsFocusStrip`. Một nguồn đọc lỗi thì mục đó trống, không hỏng cả thẻ.
+- **Kiểm thử:** `tests/top5Today.test.js` (4 ca, gồm 1 ca đối chiếu `top5Overdue` = `isTaskOverdue`); dựng thử giao diện trên trình duyệt (390px & 1100px), bấm nút điều hướng đúng màn hình, không lỗi.
+- **Nghiệm thu QLKV:** mở Tổng quan → thẻ đầu tiên có ≤ 5 việc, đúng thứ tự gấp; bấm nút từng việc mở đúng màn hình; số "Việc quá hạn" khớp với Công việc → Cần xử lý.
