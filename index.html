@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261017-12";
+window.__APP_BUILD = "20261017-13";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -21849,6 +21849,81 @@ function StoreVisitView({ isAdmin, myStaff }){
   ]);
 }
 
+// SHOPAN-ENGINE-BEGIN
+// 17/10/2026 (đặc tả AI vận hành, giai đoạn 3a): "AI phân tích nhà thuốc" — dựng 8 mục từ doc shopAnalyses/{shop}
+// (máy chủ runShopAnalysis ghi). Mục 1–4 và phần lớn mục 6 là SỐ DO HỆ THỐNG TÍNH; mục 5 tách "đã có bằng chứng" và "giả thuyết".
+function shopAnFmt(f){
+  if(!f) return "—";
+  const v = f.value, l = String(f.label || "");
+  if(typeof v !== "number") return String(v == null || v === "" ? "—" : v);
+  if(/\(đ\)/.test(l)) return fmtVNDCompact(v);
+  if(/%/.test(l)) return `${v > 0 && /thay đổi/.test(l) ? "+" : ""}${String(v).replace(".", ",")}%`;
+  return fmtNum(v);
+}
+function shopAnSections(doc){
+  if(!doc) return [];
+  const byId = {}; (doc.facts || []).forEach(f => { byId[f.id] = f; });
+  const rowsOf = (o) => Object.values(o || {}).filter(id => id && byId[id]).map(id => ({ id, label:String(byId[id].label).replace(/\s*\(đ\)$/, ""), value:shopAnFmt(byId[id]) }));
+  const evText = (ids) => (ids || []).map(id => byId[id] ? `${String(byId[id].label).replace(/\s*\(đ\)$/, "")}: ${shopAnFmt(byId[id])}` : null).filter(Boolean);
+  const r = doc.refs || {};
+  return [
+    { no:1, title:"Kết quả thực tế", kind:"facts", rows:rowsOf(r.actual), empty:"Chưa có số thực hiện tháng." },
+    { no:2, title:"Mục tiêu", kind:"facts", rows:rowsOf(r.target), empty:"Nhà thuốc chưa có chỉ tiêu tháng." },
+    { no:3, title:"Khoảng cách so với mục tiêu", kind:"facts", rows:rowsOf(r.gap), empty:"Chưa tính được (thiếu chỉ tiêu)." },
+    { no:4, title:"Xu hướng hiện tại", kind:"facts", rows:rowsOf(r.trend), empty:"Chưa có doanh thu theo ngày." },
+    { no:5, title:"Nguyên nhân", kind:"causes",
+      confirmed:(doc.confirmed || []).map(c => ({ text:c.text, evidence:evText(c.evidence) })),
+      hypotheses:(doc.hypotheses || []).map(h => ({ text:h.text, check:h.check || "", demoted:!!h.demoted })) },
+    { no:6, title:"Dữ liệu còn thiếu", kind:"list", items:doc.missing || [], empty:"Không thiếu dữ liệu chính." },
+    { no:7, title:"Giải pháp đề xuất", kind:"solutions", items:(doc.solutions || []).map(s => ({ ...s, basisText:evText(s.basis) })) },
+    { no:8, title:"Chỉ số đánh giá hiệu quả", kind:"metrics", items:doc.metrics || [] },
+  ];
+}
+// SHOPAN-ENGINE-END
+function shopAnTime(iso){ const d = new Date(iso); return isNaN(d) ? "—" : d.toLocaleString("vi-VN", { timeZone:"Asia/Ho_Chi_Minh", hour:"2-digit", minute:"2-digit", day:"2-digit", month:"2-digit", year:"numeric" }); }
+const SHOP_AN_API = "https://asia-southeast1-upharma-176d5.cloudfunctions.net/runJobNow?job=shopAnalysisNow";
+function ShopAnalysisCard({ shop, onNavigate }){
+  const [doc, setDoc] = useState(null); const [busy, setBusy] = useState(false); const [msg, setMsg] = useState("");
+  useEffect(()=>{ setDoc(null); setMsg(""); return db.collection("shopAnalyses").doc(shop).onSnapshot(d => setDoc(d.exists ? d.data() : null), err => logSystemError("shopAnalyses", err)); }, [shop]);
+  const run = async (force) => { setBusy(true); setMsg(""); try{ const r = await callCf(`${SHOP_AN_API}&shop=${encodeURIComponent(shop)}${force ? "&force=1" : ""}`, { method:"POST" }, 300000); if(r && r.cached) setMsg("Số liệu chưa đổi từ lần phân tích trước, đang hiện lại kết quả đó."); } catch(e){ setMsg("Không chạy được: " + (e.message || e)); } setBusy(false); };
+  const secs = shopAnSections(doc);
+  const box = { border:"1px solid var(--line)", borderRadius:8, padding:"8px 10px" };
+  const h = (s) => rc("div", { key:"h", style:{ fontWeight:700, fontSize:12.5, marginBottom:4 } }, `${s.no}. ${s.title}`);
+  const muted = (k, t) => rc("div", { key:k, style:{ fontSize:12, color:"var(--inkSoft)" } }, t);
+  const sec = (s) => {
+    let body;
+    if(s.kind==="facts") body = s.rows.length ? s.rows.map(x => rc("div", { key:x.id, style:{ display:"flex", justifyContent:"space-between", gap:8, fontSize:12.5, padding:"2px 0" } }, [ rc("span", { key:"l", style:{ color:"var(--inkSoft)" } }, x.label), rc("b", { key:"v", style:{ whiteSpace:"nowrap" } }, x.value) ])) : [muted("e", s.empty)];
+    else if(s.kind==="causes") body = [
+      rc("div", { key:"c" }, s.confirmed.length ? s.confirmed.map((c,i) => rc("div", { key:i, style:{ fontSize:12.5, marginBottom:6 } }, [ rc("span", { key:"t", style:{ fontWeight:700, color:CL360.good } }, "Có bằng chứng: "), c.text,
+        c.evidence.length>0 && rc("div", { key:"e", style:{ fontSize:11.5, color:"var(--inkSoft)" } }, "Dữ liệu: " + c.evidence.join(" · ")) ])) : muted("n", "Chưa có nguyên nhân nào được dữ liệu chứng minh.")),
+      s.hypotheses.length>0 && rc("div", { key:"h" }, s.hypotheses.map((x,i) => rc("div", { key:i, style:{ fontSize:12.5, marginBottom:6 } }, [ rc("span", { key:"t", style:{ fontWeight:700, color:CL360.warn } }, "Giả thuyết, cần kiểm tra: "), x.text,
+        x.check && rc("div", { key:"k", style:{ fontSize:11.5, color:"var(--inkSoft)" } }, "Cách kiểm tra: " + x.check) ]))),
+    ];
+    else if(s.kind==="list") body = s.items.length ? s.items.map((t,i) => rc("div", { key:i, style:{ fontSize:12.5, padding:"2px 0" } }, "• " + t)) : [muted("e", s.empty)];
+    else if(s.kind==="solutions") body = s.items.length ? s.items.map((x,i) => rc("div", { key:i, style:{ fontSize:12.5, marginBottom:8 } }, [
+        rc("div", { key:"t", style:{ fontWeight:700 } }, `${x.title}`),
+        rc("div", { key:"m", style:{ fontSize:11.5, color:"var(--inkSoft)" } }, `${x.owner==="QLKV" ? "Quản lý khu vực" : "Cửa hàng trưởng"} · ưu tiên ${x.priority===1 ? "cao" : x.priority===3 ? "thấp" : "trung bình"}${x.basisText.length ? " · căn cứ: " + x.basisText.join("; ") : ""}`),
+        x.steps && rc("div", { key:"s", style:{ whiteSpace:"pre-line", marginTop:2 } }, x.steps),
+        x.expected && rc("div", { key:"x", style:{ fontSize:11.5, color:"var(--pine)", marginTop:2 } }, "Kết quả mong đợi: " + x.expected),
+      ])).concat([ rc("div", { key:"go", style:{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", fontSize:11.5, color:"var(--inkSoft)" } }, [ "Đã gửi vào AI điều hành, chờ chị duyệt. Không tự giao việc.",
+        rc("button", { key:"b", type:"button", className:"btn btnGhost", style:{ fontSize:11.5, padding:"3px 10px" }, onClick:()=>onNavigate && onNavigate("ai") }, "Mở để duyệt") ]) ]) : [muted("e", "Chưa có giải pháp nào.")];
+    else body = s.items.length ? s.items.map((x,i) => rc("div", { key:i, style:{ fontSize:12.5, padding:"2px 0" } }, [ rc("b", { key:"m" }, x.metric), x.how ? ": " + x.how : "", x.auto ? rc("span", { key:"a", style:{ marginLeft:6, fontSize:11, color:CL360.good } }, "(hệ thống tự đo)") : null ])) : [muted("e", "Chưa có.")];
+    return rc("div", { key:s.no, style:box }, [ h(s), rc("div", { key:"b" }, body) ]);
+  };
+  const v = doc && doc.validation;
+  return rc("div", { className:"card", style:{ marginBottom:16 } }, [
+    rc("div", { key:"t", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, flexWrap:"wrap", marginBottom:6 } }, [
+      rc("div", { key:"a" }, [ rc("div", { key:"t", style:{ fontWeight:700, fontSize:14 } }, "AI phân tích nhà thuốc"),
+        rc("div", { key:"s", style:{ fontSize:11.5, color:"var(--inkSoft)" } }, doc ? `Phân tích lúc ${shopAnTime(doc.createdAt)}${doc.dataAsOf ? ` · dữ liệu lúc ${shopAnTime(doc.dataAsOf)}` : ""} · mục 1 đến 4 là số hệ thống tính, AI không tự tính số` : "Báo cáo 8 mục: số do hệ thống tính, AI chỉ viết nguyên nhân và giải pháp. Giải pháp vào AI điều hành chờ duyệt.") ]),
+      rc("button", { key:"b", type:"button", className:"btn btnPrimary", disabled:busy, style:{ fontSize:12, padding:"6px 12px" }, onClick:()=>run(!!doc && doc.date===todayISO()) }, busy ? "Đang phân tích..." : (doc ? "Phân tích lại" : "AI phân tích")),
+    ]),
+    msg && rc("div", { key:"msg", style:{ fontSize:12, marginBottom:6, color:"var(--inkSoft)" } }, msg),
+    doc && doc.aiStatus!=="ok" && rc("div", { key:"fail", style:{ fontSize:12, marginBottom:6, color:CL360.warn } }, "AI chưa trả lời được lần này. Mục 1 đến 4 và dữ liệu còn thiếu vẫn là số hệ thống, chị bấm Phân tích lại sau ít phút."),
+    v && v.status==="warn" && (v.unverified||[]).length>0 && rc("div", { key:"warn", style:{ fontSize:12, marginBottom:6, background:"var(--claySoft)", borderRadius:6, padding:"5px 8px" } }, `Có số AI viết không có trong dữ liệu gốc: ${(v.unverified||[]).join(", ")}. Chị kiểm tra trước khi duyệt giải pháp.`),
+    doc && rc("div", { key:"g", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))", gap:10 } }, secs.map(sec)),
+  ]);
+}
+
 function ShopProfileView({ isAdmin, myStaff, navParam, onNavigate }){
   const todayStr = todayISO();
   const lockShop = !isAdmin && myStaff ? myStaff.shop : null; // CHT chỉ xem nhà thuốc mình
@@ -22034,6 +22109,8 @@ function ShopProfileView({ isAdmin, myStaff, navParam, onNavigate }){
       ]),
     ],
 
+    // 17/10/2026 (giai đoạn 3a): báo cáo 8 mục theo yêu cầu — chỉ quản lý
+    isAdmin && rc(ShopAnalysisCard, { key:"sa", shop, onNavigate }),
     // 4. Chi tiết hỗ trợ ra quyết định
     rc("div", { key:"detail", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))", gap:12, marginBottom:16, alignItems:"start" } }, [
       rc("div", { key:"staff", className:"card" }, [
