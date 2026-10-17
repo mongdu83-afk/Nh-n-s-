@@ -98,3 +98,21 @@ Trạng thái: ✅ đã sửa (có kiểm thử) · 🟡 sửa một phần · �
 - [ ] Tổng quan → "＋ Việc" ở 1 vấn đề hàng hoá/nhân sự/khách hàng → mở hồ sơ vấn đề (có số liệu trước); giao xong hồ sơ = "ĐÃ GIAO VIỆC".
 - [ ] Shop360 → vấn đề đang giao việc không còn nút "✓ Đã xử lý xong", chỉ "Đo & đánh giá kết quả".
 - [ ] CHT báo xong 1 việc AI tự giao ở Action Center → việc sang "Chờ kiểm tra".
+
+---
+
+## Sửa máy chủ (Cloud Functions — code không có trong repo này)
+
+### SV-1 — Xem bài luyện của nhân viên đã lên từ học việc (17/10/2026, chị Hà báo)
+- **Hiện tượng (đã xác minh trên app thật):** bảng "Lịch sử luyện tập của nhân viên" hiện đúng số bài/điểm của người đã lên
+  nhân viên (VD Lưu Thị Liên · NT121 · 8 bài · TB 40), nhưng bấm **Xem bài** → máy chủ trả lỗi
+  *"Không tìm thấy nhân viên đang thử việc/học việc."*
+- **Nguyên nhân (suy luận từ thông báo lỗi):** trong `probationApiNow`, các action `practiceList`, `practiceDetail`,
+  `practiceSubmit`, `practiceDelete`, `practiceVoiceClip` tìm `hireId` trong danh sách **đang** học việc/thử việc; người đã
+  lên chính thức không còn trong danh sách đó, trong khi `practiceStaffSummary` vẫn đếm bài của họ.
+- **Cách sửa đề xuất:** khi không tìm thấy `hireId` trong danh sách đang thử việc, vẫn cho phép nếu:
+  - người gọi là quản lý (claim `admin`) **hoặc** CHT cùng nhà thuốc với hồ sơ `newHires/{hireId}`, **hoặc**
+  - `newHires/{hireId}.staffId` = nhân viên đang gọi (xem bài cũ của chính mình);
+  và hồ sơ có bài luyện. Không đổi dữ liệu; chỉ nới điều kiện đọc.
+- **Nghiệm thu:** quản lý bấm "Xem bài" ở dòng Lưu Thị Liên thấy 8 bài; nhân viên Liên vào "Tự luyện tình huống → Bài đã làm"
+  thấy bài cũ. App (bản `20261017-08` trở đi) đã sẵn sàng — không cần sửa thêm phía app.

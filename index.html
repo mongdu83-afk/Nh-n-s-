@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261017-07";
+window.__APP_BUILD = "20261017-08";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -9310,6 +9310,7 @@ function PracticeDrugReview({ it, isAdmin, hireId, onChanged }){
     (it.regradeLog || []).length > 0 && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:6 } }, "Đã sửa điểm: " + it.regradeLog.map(g => `${g.from ?? "—"}→${g.to} (${g.by || ""}${g.note ? ": " + g.note : ""})`).join(" · ")),
     msg && h("div", { style:{ fontSize:12.5, marginTop:4, color: msg.startsWith("Lỗi") ? "#B91C1C" : "#15803D" } }, msg));
 }
+const PRACTICE_BLOCKED_MSG = "Máy chủ luyện tập chỉ cho xem bài của người CÒN đang học việc/thử việc, nên chưa mở được bài cũ của nhân viên đã lên chính thức (số bài & điểm ở bảng vẫn đúng). Cần sửa máy chủ (probationApiNow) — xem docs/RA_SOAT_QLKV.md mục \"Sửa máy chủ\".";
 function PracticeHistoryModal({ row, onClose, onChanged }){
   const h = React.createElement;
   const [list, setList] = useState(null);
@@ -9324,12 +9325,18 @@ function PracticeHistoryModal({ row, onClose, onChanged }){
   const [regBusy, setRegBusy] = useState(null);
   // 17/10/2026 (chị Hà): học việc → nhân viên bán hàng: bài cũ nằm ở hồ sơ học việc (row.extraIds) → gộp vào, mỗi bài nhớ hồ sơ của nó.
   const hidMap = useRef({}); const hidOf = (id) => hidMap.current[id] || row.id;
-  async function reload(){ try{ const r = await pbCall("practiceList", { hireId:row.id, limit:200 }, 60000); if(r.ok===false) throw new Error(r.error);
+  async function reload(){ try{
+    // 17/10/2026: máy chủ chỉ cho xem bài của người CÒN học việc/thử việc → hồ sơ đã lên nhân viên báo lỗi; thử tiếp các hồ sơ khác
+    let r = null, firstErr = null;
+    try{ r = await pbCall("practiceList", { hireId:row.id, limit:200 }, 60000); if(r.ok===false){ firstErr = r.error; r = null; } }catch(e){ firstErr = e.message || String(e); }
+    if(!r && !(row.extraIds||[]).length) throw new Error(/Không tìm thấy nhân viên/.test(String(firstErr)) ? PRACTICE_BLOCKED_MSG : firstErr);
+    r = r || { rows:[] };
     let all = r.rows||[]; const m = {};
     for(const hid of (row.extraIds||[]).filter(x => x && x !== row.id)){
       try{ const r2 = await pbCall("practiceList", { hireId:hid, limit:200 }, 60000); if(r2.ok===false) continue;
         const seen = new Set(all.map(x => x.id)); const add = (r2.rows||[]).filter(x => !seen.has(x.id));
         add.forEach(x => { m[x.id] = hid; }); all = all.concat(add); }catch(e){ logSystemError("practiceList-hire", e); } }
+    if(!all.length && firstErr) throw new Error(/Không tìm thấy nhân viên/.test(String(firstErr)) ? PRACTICE_BLOCKED_MSG : firstErr);
     hidMap.current = m; setList(all.sort((a,b) => String(b.createdAt||"").localeCompare(String(a.createdAt||"")))); setIsAdmin(!!r.isAdmin); } catch(e){ setErr(e.message||String(e)); } }
   useEffect(()=>{ reload(); }, []);
   // 5/10/2026: quản lý xoá bài luyện test nhầm
@@ -9798,7 +9805,10 @@ function practiceMergeRows(rows, staffAll, hiresAll){
     const oldIds = [...new Set(ids.concat(linked))].filter(id => id !== main.hireId);
     const graded = g.reduce((a, x) => a + (Number(x.r.graded)||0), 0), wsum = g.reduce((a, x) => a + Math.min(10, Number(x.r.graded)||0), 0);
     const avg10 = wsum ? Math.round(g.reduce((a, x) => a + (x.r.avg10!=null ? x.r.avg10 * Math.min(10, Number(x.r.graded)||0) : 0), 0) / wsum) : (main.avg10!=null ? main.avg10 : null);
-    return { ...main, name: (st && st.name) || main.name, shop: (st && st.shop) || main.shop, staff:st,
+    // "đã lên nhân viên": có ≥ 2 dòng gộp, hoặc dòng còn ghi học việc trong khi hồ sơ nhân viên đã là vai trò khác
+    const promoted = g.length > 1 || !!(st && st.role && st.role !== "Nhân viên học việc" && /học việc|tts|thực tập/i.test(String(main.kind||"")));
+    return { ...main, name: (st && st.name) || main.name, shop: (st && st.shop) || main.shop, staff:st, promoted,
+      kind: promoted && st ? `${st.role} (từ học việc)` : main.kind,
       graded: g.length > 1 ? graded : main.graded, total: g.reduce((a, x) => a + (Number(x.r.total)||0), 0) || main.total,
       week: g.reduce((a, x) => a + (Number(x.r.week)||0), 0) || main.week, avg10: g.length > 1 ? avg10 : main.avg10,
       last: g.map(x => x.r.last).filter(Boolean).sort().slice(-1)[0] || main.last, oldIds };
@@ -9837,7 +9847,7 @@ function StaffPracticeOverview(){
     open && h("div", { style:{ overflowX:"auto", marginTop:8 } }, h("table", { style:{ width:"100%", borderCollapse:"collapse" } },
       h("thead", null, h("tr", null, ["Nhân viên","Nhà thuốc","Loại","Đã chấm","7 ngày qua","TB 10 bài gần nhất","Lần gần nhất",""].map(x => h("th", { key:x, style:th }, x)))),
       h("tbody", null, list.map(r => h("tr", { key:r.key },
-        h("td", { style:{ ...td, fontWeight:600 } }, (r.name || "—") + resignedTag(r.staff), r.oldIds.length ? h("div", { style:{ fontSize:11, fontWeight:400, color:"var(--inkSoft)" } }, "gồm bài luyện lúc học việc") : null), h("td", { style:td }, typeof shopLabel === "function" ? shopLabel(r.shop) : r.shop), h("td", { style:{ ...td, fontSize:12, color:"var(--inkSoft)" } }, r.kind),
+        h("td", { style:{ ...td, fontWeight:600 } }, (r.name || "—") + resignedTag(r.staff), r.promoted ? h("div", { style:{ fontSize:11, fontWeight:400, color:"var(--inkSoft)" } }, "gồm bài luyện lúc học việc") : null), h("td", { style:td }, typeof shopLabel === "function" ? shopLabel(r.shop) : r.shop), h("td", { style:{ ...td, fontSize:12, color:"var(--inkSoft)" } }, r.kind),
         h("td", { style:td }, r.graded || h("span", { style:{ color:CL360.bad, fontWeight:600 } }, "0")), h("td", { style:td }, r.week || "—"), h("td", { style:td }, sc(r.avg10)), h("td", { style:{ ...td, whiteSpace:"nowrap" } }, fmt(r.last)),
         h("td", { style:td }, (r.total || r.oldIds.length) ? h("button", { className:"btn btnGhost", style:{ fontSize:12, padding:"3px 10px" }, onClick:()=>setHist({ id:r.hireId, name:r.name, extraIds:r.oldIds }) }, "Xem bài") : null)))))),
     hist && h(PracticeHistoryModal, { row:hist, onClose:()=>{ setHist(null); load(); } }));
