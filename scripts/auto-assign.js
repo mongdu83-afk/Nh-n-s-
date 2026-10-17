@@ -69,6 +69,7 @@ async function main(){
   if(r.skippedRun){ console.log(`Khung ${slot()} đã chạy rồi — bỏ qua.`); return; }
   const byRule = {}; r.created.forEach(c => { byRule[c.rule] = (byRule[c.rule]||0) + 1; });
   console.log(`${DRY ? "[CHẠY THỬ, không ghi] " : ""}Khung ${slot()}: giao ${r.created.length} việc ${JSON.stringify(byRule)}, bỏ qua ${r.skipped.length} trường hợp.`);
+  if(r.createErrors){ await alertAdmin(`AI tự giao việc khung ${slot()}: ${r.createErrors} việc không tạo được — xem Quản trị → AI tự giao việc.`); process.exitCode = 1; }
 
   // Dự phòng: tự gửi thông báo (chỉ khi bật AA_DIRECT_PUSH=1 — mặc định dựa vào thông báo "Việc được giao" sẵn có của máy chủ Firebase)
   if(!DRY && process.env.AA_DIRECT_PUSH === "1" && r.created.length){
@@ -86,4 +87,20 @@ async function main(){
     console.log(`Đã gửi ${sent} thông báo trực tiếp.`);
   }
 }
-main().then(() => process.exit(0)).catch(e => { console.error("Lỗi:", e && e.message ? e.message : e); process.exit(1); });
+// 17/10/2026 (rà soát P0): 15–17/10 lịch chạy lỗi 3 ngày không ai biết → lỗi thì ghi trạng thái "failed" (lần sau chạy lại được)
+// và gửi thông báo về điện thoại quản lý (fcmTokens/admin). Nhật ký công khai chỉ in thông điệp lỗi, không in dữ liệu.
+async function alertAdmin(body){
+  if(DRY) return;
+  try{
+    const d = await fdb.collection("fcmTokens").doc("admin").get();
+    const tokens = (d.exists && d.data().tokens || []).filter(Boolean);
+    if(tokens.length) await admin.messaging().sendEachForMulticast({ tokens, data:{ title:"⚠️ Lỗi AI tự giao việc", body, link:"/?open=hethong", tag:"aa-fail-" + slot() } });
+  }catch(e){ console.error("Không gửi được thông báo lỗi:", e && e.message ? e.message : e); }
+}
+main().then(() => process.exit(process.exitCode || 0)).catch(async e => {
+  const msg = e && e.message ? e.message : String(e);
+  console.error("Lỗi:", msg);
+  if(!DRY){ try{ await fdb.collection("opsConfig").doc("autoAssignLog").set({ lastStatus:"failed", lastError:msg.slice(0, 300), lastFailedAt:new Date().toISOString(), lastFailedSource:"server" }, { merge:true }); }catch(_){} }
+  await alertAdmin(`AI tự giao việc khung ${slot()} bị lỗi: ${msg.slice(0, 120)}. Lần chạy sau sẽ thử lại.`);
+  process.exit(1);
+});

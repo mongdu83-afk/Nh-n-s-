@@ -122,3 +122,10 @@ test("Trần việc AI/nhà thuốc/ngày tính cả việc đã hoàn thành h�
   assert.equal(dt(aaPlan(base({ todayTasks:[ai("Đã huỷ"), ai("Đã huỷ"), ai("Đã huỷ")] }))), 1);
   assert.equal(dt(aaPlan(base({ todayTasks:done3, config:{ dayCapPerShop:4 } }))), 1);
 });
+
+test("Quản lý đã bỏ qua DT01 trong tháng → AI không tự giao lại; bỏ qua từ tháng trước → giao lại", () => {
+  const dt = (acts) => aaPlan(base({ issueActions:acts })).tasks.filter(t => t.rule === "dt01").length;
+  assert.equal(dt({ SHOP0059__DT01:{ status:"REJECTED", rejectedAt:"2026-10-05T03:00:00Z" } }), 0);
+  assert.equal(dt({ SHOP0059__DT01:{ status:"REJECTED", updatedAtTs:{ toDate:() => new Date("2026-10-02T03:00:00Z") } } }), 0);
+  assert.equal(dt({ SHOP0059__DT01:{ status:"REJECTED", rejectedAt:"2026-09-20T03:00:00Z" } }), 1);
+});
