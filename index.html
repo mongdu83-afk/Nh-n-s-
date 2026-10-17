@@ -9901,6 +9901,7 @@ function TtsCaseLibraryInner({ isAdmin }){
   const [edit, setEdit] = useState(null);
   const [busy, setBusy] = useState("");
   const [genProt, setGenProt] = useState("");
+  const [genSet, setGenSet] = useState("all");
   async function load(){ setErr(null); try{ setData(await pdCall("caseList", {}, 90000)); } catch(e){ setErr(e); } }
   useEffect(()=>{ load(); }, []);
   if(err) return h("div", null, h(EmptyState, { kind: emptyKindFromError(err), detail: err.message }), h("button", { className:"btn", onClick:load }, "Thử lại"));
@@ -9914,7 +9915,19 @@ function TtsCaseLibraryInner({ isAdmin }){
   if(prot!=="all") list = list.filter(c => c.protocolId===prot);
   if(st!=="all") list = list.filter(c => c.status===st);
   async function gen(){ if(!genProt) return window.alert("Chọn phác đồ.");
-    setBusy("gen"); try{ const r = await pdCall("caseGenerate", { protocolId:genProt, n:5 }, 240000); if(r.ok===false) throw new Error(r.error); await load(); setProt(genProt); setSt("draft"); } catch(e){ window.alert("Lỗi: " + (e.message||e)); } setBusy(""); }
+    const sets = data.sets || [];
+    setBusy("gen");
+    try{
+      if(!sets.length){ const r = await pdCall("caseGenerate", { protocolId:genProt, n:5 }, 240000); if(r.ok===false) throw new Error(r.error); }
+      else {
+        // 17/10/2026: soạn theo BỘ (mỗi bộ 1 lần gọi AI); "Tất cả các bộ" chạy lần lượt, bỏ qua loại ca phác đồ đã có
+        const keys = genSet==="all" ? sets.map(s => s.key) : [genSet]; let added = 0, skipped = 0, failed = 0;
+        for(const k of keys){ try{ const r = await pdCall("caseGenerate", { protocolId:genProt, set:k }, 240000); if(r.ok===false) throw new Error(r.error); added += r.n||0; skipped += r.skipped||0; } catch(e){ failed++; } }
+        window.alert(`Đã soạn ${added} tình huống nháp${skipped ? ` (bỏ qua ${skipped} loại đã có)` : ""}${failed ? ` · ${failed} bộ lỗi — bấm Soạn lại, hệ thống chỉ soạn phần còn thiếu` : ""}.`);
+      }
+      await load(); setProt(genProt); setSt("draft");
+    } catch(e){ window.alert("Lỗi: " + (e.message||e)); }
+    setBusy(""); }
   async function approveAll(){ const ids = list.filter(c=>c.status==="draft").map(c=>c.id); if(!ids.length) return;
     if(!window.confirm(`Duyệt nhanh ${ids.length} tình huống nháp đang hiện? (nên mở xem từng ca trước)`)) return;
     setBusy("ok"); try{ await pdCall("caseStatus", { ids, status:"approved" }, 60000); await load(); } catch(e){ window.alert("Lỗi: " + (e.message||e)); } setBusy(""); }
@@ -9927,12 +9940,15 @@ function TtsCaseLibraryInner({ isAdmin }){
       h("div", { className:"metric warn" }, h("div", { className:"label" }, "Chờ duyệt"), h("div", { className:"value" }, drafts)),
       h("div", { className:"metric" }, h("div", { className:"label" }, "Phác đồ có ca"), h("div", { className:"value" }, `${Object.keys(byProt).length}/${(data.protocols||[]).length}`))),
     h("div", { className:"card", style:{ marginBottom:12, display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" } },
-      h("b", { style:{ fontSize:13 } }, "AI soạn 5 tình huống cho phác đồ:"),
+      h("b", { style:{ fontSize:13 } }, "AI soạn tình huống cho phác đồ:"),
       h("select", { value:genProt, onChange:e=>setGenProt(e.target.value), style:{ padding:"6px 8px", border:"1px solid var(--line)", borderRadius:8, fontSize:12.5, maxWidth:360 } },
         h("option", { value:"" }, "— chọn phác đồ —"),
         protsNoCase.length>0 && h("optgroup", { label:"Chưa có tình huống" }, protsNoCase.map(p => h("option", { key:p.id, value:p.id }, p.title + (p.status!=="approved" ? " (nháp)" : "")))),
         h("optgroup", { label:"Đã có tình huống" }, (data.protocols||[]).filter(p => byProt[p.id]).map(p => h("option", { key:p.id, value:p.id }, `${p.title} (${byProt[p.id].n} ca)`)))),
-      h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:gen }, busy==="gen" ? "AI đang soạn (≈1 phút)…" : "Soạn"),
+      (data.sets||[]).length>0 && h("select", { value:genSet, onChange:e=>setGenSet(e.target.value), style:{ padding:"6px 8px", border:"1px solid var(--line)", borderRadius:8, fontSize:12.5 } },
+        h("option", { value:"all" }, `Tất cả ${(data.sets||[]).length} bộ (${(data.sets||[]).reduce((a,s)=>a+s.n,0)} loại ca)`),
+        (data.sets||[]).map(s => h("option", { key:s.key, value:s.key }, `${s.label} (${s.n} ca)`))),
+      h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:gen }, busy==="gen" ? "AI đang soạn (≈1 phút/bộ)…" : "Soạn"),
       h("button", { className:"btn", disabled:!!busy, onClick:async()=>{ setBusy("seed"); try{ const r = await pdCall("caseImportSeed", {}, 180000); if(r.ok===false) throw new Error(r.error); window.alert(`Đã nhập ${r.added} tình huống soạn sẵn (bỏ qua ${r.skipped} tình huống đã có). Các tình huống ở trạng thái Nháp — dược sĩ kiểm tra rồi Duyệt.`); await load(); setSt("draft"); } catch(e){ window.alert("Lỗi: " + (e.message||e)); } setBusy(""); } }, busy==="seed" ? "Đang nhập…" : "Nhập bộ tình huống soạn sẵn"),
       h("button", { className:"btn btnGhost", onClick:()=>setEdit({ protocolId:"", protocolTitle:"Tự thêm", kind:"ban", khach:"", loiKhach:"", tinhCach:"", thongTinAn:[], canDiKham:false, canhBao:"", phaiHoi:[], dapAn:{ xuTri:"", thuoc:[], danDo:[] }, quiz:{ cauHoi:[], xuTri:[], thuoc:[] } }) }, "＋ Tự thêm ca thật")),
     h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", marginBottom:10 } },
@@ -16937,6 +16953,24 @@ function ProductDictionaryView({ isAdmin, myStaff }){
     } catch(e){ setMsg("Lỗi: " + (e.message||e)); if(ids) window.alert("Chưa soạn được thẻ: " + (e.message||e)); }
     setBusy("");
   }
+  // 17/10/2026: soạn nháp HẾT các thẻ còn thiếu trong danh sách (kể cả mã ngoài top bán chạy mà nút "mã tiếp theo" không với tới).
+  // Gửi từng đợt 12 mã (backend chạy 3 mã song song). Thẻ AI soạn chỉ là BẢN NHÁP — vẫn phải dược sĩ duyệt mới hiện cho nhân viên.
+  async function generateAll(){
+    const pids = Array.from(new Set(all0.filter(it => !(it.d && it.d.entry)).map(it => it.pid)));
+    if(!pids.length) return;
+    if(!window.confirm(`AI sẽ soạn nháp ${pids.length} thẻ còn thiếu (khoảng ${Math.ceil(pids.length/12)} đợt, mỗi đợt ~1 phút). Giữ nguyên tab này đến khi xong. Tiếp tục?`)) return;
+    setBusy("gen"); let done = 0, fail = 0;
+    try{
+      for(let i = 0; i < pids.length; i += 12){
+        const chunk = pids.slice(i, i + 12);
+        setMsg(`AI đang soạn thẻ ${Math.min(i + 12, pids.length)}/${pids.length}…`);
+        try{ const r = await pdCall("generate", { productIds:chunk }, 540000); done += r.generated || 0; fail += r.failed || 0; }
+        catch(e){ fail += chunk.length; }
+      }
+      setMsg(`Đã soạn ${done}/${pids.length} thẻ nháp${fail ? ` · ${fail} lỗi (bấm lại để soạn tiếp phần còn thiếu)` : ""}. Nhớ kiểm tra rồi bấm Duyệt.`);
+      await load();
+    } finally { setBusy(""); }
+  }
   async function bulkReview(pids){
     if(!pids.length) return;
     const who = window.prompt(`Duyệt ${pids.length} thẻ đang hiện trong danh sách.\nNhân viên sẽ thấy ngay các thẻ này với dấu ✓.\n\nTên dược sĩ duyệt:`, (myStaff && myStaff.name) || "");
@@ -17027,6 +17061,7 @@ function ProductDictionaryView({ isAdmin, myStaff }){
   const have = all.filter(it => it.d && it.d.entry).length;
   const reviewed = all.filter(it => it.d && it.d.entry && it.d.status==="reviewed").length;
   const missingTop = rk.items.filter(it => !(dict[it.pid] && dict[it.pid].entry)).length;
+  const missingAll = all0.filter(it => !(it.d && it.d.entry)).length;
   const lastCum = rk.items.length ? rk.items[rk.items.length-1].cumShare : 0;
   const top20Cum = rk.items.length >= 20 ? rk.items[19].cumShare : lastCum;
 
@@ -17093,11 +17128,13 @@ function ProductDictionaryView({ isAdmin, myStaff }){
           "Cho nhân viên xem cả thẻ AI chưa được dược sĩ duyệt (mặc định chỉ thẻ đã duyệt ✓)")),
       isAdmin && h("div", { className:"btnRow", style:{ gap:6, flexWrap:"wrap" } },
         missingTop>0 && h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:()=>generate(null) }, busy==="gen" ? "AI đang soạn…" : `Soạn thẻ cho ${Math.min(12, missingTop)} mã tiếp theo`),
+        missingAll>0 && h("button", { className:"btn", disabled:!!busy, onClick:generateAll }, busy==="gen" ? "AI đang soạn…" : `Soạn hết ${missingAll} thẻ còn thiếu`),
         h("button", { className:"btn", disabled:!!busy, onClick:()=>setShowElearn(true) }, "Web đào tạo"),
         h("button", { className:"btn btnGhost", disabled:!!busy, onClick:rerank }, busy==="rank" ? "Đang xếp hạng…" : "Cập nhật xếp hạng"))),
     !isAdmin && canEdit && h("div", { className:"card", style:{ fontSize:12.5, padding:"8px 12px", marginBottom:10, display:"flex", gap:10, alignItems:"center", flexWrap:"wrap", background:"#EEF6F3" } },
       h("b", null, "Bạn là người duyệt nội dung đào tạo"), h("span", { style:{ color:"var(--inkSoft)" } }, "— xem cả thẻ AI chưa duyệt (lọc \"Chưa duyệt\"), sửa và bấm Duyệt; soạn thêm thẻ còn thiếu."),
-      missingTop>0 && h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:()=>generate(null) }, busy==="gen" ? "AI đang soạn…" : `Soạn thẻ cho ${Math.min(12, missingTop)} mã tiếp theo`)),
+      missingTop>0 && h("button", { className:"btn btnPrimary", disabled:!!busy, onClick:()=>generate(null) }, busy==="gen" ? "AI đang soạn…" : `Soạn thẻ cho ${Math.min(12, missingTop)} mã tiếp theo`),
+      missingAll>0 && h("button", { className:"btn", disabled:!!busy, onClick:generateAll }, busy==="gen" ? "AI đang soạn…" : `Soạn hết ${missingAll} thẻ còn thiếu`)),
     isAdmin && h(DictReviewerPicker, { settings:data.settings, onSaved:load }),
     canEdit && h("div", { style:{ marginBottom:10 } }, h("button", { className:"btn", onClick:()=>setShowCmp(true) }, isAdmin ? "AI của app: cấu hình & so sánh" : "Chấm so sánh AI")),
     showCmp && h(AiCompareModal, { isAdmin, myStaff, onClose:()=>setShowCmp(false) }),
