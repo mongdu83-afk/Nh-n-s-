@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261017-09";
+window.__APP_BUILD = "20261017-10";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -3740,7 +3740,9 @@ function TaskAssignView({ isAdmin, myStaff, navParam, onNavigate, openTasks360 }
   const [adminStatus, setAdminStatus] = useState("Tất cả");
   // 20/9/2026: nhảy thẳng tới đúng bộ lọc trạng thái khi được điều hướng từ tab Tổng quan (VD bấm
   // "Task quá hạn") — không thì trang này luôn mở mặc định "Tất cả" trạng thái.
-  useEffect(()=>{ if(navParam && navParam.status){ setAdminStatus(navParam.status); if(isAdmin) setAdminView("list"); } if(isAdmin && navParam && navParam.sub) setAdminView(navParam.sub); }, [navParam]);
+  useEffect(()=>{ if(navParam && navParam.status){ setAdminStatus(navParam.status); if(isAdmin) setAdminView("list"); } if(isAdmin && navParam && navParam.sub) setAdminView(navParam.sub);
+    // 17/10/2026: mở thẳng danh sách việc của 1 nhà thuốc (từ thẻ "Việc AI giao có được làm không")
+    if(isAdmin && navParam && navParam.shop){ setAdminShop(navParam.shop); setAdminView("list"); } }, [navParam]);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [reportingId, setReportingId] = useState(null);
@@ -21163,6 +21165,8 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate, aiOnly }){
   return rc("div", { style:{ maxWidth:1160, margin:"0 auto", padding:16 } }, [
     // 7/10/2026 (tinh gọn): trọng tâm hôm nay (nhịp điều hành + chỉ số dẫn dắt) + bản tin gộp — đứng đầu màn chính của quản lý.
     isAdmin && rc(OpsFocusStrip, { key:"focus", onNavigate }),
+    // 17/10/2026 (đặc tả AI vận hành 2a): việc AI giao có được làm không — theo nhà thuốc, 7/14/30 ngày
+    isAdmin && rc(AiExecCard, { key:"aiexec", onNavigate }),
     // 7/10/2026: vòng điều hành — (1) nhà thuốc nào có vấn đề & ở đâu → (2) ra quyết định / giao việc → (3) kết quả sau 7–14 ngày
     isAdmin && rc(ShopDiagnosisCard, { key:"diag", isAdmin, myStaff, onNavigate }),
     isAdmin && rc(DecisionsCard, { key:"decisions", isAdmin, myStaff }),
@@ -28861,6 +28865,123 @@ function top5Today(I){
   return out.sort((a, b) => b.score - a.score).slice(0, 5);
 }
 // TOP5-ENGINE-END
+// AIEXEC-ENGINE-BEGIN
+// 17/10/2026 (đặc tả AI vận hành, giai đoạn 2a): VIỆC AI GIAO CÓ ĐƯỢC LÀM KHÔNG — số thật 16/10: 7 ngày AI giao 20 việc, 2 việc xong.
+// Gom việc do AI giao (AI điều hành, Trợ lý AI thay CHT, AI tự giao việc) trong N ngày theo nhà thuốc và theo trạng thái thật.
+// Chỉ đọc, không đổi dữ liệu. Hàm thuần để kiểm thử. "Nhận xét" chỉ nêu dữ kiện đếm được, không suy ra nguyên nhân.
+const AIEXEC_STAGES = ["done", "review", "doing", "untouched", "overdue", "replaced", "cancelled"];
+const AIEXEC_STAGE_LABEL = { done:"Đã xong", review:"Chờ kiểm tra", doing:"Đang làm", untouched:"Chưa ai nhận", overdue:"Quá hạn", replaced:"Bị việc mới thay", cancelled:"Đã huỷ" };
+function aiExecSource(t){
+  if(t.opsProposalId){ const by = String(t.nguoiGiaoViec || "");
+    if(/Trợ lý AI/.test(by)) return "Trợ lý AI thay CHT";
+    if(/AI tự giao/.test(by)) return "AI điều hành (tự giao)";
+    return "AI điều hành (quản lý duyệt)"; }
+  if(t.autoAssigned || /^AI tự giao/.test(String(t.nguoiGiaoViec || ""))) return "AI tự giao việc (quy tắc)";
+  if(/^(AI|Trợ lý AI)/.test(String(t.nguoiGiaoViec || ""))) return "AI khác";
+  return null;
+}
+function aiExecStage(t, nowTs){
+  if(t.trangThai === "Đã hoàn thành") return "done";
+  if(t.trangThai === "Đã huỷ") return (/thay bằng việc mới/.test(String(t.nguoiHuy || "")) || /^Hết hiệu lực/.test(String(t.lyDoHuy || ""))) ? "replaced" : "cancelled";
+  const sub = t.subTrangThai || "Đang thực hiện";
+  if(sub === "Chờ kiểm tra") return "review";
+  if(t.deadline && `${t.deadline}T${t.hanGio || "23:59"}` < nowTs) return "overdue";
+  if(sub === "Mới giao") return "untouched";
+  return "doing";
+}
+// I = { today, nowTs, days, tasks:[mọi việc có ngayGiao trong kỳ] }
+function aiExecSummary(I){
+  const days = I.days || 7, from = aiExecAddDays(I.today, -(days - 1)), tomorrow = aiExecAddDays(I.today, 1);
+  const zero = () => { const o = { total:0, soon:0 }; AIEXEC_STAGES.forEach(s => o[s] = 0); return o; };
+  const tot = zero(), byShop = {}, bySource = {};
+  for(const t of (I.tasks || [])){
+    if(!t || !t.ngayGiao || t.ngayGiao < from || t.ngayGiao > I.today) continue;
+    const src = aiExecSource(t); if(!src) continue;
+    const st = aiExecStage(t, I.nowTs), shop = t.shop || "—";
+    const soon = st === "untouched" && t.deadline && t.deadline <= tomorrow;
+    for(const o of [tot, byShop[shop] || (byShop[shop] = zero()), bySource[src] || (bySource[src] = zero())]){ o.total++; o[st]++; if(soon) o.soon++; }
+  }
+  const live = (o) => o.total - o.replaced - o.cancelled;   // việc còn hiệu lực (không tính việc đã bị thay / huỷ)
+  const pct = (a, b) => b ? Math.round(a * 100 / b) : null;
+  const shops = Object.entries(byShop).map(([shop, o]) => ({ shop, ...o, live:live(o), donePct:pct(o.done, live(o)) }))
+    .sort((a, b) => (b.overdue + b.untouched) - (a.overdue + a.untouched) || b.total - a.total || a.shop.localeCompare(b.shop));
+  const sources = Object.entries(bySource).map(([name, o]) => ({ name, ...o, live:live(o), donePct:pct(o.done, live(o)) })).sort((a, b) => b.total - a.total);
+  const notes = [];
+  if(tot.total){
+    if(tot.replaced && tot.replaced * 100 >= tot.total * 30) notes.push(`${tot.replaced}/${tot.total} việc bị việc mới cùng loại thay trước khi xong (AI giao lại loại việc đó ngày hôm sau).`);
+    const open = tot.untouched + tot.overdue + tot.doing;
+    if(open && tot.untouched * 100 >= open * 40) notes.push(`${tot.untouched}/${open} việc còn mở chưa ai bấm nhận (vẫn ở "Mới giao").`);
+    const zeroShops = shops.filter(s => s.live >= 3 && !s.done && !s.review);
+    if(zeroShops.length) notes.push(`${zeroShops.length} nhà thuốc nhận từ 3 việc AI trở lên nhưng chưa xong việc nào: ${zeroShops.slice(0, 4).map(s => aiExecShopLbl(s.shop)).join(", ")}${zeroShops.length > 4 ? "…" : ""}.`);
+    if(tot.soon) notes.push(`${tot.soon} việc chưa ai nhận sẽ đến hạn trong hôm nay hoặc ngày mai.`);
+  }
+  return { from, to:I.today, days, total:{ ...tot, live:live(tot), donePct:pct(tot.done, live(tot)) }, shops, sources, notes };
+}
+function aiExecAddDays(iso, n){ const [y, m, d] = String(iso).split("-").map(Number); return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10); }
+function aiExecShopLbl(c){ const m = /^SHOP0*(\d+)$/i.exec(String(c || "")); return m ? "NT" + m[1] : String(c || ""); }
+// AIEXEC-ENGINE-END
+// Thẻ "Việc AI giao có được làm không" (giai đoạn 2a) — dùng AIEXEC-ENGINE, đọc tasks có ngayGiao trong 7 ngày.
+function AiExecCard({ onNavigate }){
+  const [s, setS] = useState(null); const [days, setDays] = useState(7); const [showAll, setShowAll] = useState(false);
+  useEffect(()=>{
+    let alive = true; setS(null);
+    const today = todayISO(), from = aiExecAddDays(today, -(days - 1));
+    db.collection("tasks").where("ngayGiao", ">=", from).get()
+      .then(q => { if(alive) setS({ ...aiExecSummary({ today, nowTs:`${today}T${nowHM()}`, days, tasks:q.docs.map(d => ({ id:d.id, ...d.data() })) }), at:new Date().toISOString() }); })
+      .catch(e => { logSystemError("AiExecCard", e); if(alive) setS({ err:e.message || String(e) }); });
+    return () => { alive = false; };
+  }, [days]);
+  const h = React.createElement, go = (tab, param) => onNavigate && onNavigate(tab, param);
+  const tone = { done:CL360.good, review:CL360.info, doing:CL360.gray, untouched:CL360.warn, overdue:CL360.bad, replaced:CL360.gray, cancelled:CL360.gray };
+  const head = h("div", { key:"h", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, flexWrap:"wrap", marginBottom:4 } }, [
+    h("div", { key:"t", style:{ fontWeight:700, fontSize:15 } }, "Việc AI giao có được làm không"),
+    h("div", { key:"d", style:{ display:"flex", gap:4 } }, [7, 14, 30].map(n => h("button", { key:n, type:"button", className:"btn" + (n===days ? " btnPrimary" : " btnGhost"), style:{ padding:"2px 9px", fontSize:12 }, onClick:()=>setDays(n) }, `${n} ngày`))),
+  ]);
+  if(!s) return h("div", { className:"card", style:{ marginBottom:14 } }, [head, h("div", { key:"l", className:"emptyState" }, "Đang tải việc AI giao…")]);
+  if(s.err) return h("div", { className:"card", style:{ marginBottom:14 } }, [head, h("div", { key:"e", style:{ fontSize:12.5, color:CL360.bad } }, "Không đọc được danh sách việc: " + s.err)]);
+  const T = s.total;
+  const src = h("div", { key:"src", style:{ fontSize:11, color:"var(--inkSoft)", marginBottom:8 } },
+    `Nguồn: Công việc (tasks) giao từ ${s.from} đến ${s.to} bởi AI điều hành, Trợ lý AI thay CHT và AI tự giao việc. Đọc lúc ${fmtTs360(s.at)}. "Đã xong" tính trên việc còn hiệu lực (không gồm việc bị thay hoặc huỷ).`);
+  if(!T.total) return h("div", { className:"card", style:{ marginBottom:14 } }, [head, src, h("div", { key:"n", style:{ fontSize:13 } }, `Không có việc nào do AI giao trong ${s.days} ngày qua.`)]);
+  const stat = (k, label, v, sub, color) => h("div", { key:k, style:{ flex:"1 1 120px", border:"1px solid var(--line)", borderRadius:10, padding:"8px 10px", background:"#fff" } }, [
+    h("div", { key:"l", style:{ fontSize:11.5, color:"var(--inkSoft)", fontWeight:600 } }, label),
+    h("div", { key:"v", style:{ fontSize:20, fontWeight:800, color } }, v),
+    sub && h("div", { key:"s", style:{ fontSize:11, color:"var(--inkSoft)" } }, sub),
+  ]);
+  const rows = showAll ? s.shops : s.shops.slice(0, 6);
+  const cell = { padding:"5px 6px", borderTop:"1px solid #F0EEE2", textAlign:"right", whiteSpace:"nowrap" };
+  return h("div", { className:"card", style:{ marginBottom:14 } }, [
+    head, src,
+    h("div", { key:"g", style:{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:10 } }, [
+      stat("a", "AI đã giao", T.total, `${T.live} còn hiệu lực`, "var(--ink)"),
+      stat("d", "Đã xong", T.donePct==null ? "—" : `${T.done} (${T.donePct}%)`, `${T.review} chờ kiểm tra`, T.donePct!=null && T.donePct < 50 ? CL360.bad : CL360.good),
+      stat("u", "Chưa ai nhận", T.untouched, T.soon ? `${T.soon} đến hạn hôm nay/mai` : "còn trong hạn", T.untouched ? CL360.warn : CL360.good),
+      stat("o", "Quá hạn", T.overdue, `${T.doing} đang làm`, T.overdue ? CL360.bad : CL360.good),
+      stat("r", "Bị thay / huỷ", T.replaced + T.cancelled, `${T.replaced} bị việc mới thay`, CL360.gray),
+    ]),
+    s.notes.length > 0 && h("div", { key:"nt", style:{ fontSize:12.5, border:"1px solid var(--line)", borderRadius:10, padding:"7px 10px", marginBottom:10 } }, [
+      h("div", { key:"h", style:{ fontWeight:700, marginBottom:3 } }, "Dữ kiện (chưa phải nguyên nhân)"),
+      ...s.notes.map((n, i) => h("div", { key:i }, "• " + n)),
+    ]),
+    h("div", { key:"tb", style:{ overflowX:"auto" } }, h("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5 } }, [
+      h("thead", { key:"h" }, h("tr", null, ["Nhà thuốc", "Giao", "Xong", "Chờ KT", "Chưa nhận", "Quá hạn", "Bị thay/huỷ", ""].map((c, i) =>
+        h("th", { key:i, style:{ ...cell, borderTop:"none", textAlign:i ? "right" : "left", color:"var(--inkSoft)", fontWeight:600 } }, c)))),
+      h("tbody", { key:"b" }, rows.map(r => h("tr", { key:r.shop }, [
+        h("td", { key:"s", style:{ ...cell, textAlign:"left", fontWeight:600 } }, aiExecShopLbl(r.shop)),
+        h("td", { key:"t", style:cell }, r.total),
+        h("td", { key:"d", style:{ ...cell, color:r.done ? tone.done : "var(--inkSoft)" } }, r.donePct==null ? r.done : `${r.done} (${r.donePct}%)`),
+        h("td", { key:"v", style:cell }, r.review || ""),
+        h("td", { key:"u", style:{ ...cell, color:r.untouched ? tone.untouched : undefined } }, r.untouched || ""),
+        h("td", { key:"o", style:{ ...cell, color:r.overdue ? tone.overdue : undefined, fontWeight:r.overdue ? 700 : 400 } }, r.overdue || ""),
+        h("td", { key:"x", style:{ ...cell, color:"var(--inkSoft)" } }, (r.replaced + r.cancelled) || ""),
+        h("td", { key:"b", style:cell }, r.shop !== "—" && h("button", { type:"button", className:"btn btnGhost", style:{ padding:"2px 8px", fontSize:11.5 }, onClick:()=>go("tasks", { shop:r.shop }) }, "Xem việc")),
+      ]))),
+    ])),
+    s.shops.length > 6 && h("button", { key:"m", type:"button", className:"btn btnGhost", style:{ marginTop:6, fontSize:12 }, onClick:()=>setShowAll(!showAll) }, showAll ? "Thu gọn" : `Xem cả ${s.shops.length} nhà thuốc`),
+    s.sources.length > 1 && h("div", { key:"sr", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:8 } },
+      "Theo nguồn giao: " + s.sources.map(x => `${x.name} ${x.total} việc, xong ${x.done}`).join(" · ")),
+  ]);
+}
 function OpsFocusStrip({ onNavigate }){
   const [f, setF] = useState(null);
   useEffect(()=>{
