@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261017-03";
+window.__APP_BUILD = "20261017-04";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -2105,7 +2105,10 @@ function DailyChecklistView({ isAdmin, myStaff }){
   // Cửa hàng trưởng chỉ xem được đúng nhà thuốc của mình, không được chọn "Tất cả" hay nhà thuốc khác.
   const effectiveAdminShop = isShopManager && myStaff ? myStaff.shop : adminShop;
   const shopStaff = effectiveAdminShop==="Tất cả" ? staff : staff.filter(s => s.shop===effectiveAdminShop);
-  const adminRows = shopStaff.map(s => {
+  // 17/10/2026 (chị Hà): ngày đã có lịch ca → chỉ thống kê người CÓ CA (người không ca không tính vào báo cáo);
+  // ai không có ca mà vẫn nộp thì vẫn hiện để quản lý thấy. Chưa có lịch ca ngày đó → hiện tất cả như cũ.
+  const dayHasShiftData = workRegs.concat(overtimeRegs).some(w => String(w.WorkDate||"").slice(0,10)===adminDate);
+  const adminRowsAll = shopStaff.map(s => {
     const rid = dailyReportId(s.id, adminDate);
     const r = reports[rid];
     const customCount = r && r.customTasks ? Object.keys(r.customTasks).length : 0;
@@ -2128,6 +2131,8 @@ function DailyChecklistView({ isAdmin, myStaff }){
     const needsAttention = hasShiftToday && status.text !== "Đã nộp";
     return { staff:s, r, p, done, total, status, hasShiftToday, shiftLabel, needsAttention };
   });
+  const adminRows = dayHasShiftData ? adminRowsAll.filter(x => x.hasShiftToday || x.r) : adminRowsAll;
+  const noShiftHidden = adminRowsAll.length - adminRows.length;
   const submittedCount = adminRows.filter(x => x.r && x.r.trangThai==="Đã nộp").length;
   const avgPctAdmin = adminRows.length ? Math.round(adminRows.reduce((s,x)=>s+x.p,0)/adminRows.length) : 0;
   const hasWorkRegData = workRegs.length > 0 || overtimeRegs.length > 0;
@@ -2155,6 +2160,9 @@ function DailyChecklistView({ isAdmin, myStaff }){
   const noWorkRegNotice = (isAdmin || isShopManager) && !hasWorkRegData &&
     React.createElement("div", { key:"noWorkReg", style:{ background:"var(--goldSoft)", borderRadius:10, padding:"9px 14px", marginBottom:14, fontSize:12, color:"#7a5108" } },
       "Chưa có dữ liệu ca làm việc (cả ca thường lẫn tăng ca) cho ngày này — cột \"Ca hôm nay\" sẽ hiện \"—\" cho tới khi có dữ liệu đồng bộ.");
+  const noShiftNotice = (isAdmin || isShopManager) && noShiftHidden > 0 &&
+    React.createElement("div", { key:"noShift", style:{ fontSize:12, color:"var(--inkSoft)", margin:"-6px 0 12px" } },
+      `Không tính ${noShiftHidden} nhân viên không có ca ngày này.`);
 
   const adminFilterRow = React.createElement("div", { className:"btnRow", style:{ marginBottom:14 } }, [
     isAdmin && React.createElement("select", { key:"shop", value:adminShop, onChange:e=>setAdminShop(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } },
@@ -2163,7 +2171,7 @@ function DailyChecklistView({ isAdmin, myStaff }){
   ]);
 
   const adminTable = adminRows.length===0
-    ? React.createElement("div",{className:"emptyState"}, "Chưa có nhân viên nào trong bộ lọc này.")
+    ? React.createElement("div",{className:"emptyState"}, noShiftHidden ? "Không có nhân viên nào có ca trong ngày này." : "Chưa có nhân viên nào trong bộ lọc này.")
     : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
         React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Nhân viên","Nhà thuốc","Vai trò","Ca hôm nay","Hoàn thành","Trạng thái","Điểm chủ chấm",""].map((h,i)=>React.createElement("th",{key:i},h)))),
         React.createElement("tbody",{key:"b"}, adminRows.map(x => React.createElement("tr",{key:x.staff.id, style: x.needsAttention ? { background:"var(--claySoft)" } : null}, [
@@ -2191,7 +2199,7 @@ function DailyChecklistView({ isAdmin, myStaff }){
     ]),
     // 14/10/2026 (P2): lỗi checklist theo mức nghiêm trọng & tái diễn (không để % tổng che lỗi nặng)
     adminOpen && React.createElement(ChecklistQualityPanel, { key:"clq", templates, staff, scopeShop: isShopManager && myStaff ? myStaff.shop : null, isAdmin, giver: isShopManager ? myStaff : null }),
-    adminOpen && React.createElement(React.Fragment, { key:"adm" }, [ adminMetrics, shiftReminderBanner, noWorkRegNotice, adminFilterRow, adminTable ]),
+    adminOpen && React.createElement(React.Fragment, { key:"adm" }, [ adminMetrics, noShiftNotice, shiftReminderBanner, noWorkRegNotice, adminFilterRow, adminTable ]),
   ]);
 
   return React.createElement(React.Fragment, null, [
