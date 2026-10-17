@@ -45,3 +45,16 @@ test("Tách 'đã khắc phục' với 'đã xác minh không tái diễn'", () 
 test("Không có báo cáo → chưa đủ dữ liệu để kết luận", () => {
   assert.match(clqAnalyze({ reports:[], templatesByRole:tpl, staffById, since:"2026-10-01", today:"2026-10-14" }).headline, /chưa đủ dữ liệu/);
 });
+
+test("Lỗi tái diễn sau khắc phục → gợi ý kèm cặp; sau kèm cặp vẫn theo dõi tái diễn (4d)", () => {
+  const { clqCoachShop } = (() => { vm.runInContext(";globalThis.__k = { clqCoachShop };", ctx); return ctx.__k; })();
+  const r1 = clqAnalyze({ reports, templatesByRole:tpl, staffById, since:"2026-10-01", today:"2026-10-14",
+    fixTasks:[ { checklistItemId:"a", shop:"SHOP0059", trangThai:"Đã hoàn thành", ngayHoanThanh:"2026-10-10" } ] });
+  assert.equal(clqCoachShop(r1.list[0]), "SHOP0059");
+  const r2 = clqAnalyze({ reports, templatesByRole:tpl, staffById, since:"2026-10-01", today:"2026-10-14",
+    fixTasks:[ { checklistItemId:"a", shop:"SHOP0059", trangThai:"Đang giao", coaching:true, ngayHoanThanh:"" } ] });
+  assert.equal(r2.list[0].fixStatus[0].label, "Đang kèm cặp"); assert.equal(clqCoachShop(r2.list[0]), null);
+  const r3 = clqAnalyze({ reports, templatesByRole:tpl, staffById, since:"2026-10-01", today:"2026-10-14",
+    fixTasks:[ { checklistItemId:"a", shop:"SHOP0059", trangThai:"Đã hoàn thành", coaching:true, ngayHoanThanh:"2026-10-09" } ] });
+  assert.match(r3.list[0].fixStatus[0].label, /Tái diễn sau kèm cặp \(3 ngày\)/);
+});

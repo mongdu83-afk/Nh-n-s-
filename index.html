@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261017-17";
+window.__APP_BUILD = "20261017-18";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -1763,9 +1763,11 @@ function clqAnalyze(I){
     const fixStatus = Object.keys(o.missDays).map(sh => {
       const f = fixed.filter(t => t.shop===sh).sort((a, b) => String(b.ngayHoanThanh||"").localeCompare(String(a.ngayHoanThanh||"")))[0];
       if(!f) return null;
-      if(f.trangThai!=="Đã hoàn thành") return { shop:sh, state:"fixing", label:"Đang khắc phục" };
+      // 17/10/2026 (4d, Module 7–8): lỗi tái diễn sau khắc phục → giao KÈM CẶP (coaching:true); theo dõi tiếp có còn tái diễn sau kèm cặp không
+      const kc = !!f.coaching, w = kc ? "kèm cặp" : "khắc phục";
+      if(f.trangThai!=="Đã hoàn thành") return { shop:sh, state:"fixing", coaching:kc, label: kc ? "Đang kèm cặp" : "Đang khắc phục" };
       const after = Array.from(o.missDays[sh]).filter(d => d > String(f.ngayHoanThanh).slice(0,10));
-      return after.length ? { shop:sh, state:"recurred", label:`Tái diễn sau khắc phục (${after.length} ngày)` } : { shop:sh, state:"fixed", label:"Đã khắc phục — chưa thấy tái diễn" };
+      return after.length ? { shop:sh, state:"recurred", coaching:kc, label:`Tái diễn sau ${w} (${after.length} ngày)` } : { shop:sh, state:"fixed", coaching:kc, label:`Đã ${w}, chưa thấy tái diễn` };
     }).filter(Boolean);
     return { ...o, missRate:o.misses/o.checks, recurringShops, fixStatus, missDays:undefined, sev:CLQ_SEV[o.severity] };
   }).sort((a, b) => a.sev.rank - b.sev.rank || b.misses - a.misses);
@@ -1775,7 +1777,17 @@ function clqAnalyze(I){
     headline: !reports.length ? "Chưa có báo cáo checklist trong kỳ — chưa đủ dữ liệu để kết luận."
       : `Hoàn thành ${Math.round((1 - totalMiss/totalChecks)*100)}% đầu việc, nhưng có ${critical.reduce((a, x) => a + x.misses, 0)} lần bỏ sót việc NGHIÊM TRỌNG ở ${critical.length} đầu việc.` };
 }
+// 4d: nhà thuốc cần KÈM CẶP = lỗi đã khắc phục xong mà vẫn tái diễn (chưa có kèm cặp đang làm / kèm cặp xong vẫn tái diễn thì vẫn gợi ý lại)
+function clqCoachShop(x){ const r = (x.fixStatus||[]).find(f => f.state==="recurred"); return r ? r.shop : null; }
 // CLQ-ENGINE-END
+function clqCoachText(x, sh, f, days){
+  return `Đầu việc checklist "${x.label}" (vai trò ${x.role}, mức ${x.sev ? x.sev.label : ""}) bị bỏ sót ${x.shops[sh]||0} lần trong ${days} ngày tại ${shopLabel(sh)}. ${f.label||""}.\n`
+    + "Cửa hàng trưởng kèm cặp trực tiếp, không chỉ nhắc lại:\n"
+    + "- Hỏi người phụ trách vì sao bỏ sót và xếp vào 1 trong 4 nhóm: chưa biết cách làm (kỹ năng) / quy trình chưa rõ hoặc không hợp lý / thiếu người, thiếu dụng cụ, thiếu thời gian (nguồn lực) / điều kiện kinh doanh đặc biệt\n"
+    + "- Chỉ kèm cặp khi là kỹ năng: làm mẫu tại quầy, cho nhân viên làm lại 1 lần có người xem; nhóm khác thì báo quản lý khu vực để sửa quy trình hoặc bổ sung nguồn lực\n"
+    + "- Ghi kết quả: nguyên nhân thuộc nhóm nào, đã kèm cặp ai, nội dung gì (ảnh hoặc ghi chú)\n"
+    + "App tự theo dõi tiếp: nếu 14 ngày sau vẫn bỏ sót thì báo \u201cTái diễn sau kèm cặp\u201d. Không dùng kết quả này để kết luận trách nhiệm cá nhân.";
+}
 function ChecklistQualityPanel({ templates, staff, scopeShop, isAdmin, giver }){
   const h = React.createElement;
   const [days, setDays] = useState(14);
@@ -1816,7 +1828,13 @@ function ChecklistQualityPanel({ templates, staff, scopeShop, isAdmin, giver }){
           h("td", { style:{ padding:"4px 6px", borderBottom:"1px solid var(--line)", fontSize:11.5 } }, Object.entries(x.shops).map(([s, n]) => `${shopLabel(s)}: ${n}`).join(", ")),
           h("td", { style:{ padding:"4px 6px", borderBottom:"1px solid var(--line)", fontSize:11.5, color: x.recurringShops.length ? "var(--clay)" : "var(--inkSoft)", fontWeight: x.recurringShops.length ? 700 : 400 } }, x.recurringShops.length ? x.recurringShops.map(shopLabel).join(", ") : "—"),
           h("td", { style:{ padding:"4px 6px", borderBottom:"1px solid var(--line)", fontSize:11.5 } }, x.fixStatus.length ? x.fixStatus.map(f => `${shopLabel(f.shop)}: ${f.label}`).join("; ") : "—"),
-          h("td", { style:{ padding:"4px 6px", borderBottom:"1px solid var(--line)" } }, (isAdmin || giver) && (x.severity==="critical" || x.recurringShops.length>0) && h("button", { className:"btn btnGhost", style:{ fontSize:11, padding:"2px 8px" }, onClick:()=>{
+          h("td", { style:{ padding:"4px 6px", borderBottom:"1px solid var(--line)" } }, (isAdmin || giver) && clqCoachShop(x) && h("button", { className:"btn btnPrimary", style:{ fontSize:11, padding:"2px 8px", marginBottom:4, display:"block" }, onClick:()=>{
+            const sh = clqCoachShop(x); const f = x.fixStatus.find(z => z.shop===sh) || {};
+            setComposer({ heading:"Giao kèm cặp vì lỗi tái diễn", module:"HR", shopOnly:true, shop:sh, deadline:addDays(today, 5), giver,
+              title:`Kèm cặp: "${x.label}" ${f.label ? f.label.toLowerCase() : "tái diễn"} — ${shopLabel(sh)}`.slice(0, 200),
+              mota:clqCoachText(x, sh, f, days),
+              extra:{ sourceScreen:"checklistQuality", checklistItemId:x.id, checklistItemLabel:x.label, coaching:true } }); } }, "Giao kèm cặp"),
+            (isAdmin || giver) && (x.severity==="critical" || x.recurringShops.length>0) && h("button", { className:"btn btnGhost", style:{ fontSize:11, padding:"2px 8px" }, onClick:()=>{
             const sh = (x.recurringShops[0] || Object.keys(x.shops).sort((a, b) => x.shops[b]-x.shops[a])[0]);
             setComposer({ heading:"Giao việc khắc phục lỗi checklist", module:"Ops", shopOnly:true, shop:sh, deadline:addDays(today, x.severity==="critical" ? 1 : 3), giver,
               title:`Khắc phục: "${x.label}" bị bỏ sót ${x.shops[sh]} lần — ${shopLabel(sh)}`,
@@ -15313,6 +15331,62 @@ function PromoRangeView({ mode, lockShop } = {}){
     })(),
     decide && h(DecisionModal, { preset:decide, onClose:()=>setDecide(null) }));
 }
+// ===== 17/10/2026 (4d, đặc tả Upharma Ops Module 6): AI ĐỀ XUẤT CTKM THEO 8 MỤC (promoProposals) =====
+// Máy chủ tự lấy dữ kiện (hiệu quả CTKM đã so mức nền, đơn bỏ lỡ KM 14 ngày, tiến độ doanh thu tháng) có mã K1…; AI viết 8 mục.
+// "Duyệt thử nghiệm" chỉ tạo 1 quyết định thử nghiệm (có nhà thuốc đối chứng, tự đo 7/14 ngày) + việc cho CHT nhà thuốc thử.
+// Giá bán, ngân sách, điều kiện KM vẫn theo phê duyệt của công ty — app không tự đổi.
+const PROMO_PROP_API = "https://asia-southeast1-upharma-176d5.cloudfunctions.net/runJobNow?job=promoProposalNow";
+// PROMOPROPUI-ENGINE-BEGIN
+const PROMO_PROP_SECS = [["vanDe","Vấn đề kinh doanh cần giải quyết"],["canCu","Căn cứ lựa chọn"],["doiTuong","Đối tượng áp dụng"],["cachTrienKhai","Cách triển khai"],["kpi","KPI đánh giá"],["thoiGianThu","Thời gian thử nghiệm"],["dieuKienDung","Điều kiện dừng hoặc điều chỉnh"],["ruiRo","Rủi ro và giới hạn dữ liệu"]];
+const PROMO_METRIC_VI = { rev:"Doanh thu/ngày", bills:"Số bill/ngày", tbb:"Giá trị bill trung bình", hhs:"Doanh thu hàng hệ số/ngày" };
+// 8 mục để hiển thị (mục thiếu ghi rõ "AI chưa ghi", không tự điền)
+function promoPropSections(p, facts){
+  const byId = {}; (facts||[]).forEach(f => { byId[f.id] = f; });
+  return PROMO_PROP_SECS.map(([k, label], i) => {
+    let v = p[k];
+    if(k==="canCu") v = [p.canCu, (p.maDuKien||[]).length ? "Dữ kiện: " + p.maDuKien.map(id => `${id} ${byId[id] ? byId[id].text : ""}`).join("; ") : "Chưa dẫn được dữ kiện nào trong dữ liệu hệ thống"].filter(Boolean).join("\n");
+    if(k==="doiTuong") v = [p.doiTuong, (p.nhaThuoc||[]).length ? "Nhà thuốc thử: " + p.nhaThuoc.join(", ") : ""].filter(Boolean).join("\n");
+    if(k==="kpi") v = [p.kpi, `Hệ thống đo: ${PROMO_METRIC_VI[p.chiSo]||p.chiSo||PROMO_METRIC_VI.rev}${p.mucTieuPct ? `, mục tiêu +${p.mucTieuPct}% so 14 ngày trước` : ""}, có trừ nhà thuốc đối chứng`].filter(Boolean).join("\n");
+    if(k==="thoiGianThu") v = p.thoiGianThu ? `${p.thoiGianThu} ngày` : "";
+    return { no:i+1, label, text: String(v||"").trim() || "AI chưa ghi mục này", missing: !String(v||"").trim() };
+  });
+}
+// PROMOPROPUI-ENGINE-END
+function PromoProposalView(){
+  const h = React.createElement;
+  const [doc, setDoc] = useState(undefined); const [busy, setBusy] = useState(""); const [msg, setMsg] = useState(""); const [note, setNote] = useState("");
+  useEffect(()=> db.collection("promoProposals").orderBy("createdAt","desc").limit(1).onSnapshot(s => setDoc(s.empty ? null : { id:s.docs[0].id, ...s.docs[0].data() }), err => { logSystemError("promoProposals", err); setDoc(null); }), []);
+  const call = async (body, label) => { setBusy(label); setMsg(""); try{ const r = await callCf(PROMO_PROP_API, { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify(body) }, 180000); if(r && r.ok===false) setMsg("Không làm được: " + (r.error||"")); else if(body.action==="approve") setMsg("Đã tạo thử nghiệm và giao việc cho cửa hàng trưởng. Xem kết quả ở Sổ quyết định sau 7 và 14 ngày."); return r; } catch(e){ setMsg("Lỗi: " + (e.message||e)); } finally { setBusy(""); } };
+  const approve = (i, p) => { if(!window.confirm(`Duyệt THỬ NGHIỆM "${p.ten}" tại ${(p.nhaThuoc||[]).join(", ")} trong ${p.thoiGianThu} ngày?\n\nApp sẽ tạo 1 quyết định thử nghiệm (có nhà thuốc đối chứng, tự đo sau 7 và 14 ngày) và giao việc cho cửa hàng trưởng.\nGiá bán, ngân sách và điều kiện khuyến mại vẫn theo phê duyệt của công ty, app không tự đổi.`)) return; call({ action:"approve", id:doc.id, idx:i }, "a"+i); };
+  const reject = (i) => { const r = window.prompt("Vì sao không duyệt? (AI sẽ học từ lý do này)", ""); if(r==null) return; if(!r.trim()) return window.alert("Cần ghi lý do."); call({ action:"reject", id:doc.id, idx:i, reason:r.trim() }, "r"+i); };
+  const ST = { cho_duyet:["Chờ duyệt","#2563EB"], da_duyet:["Đã duyệt thử nghiệm","#15803D"], tu_choi:["Không duyệt","#B91C1C"] };
+  return h("div", { className:"card", style:{ marginTop:8 } },
+    h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap", alignItems:"center" } },
+      h("div", null, h("div", { style:{ fontWeight:700, fontSize:15 } }, "AI đề xuất CTKM theo 8 mục"),
+        h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, doc ? `Lần gần nhất: ${opsWhen(doc.createdAt)}${doc.by ? " · " + doc.by : ""}` : "Chưa có đề xuất nào.")),
+      h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap" } },
+        h("input", { value:note, onChange:e=>setNote(e.target.value), placeholder:"Yêu cầu thêm (không bắt buộc)", style:{ padding:"6px 8px", borderRadius:8, border:"1px solid var(--line)", fontSize:12.5, minWidth:200 } }),
+        h("button", { type:"button", className:"btn btnPrimary", disabled:!!busy, onClick:()=>call({ action:"run", note }, "run"), style:{ fontSize:12.5 } }, busy==="run" ? "AI đang soạn..." : "AI đề xuất"))),
+    h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", margin:"6px 0" } }, "AI chỉ đề xuất và lập phương án. Duyệt ở đây là cho chạy thử nhỏ để đo, không thay cho phê duyệt chính sách, ngân sách hay giá bán của công ty. Doanh thu tăng trong lúc chạy chưa chắc do CTKM, nên hệ thống so với nhà thuốc đối chứng."),
+    msg && h("div", { style:{ fontSize:12.5, margin:"6px 0", color: /^Lỗi|Không làm/.test(msg) ? "#B91C1C" : "#15803D" } }, msg),
+    doc===undefined && h(EmptyState, { kind:"loading" }),
+    doc && doc.aiStatus!=="ok" && h("div", { style:{ fontSize:12.5, color:"#B45309", margin:"6px 0" } }, doc.aiStatus==="skipped" ? (doc.missing||[]).join("; ") : "AI chưa trả lời được lần này, chị bấm AI đề xuất lại."),
+    doc && (doc.numbersWarn||[]).length>0 && h("div", { style:{ fontSize:12, background:"var(--claySoft)", borderRadius:6, padding:"5px 8px", margin:"6px 0" } }, `Có số AI viết không có trong dữ kiện: ${doc.numbersWarn.slice(0,8).join(", ")}. Chị kiểm tra lại trước khi duyệt.`),
+    doc && (doc.proposals||[]).map((p, i) => { const st = ST[p.status] || [p.status, "#64748B"];
+      return h("div", { key:i, style:{ border:"1px solid var(--line)", borderRadius:10, padding:"10px 12px", marginTop:10 } },
+        h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap" } }, h("b", { style:{ fontSize:14 } }, p.ten || "Đề xuất " + (i+1)), h("span", { style:{ fontSize:12, fontWeight:800, color:st[1] } }, st[0])),
+        h("div", { style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))", gap:8, marginTop:6 } }, promoPropSections(p, doc.facts).map(s => h("div", { key:s.no, style:{ fontSize:12.5 } },
+          h("div", { style:{ fontWeight:700, fontSize:12 } }, `${s.no}. ${s.label}`), h("div", { style:{ whiteSpace:"pre-wrap", color: s.missing ? "#B45309" : undefined } }, s.text)))),
+        p.canCuOk===false && h("div", { style:{ fontSize:12, color:"#B45309", marginTop:6 } }, "Căn cứ chưa dẫn được dữ kiện trong hệ thống. Nên yêu cầu AI đề xuất lại hoặc bổ sung dữ liệu."),
+        p.status==="tu_choi" && h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:6 } }, `Lý do: ${p.rejectReason||"—"} · ${p.decidedBy||""} ${opsWhen(p.decidedAt)}`),
+        p.status==="da_duyet" && h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:6 } }, `Đã tạo thử nghiệm tại ${(p.shopsApproved||[]).join(", ")} · ${p.decidedBy||""} ${opsWhen(p.decidedAt)} · kết quả đo ở Sổ quyết định.`),
+        p.status==="cho_duyet" && h("div", { style:{ display:"flex", gap:8, marginTop:8, flexWrap:"wrap" } },
+          h("button", { type:"button", className:"btn btnPrimary", disabled:!!busy || !(p.nhaThuoc||[]).length, onClick:()=>approve(i, p), style:{ fontSize:12.5 } }, busy==="a"+i ? "Đang tạo..." : "Duyệt thử nghiệm"),
+          h("button", { type:"button", className:"btn btnGhost", disabled:!!busy, onClick:()=>reject(i), style:{ fontSize:12.5 } }, "Không duyệt"))); }),
+    doc && (doc.facts||[]).length>0 && h("details", { style:{ marginTop:10 } }, h("summary", { style:{ fontSize:12, color:"var(--inkSoft)", cursor:"pointer" } }, `Dữ kiện hệ thống đưa cho AI (${doc.facts.length})`),
+      h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:4 } }, doc.facts.map(f => h("div", { key:f.id }, `${f.id}. ${f.text}`)))),
+    doc && (doc.missing||[]).length>0 && doc.aiStatus==="ok" && h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:6 } }, "AI ghi nhận thiếu dữ liệu: " + doc.missing.join("; ")));
+}
 function PromoAnalyticsView({ isAdmin, myStaff }){
   // 1/10/2026 (Phương): bỏ "Báo cáo hiệu quả", "Hiệu quả thật" và "Nhập dữ liệu" (theo dõi CTKM thủ công theo tháng) —
   // thay hẳn bằng phân tích tự động từ hoá đơn POS theo từng đợt chiến dịch (PromoOrderView).
@@ -15321,10 +15395,10 @@ function PromoAnalyticsView({ isAdmin, myStaff }){
     React.createElement(PageTitle, { key:"title" }, "Khuyến Mại"),
     React.createElement("div", { key:"src", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:8, padding:"6px 10px", background:"var(--paper)", borderRadius:8, border:"1px solid var(--line)" } },
       "Hiệu quả từng đợt chiến dịch, tính tự động từ hoá đơn bán trên POS (voucher, giảm giá, quà tặng, đổi điểm, combo) — tên chương trình lấy từ POS, không cần nhập tay."),
-    isAdmin && React.createElement(SubTabBar, { key:"bar", tabs:[{ id:"todo", label:"Việc cần làm" }, { id:"camp", label:"Theo dõi chiến dịch" }, { id:"cmp", label:"So sánh theo kỳ" }], active:sub, onChange:setSub }),
+    isAdmin && React.createElement(SubTabBar, { key:"bar", tabs:[{ id:"todo", label:"Việc cần làm" }, { id:"camp", label:"Theo dõi chiến dịch" }, { id:"cmp", label:"So sánh theo kỳ" }, { id:"prop", label:"AI đề xuất CTKM" }], active:sub, onChange:setSub }),
     // 7/10/2026: nhân viên / CHT xem "Việc cần làm" + "Đơn bỏ lỡ KM" nhưng CHỈ nhà thuốc của mình
     !isAdmin && myStaff && myStaff.shop && React.createElement(SubTabBar, { key:"sbar", tabs:[{ id:"todo", label:"Việc cần làm & đơn bỏ lỡ" }, { id:"my", label:"Khuyến mại của tôi" }], active: sub==="my" ? "my" : "todo", onChange:setSub }),
-    !isAdmin ? (sub==="my" || !(myStaff && myStaff.shop) ? React.createElement(PromoMyView, { key:"my", myStaff }) : React.createElement(PromoRangeView, { key:"todo_"+myStaff.shop, mode:"todo", lockShop:myStaff.shop })) : sub==="cmp" ? React.createElement(PromoPeriodCompare, { key:"cmp" }) : sub==="todo" ? React.createElement(PromoRangeView, { key:"todo", mode:"todo" }) : sub==="range" ? React.createElement(PromoRangeView, { key:"rg" }) : React.createElement(PromoOrderView, { key:"po", isAdmin }),
+    !isAdmin ? (sub==="my" || !(myStaff && myStaff.shop) ? React.createElement(PromoMyView, { key:"my", myStaff }) : React.createElement(PromoRangeView, { key:"todo_"+myStaff.shop, mode:"todo", lockShop:myStaff.shop })) : sub==="cmp" ? React.createElement(PromoPeriodCompare, { key:"cmp" }) : sub==="prop" ? React.createElement(PromoProposalView, { key:"prop" }) : sub==="todo" ? React.createElement(PromoRangeView, { key:"todo", mode:"todo" }) : sub==="range" ? React.createElement(PromoRangeView, { key:"rg" }) : React.createElement(PromoOrderView, { key:"po", isAdmin }),
   ]);
 }
 // ===== Làm lại giao diện phần "Ước tính tự động theo tên hàng" giống mẫu app Dashboard
