@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261017-13";
+window.__APP_BUILD = "20261017-14";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -27579,7 +27579,10 @@ function GlobalSearch360({ onClose, onNavigate }){
 // "Dạy AI" (2 lớp: yêu cầu chung + sửa từng nhận xét) đã có sẵn ngay trong 2 tab đó.
 // 5/10/2026 (Phương): AI ĐIỀU HÀNH — AI soạn việc cần giao từ số liệu, quản lý duyệt, AI nhắc & theo dõi đến khi xong, báo cáo kết quả.
 const OPS_DOM = { sales:"Doanh số & KPI", stock:"Hàng hoá & tồn kho", cust:"Khách hàng & CSKH", people:"Nhân sự & đào tạo", task:"Công việc & tuân thủ" };
-const OPS_ST = { pending:"Chờ duyệt", approved:"Đã giao", overdue:"Quá hạn", done:"Đã xong", rejected:"Từ chối", expired:"Hết hạn duyệt", cancelled:"Đã huỷ", deferred:"Hoãn sang hôm sau (NT đủ việc AI hôm nay)", superseded:"Đã thay bằng việc mới" };
+// 17/10/2026 (giai đoạn 3b): thuần — đề xuất đã bị sửa (tiêu đề / hướng dẫn / hạn) mà chưa ghi lý do sửa
+function opsEditedNoReason(r, e){ if(!e) return false; const changed = ["title","huongDan","deadline"].some(k => e[k]!=null && String(e[k])!==String(r[k]==null ? "" : r[k])); return changed && !String(e.lyDoSua||"").trim(); }
+function opsWhen(iso){ const d = new Date(iso); return iso && !isNaN(d) ? d.toLocaleString("vi-VN", { timeZone:"Asia/Ho_Chi_Minh", hour:"2-digit", minute:"2-digit", day:"2-digit", month:"2-digit" }) : ""; }
+const OPS_ST = { pending:"Chờ duyệt", approved:"Đã giao", overdue:"Quá hạn", done:"Đã xong", rejected:"Từ chối", expired:"Hết hạn duyệt", cancelled:"Đã huỷ", deferred:"Hoãn sang hôm sau (NT đủ việc AI hôm nay)", superseded:"Đã thay bằng việc mới", reanalyze:"Chờ AI phân tích lại", need_data:"Chờ bổ sung dữ liệu" };
 // 7/10/2026 (chị Hà): TRỢ LÝ AI THAY CỬA HÀNG TRƯỞNG — nhà thuốc chưa có CHT: quản lý khu vực là người phụ trách, trợ lý AI làm thay việc hằng ngày
 function AiShopLeadCard({ onMsg }){
   const h = React.createElement;
@@ -27921,6 +27924,9 @@ function OpsOperatorView({ onNavigate }){
       if(action==="propose") setMsg(`AI đã soạn ${r.created||0} đề xuất mới (xét ${r.candidates||0} vấn đề${r.ai ? "" : " — AI chưa trả lời, dùng nội dung theo quy tắc"}).`);
       else if(action==="approve") { setMsg(`Đã giao ${r.approved} việc.` + ((r.errors||[]).length ? " Lỗi: " + r.errors.join("; ") : "")); setSel([]); }
       else if(action==="reject") { setMsg(`Đã từ chối ${r.rejected} đề xuất.`); setSel([]); }
+      else if(action==="reanalyze") setMsg(r.rerun ? `AI đã phân tích lại nhà thuốc, có ${r.solutions||0} giải pháp mới chờ duyệt.` : "Đã ghi ý kiến. AI sẽ xét lại vấn đề này ở lượt đề xuất kế tiếp, bản mới sẽ chờ chị duyệt.");
+      else if(action==="needData") setMsg(r.taskId ? "Đã gác đề xuất và giao cửa hàng trưởng bổ sung dữ liệu." : "Đã gác đề xuất, chờ bổ sung dữ liệu.");
+      else if(action==="requeue") setMsg("Đã đưa lại vào danh sách chờ duyệt.");
       else if(action==="followup") setMsg(`Đã kiểm tra: ${r.done} việc xong, báo CHT ${r.escalated} việc quá hạn > 2 ngày.`);
       else setMsg("Xong.");
     } catch(e){ setMsg("Lỗi: " + (e.message||e)); }
@@ -27952,7 +27958,9 @@ function OpsOperatorView({ onNavigate }){
           h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", marginTop:3 } }, `Giao cho: ${who(r)} · hạn ${val(r,"deadline")}`, r.capNote && h("span", { style:{ color: /quá tải|không có ca/.test(r.capNote) ? "#B91C1C" : "var(--inkSoft)" } }, " · " + r.capNote)),
           isOpen ? h("div", null,
               h("textarea", { rows:4, value:val(r,"huongDan"), onChange:e=>ed(r.id,"huongDan",e.target.value), style:{ width:"100%", marginTop:6, fontSize:13 } }),
-              h("div", { style:{ display:"flex", gap:8, alignItems:"center", marginTop:4, fontSize:12.5 } }, "Hạn:", h("input", { type:"date", value:val(r,"deadline"), min:today, onChange:e=>ed(r.id,"deadline",e.target.value) })))
+              h("div", { style:{ display:"flex", gap:8, alignItems:"center", marginTop:4, fontSize:12.5 } }, "Hạn:", h("input", { type:"date", value:val(r,"deadline"), min:today, onChange:e=>ed(r.id,"deadline",e.target.value) })),
+              // 17/10/2026 (giai đoạn 3b): sửa đề xuất thì phải ghi lý do (máy chủ cũng chặn), lý do được lưu làm bài học cho AI
+              h("input", { value:(edits[r.id]&&edits[r.id].lyDoSua)||"", onChange:e=>ed(r.id,"lyDoSua",e.target.value), placeholder:"Lý do sửa (bắt buộc khi sửa nội dung hoặc hạn)", style:{ width:"100%", marginTop:6, fontSize:12.5 } }))
             : h("div", { style:{ fontSize:13, whiteSpace:"pre-wrap", marginTop:6, lineHeight:1.5 } }, val(r,"huongDan")),
           r.ketQua && h("div", { style:{ fontSize:12.5, marginTop:4 } }, h("b", null, "Kết quả mong đợi: "), r.ketQua),
           (r.expected || r.confidence!=null || r.confidenceBasis) && h("div", { style:{ fontSize:12, marginTop:4, display:"flex", gap:10, flexWrap:"wrap", color:"var(--inkSoft)" } },
@@ -27964,8 +27972,10 @@ function OpsOperatorView({ onNavigate }){
             r.evidence && r.evidence.source && h("span", null, `Nguồn: ${r.evidence.source}${r.evidence.dataAsOf ? " · số liệu " + new Date(r.evidence.dataAsOf).toLocaleString("vi-VN") : ""}`)),
           h("details", { style:{ marginTop:4 } }, h("summary", { style:{ fontSize:12, color:"var(--inkSoft)", cursor:"pointer" } }, "Số liệu AI dựa vào"), h("div", { style:{ fontSize:12, color:"var(--inkSoft)", whiteSpace:"pre-wrap", marginTop:4 } }, r.why))),
         h("div", { style:{ display:"flex", flexDirection:"column", gap:4 } },
-          h("button", { className:"btn btnPrimary", disabled:!!busy, style:{ padding:"4px 10px", fontSize:12.5 }, onClick:()=>call("approve", { ids:[r.id], edits: edits[r.id] ? { [r.id]: edits[r.id] } : {} }, "Đang giao việc…") }, "Duyệt & giao"),
+          h("button", { className:"btn btnPrimary", disabled:!!busy, style:{ padding:"4px 10px", fontSize:12.5 }, onClick:()=>{ if(opsEditedNoReason(r, edits[r.id])){ setOpen(r.id); setMsg("Chị đã sửa đề xuất này, ghi lý do sửa trước khi duyệt."); return; } call("approve", { ids:[r.id], edits: edits[r.id] ? { [r.id]: edits[r.id] } : {} }, "Đang giao việc…"); } }, "Duyệt & giao"),
           h("button", { className:"btn", style:{ padding:"4px 10px", fontSize:12.5 }, onClick:()=>setOpen(isOpen ? null : r.id) }, isOpen ? "Xong sửa" : "Sửa"),
+          h("button", { className:"btn", disabled:!!busy, style:{ padding:"3px 8px", fontSize:12 }, onClick:()=>{ const note = window.prompt("Chị muốn AI xem lại điều gì? (VD: số liệu chưa đúng, nguyên nhân khác, giải pháp chưa phù hợp)", ""); if(note!==null && note.trim()) call("reanalyze", { id:r.id, note:note.trim() }, "Đang gửi yêu cầu phân tích lại…"); } }, "Phân tích lại"),
+          h("button", { className:"btn", disabled:!!busy, style:{ padding:"3px 8px", fontSize:12 }, onClick:()=>{ const what = window.prompt("Cần bổ sung dữ liệu gì trước khi quyết định?", ""); if(what===null || !what.trim()) return; const askShop = !!(r.target && r.target.shop) && window.confirm("Giao cửa hàng trưởng bổ sung dữ liệu này (hạn ngày mai)?"); call("needData", { id:r.id, what:what.trim(), askShop }, "Đang gác đề xuất…"); } }, "Cần thêm dữ liệu"),
           // 16/10/2026 (rà soát AI): TỪ CHỐI 1 CHẠM kèm lý do sẵn — mỗi lần bấm là 1 bài học cho AI (đưa vào "BÀI HỌC" lần soạn sau)
           h("div", { style:{ fontSize:11, color:"var(--inkSoft)", marginTop:2 } }, "Từ chối vì:"),
           ...[["wrongData","Sai số liệu"],["notNeeded","Không cần"],["alreadyDone","Đã làm rồi"]].map(([code, label]) =>
@@ -27975,7 +27985,8 @@ function OpsOperatorView({ onNavigate }){
     h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap" } },
       h("div", { style:{ fontWeight:700, fontSize:13.5 } }, r.title),
       h("span", { style:{ fontSize:12, fontWeight:800, color: r.status==="overdue" ? "#B91C1C" : r.status==="done" ? "#15803D" : "#2563EB" } }, OPS_ST[r.status] + (r.status==="overdue" ? ` ${r.lateDays} ngày` : ""))),
-    h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:2 } }, `${OPS_DOM[r.domain]||""} · ${who(r)} · hạn ${r.deadline}${r.approvedBy ? " · " + r.approvedBy + " duyệt" : ""}${r.escalatedTo ? ` · đã báo ${r.escalatedTo}` : ""}`),
+    h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:2 } }, `${OPS_DOM[r.domain]||""} · ${who(r)} · hạn ${r.deadline}${r.approvedBy ? " · " + r.approvedBy + " duyệt " + opsWhen(r.approvedAt) : ""}${r.escalatedTo ? ` · đã báo ${r.escalatedTo}` : ""}`),
+    r.editReason && h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:2 } }, "Lý do sửa khi duyệt: " + r.editReason),
     r.status==="done" && h("div", { style:{ fontSize:12.5, marginTop:3, color: /vẫn còn|CHƯA/.test(r.outcome||"") ? "#B45309" : "#15803D" } }, (r.outcome||"Đã xong") + (r.ketQuaNV ? ` — NV báo: ${r.ketQuaNV}` : "")),
     r.actualOutcome && r.actualOutcome.learning && h("div", { style:{ fontSize:12, marginTop:2, color:"var(--inkSoft)" } }, "" + r.actualOutcome.learning),
     r.lifecycle && h("span", { style:{ fontSize:11, fontWeight:800, color:LC_COLOR[r.lifecycle] } }, LC_LABEL[r.lifecycle]),
@@ -28023,14 +28034,21 @@ function OpsOperatorView({ onNavigate }){
         h("button", { key:k, className:"btn"+(domF===k ? " btnPrimary" : ""), style:{ padding:"4px 10px", fontSize:12.5 }, onClick:()=>setDomF(k) }, `${l} (${k==="all" ? st("pending").length : st("pending").filter(r=>r.domain===k).length})`))),
       // 7/10/2026 — DUYỆT NHANH 1 CHẠM: giao luôn mọi đề xuất mức trung bình/thấp (đã có quy trình chuẩn), chỉ để lại việc mức cao để đọc kỹ
       pend.length>0 && (() => { const easy = pend.filter(r => !["HIGH","CRITICAL"].includes(r.sev)); return h("div", { className:"card", style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", marginBottom:8, padding:"8px 12px", background:"#F0FDF4" } },
-        h("span", { style:{ fontSize:13, flex:1, minWidth:200 } }, `Duyệt nhanh: ${easy.length} việc mức trung bình/thấp có quy trình chuẩn · ${pend.length - easy.length} việc mức cao nên đọc kỹ`),
+        h("span", { style:{ fontSize:13, flex:1, minWidth:200 } }, `Duyệt nhanh: ${easy.length} việc mức trung bình/thấp có quy trình chuẩn · ${pend.length - easy.length} việc mức cao phải duyệt riêng từng việc`),
         h("button", { className:"btn btnPrimary", disabled:!easy.length || !!busy, onClick:()=>call("approve", { ids: easy.map(r=>r.id), edits }, "Đang giao việc…") }, `✓ Giao ${easy.length} việc`),
         h("button", { className:"btn btnGhost", disabled:!!busy, onClick:()=>{ if(window.confirm(`Giao tất cả ${pend.length} đề xuất đang hiện?`)) call("approve", { ids: pend.map(r=>r.id), edits }, "Đang giao việc…"); } }, `Giao tất cả ${pend.length}`)); })(),
       pend.length>0 && h("div", { style:{ display:"flex", gap:6, alignItems:"center", marginBottom:8, flexWrap:"wrap" } },
         h("label", { style:{ fontSize:12.5, display:"inline-flex", gap:5, alignItems:"center" } }, h("input", { type:"checkbox", checked: pend.every(r=>sel.includes(r.id)), onChange:e=>setSel(e.target.checked ? pend.map(r=>r.id) : []) }), "Chọn tất cả"),
         h("button", { className:"btn btnPrimary", disabled:!sel.length || !!busy, onClick:()=>{ if(window.confirm(`Giao ${sel.length} việc đã chọn?`)) call("approve", { ids:sel, edits }, "Đang giao việc…"); } }, `Duyệt & giao ${sel.length} việc`),
         h("button", { className:"btn", disabled:!sel.length || !!busy, style:{ color:"#B91C1C" }, onClick:()=>{ const reason = window.prompt(`Từ chối ${sel.length} đề xuất — lý do:`, ""); if(reason!==null) call("reject", { ids:sel, reason }, "Đang từ chối…"); } }, "Từ chối đã chọn")),
-      pend.length===0 ? h("div", { className:"emptyState" }, "Không có đề xuất chờ duyệt. AI soạn mới lúc 7h20 mỗi sáng, hoặc bấm \"AI soạn đề xuất ngay\".") : pend.map(pCard)),
+      pend.length===0 ? h("div", { className:"emptyState" }, "Không có đề xuất chờ duyệt. AI soạn mới lúc 7h20 mỗi sáng, hoặc bấm \"AI soạn đề xuất ngay\".") : pend.map(pCard),
+      // 17/10/2026 (giai đoạn 3b): đề xuất chị đã gác lại (chờ bổ sung dữ liệu / chờ AI phân tích lại) — có người, giờ, lý do
+      (st("need_data").length + st("reanalyze").length)>0 && h("div", { className:"card", style:{ padding:"10px 12px", marginTop:10, background:"#FFFBEB" } },
+        h("div", { style:{ fontWeight:800, fontSize:13.5, marginBottom:6 } }, `Đã gác lại (${st("need_data").length + st("reanalyze").length})`),
+        [...st("need_data"), ...st("reanalyze")].map(r => h("div", { key:r.id, style:{ display:"flex", gap:8, alignItems:"flex-start", justifyContent:"space-between", flexWrap:"wrap", borderTop:"1px dashed var(--line)", padding:"6px 0", fontSize:12.5 } },
+          h("div", { style:{ flex:"1 1 260px" } }, h("b", null, r.title), h("div", { style:{ color:"var(--inkSoft)", fontSize:12 } },
+            r.status==="need_data" ? `Chờ bổ sung: ${r.needDataNote||"—"} · ${r.needDataBy||""} ${opsWhen(r.needDataAt)}${r.needDataTaskId ? " · đã giao CHT" : ""}` : `Chờ AI phân tích lại: ${r.reanalyzeNote||"—"} · ${r.reanalyzeBy||""} ${opsWhen(r.reanalyzeAt)}`)),
+          r.status==="need_data" && h("button", { className:"btn", disabled:!!busy, style:{ padding:"3px 10px", fontSize:12 }, onClick:()=>call("requeue", { id:r.id }, "Đang đưa lại…") }, "Đưa lại chờ duyệt"))))),
     view==="track" && (track.length ? h("div", { style:{ marginTop:8 } }, track.map(tRow)) : h("div", { className:"emptyState" }, "Chưa có việc nào đang theo dõi.")),
     view==="done" && (done.length ? h("div", { style:{ marginTop:8 } }, done.slice(0,100).map(tRow)) : h("div", { className:"emptyState" }, "Chưa có việc nào hoàn thành.")),
     view==="report" && h("div", { className:"card", style:{ marginTop:8, padding:12, background:"#F5F3FF" } },
