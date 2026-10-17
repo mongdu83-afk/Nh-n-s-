@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261017-02";
+window.__APP_BUILD = "20261017-03";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -829,6 +829,10 @@ window.__MY_SHOP = window.__MY_SHOP || null;
 const __staffSubs = new Set();
 function isTestShop(shop){ return !!shop && window.__TEST_SHOPS.has(shop) && window.__MY_SHOP!==shop; }
 function isStaffResigned(st){ return !!(st && st.ngayNghiViec && st.ngayNghiViec <= todayISO()); }
+// 17/10/2026 (chị Hà): báo cáo THEO KỲ vẫn hiện người còn làm trong kỳ đó (nghỉ từ ngày đầu kỳ trở đi);
+// kỳ sau ngày nghỉ thì ẩn. Dùng với subscribeCol("staff", …, { keepResigned:true }) — cùng quy ước với Nhân viên 360.
+function resignedTag(st){ return st && st.ngayNghiViec ? ` (nghỉ ${String(st.ngayNghiViec).split("-").reverse().slice(0,2).join("/")})` : ""; }
+function staffInPeriod(rows, fromIso){ return (rows||[]).filter(st => !(st && st.ngayNghiViec && fromIso && st.ngayNghiViec < fromIso)); }
 function filterStaffRows(rows, opts){
   if(opts && opts.all) return rows;
   return rows.filter(st => !isTestShop(st.shop) && (opts && opts.keepResigned ? true : !isStaffResigned(st)));
@@ -1804,7 +1808,7 @@ function ChecklistQualityPanel({ templates, staff, scopeShop, isAdmin, giver }){
     composer && h(TaskComposer360, { preset:composer, onClose:()=>setComposer(null) }));
 }
 function DailyChecklistView({ isAdmin, myStaff }){
-  const [staff, setStaff] = useState([]);
+  const [staffRawDC, setStaff] = useState([]);
   const [templates, setTemplates] = useState(DEFAULT_DAILY_CHECKLISTS);
   const [reports, setReports] = useState({});
   const [workRegs, setWorkRegs] = useState([]);
@@ -1818,6 +1822,8 @@ function DailyChecklistView({ isAdmin, myStaff }){
   const [adminOpen, setAdminOpen] = useState(isAdmin || isShopManager);
   const [adminShop, setAdminShop] = useState(isShopManager && myStaff ? myStaff.shop : "Tất cả");
   const [adminDate, setAdminDate] = useState(todayISO());
+  // 17/10/2026 (chị Hà): xem ngày cũ vẫn hiện người còn làm ngày đó
+  const staff = useMemo(() => staffInPeriod(staffRawDC, adminDate), [staffRawDC, adminDate]);
   const [reviewReportId, setReviewReportId] = useState(null);
   // Ghi đè lạc quan (optimistic) cho ô tick — giúp UI phản hồi tick/bỏ tick
   // ngay lập tức thay vì chờ vòng lặp ghi lên Firestore, và tự khôi phục nếu lỗi.
@@ -1827,7 +1833,7 @@ function DailyChecklistView({ isAdmin, myStaff }){
   const [addingTask, setAddingTask] = useState(false);
 
   useEffect(()=>{
-    const u1 = subscribeCol("staff", setStaff);
+    const u1 = subscribeCol("staff", setStaff, null, { keepResigned:true });
     const u2 = subscribeConfigDoc("dailyChecklist", d => setTemplates(d && d.byRole ? d.byRole : DEFAULT_DAILY_CHECKLISTS));
     return ()=>{ u1(); u2(); };
   }, []);
@@ -2161,7 +2167,7 @@ function DailyChecklistView({ isAdmin, myStaff }){
     : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
         React.createElement("thead",{key:"h"}, React.createElement("tr",null, ["Nhân viên","Nhà thuốc","Vai trò","Ca hôm nay","Hoàn thành","Trạng thái","Điểm chủ chấm",""].map((h,i)=>React.createElement("th",{key:i},h)))),
         React.createElement("tbody",{key:"b"}, adminRows.map(x => React.createElement("tr",{key:x.staff.id, style: x.needsAttention ? { background:"var(--claySoft)" } : null}, [
-          React.createElement("td",{key:"n"}, x.staff.name),
+          React.createElement("td",{key:"n"}, x.staff.name + resignedTag(x.staff)),
           React.createElement("td",{key:"sh"}, x.staff.shop),
           React.createElement("td",{key:"r"}, x.staff.role),
           React.createElement("td",{key:"shift"}, x.hasShiftToday ? x.shiftLabel : (hasWorkRegData ? StatusPill("Không có ca","neutral") : "—")),
@@ -3400,11 +3406,12 @@ function WeeklyReportView({ isAdmin, myStaff }){
 
   useEffect(()=>{
     const u2 = subscribeCol("weeklyReports", rows => { const map = {}; rows.forEach(r => map[r.id] = r); setReportsMap(map); setReportsLoaded(true); });
-    const u3 = subscribeCol("staff", setStaffList);
+    const u3 = subscribeCol("staff", setStaffList, null, { keepResigned:true });
     return ()=>{ u2(); u3(); };
   }, []);
 
-  const myShopStaffOptions = selfShop ? staffList.filter(s=>s.shop===selfShop).map(s=>({ value:s.id, label:s.name })) : [];
+  // 17/10/2026 (chị Hà): staffList gồm cả người đã nghỉ để báo cáo tuần cũ vẫn hiện đúng tên; chọn người thì chỉ người đang làm
+  const myShopStaffOptions = selfShop ? staffList.filter(s=>s.shop===selfShop && !isStaffResigned(s)).map(s=>({ value:s.id, label:s.name })) : [];
   const staffNameMap = {};
   staffList.forEach(s => { staffNameMap[s.id] = s.name; });
 
@@ -7056,9 +7063,11 @@ function CustomerUpgradeDetail({ upgrades, staff, thang, isAdmin, myStaff, forSt
 }
 
 function KpiView({ isAdmin, myStaff }){
-  const [staff, setStaff] = useState([]);
+  const [staffRawK, setStaff] = useState([]);
   const [assignments, setAssignments] = useState({});
   const [thang, setThang] = useState(currentMonthStr());
+  // 17/10/2026 (chị Hà): tháng đang xem vẫn có người nghỉ trong / sau tháng đó (KPI tính tới ngày nghỉ)
+  const staff = useMemo(() => staffInPeriod(staffRawK, thang + "-01"), [staffRawK, thang]);
   // 26/9/2026: số ngày đã làm của từng nhân viên (dailyKpiPace, tính 8h sáng) — để chiếu KPI dự kiến
   // theo NGÀY LÀM VIỆC (nhân viên được nghỉ 4 ngày/tháng). Quản lý đọc tất cả, nhân viên/CHT đọc theo shop.
   const [paceById, setPaceById] = useState({});
@@ -7214,7 +7223,7 @@ function KpiView({ isAdmin, myStaff }){
   }
 
   useEffect(()=>{
-    const u1 = subscribeCol("staff", setStaff);
+    const u1 = subscribeCol("staff", setStaff, null, { keepResigned:true });
     const u3 = subscribeConfigDoc("kpiTemplates", d => {
       const loaded = d && d.NVBH ? d : DEFAULT_KPI_TEMPLATES;
       const { fixed, changed } = migrateHangHoaItems(loaded);
@@ -7813,7 +7822,7 @@ function KpiView({ isAdmin, myStaff }){
             const isOpen = ctahStaffId===r.staff.id;
             const rowEls = [
               React.createElement("tr",{key:r.staff.id}, [
-                React.createElement("td",{key:"n"}, r.staff.name),
+                React.createElement("td",{key:"n"}, r.staff.name + resignedTag(r.staff)),
                 React.createElement("td",{key:"s"}, r.staff.shop),
                 React.createElement("td",{key:"r"}, r.staff.role),
                 React.createElement("td",{key:"p"}, r.totalPlan),
@@ -12094,7 +12103,8 @@ function WeeklyPlanManagerView(){
   const [staffReports, setStaffReports] = useState([]);
   const [staffReportsLoading, setStaffReportsLoading] = useState(false);
   const [staffList, setStaffList] = useState([]);
-  useEffect(()=>{ const u = subscribeCol("staff", setStaffList); return u; }, []);
+  // 17/10/2026: gồm cả người đã nghỉ — chỉ dùng tra tên cho báo cáo tuần cũ
+  useEffect(()=>{ const u = subscribeCol("staff", setStaffList, null, { keepResigned:true }); return u; }, []);
   // 28/9/2026: phân tích sâu bằng AI cho cả tuần (backend analyzeManagerWeekNow, lưu ở opsConfig/managerWeekAi_{tuần}).
   const [mgrAi, setMgrAi] = useState(null);
   const [mgrAiBusy, setMgrAiBusy] = useState(false);
