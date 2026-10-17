@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261017-04";
+window.__APP_BUILD = "20261017-05";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -7144,6 +7144,11 @@ function KpiView({ isAdmin, myStaff }){
   // bộ real-time bên dưới) — dùng để tự động tính chỉ tiêu "nâng hạng khách hàng", không cần
   // quản lý/nhân viên tự gõ tay số liệu này nữa.
   const [customerUpgrades, setCustomerUpgrades] = useState([]);
+  // 17/10/2026 (rà soát P0): tháng mà dữ liệu đã tải xong — chặn tự điền ghi 0 / số tháng khác vào kpiAssignments khi vừa đổi tháng
+  const [kpiLoaded, setKpiLoaded] = useState({});
+  const kpiReady = kpiLoaded.assign===thang;
+  // số nâng hạng: chỉ tự điền tháng HIỆN TẠI (tháng cũ giữ số đã chốt) và khi dữ liệu nâng hạng đúng tháng đã tải
+  const upgradesReady = kpiReady && kpiLoaded.upgrades===thang && thang===todayISO().slice(0,7);
   // Trạng thái tự động lấy dữ liệu mới nhất khi mở tab KPI (xem effect đồng bộ real-time bên dưới).
   const [kpiSyncStatus, setKpiSyncStatus] = useState(null); // null | "syncing" | "done" | "error"
   const [kpiSyncMsg, setKpiSyncMsg] = useState("");
@@ -7263,21 +7268,27 @@ function KpiView({ isAdmin, myStaff }){
   // (trước đây đọc mọi tháng từ trước tới nay). Bản ghi cũ chưa có field tháng → tự lùi về lọc theo mã.
   useEffect(()=>{
     if(!thang) return undefined;
-    const u2 = subscribeWhere("kpiAssignments", [["thang","==",thang]], rows => { const map={}; rows.forEach(r=>map[r.id]=r); setAssignments(map); }, r => String(r.id).endsWith("_"+thang));
+    setKpiLoaded({}); // 17/10/2026: đổi tháng → chưa tự điền cho tới khi dữ liệu ĐÚNG tháng đã tải xong
+    const u2 = subscribeWhere("kpiAssignments", [["thang","==",thang]], rows => { const map={}; rows.forEach(r=>map[r.id]=r); setAssignments(map); setKpiLoaded(o => ({ ...o, assign:thang })); }, r => String(r.id).endsWith("_"+thang));
     const u4 = subscribeWhere("kpiCTAH", [["thang","==",thang]], rows => { const map={}; rows.forEach(r=>map[r.id]=r); setCtahDocs(map); }, r => String(r.id).endsWith("_"+thang));
     const u5 = subscribeWhere("externalEmployeePlan", [["planMonth","==",thang]], setEmployeePlans, r => empPlanRecordMonthFE(r)===thang);
-    const u7 = subscribeWhere("externalCustomerUpgrades", [["monthKey","==",thang]], setCustomerUpgrades);
+    const u7 = subscribeWhere("externalCustomerUpgrades", [["monthKey","==",thang]], rows => { setCustomerUpgrades(rows); setKpiLoaded(o => ({ ...o, upgrades:thang })); });
     return ()=>{ u2(); u4(); u5(); u7(); };
   }, [thang]);
   async function saveTemplates(next){ await saveConfigDoc("kpiTemplates", next); setShowTplEditor(false); }
 
-  async function saveTarget(staffMember, itemId, value){
+  // 17/10/2026 (rà soát P0): ghi TỰ ĐỘNG (đồng bộ từ hệ thống bán hàng) không được chạm KPI đã duyệt —
+  // trước đây mở tab KPI sau mỗi lần đồng bộ là trạng thái "QLKV đã duyệt" bị xoá. Sửa TAY vẫn huỷ duyệt như cũ.
+  const kpiAutoBlocked = (staffMember) => { const a = assignments[kpiAssignmentId(staffMember.id, thang)]; return !!(a && a.trangThaiDuyet); };
+  async function saveTarget(staffMember, itemId, value, opts){
+    if(opts && opts.auto && kpiAutoBlocked(staffMember)) return;
     const id = kpiAssignmentId(staffMember.id, thang);
     const payload = { staffId:staffMember.id, staffName:staffMember.name, shop:staffMember.shop, role:staffMember.role, thang };
     payload[`targets.${itemId}`] = value===""? "" : Number(value);
     await mergeDotFields("kpiAssignments", id, payload);
   }
-  async function saveActual(staffMember, itemId, value){
+  async function saveActual(staffMember, itemId, value, opts){
+    if(opts && opts.auto && kpiAutoBlocked(staffMember)) return;
     const id = kpiAssignmentId(staffMember.id, thang);
     const payload = { staffId:staffMember.id, staffName:staffMember.name, shop:staffMember.shop, role:staffMember.role, thang };
     payload[`actuals.${itemId}`] = value;
@@ -7342,21 +7353,21 @@ function KpiView({ isAdmin, myStaff }){
     myStaff.role==="Cửa hàng trưởng" ? u.shopCode===myStaff.shop : normalizeStaffName(u.salesName)===normalizeStaffName(myStaff.name)
   )).length : 0;
   useEffect(()=>{
-    if(!myStaff) return;
+    if(!myStaff || !kpiReady) return;
     if(myPlanDerived){
       Object.keys(myPlanDerived).forEach(itemId => {
         const { actual } = myPlanDerived[itemId];
-        if(actual!=="" && actual!=null && Number(myActuals[itemId])!==Number(actual)) saveActual(myStaff, itemId, actual);
+        if(actual!=="" && actual!=null && Number(myActuals[itemId])!==Number(actual)) saveActual(myStaff, itemId, actual, { auto:true });
       });
     }
     // 2/10/2026: chỉ tự điền % cận date (số tồn kho HÔM NAY) cho THÁNG HIỆN TẠI — trước đây mở KPI tháng cũ bị ghi đè bằng số hôm nay
     if(myInvExpiry && thang===todayISO().slice(0,7)){
-      if(Number(myActuals["hh_candate__6th"])!==Number(myInvExpiry.pct6)) saveActual(myStaff, "hh_candate__6th", myInvExpiry.pct6);
-      if(Number(myActuals["hh_candate__12th"])!==Number(myInvExpiry.pct12)) saveActual(myStaff, "hh_candate__12th", myInvExpiry.pct12);
+      if(Number(myActuals["hh_candate__6th"])!==Number(myInvExpiry.pct6)) saveActual(myStaff, "hh_candate__6th", myInvExpiry.pct6, { auto:true });
+      if(Number(myActuals["hh_candate__12th"])!==Number(myInvExpiry.pct12)) saveActual(myStaff, "hh_candate__12th", myInvExpiry.pct12, { auto:true });
     }
-    if(Number(myActuals[myUpgradeItemId]||0)!==myUpgradeCount) saveActual(myStaff, myUpgradeItemId, myUpgradeCount);
+    if(upgradesReady && Number(myActuals[myUpgradeItemId]||0)!==myUpgradeCount) saveActual(myStaff, myUpgradeItemId, myUpgradeCount, { auto:true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [myStaff && myStaff.id, thang, myPlan && myPlan.RowID, myPlan && myPlan.syncedAtTs, myInvExpiry && myInvExpiry.syncedAtTs, myUpgradeCount]);
+  }, [myStaff && myStaff.id, thang, myPlan && myPlan.RowID, myPlan && myPlan.syncedAtTs, myInvExpiry && myInvExpiry.syncedAtTs, myUpgradeCount, kpiReady, upgradesReady]);
 
   const myCtahDoc = myStaff ? (ctahDocs[kpiCtahId(myStaff.id, thang)] || {}) : {};
   const myIsCHT = myStaff && myStaff.role==="Cửa hàng trưởng";
@@ -7470,25 +7481,25 @@ function KpiView({ isAdmin, myStaff }){
   // liệu đang lưu (tránh ghi lặp lại/vòng lặp mỗi lần re-render). Quản lý vẫn có thể tự sửa tay
   // sau đó nếu cần, lần đồng bộ tiếp theo sẽ lại cập nhật về đúng số liệu thật từ hệ thống bán hàng.
   useEffect(()=>{
-    if(!pickedStaff || !planDerived) return;
+    if(!pickedStaff || !planDerived || !kpiReady) return;
     Object.keys(planDerived).forEach(itemId => {
       const { target, actual } = planDerived[itemId];
-      if(target!=="" && Number(pickedTargets[itemId])!==Number(target)) saveTarget(pickedStaff, itemId, target);
-      if(actual!=="" && Number(pickedActuals[itemId])!==Number(actual)) saveActual(pickedStaff, itemId, actual);
+      if(target!=="" && Number(pickedTargets[itemId])!==Number(target)) saveTarget(pickedStaff, itemId, target, { auto:true });
+      if(actual!=="" && Number(pickedActuals[itemId])!==Number(actual)) saveActual(pickedStaff, itemId, actual, { auto:true });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pickedStaff && pickedStaff.id, thang, pickedPlan && pickedPlan.RowID, pickedPlan && pickedPlan.syncedAtTs]);
+  }, [pickedStaff && pickedStaff.id, thang, pickedPlan && pickedPlan.RowID, pickedPlan && pickedPlan.syncedAtTs, kpiReady]);
 
   // Tự động điền % thực tế cho 2 chỉ tiêu con của "Hàng cận date" (≤6 tháng/≤12 tháng), lấy từ tỷ
   // lệ % GIÁ TRỊ TỒN KHO cận date của đúng nhà thuốc nhân viên đang thuộc về (đây là chỉ tiêu theo
   // NHÀ THUỐC, không phải theo cá nhân — mọi nhân viên cùng nhà thuốc dùng chung 1 số liệu).
   const pickedInvExpiry = pickedStaff ? inventoryExpiry[pickedStaff.shop] : null;
   useEffect(()=>{
-    if(!pickedStaff || !pickedInvExpiry || thang!==todayISO().slice(0,7)) return; // 2/10/2026: không ghi đè tháng cũ
-    if(Number(pickedActuals["hh_candate__6th"])!==Number(pickedInvExpiry.pct6)) saveActual(pickedStaff, "hh_candate__6th", pickedInvExpiry.pct6);
-    if(Number(pickedActuals["hh_candate__12th"])!==Number(pickedInvExpiry.pct12)) saveActual(pickedStaff, "hh_candate__12th", pickedInvExpiry.pct12);
+    if(!pickedStaff || !pickedInvExpiry || !kpiReady || thang!==todayISO().slice(0,7)) return; // 2/10/2026: không ghi đè tháng cũ
+    if(Number(pickedActuals["hh_candate__6th"])!==Number(pickedInvExpiry.pct6)) saveActual(pickedStaff, "hh_candate__6th", pickedInvExpiry.pct6, { auto:true });
+    if(Number(pickedActuals["hh_candate__12th"])!==Number(pickedInvExpiry.pct12)) saveActual(pickedStaff, "hh_candate__12th", pickedInvExpiry.pct12, { auto:true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pickedStaff && pickedStaff.id, thang, pickedInvExpiry && pickedInvExpiry.syncedAtTs]);
+  }, [pickedStaff && pickedStaff.id, thang, pickedInvExpiry && pickedInvExpiry.syncedAtTs, kpiReady]);
 
   // Tự động đếm & điền chỉ tiêu "nâng hạng khách hàng" (cs_nangHang cho NVBH, ds_cskh cho CHT) từ
   // dữ liệu đã đồng bộ real-time — CHT tính theo TOÀN NHÀ THUỐC (mọi lượt nâng hạng của khách mua
@@ -7499,10 +7510,10 @@ function KpiView({ isAdmin, myStaff }){
     pickedStaff.role==="Cửa hàng trưởng" ? u.shopCode===pickedStaff.shop : normalizeStaffName(u.salesName)===normalizeStaffName(pickedStaff.name)
   )).length : 0;
   useEffect(()=>{
-    if(!pickedStaff) return;
-    if(Number(pickedActuals[pickedUpgradeItemId]||0)!==pickedUpgradeCount) saveActual(pickedStaff, pickedUpgradeItemId, pickedUpgradeCount);
+    if(!pickedStaff || !upgradesReady) return;
+    if(Number(pickedActuals[pickedUpgradeItemId]||0)!==pickedUpgradeCount) saveActual(pickedStaff, pickedUpgradeItemId, pickedUpgradeCount, { auto:true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pickedStaff && pickedStaff.id, thang, pickedUpgradeCount]);
+  }, [pickedStaff && pickedStaff.id, thang, pickedUpgradeCount, upgradesReady]);
 
   // Bảng tổng hợp toàn bộ nhân sự trong tháng đang chọn — tách riêng Nhân viên bán hàng và Cửa
   // hàng trưởng (CHT) thành 2 bảng, vì 2 vai trò có bộ chỉ tiêu KPI khác nhau. KHÔNG gồm Nhân
@@ -17921,6 +17932,15 @@ function LoginScreen(){
   );
 }
 
+function ResignedStaffScreen({ user, myStaff }){
+  // gỡ thiết bị khỏi danh sách nhận thông báo của nhà thuốc (người đã nghỉ không nhận việc / tin nội bộ nữa)
+  useEffect(()=>{ db.collection("fcmTokens").doc(myStaff.id).set({ tokens:[], resignedAt:new Date().toISOString() }, { merge:true }).catch(e => logSystemError("fcmTokens-resigned", e)); }, [myStaff.id]);
+  return React.createElement("div", { style:{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", padding:16, textAlign:"center" } },
+    React.createElement("div", { style:{ maxWidth:380 } },
+      React.createElement("div", { style:{ fontWeight:700, fontSize:18.5, marginBottom:8 } }, "Tài khoản đã ngừng hoạt động"),
+      React.createElement("div", { style:{ fontSize:13, color:"var(--inkSoft)", marginBottom:18 } }, `Hồ sơ nhân viên của ${user.email} đã ghi nhận nghỉ việc từ ${String(myStaff.ngayNghiViec).split("-").reverse().join("/")}. Nếu thông tin chưa đúng, liên hệ quản lý để khôi phục.`),
+      React.createElement("button", { className:"btn btnGhost", onClick:()=>auth.signOut() }, "Đăng xuất")));
+}
 function NoStaffLinkedScreen({ user }){
   return React.createElement("div", { style:{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", padding:16, textAlign:"center" } },
     React.createElement("div", { style:{ maxWidth:380 } }, [
@@ -22859,7 +22879,7 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
     setBusy(true);
     try{
       await db.collection("issueActions").doc(issueActionKeyOf(shop, code)).set({
-        shop, code, title:issue.title, status:"REJECTED", rejectReason:rejectReason.trim(),
+        shop, code, title:issue.title, status:"REJECTED", rejectReason:rejectReason.trim(), rejectedAt:new Date().toISOString(),
         updatedAtTs: firebase.firestore.FieldValue.serverTimestamp(),
       }, { merge:true });
       await logIssueHistory({ shop, code, action:"REJECT", oldStatus: action ? action.status : null, newStatus:"REJECTED", detail:rejectReason.trim() });
@@ -26543,6 +26563,9 @@ function aaPlan(I){
       if(!dx.confirmed || dx.freshness.stale || !dx.plan){ skipped.push({ rule:"dt01", key:shop, reason: !dx.confirmed ? "Số thực đạt chưa xác nhận" : dx.freshness.stale ? "Số POS chưa cập nhật" : "Chưa có kế hoạch bù" }); return; }
       const act = (I.issueActions||{})[`${shop}__DT01`];
       if(act && ["IN_PROGRESS","PENDING_VERIFICATION"].includes(act.status)){ skipped.push({ rule:"dt01", key:shop, reason:"Hồ sơ DT01 đang xử lý" }); return; }
+      // 17/10/2026 (rà soát P0): quản lý đã BỎ QUA DT01 của nhà thuốc trong tháng này → AI không tự giao lại tới tháng sau
+      if(act && act.status==="REJECTED"){ const ts = act.rejectedAt || (act.updatedAtTs && typeof act.updatedAtTs.toDate==="function" ? act.updatedAtTs.toDate().toISOString() : "");
+        if(!ts || String(ts).slice(0,7)===String(today).slice(0,7)){ skipped.push({ rule:"dt01", key:shop, reason:"Quản lý đã bỏ qua DT01 tháng này" }); return; } }
       add({ rule:"dt01", autoKey:`dt01:${shop}:${today.slice(0,7)}`, ...aaAssign(I, shop, "lead"), mode:"lead", module:"Khác", deadline:dx.plan.checkDate,
         title:`Kế hoạch bù doanh thu — ${String(shop).replace(/^SHOP0*/, "NT")}`, mota:rvdTaskText(dx), dx,
         extra:{ sourceIssueCode:"DT01", sourceIssueTitle:"Doanh thu dự kiến không đạt chỉ tiêu tháng", sourceShop:shop, issueActionKey:`${shop}__DT01`,
@@ -26625,24 +26648,30 @@ async function runAutoAssign({ force, slot, source } = {}){
   const slotKey = slot || today;
   const logRef = db.collection("opsConfig").doc("autoAssignLog");
   if(!force){
+    // 17/10/2026 (rà soát P0): khung chỉ tính "đã chạy" khi chạy XONG. Lần trước lỗi (failed) hoặc treo > 15 phút → cho chạy lại.
     const ok = await db.runTransaction(async tx => { const d = await tx.get(logRef); const x = d.exists ? d.data() : {};
-      if(x.lastRunSlot===slotKey || (!slot && x.lastRunDate===today)) return false;
-      tx.set(logRef, { lastRunDate:today, lastRunSlot:slotKey, runningAt:new Date().toISOString() }, { merge:true }); return true; });
+      const sameSlot = x.lastRunSlot===slotKey || (!slot && x.lastRunDate===today);
+      const stuck = x.lastStatus==="running" && !(x.runningAt && Date.now() - Date.parse(x.runningAt) < 15*60*1000);
+      if(sameSlot && x.lastStatus!=="failed" && !stuck) return false;
+      tx.set(logRef, { lastRunDate:today, lastRunSlot:slotKey, runningAt:new Date().toISOString(), lastStatus:"running" }, { merge:true }); return true; });
     if(!ok) return { skippedRun:true, created:[], skipped:[] };
   }
   const safe = async (f, d) => { try{ return await f(); }catch(e){ logSystemError("autoAssign", e); return d; } };
+  // dữ liệu BẮT BUỘC (chống giao trùng / chọn người): đọc lỗi thì DỪNG, không giao việc với dữ liệu thiếu
+  const missing = [];
+  const must = (name, f) => f().catch(e => { missing.push(name); logSystemError("autoAssign:" + name, e); return null; });
   const get = async (c, id) => { const d = await db.collection(c).doc(id).get(); return d.exists ? d.data() : null; };
   const month = today.slice(0,7);
   const [recentAuto, clqFixAll, todayTasks] = await Promise.all([
-    safe(async () => (await db.collection("tasks").where("autoAssigned", "==", true).get()).docs.map(d => d.data()).filter(t => (t.ngayGiao||"") >= addDays(today, -60)), []),
+    must("recentAuto", async () => (await db.collection("tasks").where("autoAssigned", "==", true).get()).docs.map(d => d.data()).filter(t => (t.ngayGiao||"") >= addDays(today, -60))),
     safe(async () => (await db.collection("tasks").where("sourceScreen", "==", "checklistQuality").get()).docs.map(d => d.data()), []),
     safe(async () => (await db.collection("tasks").where("ngayGiao", "==", today).get()).docs.map(d => d.data()), null),
   ]);
   const [cfg, staffSnap, openSnap, actsSnap, ra, mt, clTpl, reports, idx, plansSnap, nsTrk, dna, invSum, pace] = await Promise.all([
     safe(() => get("opsConfig", "autoAssignRules"), null),
-    safe(async () => (await db.collection("staff").get()).docs.map(d => ({ id:d.id, ...d.data() })).filter(s => !isStaffResigned(s)), []),
-    safe(async () => (await db.collection("tasks").where("trangThai", "==", "Đang giao").get()).docs.map(d => d.data()), []),
-    safe(async () => { const o = {}; (await db.collection("issueActions").get()).docs.forEach(d => { o[d.id] = d.data(); }); return o; }, {}),
+    must("staff", async () => (await db.collection("staff").get()).docs.map(d => ({ id:d.id, ...d.data() })).filter(s => !isStaffResigned(s))),
+    must("openTasks", async () => (await db.collection("tasks").where("trangThai", "==", "Đang giao").get()).docs.map(d => d.data())),
+    must("issueActions", async () => { const o = {}; (await db.collection("issueActions").get()).docs.forEach(d => { o[d.id] = d.data(); }); return o; }),
     safe(() => get("opsConfig", "revenueAnalytics"), null),
     safe(async () => { const d = await db.collection("opsConfig").doc("revenueAnalyticsMonths").collection("months").doc(month).get(); return d.exists ? d.data() : null; }, null),
     safe(() => get("opsConfig", "dailyChecklist"), null),
@@ -26657,6 +26686,10 @@ async function runAutoAssign({ force, slot, source } = {}){
   // Lịch ca HÔM NAY + NGÀY MAI (ca thường + tăng ca) — nhân viên đăng ký trước 1–2 ngày nên không dò xa hơn
   const shiftRange = async (c, ot) => (await db.collection(c).where("WorkDate", ">=", today).where("WorkDate", "<=", addDays(today, 1) + "\uf8ff").get()).docs.map(d => ({ ...d.data(), __isOT:ot }));
   const shiftsAll = await safe(async () => { const [a, b] = await Promise.all([shiftRange("externalShiftWork", false), shiftRange("externalOverTime", true)]); return a.concat(b); }, null);
+  if(missing.length){
+    await logRef.set({ lastStatus:"failed", lastError:"Không đọc được dữ liệu bắt buộc: " + missing.join(", "), lastFailedAt:new Date().toISOString() }, { merge:true });
+    throw new Error("Không đọc được dữ liệu bắt buộc: " + missing.join(", ") + " — đã dừng, không giao việc");
+  }
   const staffById = {}; staffSnap.forEach(s => { staffById[s.id] = s; });
   const running = ((idx && idx.campaigns) || []).find(c => c.kind==="campaign" && c.running);
   const camp = running ? await safe(() => get("promoOrderAnalytics", running.key), null) : null;
@@ -26672,7 +26705,7 @@ async function runAutoAssign({ force, slot, source } = {}){
       return { planId:p.id, shop:t.shop, input:{ openDate:t.openDate, today, daily:((ra && ra.byShop)||{})[t.shop] || {}, expectedRevDay:p.input && p.input.expectedRevDay, benchmarkRevDay: bench && bench.f ? bench.f.revDay : null } }; }) },
     stale: invSum ? { ts:invSum.computedAt } : null,
   });
-  const created = [];
+  const created = []; let createErrors = 0;
   for(const t of plan.tasks){
     try{
       const { rule, autoKey, assignType, staffId, staffName, shop, module, deadline, hanGio, title, mota, extra, dx } = t;
@@ -26690,14 +26723,15 @@ async function runAutoAssign({ force, slot, source } = {}){
         await logIssueHistory({ shop, code:"DT01", action:"ASSIGN", oldStatus:null, newStatus:"IN_PROGRESS", detail:"AI tự giao kế hoạch bù doanh thu" });
       }
       created.push({ rule, title, taskId:ref.id, assignType, staffId, shop });
-    }catch(e){ logSystemError("autoAssignCreate", e); }
+    }catch(e){ createErrors++; logSystemError("autoAssignCreate", e); }
   }
   const src = source || "app";
   await logRef.set({ lastRunDate:today, lastRunSlot:slotKey, lastRunAt:new Date().toISOString(), lastSource:src,
+    lastStatus: createErrors ? "partial" : "done", lastError: createErrors ? `${createErrors} việc không tạo được` : null, createErrors,
     ...(src==="server" ? { lastServerRunAt:new Date().toISOString() } : {}),
     by: src==="server" ? "Máy chủ (lịch 9h20 & 15h20)" : ((auth.currentUser && auth.currentUser.email) || ""),
     last:{ created, skipped:plan.skipped.slice(0, 40), overflow:plan.overflow||0 } }, { merge:true });
-  return { created, skipped:plan.skipped };
+  return { created, skipped:plan.skipped, createErrors };
 }
 // Chạy nền 1 lần/ngày khi quản lý mở app (sau 20 giây để không tranh tải dữ liệu lúc mở app).
 function AutoAssignRunner({ isAdmin }){
@@ -26743,6 +26777,9 @@ function AutoAssignCard(){
     h("div", { style:{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap", marginTop:8 } },
       h("button", { className:"btn btnPrimary", disabled:busy || !on.enabled, onClick:runNow, style:{ fontSize:12.5 } }, busy ? "Đang chạy…" : "Chạy ngay"),
       msg && h("span", { style:{ fontSize:12.5 } }, msg)),
+    // 17/10/2026 (rà soát P0): lần chạy lỗi phải HIỆN RA, không im lặng
+    log && (log.lastStatus==="failed" || log.lastStatus==="partial") && h("div", { style:{ fontSize:12.5, marginTop:8, padding:"6px 10px", borderRadius:8, background:"#FEE2E2", color:"#991B1B", fontWeight:600 } },
+      `⚠️ ${log.lastStatus==="failed" ? "Lần chạy gần nhất BỊ LỖI" : "Lần chạy gần nhất chưa trọn vẹn"}${log.lastFailedAt && log.lastStatus==="failed" ? " (" + new Date(log.lastFailedAt).toLocaleString("vi-VN") + ")" : ""}: ${log.lastError || "không rõ lý do"}. Lần chạy sau sẽ tự thử lại.`),
     log && log.lastRunAt && h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:8 } }, `Lần chạy gần nhất ${new Date(log.lastRunAt).toLocaleString("vi-VN")}${log.by ? " · " + log.by : ""}: giao ${(last && last.created || []).length} việc`),
     last && (last.created||[]).length>0 && h("ul", { style:{ margin:"4px 0 0", paddingLeft:18, fontSize:12.5 } }, last.created.slice(0, 12).map((c, i) => h("li", { key:i }, c.title))),
     last && (last.skipped||[]).length>0 && h("details", { style:{ fontSize:12, marginTop:4 } }, h("summary", { style:{ cursor:"pointer", color:"var(--inkSoft)" } }, `Không giao ${last.skipped.length} trường hợp (lý do)`),
@@ -29113,6 +29150,9 @@ function App(){
   const myStaff = isAdmin ? null : staff.find(s => s.uid===user.uid);
   if(myStaff && window.__MY_SHOP!==myStaff.shop){ window.__MY_SHOP = myStaff.shop; }
   if(!isAdmin && !myStaff) return React.createElement(NoStaffLinkedScreen, { user });
+  // 17/10/2026 (rà soát P0): nhân viên ĐÃ NGHỈ (ngày nghỉ ≤ hôm nay) không vào được app nữa. Đây là chặn ở app;
+  // quyền đọc dữ liệu thật phải được chặn ở máy chủ (luật Firestore / thu hồi tài khoản) — xem docs/RA_SOAT_QLKV.md.
+  if(!isAdmin && isStaffResigned(myStaff)) return React.createElement(ResignedStaffScreen, { user, myStaff });
   return React.createElement(Dashboard, { user, isAdmin, myStaff });
 }
 

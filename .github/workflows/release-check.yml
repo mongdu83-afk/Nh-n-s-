@@ -1,0 +1,35 @@
+# Kiểm tra mỗi lần main thay đổi: kiểm thử + chống tải nhầm index.html cũ (rà soát P0 17/10/2026).
+# Lỗi → workflow đỏ + gửi thông báo về điện thoại quản lý.
+name: Kiểm tra bản phát hành
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Lấy index.html bản trước
+        run: git show HEAD~1:index.html > /tmp/prev-index.html 2>/dev/null || true
+      - name: Kiểm tra bản phát hành
+        run: node scripts/check-release.js /tmp/prev-index.html
+      - name: Kiểm thử
+        run: node --test tests/*.test.js
+      - name: Báo quản lý khi lỗi
+        if: failure() && github.event_name == 'push'
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          npm install --no-save --no-audit --no-fund firebase-admin@12.7.0
+          MSG="Bản vừa đưa lên main có lỗi: $(cat .release-check-errors.txt 2>/dev/null | head -c 200 || echo 'kiểm thử thất bại') — xem GitHub Actions."
+          node scripts/notify-admin.js "⚠️ Kiểm tra bản phát hành thất bại" "$MSG"
