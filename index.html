@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261017-01";
+window.__APP_BUILD = "20261017-02";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -9260,18 +9260,27 @@ function PracticeHistoryModal({ row, onClose, onChanged }){
   const [picked, setPicked] = useState([]);
   const [delBusy, setDelBusy] = useState(false);
   const [regBusy, setRegBusy] = useState(null);
-  async function reload(){ try{ const r = await pbCall("practiceList", { hireId:row.id, limit:200 }, 60000); if(r.ok===false) throw new Error(r.error); setList(r.rows||[]); setIsAdmin(!!r.isAdmin); } catch(e){ setErr(e.message||String(e)); } }
+  // 17/10/2026 (chị Hà): học việc → nhân viên bán hàng: bài cũ nằm ở hồ sơ học việc (row.extraIds) → gộp vào, mỗi bài nhớ hồ sơ của nó.
+  const hidMap = useRef({}); const hidOf = (id) => hidMap.current[id] || row.id;
+  async function reload(){ try{ const r = await pbCall("practiceList", { hireId:row.id, limit:200 }, 60000); if(r.ok===false) throw new Error(r.error);
+    let all = r.rows||[]; const m = {};
+    for(const hid of (row.extraIds||[]).filter(x => x && x !== row.id)){
+      try{ const r2 = await pbCall("practiceList", { hireId:hid, limit:200 }, 60000); if(r2.ok===false) continue;
+        const seen = new Set(all.map(x => x.id)); const add = (r2.rows||[]).filter(x => !seen.has(x.id));
+        add.forEach(x => { m[x.id] = hid; }); all = all.concat(add); }catch(e){ logSystemError("practiceList-hire", e); } }
+    hidMap.current = m; setList(all.sort((a,b) => String(b.createdAt||"").localeCompare(String(a.createdAt||"")))); setIsAdmin(!!r.isAdmin); } catch(e){ setErr(e.message||String(e)); } }
   useEffect(()=>{ reload(); }, []);
   // 5/10/2026: quản lý xoá bài luyện test nhầm
   async function del(ids){
     if(!ids.length) return;
     if(!window.confirm(`Xoá vĩnh viễn ${ids.length} bài luyện của ${row.name}?\nĐiểm và lịch sử của các bài này sẽ không tính nữa.`)) return;
     setDelBusy(true); setErr(null);
-    try{ const r = await pbCall("practiceDelete", { hireId:row.id, ids }, 60000); if(r.ok===false) throw new Error(r.error);
+    try{ const byHid = {}; ids.forEach(id => { (byHid[hidOf(id)] = byHid[hidOf(id)] || []).push(id); });
+      for(const hid of Object.keys(byHid)){ const r = await pbCall("practiceDelete", { hireId:hid, ids:byHid[hid] }, 60000); if(r.ok===false) throw new Error(r.error); }
       setPicked([]); if(sel && ids.includes(sel)){ setSel(null); setItem(null); } await reload(); onChanged && onChanged(); }
     catch(e){ setErr(e.message||String(e)); } setDelBusy(false); }
   async function open(id){ setSel(id); setItem(null); setBusy(true); setErr(null);
-    try{ const r = await pbCall("practiceDetail", { hireId:row.id, id }, 60000); if(r.ok===false) throw new Error(r.error); setItem(r.item); } catch(e){ setErr(e.message||String(e)); } setBusy(false); }
+    try{ const r = await pbCall("practiceDetail", { hireId:hidOf(id), id }, 60000); if(r.ok===false) throw new Error(r.error); setItem(r.item); } catch(e){ setErr(e.message||String(e)); } setBusy(false); }
   const scC = s => s==null ? "var(--inkSoft)" : s>=80 ? CL360.good : s>=60 ? CL360.warn : CL360.bad;
   const fmtT = iso => { try{ const d = new Date(iso); return d.toLocaleString("vi-VN", { hour:"2-digit", minute:"2-digit", day:"2-digit", month:"2-digit" }); } catch(e){ return iso||""; } };
   const sec = (title, ...kids) => h("div", { style:{ marginTop:12 } }, h("div", { style:{ fontSize:12, fontWeight:800, color:"var(--inkSoft)", textTransform:"uppercase", letterSpacing:".04em", marginBottom:5 } }, title), ...kids);
@@ -9299,8 +9308,8 @@ function PracticeHistoryModal({ row, onClose, onChanged }){
       box("#fff", it.answer.nhanDinh ? h("span", null, h("b", null, "Nhận định: "), it.answer.nhanDinh, "\n") : null, h("b", null, "1. Hỏi khách: "), it.answer.hoi||"—", "\n", h("b", null, "2. Xử trí: "), it.answer.xuTri||"—", "\n", h("b", null, "3. Thuốc & liều: "), it.answer.thuoc||"—", "\n", h("b", null, "4. Dặn dò: "), it.answer.danDo||"—")),
     it.mode==="quiz" && it.quiz && sec("Bài trắc nghiệm", quizBlock(it)),
     (it.errors||[]).length>0 && sec("Lỗi", h("div", { style:{ color:CL360.bad, fontWeight:700, fontSize:13 } }, it.errors.map(e=>e.label).join(" · "))),
-    h(TtsVoiceDetail, { it, hireId:row.id }),
-    h(PracticeDrugReview, { it, isAdmin, hireId:row.id, onChanged:()=>{ open(it.id); reload(); onChanged && onChanged(); } }),
+    h(TtsVoiceDetail, { it, hireId:hidOf(it.id) }),
+    h(PracticeDrugReview, { it, isAdmin, hireId:hidOf(it.id), onChanged:()=>{ open(it.id); reload(); onChanged && onChanged(); } }),
     it.feedback && (it.feedback.good||[]).length>0 && sec("Làm đúng", box("#F0FDF4", ul(it.feedback.good))),
     it.feedback && (it.feedback.fix||[]).length>0 && sec("Cần sửa", box("#FEF2F2", ul(it.feedback.fix))),
     it.feedback && (it.feedback.missed||[]).length>0 && sec("Chưa hỏi", box("#FFFBEB", ul(it.feedback.missed))),
@@ -9333,7 +9342,7 @@ function PracticeHistoryModal({ row, onClose, onChanged }){
               `${PH_MODE[x.mode]||x.mode} · ${fmtT(x.createdAt)}${(x.mode==="chat"||x.mode==="voice") ? ` · ${x.turns} lượt` : ""}${x.commScore!=null ? ` · giao tiếp ${x.commScore}` : ""}${x.status==="open" ? " · chưa nộp" : x.status==="ungraded" ? " · chưa chấm được" : ""}${x.khach ? " · " + x.khach : ""}`),
             (x.errors||[]).length>0 && h("div", { style:{ fontSize:11.5, color:CL360.bad } }, x.errors.map(e=>e.label).join(" · "))),
           x.status==="ungraded" && h("button", { className:"btn btnPrimary", disabled:!!regBusy, style:{ padding:"3px 8px", fontSize:12 }, onClick:async e=>{ e.stopPropagation(); setRegBusy(x.id); setErr(null);
-              try{ const r = await pbCall("practiceSubmit", { hireId:row.id, id:x.id }, 240000); if(r.ok===false) throw new Error(r.error); if(!r.graded) setErr("Máy chấm vẫn đang quá tải — thử lại sau ít phút."); await reload(); onChanged && onChanged(); } catch(er){ setErr(er.message||String(er)); } setRegBusy(null); } }, regBusy===x.id ? "Đang chấm…" : "Chấm lại"),
+              try{ const r = await pbCall("practiceSubmit", { hireId:hidOf(x.id), id:x.id }, 240000); if(r.ok===false) throw new Error(r.error); if(!r.graded) setErr("Máy chấm vẫn đang quá tải — thử lại sau ít phút."); await reload(); onChanged && onChanged(); } catch(er){ setErr(er.message||String(er)); } setRegBusy(null); } }, regBusy===x.id ? "Đang chấm…" : "Chấm lại"),
           isAdmin && h("button", { className:"btn", title:"Xoá bài này", disabled:delBusy, style:{ padding:"3px 8px", fontSize:12, color:CL360.bad }, onClick:e=>{ e.stopPropagation(); del([x.id]); } }, "Xoá"),
           h("span", { style:{ color:"var(--inkSoft)" } }, "›")))),
       sel && (busy ? h("div", { style:{ fontSize:13, color:"var(--inkSoft)", marginTop:10 } }, "Đang tải bài…") : item && h("div", { style:{ marginTop:10 } }, detail(item),
@@ -9651,11 +9660,30 @@ function SelfPracticePanel(){
   const [sel, setSel] = useState(() => { try{ return JSON.parse(localStorage.getItem("ttsGroups")||"[]"); }catch(e){ return []; } });
   const [open, setOpen] = useState(false);
   const [histOpen, setHistOpen] = useState(false);
+  // 17/10/2026 (chị Hà): nhân viên lên từ học việc → bài luyện cũ nằm ở hồ sơ học việc (newHires.staffId = mình) → gộp vào.
+  const [oldIds, setOldIds] = useState([]); const [oldRows, setOldRows] = useState([]);
   const load = () => pbCall("practiceList", { hireId:"self" }, 60000).then(setInfo).catch(()=>setInfo({ groups:[] }));
   useEffect(()=>{ load(); }, []);
+  useEffect(()=>{ let dead = false; const uid = auth.currentUser && auth.currentUser.uid; if(!uid) return undefined;
+    (async () => {
+      const me = await db.collection("staff").where("uid", "==", uid).limit(1).get();
+      // còn là học việc thì "self" đã là hồ sơ học việc → không gộp (tránh trùng)
+      if(me.empty || dead || me.docs[0].data().role === "Nhân viên học việc") return; const myId = me.docs[0].id;
+      let ids = [];
+      try{ ids = (await db.collection("newHires").where("staffId", "==", myId).get()).docs.map(d => d.id); }catch(e){ logSystemError("newHires-self", e); }
+      // không có hồ sơ newHires (học việc "tự thêm") → hỏi danh sách thử việc, chỉ với người vào làm ≤ 120 ngày (tránh tải nặng cho mọi người)
+      const joined = me.docs[0].data().ngayVaoLam || "";
+      if(!ids.length && joined && joined >= addDays(todayISO(), -120)){
+        try{ const r = await pbCall("list", {}, 180000); ids = ((r && r.rows) || []).filter(x => x.staffId === myId && x.id).map(x => x.id); }catch(e){ logSystemError("probationList-self", e); } }
+      if(dead || !ids.length) return; setOldIds(ids);
+      let rows = []; for(const id of ids){ try{ const r = await pbCall("practiceList", { hireId:id, limit:200 }, 60000); if(r && r.ok !== false) rows = rows.concat(r.rows || []); }catch(e){} }
+      if(!dead) setOldRows(rows);
+    })().catch(e => logSystemError("practice-oldHire", e));
+    return () => { dead = true; }; }, []);
   const toggle = (k) => { const n = sel.includes(k) ? sel.filter(x=>x!==k) : [...sel, k]; setSel(n); try{ localStorage.setItem("ttsGroups", JSON.stringify(n)); }catch(e){} };
   const groups = (info && info.groups) || [];
-  const done = info && info.rows ? info.rows.filter(r=>r.status==="graded") : [];
+  const selfRows = (info && info.rows) || [], selfIds = new Set(selfRows.map(r => r.id));
+  const done = selfRows.concat(oldRows.filter(r => !selfIds.has(r.id))).filter(r=>r.status==="graded").sort((a,b) => String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
   const avg = done.length ? Math.round(done.slice(0,10).reduce((a,r)=>a+(r.score||0),0)/Math.min(10,done.length)) : null;
   return h("div", { className:"card", style:{ padding:14, marginBottom:14, background:"#F0FDF4", border:"1px solid #BBF7D0" } },
     h("div", { style:{ display:"flex", justifyContent:"space-between", gap:8, flexWrap:"wrap", alignItems:"center" } },
@@ -9669,7 +9697,7 @@ function SelfPracticePanel(){
       style:{ padding:"5px 11px", borderRadius:16, fontSize:12.5, fontWeight:600, cursor: g.n ? "pointer" : "not-allowed", fontFamily:"inherit", opacity: g.n ? 1 : .5,
         border:"1.5px solid " + (sel.includes(g.k) ? "var(--pine)" : "var(--line)"), background: sel.includes(g.k) ? "var(--pine)" : "#fff", color: sel.includes(g.k) ? "#fff" : "var(--ink)" } }, `${g.label} (${g.n})`))),
     open && h(TtsPracticeModal, { row:{ id:"self", name:"Bài luyện của bạn" }, groups: sel.filter(k => (groups.find(g=>g.k===k)||{}).n), onClose:()=>{ setOpen(false); load(); } }),
-    histOpen && h(PracticeHistoryModal, { row:{ id:"self", name:"bạn" }, onClose:()=>{ setHistOpen(false); load(); } }));
+    histOpen && h(PracticeHistoryModal, { row:{ id:"self", name:"bạn", extraIds:oldIds }, onClose:()=>{ setHistOpen(false); load(); } }));
 }
 // 14/10/2026: quản lý chỉnh giới hạn bài luyện GIỌNG NÓI mỗi tuần (opsConfig/ttsVoiceConfig)
 function TtsVoiceLimitSetting(){
