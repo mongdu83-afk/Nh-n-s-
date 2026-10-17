@@ -11,7 +11,7 @@ const prevPath = process.argv[2];
 const prev = prevPath && fs.existsSync(prevPath) ? fs.readFileSync(prevPath, "utf8") : null;
 const errors = [], notes = [];
 
-for(const n of ["RVD","KBP","PMD","CLQ","NS","IP","AM","AA"]){
+for(const n of ["RVD","KBP","PMD","CLQ","NS","IP","AM","AA","TOP5"]){
   const a = cur.indexOf(`\n// ${n}-ENGINE-BEGIN\n`), b = cur.indexOf(`\n// ${n}-ENGINE-END`);
   if(prev && prev.includes(`// ${n}-ENGINE-BEGIN`) && !(a > 0 && b > a)) errors.push(`Thiếu khối ${n}-ENGINE (máy chủ AI tự giao việc cần khối này)`);
 }
