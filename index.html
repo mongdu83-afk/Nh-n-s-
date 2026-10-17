@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261016-18";
+window.__APP_BUILD = "20261017-01";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -26561,7 +26561,8 @@ function aaPlan(I){
   // 16/10/2026 (chị Hà): TRẦN NGÀY CHUNG — mỗi nhà thuốc nhận tối đa 3 việc AI/ngày (tính cả việc AI điều hành đã giao hôm nay).
   // Việc giao quản lý (admin) không tính. Phần vượt trần để lần chạy sau / ngày sau.
   const cap = Number(I.config && I.config.dayCapPerShop) || 3, used = {};
-  open.forEach(t => { if(t.shop && t.ngayGiao===today && t.trangThai!=="Đã huỷ" && aaIsAiTask(t)) used[t.shop] = (used[t.shop]||0) + 1; });
+  // 17/10/2026 (chị Hà): đếm CẢ việc đã làm xong trong ngày (todayTasks = mọi việc giao hôm nay); không có thì đếm việc đang mở.
+  (I.todayTasks || open).forEach(t => { if(t.shop && t.ngayGiao===today && t.trangThai!=="Đã huỷ" && aaIsAiTask(t)) used[t.shop] = (used[t.shop]||0) + 1; });
   const capped = out.filter(t => { if(!t.shop || t.assignType==="admin") return true; const n = used[t.shop]||0;
     if(n >= cap){ skipped.push({ rule:t.rule, key:t.autoKey, reason:`Nhà thuốc đã đủ ${cap} việc AI hôm nay` }); return false; } used[t.shop] = n + 1; return true; });
   return { tasks:capped.slice(0, I.max || 25), skipped, overflow: Math.max(0, capped.length - (I.max || 25)) };
@@ -26586,9 +26587,10 @@ async function runAutoAssign({ force, slot, source } = {}){
   const safe = async (f, d) => { try{ return await f(); }catch(e){ logSystemError("autoAssign", e); return d; } };
   const get = async (c, id) => { const d = await db.collection(c).doc(id).get(); return d.exists ? d.data() : null; };
   const month = today.slice(0,7);
-  const [recentAuto, clqFixAll] = await Promise.all([
+  const [recentAuto, clqFixAll, todayTasks] = await Promise.all([
     safe(async () => (await db.collection("tasks").where("autoAssigned", "==", true).get()).docs.map(d => d.data()).filter(t => (t.ngayGiao||"") >= addDays(today, -60)), []),
     safe(async () => (await db.collection("tasks").where("sourceScreen", "==", "checklistQuality").get()).docs.map(d => d.data()), []),
+    safe(async () => (await db.collection("tasks").where("ngayGiao", "==", today).get()).docs.map(d => d.data()), null),
   ]);
   const [cfg, staffSnap, openSnap, actsSnap, ra, mt, clTpl, reports, idx, plansSnap, nsTrk, dna, invSum, pace] = await Promise.all([
     safe(() => get("opsConfig", "autoAssignRules"), null),
@@ -26614,7 +26616,7 @@ async function runAutoAssign({ force, slot, source } = {}){
   const camp = running ? await safe(() => get("promoOrderAnalytics", running.key), null) : null;
   const dnaShops = dna ? Object.values(dna.shops||{}) : [];
   const tracks = (nsTrk && nsTrk.byPlan) || {};
-  const plan = aaPlan({ today, nowHM:nowHM(), shifts: shiftsAll && shiftsAll.length ? shiftsAll : null, shiftsMissing: !(shiftsAll && shiftsAll.length), nowMs:Date.now(), config:cfg, recentAuto, shops:DEFAULT_SHOPS, staff:staffSnap, openTasks:openSnap, issueActions:actsSnap,
+  const plan = aaPlan({ today, nowHM:nowHM(), shifts: shiftsAll && shiftsAll.length ? shiftsAll : null, shiftsMissing: !(shiftsAll && shiftsAll.length), nowMs:Date.now(), config:cfg, recentAuto, shops:DEFAULT_SHOPS, staff:staffSnap, openTasks:openSnap, todayTasks, issueActions:actsSnap,
     revenue: ra && mt ? { diagnose:(shop) => rvdDiagnose({ shop, month:mt.month || month, today, daily:(ra.byShop||{})[shop] || {}, computedAt:ra.computedAt, monthRow:(mt.byShop||{})[shop] || null,
       monthMeta:{ daysElapsed:mt.daysElapsed, daysInMonth:mt.daysInMonth, isCurrentMonth:mt.isCurrentMonth } }) } : null,
     kpiPace:pace,

@@ -111,3 +111,14 @@ test("Không ai có ca hôm nay / ngày mai / không có dữ liệu ca → giao
   const t2 = aaPlan(base({ revenue:null, staff:shStaff, shifts:null, shiftsMissing:true, nowHM:"09:20", checklist:clIn() })).tasks.find(x => x.rule==="checklist");
   assert.match(t2.mota, /Chưa có dữ liệu lịch ca/);
 });
+
+test("Trần việc AI/nhà thuốc/ngày tính cả việc đã hoàn thành hôm nay; việc huỷ không tính", () => {
+  const ai = (st) => ({ shop:"SHOP0059", ngayGiao:TODAY, trangThai:st, autoAssigned:true });
+  const dt = (r) => r.tasks.filter(t => t.rule === "dt01").length;
+  const done3 = [ai("Đã hoàn thành"), ai("Đã hoàn thành"), ai("Đã hoàn thành")];
+  const r = aaPlan(base({ todayTasks:done3 }));
+  assert.equal(dt(r), 0);
+  assert.ok(r.skipped.some(s => /đã đủ 3 việc AI hôm nay/.test(s.reason)));
+  assert.equal(dt(aaPlan(base({ todayTasks:[ai("Đã huỷ"), ai("Đã huỷ"), ai("Đã huỷ")] }))), 1);
+  assert.equal(dt(aaPlan(base({ todayTasks:done3, config:{ dayCapPerShop:4 } }))), 1);
+});
