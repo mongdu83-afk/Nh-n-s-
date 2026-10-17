@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261017-15";
+window.__APP_BUILD = "20261017-16";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -21921,6 +21921,11 @@ function ShopAnalysisCard({ shop, onNavigate }){
     doc && doc.aiStatus!=="ok" && rc("div", { key:"fail", style:{ fontSize:12, marginBottom:6, color:CL360.warn } }, "AI chưa trả lời được lần này. Mục 1 đến 4 và dữ liệu còn thiếu vẫn là số hệ thống, chị bấm Phân tích lại sau ít phút."),
     v && v.status==="warn" && (v.unverified||[]).length>0 && rc("div", { key:"warn", style:{ fontSize:12, marginBottom:6, background:"var(--claySoft)", borderRadius:6, padding:"5px 8px" } }, `Có số AI viết không có trong dữ liệu gốc: ${(v.unverified||[]).join(", ")}. Chị kiểm tra trước khi duyệt giải pháp.`),
     doc && rc("div", { key:"g", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))", gap:10 } }, secs.map(sec)),
+    doc && (doc.experiences||[]).length>0 && rc("div", { key:"exp", style:{ fontSize:12, marginTop:8, color:"var(--inkSoft)" } }, [
+      rc("b", { key:"b" }, "AI đã tham khảo kinh nghiệm đã xác nhận: "),
+      doc.experiences.map(x => `${x.vanDe} (${x.hieuQua||"Chưa rõ"})`).join("; "),
+      onNavigate && rc("a", { key:"a", href:"#", style:{ marginLeft:6 }, onClick:ev=>{ ev.preventDefault(); onNavigate("kinhnghiem"); } }, "Xem"),
+    ]),
   ]);
 }
 
@@ -27981,7 +27986,8 @@ function OpsOperatorView({ onNavigate }){
             r.expected && r.expected.metric && h("span", null, `Đo: ${r.expected.metric} ${opsFmtV(r.expected.baseline)} → ${opsFmtV(r.expected.target)} sau ${r.expected.horizonDays||0} ngày`),
             r.risk && h("span", { style:{ color:"#B45309" } }, "" + r.risk),
             r.evidence && r.evidence.source && h("span", null, `Nguồn: ${r.evidence.source}${r.evidence.dataAsOf ? " · số liệu " + new Date(r.evidence.dataAsOf).toLocaleString("vi-VN") : ""}`)),
-          h("details", { style:{ marginTop:4 } }, h("summary", { style:{ fontSize:12, color:"var(--inkSoft)", cursor:"pointer" } }, "Số liệu AI dựa vào"), h("div", { style:{ fontSize:12, color:"var(--inkSoft)", whiteSpace:"pre-wrap", marginTop:4 } }, r.why))),
+          h("details", { style:{ marginTop:4 } }, h("summary", { style:{ fontSize:12, color:"var(--inkSoft)", cursor:"pointer" } }, "Số liệu AI dựa vào"), h("div", { style:{ fontSize:12, color:"var(--inkSoft)", whiteSpace:"pre-wrap", marginTop:4 } }, r.why)),
+          (r.experienceIds||[]).length>0 && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:3 } }, `AI có tham khảo ${r.experienceIds.length} kinh nghiệm vận hành đã được xác nhận`)),
         h("div", { style:{ display:"flex", flexDirection:"column", gap:4 } },
           h("button", { className:"btn btnPrimary", disabled:!!busy, style:{ padding:"4px 10px", fontSize:12.5 }, onClick:()=>{ if(opsEditedNoReason(r, edits[r.id])){ setOpen(r.id); setMsg("Chị đã sửa đề xuất này, ghi lý do sửa trước khi duyệt."); return; } call("approve", { ids:[r.id], edits: edits[r.id] ? { [r.id]: edits[r.id] } : {} }, "Đang giao việc…"); } }, "Duyệt & giao"),
           h("button", { className:"btn", style:{ padding:"4px 10px", fontSize:12.5 }, onClick:()=>setOpen(isOpen ? null : r.id) }, isOpen ? "Xong sửa" : "Sửa"),
@@ -28414,14 +28420,24 @@ function AlertRulesConfigView(){
 // để tra cứu khi gặp vấn đề tương tự lần sau — và làm dữ liệu nền cho trợ lý thông minh sau này (mục
 // XXIX, chưa triển khai trong bản này). Collection mới "opsExperience", không đụng gì tới dữ liệu cũ.
 const EXPERIENCE_EFFECT_OPTIONS = ["Hiệu quả", "Không hiệu quả", "Chưa rõ"];
+// 17/10/2026 (4b, đặc tả Upharma Ops): kinh nghiệm phải được QUẢN LÝ XÁC NHẬN thì AI mới đọc (AI điều hành, AI phân tích nhà thuốc).
+// Ghi mới / sửa nội dung / AI soạn nháp từ kết quả đo đối chứng → "Chờ xác nhận". Kinh nghiệm cũ chưa có trạng thái → "Chưa xác nhận".
+// EXPUI-ENGINE-BEGIN
+const EXP_XN = { da_xac_nhan:["Đã xác nhận, AI dùng","good"], cho_xac_nhan:["Chờ quản lý xác nhận","warn"], khong_dung:["Không dùng","bad"] };
+function expXn(e){ return EXP_XN[e && e.xacNhan] || ["Chưa xác nhận","warn"]; }
+const EXP_CONTENT_KEYS = ["vanDe","nguyenNhan","cachXuLy","ketQua","hieuQua","phamViApDung"];
+// Sửa nội dung kinh nghiệm đã xác nhận → phải xác nhận lại (AI không dùng bản chưa ai xem)
+function expNeedsReconfirm(orig, form){ return EXP_CONTENT_KEYS.some(k => String((orig||{})[k]||"").trim() !== String((form||{})[k]||"").trim()); }
+// EXPUI-ENGINE-END
 function experienceEmptyForm(myStaff){
   return { vanDe:"", nguyenNhan:"", cachXuLy:"", nguoiXuLy: myStaff ? myStaff.name : "", ketQua:"", hieuQua:"Chưa rõ", phamViApDung:"" };
 }
-function KinhNghiemVanHanhView({ myStaff, navParam }){
+function KinhNghiemVanHanhView({ isAdmin, myStaff, navParam }){
   const [list, setList] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [q, setQ] = useState("");
   const [filterHieuQua, setFilterHieuQua] = useState("Tất cả");
+  const [filterXn, setFilterXn] = useState("Tất cả");
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(experienceEmptyForm(myStaff));
@@ -28452,9 +28468,12 @@ function KinhNghiemVanHanhView({ myStaff, navParam }){
     setSaving(true);
     try{
       const payload = { ...form, vanDe:form.vanDe.trim(), nguyenNhan:form.nguyenNhan.trim(), cachXuLy:form.cachXuLy.trim(), ketQua:form.ketQua.trim(), phamViApDung:form.phamViApDung.trim() };
-      if(editingId) await db.collection("opsExperience").doc(editingId).set(payload, { merge:true });
-      else {
-        const ref = await db.collection("opsExperience").add({ ...payload, ngay:todayISO(), createdAtTs: firebase.firestore.FieldValue.serverTimestamp() });
+      if(editingId){
+        const orig = list.find(x => x.id===editingId) || {};
+        const re = expNeedsReconfirm(orig, payload) ? { xacNhan:"cho_xac_nhan", confirmedBy:null, confirmedAt:null, editedBy:(myStaff && myStaff.name) || (auth.currentUser && auth.currentUser.email) || "", editedAt:new Date().toISOString() } : {};
+        await db.collection("opsExperience").doc(editingId).set({ ...payload, ...re }, { merge:true });
+      } else {
+        const ref = await db.collection("opsExperience").add({ ...payload, xacNhan:"cho_xac_nhan", nguon:"quan_ly_ghi", createdBy:(auth.currentUser && auth.currentUser.email) || "", ngay:todayISO(), createdAtTs: firebase.firestore.FieldValue.serverTimestamp() });
         // Nếu tạo từ "Lưu thành kinh nghiệm" ở màn Chi tiết vấn đề (issueCode+issueShop điền sẵn từ
         // navParam.draft) — ghi lại experienceId vào đúng doc issueActions để khoá nút, tránh lưu trùng.
         if(form.issueCode && form.issueShop){
@@ -28466,10 +28485,21 @@ function KinhNghiemVanHanhView({ myStaff, navParam }){
     } finally { setSaving(false); }
   }
   async function removeItem(id){ if(window.confirm("Xoá kinh nghiệm này?")) await db.collection("opsExperience").doc(id).delete(); }
+  const me = () => (myStaff && myStaff.name) || (auth.currentUser && auth.currentUser.email) || "Quản lý";
+  async function confirmItem(e){
+    if(!window.confirm(`Xác nhận kinh nghiệm "${e.vanDe}" là đúng?\nTừ giờ AI sẽ tham khảo cách xử lý này khi đề xuất việc cho vấn đề tương tự.`)) return;
+    await db.collection("opsExperience").doc(e.id).set({ xacNhan:"da_xac_nhan", confirmedBy:me(), confirmedByEmail:(auth.currentUser && auth.currentUser.email) || "", confirmedAt:new Date().toISOString(), rejectReason:null }, { merge:true });
+  }
+  async function rejectItem(e){
+    const r = window.prompt("Vì sao không dùng kinh nghiệm này? (AI sẽ không đọc)", ""); if(r==null) return;
+    if(!r.trim()) return window.alert("Cần ghi lý do.");
+    await db.collection("opsExperience").doc(e.id).set({ xacNhan:"khong_dung", rejectReason:r.trim().slice(0,300), confirmedBy:me(), confirmedAt:new Date().toISOString() }, { merge:true });
+  }
 
   const qLower = q.trim().toLowerCase();
   const filtered = list.filter(e =>
     (filterHieuQua==="Tất cả" || e.hieuQua===filterHieuQua) &&
+    (filterXn==="Tất cả" || (filterXn==="cho" ? !["da_xac_nhan","khong_dung"].includes(e.xacNhan) : e.xacNhan===filterXn)) &&
     (!qLower || `${e.vanDe||""} ${e.nguyenNhan||""} ${e.cachXuLy||""} ${e.phamViApDung||""}`.toLowerCase().includes(qLower)));
 
   const effectColor = h => h==="Hiệu quả" ? "good" : (h==="Không hiệu quả" ? "bad" : "warn");
@@ -28480,19 +28510,33 @@ function KinhNghiemVanHanhView({ myStaff, navParam }){
       React.createElement("input", { key:"q", value:q, onChange:e=>setQ(e.target.value), placeholder:"Tìm theo vấn đề, nguyên nhân, cách xử lý...", style:{ flex:"1 1 260px", padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } }),
       React.createElement("select", { key:"f", value:filterHieuQua, onChange:e=>setFilterHieuQua(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } },
         ["Tất cả", ...EXPERIENCE_EFFECT_OPTIONS].map(o => React.createElement("option",{key:o,value:o},o))),
+      React.createElement("select", { key:"xn", value:filterXn, onChange:e=>setFilterXn(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } },
+        [["Tất cả","Mọi trạng thái xác nhận"],["cho","Chờ / chưa xác nhận"],["da_xac_nhan","Đã xác nhận"],["khong_dung","Không dùng"]].map(([v,l]) => React.createElement("option",{key:v,value:v},l))),
       React.createElement("button", { key:"add", type:"button", className:"btn btnPrimary", onClick:openAdd }, "＋ Thêm kinh nghiệm"),
     ]),
+    loaded && list.length>0 && React.createElement("div", { key:"xnInfo", className:"card", style:{ marginBottom:12, padding:"8px 12px", fontSize:12.5, background:"var(--goldSoft,#FFF8E6)" } },
+      `AI chỉ đọc kinh nghiệm đã được quản lý xác nhận. Hiện có ${list.filter(e=>e.xacNhan==="da_xac_nhan").length} kinh nghiệm AI đang dùng, ${list.filter(e=>!["da_xac_nhan","khong_dung"].includes(e.xacNhan)).length} kinh nghiệm chờ xác nhận.`),
     !loaded ? React.createElement(EmptyState, { kind:"loading" })
       : filtered.length===0 ? React.createElement("div", { className:"emptyState" }, list.length===0 ? "Chưa có kinh nghiệm nào được ghi lại — hãy là người đầu tiên." : "Không tìm thấy kinh nghiệm phù hợp.")
       : React.createElement("div", { style:{ display:"flex", flexDirection:"column", gap:10 } }, filtered.map(e => React.createElement("div", { key:e.id, className:"card" }, [
           React.createElement("div", { key:"h", style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10, marginBottom:6 } }, [
             React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:14 } }, e.vanDe),
-            StatusPill(e.hieuQua||"Chưa rõ", effectColor(e.hieuQua)),
+            React.createElement("span", { key:"p", style:{ display:"flex", gap:6, flexWrap:"wrap", justifyContent:"flex-end" } }, [
+              React.createElement("span", { key:"h" }, StatusPill(e.hieuQua||"Chưa rõ", effectColor(e.hieuQua))),
+              React.createElement("span", { key:"x" }, StatusPill(expXn(e)[0], expXn(e)[1])),
+            ]),
           ]),
+          e.nguon==="ai_do_doi_chung" && React.createElement("div", { key:"src", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:4 } }, "AI soạn nháp từ kết quả đo so với nhà thuốc đối chứng. Quản lý xem lại rồi xác nhận."),
           e.nguyenNhan && React.createElement("div", { key:"nn", style:{ fontSize:12.5, marginBottom:4 } }, [ React.createElement("b",{key:"b"},"Nguyên nhân: "), e.nguyenNhan ]),
           React.createElement("div", { key:"cx", style:{ fontSize:12.5, marginBottom:4 } }, [ React.createElement("b",{key:"b"},"Cách xử lý: "), e.cachXuLy ]),
           e.ketQua && React.createElement("div", { key:"kq", style:{ fontSize:12.5, marginBottom:4 } }, [ React.createElement("b",{key:"b"},"Kết quả: "), e.ketQua ]),
           e.phamViApDung && React.createElement("div", { key:"pv", style:{ fontSize:12.5, marginBottom:4 } }, [ React.createElement("b",{key:"b"},"Phạm vi áp dụng: "), e.phamViApDung ]),
+          (e.xacNhan==="da_xac_nhan" || e.xacNhan==="khong_dung") && e.confirmedBy && React.createElement("div", { key:"cf", style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:4 } },
+            `${e.xacNhan==="da_xac_nhan" ? "Xác nhận" : "Không dùng"}: ${e.confirmedBy}${e.confirmedAt ? " lúc " + opsWhen(e.confirmedAt) : ""}${e.rejectReason ? " · lý do: " + e.rejectReason : ""}`),
+          isAdmin && e.xacNhan!=="da_xac_nhan" && React.createElement("div", { key:"cfb", style:{ display:"flex", gap:8, marginTop:6, flexWrap:"wrap" } }, [
+            React.createElement("button", { key:"y", type:"button", className:"btn btnPrimary", style:{ fontSize:12, padding:"4px 10px" }, onClick:()=>confirmItem(e) }, "Xác nhận đúng"),
+            e.xacNhan!=="khong_dung" && React.createElement("button", { key:"n", type:"button", className:"btn btnGhost", style:{ fontSize:12, padding:"4px 10px" }, onClick:()=>rejectItem(e) }, "Không dùng"),
+          ]),
           React.createElement("div", { key:"meta", style:{ fontSize:11, color:"var(--inkSoft)", marginTop:6, display:"flex", justifyContent:"space-between", alignItems:"center" } }, [
             React.createElement("span", { key:"who" }, `${e.nguoiXuLy||"—"} · ${e.ngay ? e.ngay.split("-").reverse().join("/") : ""}`),
             React.createElement("span", { key:"act", style:{ display:"flex", gap:10 } }, [
@@ -29621,7 +29665,7 @@ function Dashboard({ user, isAdmin, myStaff }){
         activeTab==="baocaotuan" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(BaoCaoTuanView, { key:viewResetKey, isAdmin, myStaff })),
         activeTab==="baocaolanhdao" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(LeaderReportView, { key:viewResetKey, isAdmin })),
         activeTab==="nhipvanhanh" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(OpsPulseView, { key:viewResetKey, isAdmin, myStaff })),
-        activeTab==="kinhnghiem" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(KinhNghiemVanHanhView, { key:viewResetKey, myStaff, navParam })),
+        activeTab==="kinhnghiem" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(KinhNghiemVanHanhView, { key:viewResetKey, isAdmin, myStaff, navParam })),
         activeTab==="revenueAnalytics" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(RevenueAnalyticsView, { key:viewResetKey, isAdmin, myStaff, navParam })),
         activeTab==="ketquangay" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(DailyResultsView, { key:viewResetKey, isAdmin, myStaff })),
         // Khôi phục lại "Báo cáo doanh số ngày" cho nhân viên (form nhập doanh số/hệ số theo khung
