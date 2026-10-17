@@ -19,6 +19,13 @@ test("Dòng học việc + dòng nhân viên của cùng 1 người → 1 dòng,
   assert.equal(out.length, 1);
   assert.equal(out[0].hireId, "st9"); assert.deepEqual(Array.from(out[0].oldIds), ["hire1"]);
   assert.equal(out[0].graded, 8); assert.equal(out[0].total, 9); assert.equal(out[0].avg10, 72);
+  assert.equal(out[0].promoted, true);
+});
+test("Chỉ còn dòng học việc nhưng hồ sơ đã là nhân viên bán hàng → ghi 'từ học việc'; chỉ có hồ sơ liên kết → không gắn nhãn", () => {
+  const one = practiceMergeRows([ { key:"h", hireId:"hire1", name:"Lưu Thị Liên", shop:"SHOP0059", kind:"Học việc / thử việc", graded:8, total:8 } ], [lien], []);
+  assert.equal(one[0].promoted, true); assert.match(one[0].kind, /từ học việc/);
+  const linked = practiceMergeRows([ { key:"s", hireId:"st9", name:"Lưu Thị Liên", shop:"SHOP0059", kind:"Nhân viên", graded:0, total:0 } ], [lien], [{ id:"hA", staffId:"st9" }]);
+  assert.equal(linked[0].promoted, false);
 });
 test("Máy chủ không trả dòng học việc → lấy hồ sơ học việc liên kết (newHires.staffId hoặc cùng tên + nhà thuốc)", () => {
   const rows = [ { key:"s", hireId:"st9", name:"Lưu Thị Liên", shop:"SHOP0059", kind:"Nhân viên", graded:0, total:0 } ];
