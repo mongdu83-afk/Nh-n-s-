@@ -26786,20 +26786,18 @@ async function runAutoAssign({ force, slot, source } = {}){
   const must = (name, f) => f().catch(e => { missing.push(name); logSystemError("autoAssign:" + name, e); return null; });
   const get = async (c, id) => { const d = await db.collection(c).doc(id).get(); return d.exists ? d.data() : null; };
   const month = today.slice(0,7);
-  const [recentAuto, clqFixAll, todayTasks] = await Promise.all([
+  const [recentAuto, todayTasks] = await Promise.all([
     must("recentAuto", async () => (await db.collection("tasks").where("autoAssigned", "==", true).get()).docs.map(d => d.data()).filter(t => (t.ngayGiao||"") >= addDays(today, -60))),
-    safe(async () => (await db.collection("tasks").where("sourceScreen", "==", "checklistQuality").get()).docs.map(d => d.data()), []),
     safe(async () => (await db.collection("tasks").where("ngayGiao", "==", today).get()).docs.map(d => d.data()), null),
   ]);
-  const [cfg, staffSnap, openSnap, actsSnap, ra, mt, clTpl, reports, idx, plansSnap, nsTrk, dna, invSum, pace] = await Promise.all([
+  const [cfg, staffSnap, openSnap, actsSnap, ra, mt, idx, plansSnap, nsTrk, dna, invSum, pace] = await Promise.all([
     safe(() => get("opsConfig", "autoAssignRules"), null),
     must("staff", async () => (await db.collection("staff").get()).docs.map(d => ({ id:d.id, ...d.data() })).filter(s => !isStaffResigned(s))),
     must("openTasks", async () => (await db.collection("tasks").where("trangThai", "==", "Đang giao").get()).docs.map(d => d.data())),
     must("issueActions", async () => { const o = {}; (await db.collection("issueActions").get()).docs.forEach(d => { o[d.id] = d.data(); }); return o; }),
     safe(() => get("opsConfig", "revenueAnalytics"), null),
     safe(async () => { const d = await db.collection("opsConfig").doc("revenueAnalyticsMonths").collection("months").doc(month).get(); return d.exists ? d.data() : null; }, null),
-    safe(() => get("opsConfig", "dailyChecklist"), null),
-    safe(async () => (await db.collection("dailyReports").where("ngay", ">=", addDays(today, -13)).get()).docs.map(d => d.data()), []),
+    // 17/10/2026: không còn đọc checklist 14 ngày — checklist đã bỏ khỏi AI tự giao việc
     safe(() => get("promoOrderAnalytics", "_index"), null),
     safe(async () => (await db.collection("newPharmacyPlans").orderBy("createdAt", "desc").limit(10).get()).docs.map(d => ({ id:d.id, ...d.data() })), []),
     safe(() => get("opsConfig", "newPharmacyTracking"), null),
@@ -26814,7 +26812,6 @@ async function runAutoAssign({ force, slot, source } = {}){
     await logRef.set({ lastStatus:"failed", lastError:"Không đọc được dữ liệu bắt buộc: " + missing.join(", "), lastFailedAt:new Date().toISOString() }, { merge:true });
     throw new Error("Không đọc được dữ liệu bắt buộc: " + missing.join(", ") + " — đã dừng, không giao việc");
   }
-  const staffById = {}; staffSnap.forEach(s => { staffById[s.id] = s; });
   const running = ((idx && idx.campaigns) || []).find(c => c.kind==="campaign" && c.running);
   const camp = running ? await safe(() => get("promoOrderAnalytics", running.key), null) : null;
   const dnaShops = dna ? Object.values(dna.shops||{}) : [];
@@ -26823,7 +26820,6 @@ async function runAutoAssign({ force, slot, source } = {}){
     revenue: ra && mt ? { diagnose:(shop) => rvdDiagnose({ shop, month:mt.month || month, today, daily:(ra.byShop||{})[shop] || {}, computedAt:ra.computedAt, monthRow:(mt.byShop||{})[shop] || null,
       monthMeta:{ daysElapsed:mt.daysElapsed, daysInMonth:mt.daysInMonth, isCurrentMonth:mt.isCurrentMonth } }) } : null,
     kpiPace:pace,
-    checklist:{ reports, templatesByRole:(clTpl && clTpl.byRole) || DEFAULT_DAILY_CHECKLISTS, staffById, since:addDays(today, -13), today, fixTasks:clqFixAll },
     promo: camp ? { campKey:running.key, camp:{ ...camp, label:running.label, running:true }, chainDaily:ra && ra.chainRevenueByDay } : null,
     newShop:{ items: plansSnap.filter(p => tracks[p.id] && tracks[p.id].shop && tracks[p.id].openDate).map(p => { const t = tracks[p.id]; const bench = dnaShops.find(x => x.shop===p.benchmark);
       return { planId:p.id, shop:t.shop, input:{ openDate:t.openDate, today, daily:((ra && ra.byShop)||{})[t.shop] || {}, expectedRevDay:p.input && p.input.expectedRevDay, benchmarkRevDay: bench && bench.f ? bench.f.revDay : null } }; }) },
@@ -27410,7 +27406,7 @@ function GlobalSearch360({ onClose, onNavigate }){
 // "Dạy AI" (2 lớp: yêu cầu chung + sửa từng nhận xét) đã có sẵn ngay trong 2 tab đó.
 // 5/10/2026 (Phương): AI ĐIỀU HÀNH — AI soạn việc cần giao từ số liệu, quản lý duyệt, AI nhắc & theo dõi đến khi xong, báo cáo kết quả.
 const OPS_DOM = { sales:"Doanh số & KPI", stock:"Hàng hoá & tồn kho", cust:"Khách hàng & CSKH", people:"Nhân sự & đào tạo", task:"Công việc & tuân thủ" };
-const OPS_ST = { pending:"Chờ duyệt", approved:"Đã giao", overdue:"Quá hạn", done:"Đã xong", rejected:"Từ chối", expired:"Hết hạn duyệt", cancelled:"Đã huỷ" };
+const OPS_ST = { pending:"Chờ duyệt", approved:"Đã giao", overdue:"Quá hạn", done:"Đã xong", rejected:"Từ chối", expired:"Hết hạn duyệt", cancelled:"Đã huỷ", deferred:"Hoãn sang hôm sau (NT đủ việc AI hôm nay)", superseded:"Đã thay bằng việc mới" };
 // 7/10/2026 (chị Hà): TRỢ LÝ AI THAY CỬA HÀNG TRƯỞNG — nhà thuốc chưa có CHT: quản lý khu vực là người phụ trách, trợ lý AI làm thay việc hằng ngày
 function AiShopLeadCard({ onMsg }){
   const h = React.createElement;
@@ -27475,7 +27471,7 @@ function OpsOperatorConfig({ onMsg }){
       chk(s.intraday, "Bật cảnh báo trong ngày", on => setS({ ...s, intraday:on })),
       h("span", { style:{ fontSize:13 } }, "Báo khi doanh thu dưới ", h("input", { type:"number", min:30, max:95, value:Math.round((s.pacePct||0.65)*100), onChange:e=>setS({ ...s, pacePct:Number(e.target.value)/100 }), style:{ width:60 } }), "% nhịp thường"),
       h("div", null, h("button", { className:"btn btnPrimary", style:{ marginTop:8 }, disabled:busy==="s", onClick:save }, "Lưu"))),
-    sec("① Tự giao việc nhỏ theo quy trình chuẩn", "AI giao luôn cho nhà thuốc khi mọi con số trong việc khớp số liệu gốc, không chờ duyệt (trừ mức NGHIÊM TRỌNG). Việc về nhân sự, tiền, trả hàng NCC, kiểm kê luôn chờ duyệt. Nếu một loại việc tự giao mà làm xong không cải thiện số liệu, AI tự thu hồi quyền tự giao loại đó và báo quản lý.",
+    sec("① Tự giao việc nhỏ theo quy trình chuẩn", "AI giao luôn cho nhà thuốc khi mọi con số trong việc khớp số liệu gốc, không chờ duyệt (trừ mức NGHIÊM TRỌNG). Việc về nhân sự, tiền, trả hàng NCC, kiểm kê, checklist (không nộp / thiếu bằng chứng) luôn chờ duyệt. Nếu một loại việc tự giao mà làm xong không cải thiện số liệu, AI tự thu hồi quyền tự giao loại đó và báo quản lý.",
       chk(aa.policyOn !== false, "Bật tự giao việc nhỏ", on => setS({ ...s, autoApprove:{ ...aa, policyOn:on } })),
       // 16/10/2026 (chị Hà chốt "việc có số liệu chính xác thì AI tự giao"): mọi loại việc (trừ nhóm luôn chờ duyệt, mức NGHIÊM TRỌNG)
       // được tự giao khi MỌI con số AI viết khớp số liệu gốc — bỏ ô chọn từng loại (không còn tác dụng, dễ hiểu nhầm).
