@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261017-10";
+window.__APP_BUILD = "20261017-11";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -20920,6 +20920,52 @@ function OverviewGroupCard({ title, color, headline, headlineSub, lines, onClick
   ]);
 }
 
+// ISSUEHUB-ENGINE-BEGIN
+// 17/10/2026 (đặc tả AI vận hành, giai đoạn 2b): MỘT danh sách vấn đề. Cùng 1 vấn đề (nhà thuốc + mã) trước đây hiện riêng ở
+// Sức khoẻ nhà thuốc, Rủi ro, Đề xuất AI và Hồ sơ vấn đề. Hàm này gộp theo khoá "nhà thuốc__mã" và gắn đủ thông tin quản lý cần:
+// mức ảnh hưởng, dữ liệu lúc nào, nguyên nhân (luôn ghi rõ là giả thuyết khi chưa có người xác nhận), hành động đề xuất,
+// trạng thái xử lý, người phụ trách. Hàm thuần để kiểm thử; không ghi dữ liệu.
+// I = { issues:[vấn đề sức khoẻ có shopCode], healthAt, risks:[rủi ro đang mở, có id], proposals:[đề xuất AI chờ duyệt, có id],
+//       issueActions:{ "SHOP__MÃ": hồ sơ }, openTasks:[việc Đang giao, có id], nowTs, scopeShop }
+const ISSUEHUB_CODE = /^[A-Z]{2}\d{2}$/;
+function issueHubSevOf(level){ return level==="CRITICAL" || level==="HIGH" ? "red" : level==="MEDIUM" ? "orange" : "yellow"; }
+function issueHubMerge(I){
+  const key = (s, c) => `${s}__${c}`, rows = new Map(), inScope = (s) => !I.scopeShop || I.scopeShop==="Tất cả" || s===I.scopeShop;
+  const tasks = {}; (I.openTasks || []).forEach(t => { if(t && t.id) tasks[t.id] = t; });
+  let alerts = 0;
+  for(const i of (I.issues || [])){ if(!i || !i.shopCode || !i.code) continue; alerts++;
+    const k = key(i.shopCode, i.code); if(rows.has(k)){ rows.get(k).sources.push("health"); continue; }
+    rows.set(k, { ...i, key:k, sources:["health"], risk:null, proposals:[] }); }
+  for(const r of (I.risks || [])){ if(!r || r.isOpen===false || !r.shop || !r.code || !inScope(r.shop)) continue; alerts++;
+    const k = key(r.shop, r.code), row = rows.get(k);
+    if(row){ row.sources.push("risk"); if(!row.risk || (r.priority||9) < (row.risk.priority||9)) row.risk = r; continue; }
+    rows.set(k, { key:k, shopCode:r.shop, code:r.code, title:r.title || r.code, detail:r.detail || "", severity:issueHubSevOf(r.level), currentValue:r.currentValue ?? null, threshold:r.threshold ?? null,
+      detectedAtTs:r.detectedAt || null, group:r.domain || null, tab:"risk", param:{ riskId:r.id }, sources:["risk"], risk:r, proposals:[], onlyFrom:"risk" }); }
+  for(const p of (I.proposals || [])){ const shop = p && (p.shop || (p.target && p.target.shop)); if(!p || p.status!=="pending" || !shop || !ISSUEHUB_CODE.test(String(p.type||"")) || !inScope(shop)) continue; alerts++;
+    const k = key(shop, p.type), row = rows.get(k);
+    if(row){ row.sources.push("ai"); row.proposals.push(p); continue; }
+    rows.set(k, { key:k, shopCode:shop, code:p.type, title:p.title || p.type, detail:p.why || "", severity:issueHubSevOf(p.sev), currentValue:null, threshold:null,
+      detectedAtTs:p.createdAtTs || null, group:null, tab:"ai", param:null, sources:["ai"], risk:null, proposals:[p], onlyFrom:"ai" }); }
+  const out = [];
+  for(const row of rows.values()){
+    const act = (I.issueActions || {})[row.key] || null, r = row.risk, p = row.proposals[0] || null;
+    const linked = [act && act.assignedTaskId, ...((r && r.linkedTaskIds) || [])].filter(Boolean);
+    const task = linked.map(id => tasks[id]).find(Boolean) || null;
+    const overdue = !!(task && task.deadline && task.subTrangThai!=="Chờ kiểm tra" && `${task.deadline}T${task.hanGio || "23:59"}` < I.nowTs);
+    const owner = task ? (task.staffName || (task.assignType==="shop" ? `Cả nhà thuốc ${task.shop || ""}`.trim() : task.assignType==="admin" ? "Quản lý" : "")) : ((r && r.ownerName) || "");
+    const status = act && act.status ? act.status : task ? "IN_PROGRESS" : row.proposals.length ? "AI_PENDING" : "NEW";
+    const dataAsOf = (r && r.evidence && r.evidence.computedAt) || (row.sources.includes("health") ? I.healthAt : null) || (p && p.evidence && p.evidence.dataAsOf) || null;
+    const confirmed = act && act.causeConfirmed && act.rootCause ? act.rootCause : null;
+    const hypothesis = confirmed ? null : (row.hypothesis || row.cause || (act && act.rootCause) || (r && r.hypothesis) || (p && p.why) || null);
+    const action = p ? p.title : (act && act.recommendation) || null;
+    const money = p && p.money && p.money.label ? p.money.label : null;
+    out.push({ ...row, act, task, overdue, owner, status, dataAsOf, causeConfirmed:confirmed, hypothesis, action, money, sources:[...new Set(row.sources)] });
+  }
+  const sevRank = { red:0, orange:1, yellow:2 };
+  out.sort((a, b) => (sevRank[a.severity] ?? 3) - (sevRank[b.severity] ?? 3) || (b.overdue - a.overdue) || ((a.shopScore ?? 101) - (b.shopScore ?? 101)) || a.key.localeCompare(b.key));
+  return { rows:out, alerts, merged:alerts - out.length };
+}
+// ISSUEHUB-ENGINE-END
 function ExecOverviewView({ isAdmin, myStaff, onNavigate, aiOnly }){
   const todayStr = todayISO();
   const [monthKey, setMonthKey] = useState(todayStr.slice(0,7));
@@ -20963,6 +21009,11 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate, aiOnly }){
   const [issueActionsAll, setIssueActionsAll] = useState([]);
   useEffect(()=>{ const u = subscribeCol("issueActions", setIssueActionsAll); return u; }, []);
   const issueActionByKey = {}; issueActionsAll.forEach(a => { if(a && a.shop && a.code) issueActionByKey[issueActionKeyOf(a.shop, a.code)] = a; });
+  // 17/10/2026 (đặc tả AI vận hành 2b): rủi ro đang mở + đề xuất AI chờ duyệt — gộp vào "Vấn đề cần quan tâm", không hiện trùng
+  const [openRisks, setOpenRisks] = useState([]);
+  useEffect(()=>{ if(!isAdmin) return; return db.collection("risks").where("isOpen","==",true).onSnapshot(s => setOpenRisks(s.docs.map(d => ({ id:d.id, ...d.data() }))), err => logSystemError("risks(exec)", err)); }, [isAdmin]);
+  const [pendingProps, setPendingProps] = useState([]);
+  useEffect(()=>{ if(!isAdmin) return; return db.collection("opsProposals").where("status","==","pending").onSnapshot(s => setPendingProps(s.docs.map(d => ({ id:d.id, ...d.data() }))), err => logSystemError("opsProposals(exec)", err)); }, [isAdmin]);
   // Doanh thu theo ngày (mục E đặc tả Module 6 — 1 biểu đồ xu hướng gọn) — dùng lại đúng nguồn
   // opsConfig/revenueAnalytics đã có (cùng dữ liệu với tab "Doanh thu" > "So sánh kỳ"), KHÔNG tạo
   // nguồn dữ liệu mới.
@@ -21031,7 +21082,9 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate, aiOnly }){
   // ---- "Vấn đề cần quan tâm": gộp vấn đề của các nhà thuốc trong phạm vi, đỏ trước cam trước vàng ----
   const issues = agg ? agg.list.flatMap(s => (s.issues||[]).map(i => ({ ...i, shopCode:s.shopCode, shopScore:s.score==null?101:s.score })))
     .sort((a,b) => (ISSUE_SEV[a.severity].rank - ISSUE_SEV[b.severity].rank) || (a.shopScore - b.shopScore)) : [];
-  const issuesShown = showAllIssues ? issues : issues.slice(0, 8);
+  const hub = issueHubMerge({ issues, healthAt: summary && summary.computedAt, risks: isAdmin ? openRisks : [], proposals: isAdmin ? pendingProps : [],
+    issueActions: issueActionByKey, openTasks, nowTs:`${todayStr}T${nowHM()}`, scopeShop: adminShop });
+  const issuesShown = showAllIssues ? hub.rows : hub.rows.slice(0, 8);
   function openIssueTask(i){
     if(ISSUE_KIND_OF[i.code]) return setIssueDetail(i); // vấn đề đo được: giao trong hồ sơ để lưu số liệu TRƯỚC xử lý
     setComposer(buildAlertTaskPreset({
@@ -21254,32 +21307,52 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate, aiOnly }){
     // Vấn đề cần quan tâm + Hôm nay tôi phải làm gì
     rc("div", { key:"row2", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))", gap:12, marginBottom:16, alignItems:"start" } }, [
       rc("div", { key:"issues", className:"card" }, [
-        rc(Head360, { key:"h", title:`Vấn đề cần quan tâm${issues.length ? ` (${issues.length})` : ""}` }),
+        rc(Head360, { key:"h", title:`Vấn đề cần quan tâm${hub.rows.length ? ` (${hub.rows.length})` : ""}` }),
+        hub.merged > 0 && rc("div", { key:"mg", style:{ fontSize:11, color:"var(--inkSoft)", marginBottom:4 } }, `Đã gộp ${hub.merged} cảnh báo trùng (cùng nhà thuốc, cùng mã) từ Sức khoẻ nhà thuốc, Rủi ro và Đề xuất AI.`),
         !summary ? rc("div", { key:"e", className:"emptyState" }, [ "Chưa có dữ liệu tổng hợp vấn đề theo nhà thuốc. ", rc("button", { key:"b", type:"button", className:"btn", disabled:healthBusy, style:{ fontSize:12, marginTop:8 }, onClick:recomputeHealth }, healthBusy ? "Đang tính..." : "Tính ngay") ])
-          : issues.length===0 ? rc("div", { key:"e", className:"emptyState" }, "Không phát hiện vấn đề nào — mọi thứ đang ổn.")
+          : hub.rows.length===0 ? rc("div", { key:"e", className:"emptyState" }, "Không phát hiện vấn đề nào — mọi thứ đang ổn.")
           : rc("div", { key:"l" }, issuesShown.map((i, idx) => {
-              const act = issueActionByKey[issueActionKeyOf(i.shopCode, i.code)];
-              const statusLbl = !act ? "MỚI PHÁT HIỆN" : (ISSUE_STATUS_LABEL[act.status] || act.status);
-              const statusColor = !act ? CL360.gray : act.status==="REJECTED" ? CL360.gray : (act.status==="CLOSED"||act.status==="RESOLVED") ? CL360.good : act.status==="REOPENED" ? CL360.warn : CL360.info;
+              const act = i.act || issueActionByKey[issueActionKeyOf(i.shopCode, i.code)];
+              const statusLbl = act ? (ISSUE_STATUS_LABEL[act.status] || act.status) : i.status==="AI_PENDING" ? "AI ĐỀ XUẤT · CHỜ DUYỆT" : i.status==="IN_PROGRESS" ? "ĐÃ GIAO VIỆC" : "MỚI PHÁT HIỆN";
+              const statusColor = !act ? (i.status==="IN_PROGRESS" ? CL360.info : i.status==="AI_PENDING" ? CL360.violet : CL360.gray) : act.status==="REJECTED" ? CL360.gray : (act.status==="CLOSED"||act.status==="RESOLVED") ? CL360.good : act.status==="REOPENED" ? CL360.warn : CL360.info;
+              const sev = ISSUE_SEV[i.severity] || ISSUE_SEV.yellow;
+              const openRow = () => (!i.onlyFrom && ISSUE_KIND_OF[i.code]) ? setIssueDetail(i) : go(i.tab, i.param);
+              const srcLbl = (i.sources || []).length > 1 ? "Gộp từ: " + i.sources.map(x => ({ health:"Sức khoẻ", risk:"Rủi ro", ai:"Đề xuất AI" })[x] || x).join(", ") : null;
               const detectedLbl = i.detectedAtTs ? new Date(i.detectedAtTs).toLocaleTimeString("vi-VN",{hour:"2-digit",minute:"2-digit"}) : null;
               const measureLbl = (i.currentValue!=null && i.threshold!=null) ? `Hiện tại ${fmtNum(i.currentValue)} · ngưỡng ${fmtNum(i.threshold)}` : null;
-              return rc("div", { key:i.shopCode+i.code+idx, style:{ display:"flex", alignItems:"flex-start", gap:8, padding:"8px 0", borderBottom:"1px solid var(--line)" } }, [
-              rc("span", { key:"d", style:{ flex:"none", marginTop:1 } }, ISSUE_SEV[i.severity].dot),
-              rc("div", { key:"x", onClick:()=> ISSUE_KIND_OF[i.code] ? setIssueDetail(i) : go(i.tab, i.param), style:{ flex:1, minWidth:0, cursor:"pointer" } }, [
+              return rc("div", { key:i.shopCode+i.code+idx, style:{ display:"flex", alignItems:"flex-start", gap:8, padding:"8px 0", borderBottom:"1px solid var(--line)", flexWrap:"wrap" } }, [
+              rc("span", { key:"d", style:{ flex:"none", marginTop:1, color:sev.color } }, sev.dot),
+              rc("div", { key:"x", onClick:openRow, style:{ flex:"1 1 220px", minWidth:0, cursor:"pointer" } }, [
                 rc("div", { key:"a", style:{ fontWeight:600, fontSize:12.5 } }, `${shopLabel(i.shopCode)} — ${i.title}`),
                 i.detail && rc("div", { key:"b", style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:2 } }, i.detail),
                 rc("div", { key:"meta", style:{ fontSize:10.5, color:"var(--inkSoft)", marginTop:3, display:"flex", gap:8, flexWrap:"wrap" } }, [
                   measureLbl && rc("span", { key:"mv" }, measureLbl),
                   detectedLbl && rc("span", { key:"dt" }, `Phát hiện ${detectedLbl}`),
                   rc("span", { key:"st", style:{ color:statusColor, fontWeight:700 } }, statusLbl),
+                  i.overdue && rc("span", { key:"od", style:{ color:CL360.bad, fontWeight:700 } }, "VIỆC QUÁ HẠN"),
                 ]),
+                // 17/10/2026 (đặc tả 2b): đủ 8 thông tin — ai phụ trách, dữ liệu lúc nào, nguyên nhân (giả thuyết hay đã xác nhận), hành động đề xuất
+                rc("div", { key:"m2", style:{ fontSize:10.5, color:"var(--inkSoft)", marginTop:2, display:"flex", gap:8, flexWrap:"wrap" } }, [
+                  rc("span", { key:"ow" }, "Phụ trách: " + (i.owner || "chưa có") + (i.task && i.task.deadline ? ` · hạn ${i.task.deadline.slice(8,10)}/${i.task.deadline.slice(5,7)}` : "")),
+                  rc("span", { key:"da" }, "Dữ liệu lúc " + (i.dataAsOf ? fmtTs360(i.dataAsOf) : "chưa rõ")),
+                  i.money && rc("span", { key:"mo" }, "Ảnh hưởng: " + i.money),
+                  srcLbl && rc("span", { key:"sr" }, srcLbl),
+                ]),
+                (i.causeConfirmed || i.hypothesis) && rc("div", { key:"cz", style:{ fontSize:11, marginTop:2 } }, [
+                  rc("b", { key:"l" }, i.causeConfirmed ? "Nguyên nhân đã xác nhận: " : "Giả thuyết (chưa xác nhận): "),
+                  String(i.causeConfirmed || i.hypothesis).slice(0, 180),
+                ]),
+                i.action && rc("div", { key:"ac", style:{ fontSize:11, marginTop:2 } }, [rc("b", { key:"l" }, i.proposals && i.proposals.length ? "AI đề xuất: " : "Hành động: "), String(i.action).slice(0, 160)]),
               ]),
               rc("div", { key:"p", style:{ display:"flex", flexDirection:"column", gap:3, alignItems:"flex-end", flex:"none" } }, [
                 i.priority && rc(IssuePriorityBadge, { key:"pr", priority:i.priority }),
-                rc(Pill360, { key:"g", text:(HEALTH_GROUP_LABEL[i.group]||"").toUpperCase(), color:ISSUE_SEV[i.severity].color }),
+                rc(Pill360, { key:"g", text:(HEALTH_GROUP_LABEL[i.group]||i.code||"").toUpperCase(), color:sev.color }),
               ]),
-              rc("button", { key:"c", type:"button", className:"btn btnGhost", style:{ fontSize:11, padding:"3px 8px", flex:"none" }, onClick:()=> ISSUE_KIND_OF[i.code] ? setIssueDetail(i) : go(i.tab, i.param), title:"Chi tiết vấn đề" }, "Chi tiết"),
-              rc("button", { key:"tk", type:"button", className:"btn btnPrimary", style:{ fontSize:11, padding:"3px 8px", flex:"none" }, onClick:()=>{
+              rc("button", { key:"c", type:"button", className:"btn btnGhost", style:{ fontSize:11, padding:"3px 8px", flex:"none" }, onClick:openRow, title:"Chi tiết vấn đề" }, "Chi tiết"),
+              // 17/10/2026 (đặc tả 2b): đã có đề xuất AI chờ duyệt → duyệt đề xuất đó thay vì tạo việc trùng; vấn đề chỉ có ở Rủi ro → giao ở màn Rủi ro
+              (i.status==="AI_PENDING" || i.onlyFrom) ? rc("button", { key:"tk", type:"button", className:"btn btnPrimary", style:{ fontSize:11, padding:"3px 8px", flex:"none" },
+                onClick:()=> i.status==="AI_PENDING" ? go("ai") : go(i.tab, i.param) }, i.status==="AI_PENDING" ? "Duyệt đề xuất" : "Giao việc")
+              : rc("button", { key:"tk", type:"button", className:"btn btnPrimary", style:{ fontSize:11, padding:"3px 8px", flex:"none" }, onClick:()=>{
                 if(ISSUE_KIND_OF[i.code]) return setIssueDetail(i); // 17/10/2026: vấn đề đo được → giao trong hồ sơ (lưu số liệu trước xử lý)
                 setComposer(buildAlertTaskPreset({
                   heading: "Tạo việc từ vấn đề sức khoẻ",
@@ -21298,7 +21371,7 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate, aiOnly }){
                 }));
               } }, "＋ Việc"),
             ]); })),
-        issues.length>8 && rc("div", { key:"more", onClick:()=>setShowAllIssues(v=>!v), style:{ fontSize:11.5, color:CL360.info, cursor:"pointer", marginTop:8 } }, showAllIssues ? "Thu gọn ‹" : `Xem tất cả ${issues.length} vấn đề ›`),
+        hub.rows.length>8 && rc("div", { key:"more", onClick:()=>setShowAllIssues(v=>!v), style:{ fontSize:11.5, color:CL360.info, cursor:"pointer", marginTop:8 } }, showAllIssues ? "Thu gọn ‹" : `Xem tất cả ${hub.rows.length} vấn đề ›`),
       ]),
       rc("div", { key:"todo", className:"card" }, [
         rc(Head360, { key:"h", title:"Hôm nay tôi phải làm gì?", right:rc("span", { key:"lnk", onClick:()=>go("action"), style:{ fontSize:11.5, color:CL360.info, cursor:"pointer" } }, "Mở Công việc ›") }),
