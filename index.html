@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261017-11";
+window.__APP_BUILD = "20261017-12";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -3763,6 +3763,18 @@ function TaskAssignView({ isAdmin, myStaff, navParam, onNavigate, openTasks360 }
     const u2 = subscribeCol("staff", setStaffList);
     return ()=>{ u1(); u2(); };
   }, [isAdmin, myStaff && myStaff.shop]);
+  // 17/10/2026 (giai đoạn 3c): nguồn "Đạt kết quả kinh doanh" — hồ sơ vấn đề (issueActions) + đề xuất AI 60 ngày (opsProposals). Chỉ quản lý.
+  const [triActs, setTriActs] = useState({}); const [triProps, setTriProps] = useState({});
+  useEffect(()=>{
+    if(!isAdmin) return undefined;
+    const u1 = db.collection("issueActions").onSnapshot(s => { const m = {}; s.forEach(d => { const x = d.data(); if(x.assignedTaskId) m[x.assignedTaskId] = x; }); setTriActs(m); }, err => logSystemError("TaskAssignView issueActions", err));
+    const u2 = db.collection("opsProposals").where("date", ">=", addDays(todayISO(), -60)).onSnapshot(s => { const m = {}; s.forEach(d => { m[d.id] = d.data(); }); setTriProps(m); }, err => logSystemError("TaskAssignView opsProposals", err));
+    return ()=>{ u1(); u2(); };
+  }, [isAdmin]);
+  const triOf = t => taskTriState(t, { act:triActs[t.id] || null, prop:(t.opsProposalId && triProps[t.opsProposalId]) || null });
+  const triChips = t => { const r = triOf(t); return React.createElement("div", { key:"tri", style:{ display:"flex", flexWrap:"wrap", gap:4, marginTop:4, fontSize:10.5 } },
+    [["w","Việc",r.work],["q","Chất lượng",r.quality],["o","Kết quả KD",r.outcome]].map(([k,lb,x]) => { const c = TONE_COLOR[x.tone] || TONE_COLOR.neutral;
+      return React.createElement("span", { key:k, title:`${lb}: ${x.label}${x.note ? " · "+x.note : ""}`, style:{ color:c.fg, background:c.bg, borderRadius:6, padding:"1px 6px", fontWeight:600 } }, `${lb}: ${x.key==="none" ? "không có chỉ số" : x.label}`); })); };
 
   const today = todayISO();
   // Việc CRM đã nộp kết quả trước đây còn kẹt ở "Chờ kiểm tra" → tự chuyển thành Đã hoàn thành
@@ -4212,7 +4224,7 @@ function TaskAssignView({ isAdmin, myStaff, navParam, onNavigate, openTasks360 }
             React.createElement("td",{key:"sh"}, target),
             React.createElement("td",{key:"gb"}, t.nguoiGiaoViec || "Quản lý khu vực"),
             React.createElement("td",{key:"d"}, deadlineLabel(t)),
-            React.createElement("td",{key:"st"}, [ React.createElement(React.Fragment, { key:"s" }, StatusPill(status.text, status.tone)), t.ti && t.ti.isLate && t.trangThai==="Đã hoàn thành" && React.createElement("span", { key:"l", style:{ marginLeft:6, fontSize:10.5, color:"var(--clay)", fontWeight:700 } }, "xong trễ") ]),
+            React.createElement("td",{key:"st"}, [ React.createElement(React.Fragment, { key:"s" }, StatusPill(status.text, status.tone)), t.ti && t.ti.isLate && t.trangThai==="Đã hoàn thành" && React.createElement("span", { key:"l", style:{ marginLeft:6, fontSize:10.5, color:"var(--clay)", fontWeight:700 } }, "xong trễ"), triChips(t) ]),
             React.createElement("td",{key:"a", style:{whiteSpace:"nowrap"}}, [
               React.createElement("button",{key:"v", className:"btn", style:{padding:"5px 10px",fontSize:11.5,marginRight:6}, onClick:()=>setViewTask(t)}, "Xem"),
               sub==="Chờ kiểm tra" && React.createElement("button",{key:"ok", className:"btn btnPrimary", style:{padding:"5px 10px",fontSize:11.5,marginRight:6}, onClick:()=>approveTask(t.id)}, "Duyệt"),
@@ -4272,6 +4284,13 @@ function TaskAssignView({ isAdmin, myStaff, navParam, onNavigate, openTasks360 }
       taskSubStatus(viewTask)==="Bị vướng" && viewTask.lyDoVuong && React.createElement("div", { key:"blk", style:{ marginBottom:10, fontSize:12.5, background:"var(--claySoft)", borderRadius:8, padding:"8px 10px" } }, `Đang bị vướng: ${viewTask.lyDoVuong}`),
       viewTask.trangThai==="Đã huỷ" && React.createElement("div", { key:"cnl", style:{ marginBottom:10, fontSize:12.5, background:"var(--paper)", borderRadius:8, padding:"8px 10px" } }, `✕ Đã huỷ${viewTask.ngayHuy ? ` ngày ${viewTask.ngayHuy}` : ""}${viewTask.nguoiHuy ? ` bởi ${viewTask.nguoiHuy}` : ""}: ${viewTask.lyDoHuy || "—"}`),
       React.createElement("div", { key:"stpill", style:{ marginBottom:10 } }, StatusPill(`${taskSubStatusIcon(taskSubStatus(viewTask))} ${taskSubStatus(viewTask)}`, taskSubStatusTone(taskSubStatus(viewTask)))),
+      (()=>{ const r = triOf(viewTask); return React.createElement("div", { key:"tri3", style:{ marginBottom:12, border:"1px solid var(--line)", borderRadius:8, padding:"8px 10px" } }, [
+        React.createElement("div", { key:"h", style:{ fontWeight:700, fontSize:12.5, marginBottom:4 } }, "Đánh giá việc này theo 3 ý"),
+        ...[["w","1. Xong việc",r.work],["q","2. Đạt chất lượng",r.quality],["o","3. Đạt kết quả kinh doanh",r.outcome]].map(([k,lb,x]) => React.createElement("div", { key:k, style:{ display:"flex", flexWrap:"wrap", alignItems:"center", gap:6, fontSize:12.5, padding:"3px 0" } }, [
+          React.createElement("span", { key:"l", style:{ minWidth:170 } }, lb), React.createElement(React.Fragment, { key:"p" }, StatusPill(x.label, x.tone)),
+          x.note && React.createElement("span", { key:"n", style:{ fontSize:11.5, color:"var(--inkSoft)" } }, x.note) ])),
+        !isAdmin && r.outcome.key!=="none" && React.createElement("div", { key:"na", style:{ fontSize:11, color:"var(--inkSoft)", marginTop:2 } }, "Kết quả kinh doanh do quản lý khu vực xác nhận."),
+      ]); })(),
       viewTask.truocXuLy && React.createElement("div", { key:"truoc", style:{ marginBottom:8, fontSize:12.5 } }, [ React.createElement("b",{key:"b"},"Trước khi xử lý: "), viewTask.truocXuLy ]),
       viewTask.ketQua
         ? React.createElement("div", { key:"kq", style:{ marginBottom:14 } }, [
@@ -28993,6 +29012,53 @@ function aiExecSummary(I){
 function aiExecAddDays(iso, n){ const [y, m, d] = String(iso).split("-").map(Number); return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10); }
 function aiExecShopLbl(c){ const m = /^SHOP0*(\d+)$/i.exec(String(c || "")); return m ? "NT" + m[1] : String(c || ""); }
 // AIEXEC-ENGINE-END
+
+// TRISTATE-ENGINE-BEGIN
+// 17/10/2026 (đặc tả AI vận hành, giai đoạn 3c): mỗi việc hiện TÁCH 3 ý — Xong việc / Đạt chất lượng /
+// Đạt kết quả kinh doanh — để việc đã làm xong mà chỉ số chưa lên không bị tính là "đã xử lý xong".
+// Thuần (không gọi Firebase): t = việc; ctx = { act: hồ sơ vấn đề issueActions có assignedTaskId = t.id,
+// prop: đề xuất AI (opsProposals) của t.opsProposalId }. tone dùng chung với StatusPill.
+function triWork(t){
+  const sub = t.subTrangThai || "";
+  if(t.trangThai==="Đã huỷ") return { key:"cancelled", label:"Đã huỷ", tone:"neutral" };
+  if(t.trangThai==="Đã hoàn thành") return { key:"done", label:"Đã xong", tone:"good" };
+  if(sub==="Chờ kiểm tra") return { key:"submitted", label:"Đã nộp, chờ kiểm tra", tone:"gold" };
+  return { key:"open", label:"Chưa xong", tone:"warn" };
+}
+function triQuality(t){
+  const sub = t.subTrangThai || "";
+  if(t.trangThai==="Đã huỷ") return { key:"na", label:"Không áp dụng", tone:"neutral" };
+  if(sub==="Không đạt") return { key:"khong_dat", label:"Không đạt, cần làm lại", tone:"warn", note:t.lyDoKhongDat || "" };
+  const verified = t.ketQuaDat===true || !!t.verifiedAtTs;
+  if(t.trangThai==="Đã hoàn thành"){
+    if(verified) return { key:"dat", label: t.lyDoKhongDat ? "Đạt (sau khi làm lại)" : "Đạt", tone:"good", note:t.verifiedBy ? `Duyệt bởi ${t.verifiedBy}` : "" };
+    return { key:"chua_kiem_tra", label:"Đóng không qua kiểm tra", tone:"neutral" };
+  }
+  if(sub==="Chờ kiểm tra") return { key:"cho", label:"Chờ quản lý kiểm tra", tone:"gold" };
+  return { key:"chua", label:"Chưa có kết quả", tone:"neutral" };
+}
+const TRI_EFFECT = { hieu_qua:["Đạt","good"], mot_phan:["Đạt một phần","gold"], khong_hieu_qua:["Không đạt","warn"] };
+function triOutcome(t, ctx){
+  const act = ctx && ctx.act, prop = ctx && ctx.prop;
+  if(act && act.effectiveness && TRI_EFFECT[act.effectiveness]){
+    const [label, tone] = TRI_EFFECT[act.effectiveness];
+    return { key:act.effectiveness, label, tone, note:[act.effectivenessNote, act.confirmedBy ? `xác nhận: ${act.confirmedBy}` : ""].filter(Boolean).join(" · "), source:"issue" };
+  }
+  const o = prop && prop.actualOutcome;
+  if(o && o.success===true) return { key:"hieu_qua", label:"Đạt", tone:"good", note:o.learning || "", source:"ai" };
+  if(o && o.success===false) return { key:"khong_hieu_qua", label:"Không đạt", tone:"warn", note:o.learning || "", source:"ai" };
+  if(o && o.outcome) return { key:"khong_do_duoc", label:String(o.outcome), tone:"neutral", note:o.learning || "", source:"ai" };
+  const linked = !!(act || t.opsProposalId || t.sourceIssueCode || t.sourceRiskId);
+  const r = !linked ? { key:"none", label:"Việc này không gắn chỉ số kinh doanh", tone:"neutral" }
+    : t.trangThai==="Đã huỷ" ? { key:"na", label:"Không đo (việc đã huỷ)", tone:"neutral" }
+    : t.trangThai!=="Đã hoàn thành" ? { key:"wait_done", label:"Đo sau khi việc xong", tone:"neutral" }
+    : { key:"wait_measure", label:"Chưa đo, chưa được tính là thành công", tone:"gold" };
+  // Ô "Tác động thực tế" quản lý tự ghi là nhận xét, không phải số đo → chỉ hiện kèm, không đổi kết luận.
+  if(t.tacDong && String(t.tacDong).trim()) r.note = `Quản lý ghi: ${String(t.tacDong).trim()}`;
+  return r;
+}
+function taskTriState(t, ctx){ return { work:triWork(t || {}), quality:triQuality(t || {}), outcome:triOutcome(t || {}, ctx) }; }
+// TRISTATE-ENGINE-END
 // Thẻ "Việc AI giao có được làm không" (giai đoạn 2a) — dùng AIEXEC-ENGINE, đọc tasks có ngayGiao trong 7 ngày.
 function AiExecCard({ onNavigate }){
   const [s, setS] = useState(null); const [days, setDays] = useState(7); const [showAll, setShowAll] = useState(false);
