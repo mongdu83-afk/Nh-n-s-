@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261017-05";
+window.__APP_BUILD = "20261017-06";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -1663,6 +1663,18 @@ function normalizeStaffName(s){
     .replace(/\s+/g, " ")
     .trim();
 }
+// 17/10/2026 (rà soát P0): các TÊN dùng để ghép nhân viên với dữ liệu ngoài (ca làm, chỉ tiêu, đơn POS, nâng hạng).
+// Có "Tên trên hệ thống bán hàng/chấm công" (tenHeThong, nhiều tên cách nhau dấu phẩy) thì dùng tên đó — để tách
+// 2 người trùng tên; không có thì dùng tên trong app như trước.
+function staffNameKeys(st){
+  const alt = String((st && st.tenHeThong) || "").split(",").map(normalizeStaffName).filter(Boolean);
+  return alt.length ? alt : [normalizeStaffName(st && st.name)].filter(Boolean);
+}
+// Người đang làm có tên ghép (staffNameKeys) TRÙNG nhau → số liệu ca/chỉ tiêu/đơn có thể bị gán nhầm
+function staffNameCollisions(list){
+  const by = {}; (list||[]).filter(st => !isStaffResigned(st)).forEach(st => staffNameKeys(st).forEach(k => { (by[k] = by[k] || []).push(st); }));
+  return Object.values(by).filter(a => a.length > 1);
+}
 // So sánh "vai trò" (role) an toàn — chuẩn hoá Unicode NFC + bỏ khoảng trắng thừa trước khi so
 // sánh, thay vì so sánh chuỗi y hệt (===). Có trường hợp thực tế 1 vài bản ghi nhân viên lưu chữ
 // tiếng Việt ở dạng Unicode tổ hợp khác (NFD) dù nhìn trên màn hình giống hệt, khiến so sánh ===
@@ -1678,12 +1690,12 @@ function isRole(s, roleLabel){
 // runDailyChecklistReminder phía Cloud Function đang làm).
 function findWorkRegsForStaffDate(workRegs, overtimeRegs, staffMember, dateISO){
   if(!staffMember) return [];
-  const key = normalizeStaffName(staffMember.name);
-  if(!key) return [];
+  const keys = staffNameKeys(staffMember);
+  if(!keys.length) return [];
   const matchOne = r => {
     const workDate = String(r.WorkDate || "").slice(0,10);
     if(workDate !== dateISO) return false;
-    return normalizeStaffName(r.EmployeeName) === key;
+    return keys.includes(normalizeStaffName(r.EmployeeName));
   };
   const shifts = workRegs.filter(matchOne).map(r => ({ ...r, __isOT:false }));
   const ots = (overtimeRegs||[]).filter(matchOne).map(r => ({ ...r, __isOT:true }));
@@ -5204,6 +5216,15 @@ function kpiTotalActual(groups, targets, actuals){
 // level/số lượng nhân sự, hàng thường trực, cận date. Template tuỳ chỉnh có thể gắn luyKe:true/false.
 // PHẢI giữ giống hệt bản trong Cloud Functions (index.js).
 const KPI_PASS_PCT = 0.85;
+// 17/10/2026 (rà soát P0 — bước 1 KPI Registry): ĐỊNH NGHĨA CHUNG các chỉ số. Màn hình / AI tự giao việc dùng ngưỡng ở đây,
+// không tự viết số riêng. Công thức "dự kiến %" hiện còn nhiều bản (xem docs/RA_SOAT_QLKV.md P0-9) — sẽ gom dần về đây.
+const KPI_DEFS = {
+  kpiPct:      { label:"KPI tổng", passPct:KPI_PASS_PCT, period:"tháng (lũy kế tới hôm qua, dự kiến chốt 6h35)", source:"dailyKpiPace (máy chủ) / kpiAssignments" },
+  doanhSoPct:  { label:"% doanh số cá nhân", passPct:KPI_PASS_PCT, period:"tháng", source:"externalEmployeePlan (đồng bộ 6h/12h/18h)" },
+  shopRevenue: { label:"Doanh thu nhà thuốc (dự kiến % chỉ tiêu)", goodPct:95, warnPct:80, period:"tháng (tới hôm nay)", source:"opsConfig/revenueAnalyticsMonths (máy chủ)" },
+  checklist:   { label:"Tỷ lệ nộp checklist ngày có ca", passRate:0.85, period:"tháng", source:"dailyReports + lịch ca" },
+  onTime:      { label:"Tỷ lệ việc đúng hạn", goodRate:0.85, warnRate:0.6, period:"90 ngày", source:"tasks" },
+};
 const KPI_CUMULATIVE_ITEM_IDS = ["kh_tongkh", "dh_sodon", "cs_nangHang", "ds_tong", "ds_hhs", "ds_cskh"];
 function kpiIsCumulativeItem(it){
   if(!it) return false;
@@ -5326,7 +5347,7 @@ function kbpAssumption(p, today, offDays){
   return `Dự báo giả định giữ tốc độ ${cur==null ? "hiện tại" : kbpMoney(cur) + "/ngày làm"} của ${w.workedBefore} ngày đã làm cho ${w.workLeft} ngày làm còn lại (đã trừ ${w.offLeft} ngày nghỉ còn lại trong ${offDays==null?4:offDays} ngày/tháng); chưa tính ca đăng ký thêm, nghỉ phép đột xuất.`;
 }
 function kbpPlan(p, today, opts){
-  const o = opts || {}, pass = o.passPct==null ? 0.85 : o.passPct;
+  const o = opts || {}, pass = o.passPct==null ? 0.85 : o.passPct; // = KPI_DEFS.kpiPct.passPct (khối ENGINE tự chứa vì máy chủ cũng chạy)
   const w = kbpWorkdays(p, today, o.offDays);
   const out = { staffId:p.staffId, name:p.staffName || p.staffId, shop:p.shop, workdays:w, assumption:kbpAssumption(p, today, o.offDays), metrics:[], weakest:null, plan:null, insufficient:[], coaching:[], notes:[] };
   const mk = (key, label, target, actual, projected) => {
@@ -5583,7 +5604,7 @@ function KpiGroups({ groups, targets, actuals, canEditTarget, canEditActual, onT
       React.createElement("div", { key:"a", style:{ fontSize:13 } }, [ React.createElement("b",null,"Tổng điểm KPI kế hoạch: "), `${totalPlan} điểm` ]),
       React.createElement("div", { key:"b", style:{ fontSize:13 } }, [ React.createElement("b",null,"Tổng điểm KPI thực tế: "), totalActual!=null ? `${Math.round(totalActual)} điểm` : "—" ]),
       React.createElement("div", { key:"c", style:{ fontSize:13 } }, [ React.createElement("b",null,"% KPI đạt: "), pctDat!=null ? `${Math.round(pctDat*100)}%` : "—" ]),
-      pctDat!=null && StatusPill(kpiXepLoai(pctDat), pctDat>=0.85?"good":"warn"),
+      pctDat!=null && StatusPill(kpiXepLoai(pctDat), pctDat>=KPI_DEFS.kpiPct.passPct?"good":"warn"),
     ]),
   ]);
 }
@@ -7001,22 +7022,24 @@ function CustomerUpgradeDetail({ upgrades, staff, thang, isAdmin, myStaff, forSt
   const [shopF, setShopF] = useState("Tất cả");
   const [staffF, setStaffF] = useState("Tất cả");
   const [q, setQ] = useState("");
-  const staffByNorm = useMemo(()=>{ const m = {}; (staff||[]).forEach(st => { if(st.name) m[normalizeStaffName(st.name)] = st; }); return m; }, [staff]);
+  // 17/10/2026: ghép theo tên + nhà thuốc trước (tách người trùng tên), tên trùng ở 2 nơi thì không tự gán
+  const staffByNorm = useMemo(()=>{ const m = {}; (staff||[]).forEach(st => { staffNameKeys(st).forEach(k => { m[k + "|" + st.shop] = st; m[k] = (m[k] && m[k] !== st) ? "DUP" : st; }); }); return m; }, [staff]);
   const rows = useMemo(()=>{
     return (upgrades||[]).filter(u => u.monthKey===thang).map(u => {
-      let st = u.salesName ? staffByNorm[normalizeStaffName(u.salesName)] : null;
-      if(!st && forStaff && normalizeStaffName(u.salesName)===normalizeStaffName(forStaff.name)) st = forStaff;
-      if(!st && myStaff && normalizeStaffName(u.salesName)===normalizeStaffName(myStaff.name)) st = myStaff;
+      let st = u.salesName ? (staffByNorm[normalizeStaffName(u.salesName) + "|" + u.shopCode] || staffByNorm[normalizeStaffName(u.salesName)]) : null;
+      if(st === "DUP") st = null;
+      if(!st && forStaff && staffNameKeys(forStaff).includes(normalizeStaffName(u.salesName))) st = forStaff;
+      if(!st && myStaff && staffNameKeys(myStaff).includes(normalizeStaffName(u.salesName))) st = myStaff;
       return { ...u, staffObj:st||null, staffLabel: st ? st.name : (u.salesName ? `${u.salesName} (chưa khớp nhân viên)` : u.noRecentOrder ? `Không do đơn mới${u.lastPurchaseAt ? " — mua gần nhất " + String(u.lastPurchaseAt).slice(8,10) + "/" + String(u.lastPurchaseAt).slice(5,7) + (u.lastPurchaseSalesName ? " (" + u.lastPurchaseSalesName + ")" : "") : ""}` : "(không rõ người bán)") };
     }).filter(u => {
       if(forStaff){
         if(forStaff.role==="Cửa hàng trưởng") return u.shopCode===forStaff.shop;
-        return normalizeStaffName(u.salesName)===normalizeStaffName(forStaff.name);
+        return staffNameKeys(forStaff).includes(normalizeStaffName(u.salesName));
       }
       if(isAdmin) return true;
       if(!myStaff) return false;
       if(myIsCHT) return u.shopCode===myStaff.shop;
-      return normalizeStaffName(u.salesName)===normalizeStaffName(myStaff.name);
+      return staffNameKeys(myStaff).includes(normalizeStaffName(u.salesName));
     }).sort((a,b) => String(b.detectedAtTs||"").localeCompare(String(a.detectedAtTs||"")));
   }, [upgrades, thang, staffByNorm, isAdmin, myStaff && myStaff.id, forStaff && forStaff.id]);
   const shopOptions = ["Tất cả", ...Array.from(new Set(rows.map(r=>r.shopCode).filter(Boolean))).sort()];
@@ -7350,7 +7373,7 @@ function KpiView({ isAdmin, myStaff }){
   const myInvExpiry = myStaff ? inventoryExpiry[myStaff.shop] : null;
   const myUpgradeItemId = myStaff && myStaff.role==="Cửa hàng trưởng" ? "ds_cskh" : "cs_nangHang";
   const myUpgradeCount = (myStaff && thang) ? customerUpgrades.filter(u => u.monthKey===thang && (
-    myStaff.role==="Cửa hàng trưởng" ? u.shopCode===myStaff.shop : normalizeStaffName(u.salesName)===normalizeStaffName(myStaff.name)
+    myStaff.role==="Cửa hàng trưởng" ? u.shopCode===myStaff.shop : staffNameKeys(myStaff).includes(normalizeStaffName(u.salesName))
   )).length : 0;
   useEffect(()=>{
     if(!myStaff || !kpiReady) return;
@@ -7458,11 +7481,11 @@ function KpiView({ isAdmin, myStaff }){
   function findEmployeePlanFor(staffMember, thangStr){
     if(!staffMember || !thangStr) return null;
     const [y, m] = thangStr.split("-").map(Number);
-    const key = normalizeStaffName(staffMember.name);
+    const keys = staffNameKeys(staffMember);
     return employeePlans.find(r =>
       Number(r.MonthS)===m && Number(r.YearS)===y &&
       r.ShopCode===staffMember.shop &&
-      normalizeStaffName(r.EmployeeName)===key
+      keys.includes(normalizeStaffName(r.EmployeeName))
     ) || null;
   }
   const pickedPlan = findEmployeePlanFor(pickedStaff, thang);
@@ -7507,7 +7530,7 @@ function KpiView({ isAdmin, myStaff }){
   // bán) — khớp đúng quy tắc gán nhân viên đã cài trong Cloud Function syncCustomerLevelUpgradesNow.
   const pickedUpgradeItemId = pickedStaff && pickedStaff.role==="Cửa hàng trưởng" ? "ds_cskh" : "cs_nangHang";
   const pickedUpgradeCount = (pickedStaff && thang) ? customerUpgrades.filter(u => u.monthKey===thang && (
-    pickedStaff.role==="Cửa hàng trưởng" ? u.shopCode===pickedStaff.shop : normalizeStaffName(u.salesName)===normalizeStaffName(pickedStaff.name)
+    pickedStaff.role==="Cửa hàng trưởng" ? u.shopCode===pickedStaff.shop : staffNameKeys(pickedStaff).includes(normalizeStaffName(u.salesName))
   )).length : 0;
   useEffect(()=>{
     if(!pickedStaff || !upgradesReady) return;
@@ -7680,6 +7703,11 @@ function KpiView({ isAdmin, myStaff }){
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type:"array" });
       let matched = 0, unmatched = [];
+      // 17/10/2026 (rà soát P0): khớp tên đã chuẩn hoá (cả "tên trên hệ thống"); trùng tên mà file không ghi nhà thuốc → KHÔNG tự chọn người đầu tiên
+      const findImportStaff = (ten, shop) => { const k = normalizeStaffName(ten);
+        const c = staff.filter(x => (x.name.trim()===ten || staffNameKeys(x).includes(k)) && (!shop || x.shop===shop));
+        if(c.length > 1){ unmatched.push(ten + " (trùng tên — cần cột Nhà thuốc)"); return "DUP"; }
+        return c[0] || null; };
       let skuShopsUpdated = 0, skuTotal = 0;
       for(const sheetName of wb.SheetNames){
         // Sheet riêng chứa danh sách MÃ HÀNG THƯỜNG TRỰC của TẤT CẢ nhà thuốc gộp chung (cột A =
@@ -7729,7 +7757,7 @@ function KpiView({ isAdmin, myStaff }){
               const ten = (row["Tên nhân viên"]||row["Tên NV"]||"").toString().trim();
               const shop = (row["Nhà thuốc"]||"").toString().trim();
               if(!ten) continue;
-              const s = staff.find(x => x.name.trim()===ten && (!shop || x.shop===shop));
+              const s = findImportStaff(ten, shop); if(s === "DUP") continue;
               if(!s){ unmatched.push(ten); continue; }
               const payload = { staffId:s.id, staffName:s.name, shop:s.shop, role:s.role, thang };
               let any = false;
@@ -7751,7 +7779,7 @@ function KpiView({ isAdmin, myStaff }){
             const shop = String(row[0]||"").trim();
             const ten = String(row[1]||"").trim();
             if(!ten) continue;
-            const s = staff.find(x => x.name.trim()===ten && (!shop || x.shop===shop));
+            const s = findImportStaff(ten, shop); if(s === "DUP") continue;
             if(!s){ unmatched.push(ten); continue; }
             const payload = { staffId:s.id, staffName:s.name, shop:s.shop, role:s.role, thang };
             let any = false;
@@ -7770,7 +7798,7 @@ function KpiView({ isAdmin, myStaff }){
           const ten = (row["Tên nhân viên"]||row["Tên NV"]||"").toString().trim();
           const shop = (row["Nhà thuốc"]||row["Nhà thuốc"]||"").toString().trim();
           if(!ten) continue;
-          const s = staff.find(x => x.name.trim()===ten && (!shop || x.shop===shop));
+          const s = findImportStaff(ten, shop); if(s === "DUP") continue;
           if(!s){ unmatched.push(ten); continue; }
           const payload = { staffId:s.id, staffName:s.name, shop:s.shop, role:s.role, thang };
           let any = false;
@@ -11046,6 +11074,11 @@ function StaffView(){
 
   const leftList = staff.filter(isStaffResigned);
   const shownStaff = showLeft ? leftList : staff.filter(st => !isStaffResigned(st));
+  // 17/10/2026 (rà soát P0): người trùng tên → ca làm / chỉ tiêu / đơn bán có thể bị ghép nhầm
+  const nameDups = staffNameCollisions(staff);
+  const dupNotice = nameDups.length > 0 && React.createElement("div", { key:"dup", style:{ background:"var(--goldSoft)", borderRadius:10, padding:"9px 14px", margin:"0 0 12px", fontSize:12.5, color:"#7a5108" } },
+    `⚠️ ${nameDups.length} nhóm nhân viên TRÙNG TÊN: ${nameDups.map(g => g.map(x => `${x.name} (${x.shop})`).join(" / ")).join("; ")}. ` +
+    `Ca làm, chỉ tiêu và đơn bán đang ghép theo tên nên có thể bị gán nhầm — bấm Sửa từng người và điền "Tên trên hệ thống bán hàng/chấm công" cho khác nhau.`);
   const table = staff.length===0
     ? React.createElement("div", { className:"emptyState" }, "Chưa có nhân viên nào — thêm để dùng cho Buddy và Tặng sao.")
     : React.createElement("div", { className:"tableWrap" }, React.createElement("table",{className:"data"}, [
@@ -11107,7 +11140,7 @@ function StaffView(){
       React.createElement("button", { key:"left", className:"btn"+(showLeft?" btnPrimary":""), onClick:()=>setShowLeft(v=>!v) }, showLeft ? "← Đang làm việc" : `Đã nghỉ việc (${leftList.length})`),
     ]),
     showLeft && React.createElement("div", { key:"lnote", style:{ fontSize:12.5, color:"var(--inkSoft)", marginBottom:10 } }, "Nhân viên đã nghỉ không hiện ở các danh sách, giao việc, thống kê từ ngày nghỉ (KPI tháng vẫn tính đến ngày nghỉ). Bấm \"Khôi phục\" nếu xác nhận nhầm."),
-    table, formModal, createModal,
+    dupNotice, table, formModal, createModal,
     leaving && React.createElement("div", { key:"lv", className:"modalOverlay", onClick:()=>setLeaving(null) },
       React.createElement("div", { className:"modal", onClick:e=>e.stopPropagation(), style:{ maxWidth:420 } }, [
         React.createElement("div", { key:"t", style:{ fontWeight:800, fontSize:17, marginBottom:6 } }, `Xác nhận ${leaving.name} nghỉ việc`),
@@ -20914,6 +20947,7 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate, aiOnly }){
     .sort((a,b) => (ISSUE_SEV[a.severity].rank - ISSUE_SEV[b.severity].rank) || (a.shopScore - b.shopScore)) : [];
   const issuesShown = showAllIssues ? issues : issues.slice(0, 8);
   function openIssueTask(i){
+    if(ISSUE_KIND_OF[i.code]) return setIssueDetail(i); // vấn đề đo được: giao trong hồ sơ để lưu số liệu TRƯỚC xử lý
     setComposer(buildAlertTaskPreset({
       heading: "Tạo công việc xử lý",
       title: `[${shopLabel(i.shopCode)}] ${i.title}`,
@@ -20954,10 +20988,10 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate, aiOnly }){
 
   // ---- Thẻ 5 nhóm chỉ số ----
   const pctHead = revenueBlock ? (revenueBlock.projectedPct!=null ? revenueBlock.projectedPct : revenueBlock.pct) : null;
-  const revColor = pctHead==null ? CL360.gray : pctHead>=95 ? CL360.good : pctHead>=80 ? CL360.warn : CL360.bad;
+  const revColor = pctHead==null ? CL360.gray : pctHead>=KPI_DEFS.shopRevenue.goodPct ? CL360.good : pctHead>=KPI_DEFS.shopRevenue.warnPct ? CL360.warn : CL360.bad;
   const n = v => v==null ? "—" : fmtNum(v);
   const cards = [
-    { key:"rev", title:"Doanh thu tháng", color:revColor, headline: pctHead==null ? "—" : `${pctHead}%`, headlineSub:"Dự kiến đạt cả tháng", tab:["revenueAnalytics"], lines:[
+    { key:"rev", title:"Doanh thu tháng", color:revColor, headline: pctHead==null ? "—" : `${pctHead}%`, headlineSub: revenueBlock && revenueBlock.projectedPct!=null ? "Dự kiến đạt cả tháng" : "Đã đạt tới hôm nay (chưa có số dự kiến)", tab:["revenueAnalytics"], lines:[
       { label:"Thực hiện", value: revenueBlock ? fmtVNDCompact(revenueBlock.actual||0) : "—", onClick:()=>go("revenueAnalytics") },
       { label:"Chỉ tiêu", value: revenueBlock ? fmtVNDCompact(revenueBlock.target||0) : "—", onClick:()=>go("revenueAnalytics") },
       { label:"Đạt lũy kế", value: revenueBlock && revenueBlock.pct!=null ? `${revenueBlock.pct}%` : "—", onClick:()=>go("revenueAnalytics") } ] },
@@ -21156,8 +21190,9 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate, aiOnly }){
                 i.priority && rc(IssuePriorityBadge, { key:"pr", priority:i.priority }),
                 rc(Pill360, { key:"g", text:(HEALTH_GROUP_LABEL[i.group]||"").toUpperCase(), color:ISSUE_SEV[i.severity].color }),
               ]),
-              rc("button", { key:"c", type:"button", className:"btn btnGhost", style:{ fontSize:11, padding:"3px 8px", flex:"none" }, onClick:()=>setIssueDetail(i), title:"Chi tiết vấn đề" }, "Chi tiết"),
+              rc("button", { key:"c", type:"button", className:"btn btnGhost", style:{ fontSize:11, padding:"3px 8px", flex:"none" }, onClick:()=> ISSUE_KIND_OF[i.code] ? setIssueDetail(i) : go(i.tab, i.param), title:"Chi tiết vấn đề" }, "Chi tiết"),
               rc("button", { key:"tk", type:"button", className:"btn btnPrimary", style:{ fontSize:11, padding:"3px 8px", flex:"none" }, onClick:()=>{
+                if(ISSUE_KIND_OF[i.code]) return setIssueDetail(i); // 17/10/2026: vấn đề đo được → giao trong hồ sơ (lưu số liệu trước xử lý)
                 setComposer(buildAlertTaskPreset({
                   heading: "Tạo việc từ vấn đề sức khoẻ",
                   title: `[${i.code||""}] ${i.title||i.message||"Vấn đề"}`,
@@ -21244,7 +21279,7 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate, aiOnly }){
                 topIssue && rc("div", { key:"a", style:{ fontSize:12, marginTop:4, color:"var(--ink)" } }, [rc("b", { key:"k" }, "Đề xuất: "), suggestedActionForIssue(topIssue)]),
               ]),
               rc("div", { key:"btns", style:{ display:"flex", gap:6, flexWrap:"wrap" } }, [
-                topIssue && rc("button", { key:"d", type:"button", className:"btn btnGhost", style:{ fontSize:11.5, padding:"5px 10px" }, onClick:()=>setIssueDetail({ ...topIssue, shopCode:s.shopCode }) }, "Chi tiết"),
+                topIssue && rc("button", { key:"d", type:"button", className:"btn btnGhost", style:{ fontSize:11.5, padding:"5px 10px" }, onClick:()=> ISSUE_KIND_OF[topIssue.code] ? setIssueDetail({ ...topIssue, shopCode:s.shopCode }) : go(topIssue.tab, topIssue.param) }, "Chi tiết"),
                 topIssue && rc("button", { key:"task", type:"button", className:"btn btnPrimary", style:{ fontSize:11.5, padding:"5px 10px" }, onClick:()=>openIssueTask({ ...topIssue, shopCode:s.shopCode }) }, "Giao việc"),
                 rc("button", { key:"p", type:"button", className:"btn", style:{ fontSize:11.5, padding:"5px 10px" }, onClick:()=>go("shop360", { shop:s.shopCode }) }, "Hồ sơ NT"),
               ]),
@@ -21253,7 +21288,7 @@ function ExecOverviewView({ isAdmin, myStaff, onNavigate, aiOnly }){
     ]),
 
     // 5/10/2026 (Phương): AI Briefing + Trợ lý thông minh chuyển sang AI điều hành (aiOnly) — Tổng quan không hiện nữa
-    composer && rc(TaskComposer360, { key:"cmp", preset:composer, onClose:()=>setComposer(null) }),
+    composer && rc(TaskComposer360, { key:"cmp", preset:composer, onClose:()=>setComposer(null), onSaved:(id)=>markIssueAssigned(composer, id) }),
     issueDetail && rc(IssueDetailModal360, { key:"issuedetail", issue:issueDetail, shop:issueDetail.shopCode, onClose:()=>setIssueDetail(null), onNavigate:go }),
   ]);
 }
@@ -21692,7 +21727,7 @@ function ShopProfileView({ isAdmin, myStaff, navParam, onNavigate }){
   function taskForIssue(i){ return openTasks.find(t => t.sourceIssueCode===i.code && t.sourceShop===shop) || null; }
   function openIssueTask(i){
     setComposer({ heading:"Tạo công việc xử lý", title:`[${shopLabel(shop)}] ${i.title}`, mota:`${i.detail||""}`.trim(), module:HEALTH_GROUP_MODULE[i.group]||"Khác",
-      shopOnly:true, shop, extra:{ sourceIssueCode:i.code, sourceIssueTitle:i.title, sourceShop:shop, actionInsight:i.title } });
+      shopOnly:true, shop, extra:{ sourceType:"shopHealthIssue", sourceIssueCode:i.code, sourceIssueTitle:i.title, sourceShop:shop, actionInsight:i.title } });
   }
   async function recomputeHealth(){
     setHealthBusy(true);
@@ -21728,10 +21763,14 @@ function ShopProfileView({ isAdmin, myStaff, navParam, onNavigate }){
         // "HH01"/"NS01"/"KH01"/"KH02" đã có màn Chi tiết vấn đề riêng (dữ liệu chứng minh + đề xuất xử lý
         // + giao việc/đo kết quả/đánh giá hiệu quả) — các mã vấn đề khác vẫn điều hướng như cũ.
         linkBtn("Xem chi tiết", ()=> ISSUE_KIND_OF[i.code] ? setIssueDetail(i) : go(i.tab, i.param)),
-        !existing && rc("button", { key:"t", type:"button", className:"btn btnPrimary", style:{ fontSize:11.5, padding:"4px 10px", flex:"none" }, onClick:()=>setIssueDetail(i) }, "＋ Tạo công việc xử lý"),
+        !existing && rc("button", { key:"t", type:"button", className:"btn btnPrimary", style:{ fontSize:11.5, padding:"4px 10px", flex:"none" }, onClick:()=> ISSUE_KIND_OF[i.code] ? setIssueDetail(i) : openIssueTask(i) }, "＋ Tạo công việc xử lý"),
         (()=>{ const st = (issueActs[i.code]||{}).status; const b = (k, l, a) => rc("button", { key:k, type:"button", className:"btn btnGhost", style:{ fontSize:11.5, padding:"4px 10px", flex:"none" }, onClick:()=>issueLife(i, a) }, l);
           if(!st || st==="REOPENED") return [b("ack","Nhận xử lý","ack"), b("rj","Bỏ qua","reject")];
           if(st==="CLOSED" || st==="REJECTED") return [b("ro","Mở lại","reopen")];
+          // 17/10/2026 (rà soát P0): "xong việc" ≠ "đã giải quyết" — vấn đề đo được (có ISSUE_KIND_OF) đang giao việc / chờ đánh giá
+          // thì phải đo & đánh giá trong hồ sơ, không đóng tắt ở đây
+          if(ISSUE_KIND_OF[i.code] && ["IN_PROGRESS","PENDING_VERIFICATION","RESOLVED"].includes(st))
+            return [rc("button", { key:"ev", type:"button", className:"btn btnGhost", style:{ fontSize:11.5, padding:"4px 10px", flex:"none" }, onClick:()=>setIssueDetail(i) }, st==="RESOLVED" ? "Đóng hồ sơ" : "Đo & đánh giá kết quả")];
           return [b("cl","✓ Đã xử lý xong","close"), b("rj","Bỏ qua","reject")]; })(),
       ]),
     ]);
@@ -21830,7 +21869,7 @@ function ShopProfileView({ isAdmin, myStaff, navParam, onNavigate }){
         rc(Table360, { key:"t", head:["Công việc","Người làm","Hạn","Trạng thái"], rows:taskRows, emptyText:"Nhà thuốc không có việc nào đang mở." }),
       ]),
     ]),
-    composer && rc(TaskComposer360, { key:"cmp", preset: lockShop ? { ...composer, giver:myStaff } : composer, onClose:()=>setComposer(null) }),
+    composer && rc(TaskComposer360, { key:"cmp", preset: lockShop ? { ...composer, giver:myStaff } : composer, onClose:()=>setComposer(null), onSaved:(id)=>markIssueAssigned(composer, id) }),
     issueDetail && rc(IssueDetailModal360, { key:"issuedetail", issue:issueDetail, shop, giver: lockShop ? myStaff : null, onClose:()=>setIssueDetail(null), onNavigate:go }),
   ]);
 }
@@ -22646,9 +22685,23 @@ function issueActionKeyOf(shop, code){ return `${shop}__${code}`; }
 // Bộ trạng thái chuẩn (P0-2/P0-3): NEW (chưa có doc) → REJECTED / IN_PROGRESS → PENDING_VERIFICATION
 // → RESOLVED → CLOSED, hoặc RESOLVED→REOPENED (đánh giá "Không hiệu quả") quay lại giao việc.
 const ISSUE_STATUS_LABEL = {
-  REJECTED:"ĐÃ BỎ QUA", IN_PROGRESS:"ĐÃ GIAO VIỆC", PENDING_VERIFICATION:"CHỜ ĐÁNH GIÁ HIỆU QUẢ",
+  REJECTED:"ĐÃ BỎ QUA", ACKNOWLEDGED:"ĐÃ NHẬN XỬ LÝ", IN_PROGRESS:"ĐÃ GIAO VIỆC", PENDING_VERIFICATION:"CHỜ ĐÁNH GIÁ HIỆU QUẢ",
   RESOLVED:"ĐÃ XỬ LÝ (CHỜ ĐÓNG)", CLOSED:"ĐÃ ĐÓNG", REOPENED:"ĐÃ MỞ LẠI",
 };
+// 17/10/2026 (rà soát P0): tạo việc từ 1 vấn đề sức khoẻ nhà thuốc (không qua hồ sơ chi tiết) vẫn phải ghi hồ sơ vấn đề
+// sang "ĐÃ GIAO VIỆC" — trước đây vấn đề vẫn hiện "Mới phát hiện" và không vào vòng đo / đánh giá. Chu kỳ mới xoá đánh giá cũ.
+async function markIssueAssigned(preset, taskId){
+  const x = (preset && preset.extra) || {}; const shop = x.sourceShop || (preset && preset.shop), code = x.sourceIssueCode;
+  if(x.sourceType !== "shopHealthIssue" || !shop || !code || !taskId) return;
+  try{
+    const ref = db.collection("issueActions").doc(issueActionKeyOf(shop, code)); const cur = await ref.get(); const old = cur.exists ? cur.data() : null;
+    if(old && ["IN_PROGRESS","PENDING_VERIFICATION"].includes(old.status)) return;
+    await ref.set({ shop, code, title:x.sourceIssueTitle || (preset && preset.title) || code, status:"IN_PROGRESS", assignedTaskId:taskId, assignedAtTs:new Date().toISOString(),
+      effectiveness:null, resultAfter:null, confirmedBy:null, ...(old && old.status==="REOPENED" ? { recurrence:true } : {}),
+      updatedAtTs:firebase.firestore.FieldValue.serverTimestamp() }, { merge:true });
+    await logIssueHistory({ shop, code, action:"ASSIGN", oldStatus: old ? old.status : null, newStatus:"IN_PROGRESS", detail:"Giao việc từ danh sách vấn đề" });
+  }catch(e){ logSystemError("markIssueAssigned", e); }
+}
 function currentActorLabel(){
   return (typeof auth!=="undefined" && auth.currentUser && auth.currentUser.email) || "Quản lý khu vực";
 }
@@ -23305,7 +23358,7 @@ function IssueDetailModal360({ issue, shop, onClose, onNavigate, giver }){
       ]),
 
       // Hành động: Từ chối / Xem nguồn / Giao việc — hiện khi vấn đề còn MỚI hoặc ĐÃ MỞ LẠI (REOPENED)
-      (!action || action.status==="REOPENED") && rc("div", { key:"actions", style:{ display:"flex", gap:8, flexWrap:"wrap", justifyContent:"flex-end", marginTop:16 } }, [
+      (!action || action.status==="REOPENED" || action.status==="ACKNOWLEDGED") && rc("div", { key:"actions", style:{ display:"flex", gap:8, flexWrap:"wrap", justifyContent:"flex-end", marginTop:16 } }, [
         action && action.status==="REOPENED" && rc("div", { key:"note", style:{ width:"100%", fontSize:11.5, color:"var(--inkSoft)", marginBottom:4 } }, "Vấn đề đã được đánh giá là chưa hiệu quả ở lần xử lý trước — xem Lịch sử xử lý bên dưới."),
         rc("button", { key:"rj", type:"button", className:"btn btnGhost", onClick:()=>setRejecting(true) }, "Từ chối đề xuất"),
         isGoodsKind && primarySource && rc("button", { key:"src", type:"button", className:"btn btnGhost", onClick:()=>{ onNavigate && onNavigate("hanghoa", { sub:"transfer", invSubTab:"tocdo", shop:primarySource }); onClose && onClose(); } }, "Xem chi tiết nguồn"),
@@ -23797,7 +23850,7 @@ function Productivity360Panel({ me, thang, metrics, summary, onCreateTask }){
   const actions = [];
   if(C.applicable && C.projectedAttainment!=null && C.projectedAttainment < 0.9 && C.neededPerDay!=null)
     actions.push({ key:"rev", title:`Kèm bán hàng: cần thêm ~${fmtVNDCompact(C.neededPerDay)}/ngày`, detail:`Dự kiến cuối tháng ${pct360(C.projectedAttainment)} chỉ tiêu (${fmtVNDCompact(C.projectedRevenue)} / ${fmtVNDCompact(C.revenueTarget)}). TBB ${C.tbb!=null?fmtVNDCompact(C.tbb):"—"}${C.tbbTarget?` so với mục tiêu ${fmtVNDCompact(C.tbbTarget)}`:""}.` });
-  if(Bx.checklistRate!=null && Bx.checklistRate < 0.85 && Bx.checklistDays>0)
+  if(Bx.checklistRate!=null && Bx.checklistRate < KPI_DEFS.checklist.passRate && Bx.checklistDays>0)
     actions.push({ key:"cl", title:"Nhắc nộp checklist ngày có ca", detail:`Mới nộp ${Bx.checklistDone}/${Bx.checklistDays} ngày có ca trong tháng.` });
   if((Bx.overdueOpen||0) > 0)
     actions.push({ key:"ov", title:`Xử lý ${Bx.overdueOpen} việc quá hạn`, detail:`Đúng hạn ${pct360(Bx.onTimeRate)} (${Bx.onTime||0}/${Bx.dueTasks||0} việc đến hạn), ${Bx.returned||0} việc bị trả lại/không đạt.` });
@@ -26509,9 +26562,10 @@ function aaTarget(staff, shop){
 // đang trong ca. Không giao học việc, không giao người đã hết ca. Không có lịch ca → giao CHT / cả nhà thuốc như cũ (ghi rõ).
 function aaNorm(s){ return String(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/Đ/g, "d").replace(/y/g, "i").replace(/\s+/g, " ").trim(); }
 function aaShiftsOf(I, st){
-  const k = aaNorm(st.name);
-  if(!k) return [];
-  return (I.shifts||[]).filter(r => aaNorm(r.EmployeeName)===k).map(r => {
+  // 17/10/2026: ưu tiên "tên trên hệ thống chấm công" (tenHeThong) để tách người trùng tên — giống staffNameKeys
+  const alt = String(st.tenHeThong||"").split(",").map(aaNorm).filter(Boolean), keys = alt.length ? alt : [aaNorm(st.name)].filter(Boolean);
+  if(!keys.length) return [];
+  return (I.shifts||[]).filter(r => keys.includes(aaNorm(r.EmployeeName))).map(r => {
     const x = { date:String(r.WorkDate||"").slice(0,10), start:String(r.TimeStart||"").slice(11,16) || "00:00", end:String(r.TimeEnd||"").slice(11,16) || "23:59", ot:!!r.__isOT };
     if(x.end <= x.start) x.end = "23:59";   // ca qua đêm: tính đến hết ngày
     return x;
@@ -27048,7 +27102,13 @@ function ActionCenterView({ isAdmin, myStaff, navParam, onNavigate, openTasks, s
   async function completeTask(t){
     if(!resultText.trim()) return;
     setBusy(true);
-    try{ await updateDoc("tasks", t.id, { trangThai:"Đã hoàn thành", ketQua:resultText.trim(), ngayHoanThanh:today, nguoiBaoCao: shopScope ? `${(myStaff && myStaff.name) || "CHT"} (CHT)` : "Quản lý khu vực" }); setResultText(""); }
+    // 17/10/2026 (rà soát P0): CHT báo xong việc sinh từ RỦI RO / AI / vấn đề nhà thuốc → "Chờ kiểm tra" để QLKV xác minh
+    // (giống màn Giao việc), không tự đóng. QLKV báo xong thì vẫn hoàn thành ngay như cũ.
+    const needVerify = shopScope && !!(t.sourceRiskId || t.opsProposalId || t.sourceIssueCode || t.autoAssigned);
+    try{ await updateDoc("tasks", t.id, needVerify
+        ? { subTrangThai:"Chờ kiểm tra", ketQua:resultText.trim(), ngayNopKetQua:today, nguoiBaoCao:`${(myStaff && myStaff.name) || "CHT"} (CHT)` }
+        : { trangThai:"Đã hoàn thành", ketQua:resultText.trim(), ngayHoanThanh:today, nguoiBaoCao: shopScope ? `${(myStaff && myStaff.name) || "CHT"} (CHT)` : "Quản lý khu vực" });
+      setResultText(""); if(needVerify) window.alert("Đã gửi kết quả — việc chuyển sang \"Chờ kiểm tra\" để quản lý khu vực xác minh."); }
     catch(err){ window.alert("Không lưu được: " + (err && err.message ? err.message : err)); }
     setBusy(false);
   }
