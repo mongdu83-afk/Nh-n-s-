@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261017-06";
+window.__APP_BUILD = "20261017-07";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -832,6 +832,12 @@ function isStaffResigned(st){ return !!(st && st.ngayNghiViec && st.ngayNghiViec
 // 17/10/2026 (chị Hà): báo cáo THEO KỲ vẫn hiện người còn làm trong kỳ đó (nghỉ từ ngày đầu kỳ trở đi);
 // kỳ sau ngày nghỉ thì ẩn. Dùng với subscribeCol("staff", …, { keepResigned:true }) — cùng quy ước với Nhân viên 360.
 function resignedTag(st){ return st && st.ngayNghiViec ? ` (nghỉ ${String(st.ngayNghiViec).split("-").reverse().slice(0,2).join("/")})` : ""; }
+// ghi chú ngày nghỉ cho 1 bản ghi có staffId hoặc tên + nhà thuốc (hồ sơ học việc, thử việc…) — tra danh sách nhân viên đầy đủ
+function resignedTagOf(rec){
+  if(!rec) return ""; const all = window.__STAFF_ALL || [];
+  const st = (rec.staffId && all.find(x => x.id === rec.staffId)) || all.find(x => x.shop === rec.shop && normalizeStaffName(x.name) === normalizeStaffName(rec.name));
+  return st && isStaffResigned(st) ? resignedTag(st) : "";
+}
 function staffInPeriod(rows, fromIso){ return (rows||[]).filter(st => !(st && st.ngayNghiViec && fromIso && st.ngayNghiViec < fromIso)); }
 function filterStaffRows(rows, opts){
   if(opts && opts.all) return rows;
@@ -9727,6 +9733,9 @@ function SelfPracticePanel(){
       if(me.empty || dead || me.docs[0].data().role === "Nhân viên học việc") return; const myId = me.docs[0].id;
       let ids = [];
       try{ ids = (await db.collection("newHires").where("staffId", "==", myId).get()).docs.map(d => d.id); }catch(e){ logSystemError("newHires-self", e); }
+      // hồ sơ học việc chưa liên kết tài khoản → tìm theo tên + nhà thuốc
+      if(!ids.length){ const meD = me.docs[0].data();
+        try{ ids = (await db.collection("newHires").where("shop", "==", meD.shop).get()).docs.filter(d => normalizeStaffName(d.data().name) === normalizeStaffName(meD.name)).map(d => d.id); }catch(e){ logSystemError("newHires-self-name", e); } }
       // không có hồ sơ newHires (học việc "tự thêm") → hỏi danh sách thử việc, chỉ với người vào làm ≤ 120 ngày (tránh tải nặng cho mọi người)
       const joined = me.docs[0].data().ngayVaoLam || "";
       if(!ids.length && joined && joined >= addDays(todayISO(), -120)){
@@ -9772,15 +9781,43 @@ function TtsVoiceLimitSetting(){
     msg && h("span", { style:{ color:"var(--pine)" } }, msg));
 }
 // 14/10/2026 (chị Hà): quản lý / CHT xem lịch sử luyện tình huống của TẤT CẢ nhân viên (trước chỉ xem được học việc)
+// Gộp các dòng tóm tắt luyện tập của CÙNG 1 người (hồ sơ học việc + hồ sơ nhân viên); thêm hồ sơ học việc (newHires) liên kết
+// với người đó mà máy chủ không trả về. Khớp: newHires.staffId = mã nhân viên, hoặc cùng tên + nhà thuốc.
+function practiceMergeRows(rows, staffAll, hiresAll){
+  const nk = (name, shop) => normalizeStaffName(name) + "|" + (shop || "");
+  const staffBy = {}; (staffAll||[]).forEach(st => { staffBy[st.id] = st; staffNameKeys(st).concat([normalizeStaffName(st.name)]).forEach(k => { staffBy[k + "|" + st.shop] = staffBy[k + "|" + st.shop] || st; }); });
+  const staffOf = (r) => staffBy[r.staffId] || staffBy[r.hireId] || staffBy[nk(r.name, r.shop)] || null;
+  const groups = {}, order = [];
+  (rows||[]).forEach(r => { const st = staffOf(r); const k = st ? "st:" + st.id : "n:" + nk(r.name, r.shop); if(!groups[k]){ groups[k] = []; order.push(k); } groups[k].push({ r, st }); });
+  return order.map(k => {
+    const g = groups[k], st = (g.find(x => x.st) || {}).st || null;
+    // dòng chính: dòng nhân viên hiện tại (không phải học việc) nếu có
+    const main = (g.find(x => !/học việc|tts|thực tập/i.test(String(x.r.kind||""))) || g[0]).r;
+    const ids = g.map(x => x.r.hireId).filter(Boolean);
+    const linked = st ? (hiresAll||[]).filter(h => h.staffId === st.id || nk(h.name, h.shop) === nk(st.name, st.shop)).map(h => h.id) : [];
+    const oldIds = [...new Set(ids.concat(linked))].filter(id => id !== main.hireId);
+    const graded = g.reduce((a, x) => a + (Number(x.r.graded)||0), 0), wsum = g.reduce((a, x) => a + Math.min(10, Number(x.r.graded)||0), 0);
+    const avg10 = wsum ? Math.round(g.reduce((a, x) => a + (x.r.avg10!=null ? x.r.avg10 * Math.min(10, Number(x.r.graded)||0) : 0), 0) / wsum) : (main.avg10!=null ? main.avg10 : null);
+    return { ...main, name: (st && st.name) || main.name, shop: (st && st.shop) || main.shop, staff:st,
+      graded: g.length > 1 ? graded : main.graded, total: g.reduce((a, x) => a + (Number(x.r.total)||0), 0) || main.total,
+      week: g.reduce((a, x) => a + (Number(x.r.week)||0), 0) || main.week, avg10: g.length > 1 ? avg10 : main.avg10,
+      last: g.map(x => x.r.last).filter(Boolean).sort().slice(-1)[0] || main.last, oldIds };
+  });
+}
 function StaffPracticeOverview(){
   const h = React.createElement;
   const [data, setData] = useState(null); const [err, setErr] = useState(null); const [shop, setShop] = useState("all"); const [q, setQ] = useState(""); const [hist, setHist] = useState(null); const [open, setOpen] = useState(true);
   const load = () => pbCall("practiceStaffSummary", {}, 60000).then(r => { if(r.ok === false) throw new Error(r.error); setData(r); }).catch(e => setErr(e.message || String(e)));
   useEffect(()=>{ load(); }, []);
+  // 17/10/2026 (chị Hà): nhân viên lên từ học việc có 2 hồ sơ (học việc + nhân viên) → gộp làm 1 dòng, xem được cả bài cũ;
+  // người đã nghỉ ghi kèm ngày nghỉ.
+  const [staffAll, setStaffAll] = useState([]); const [hiresAll, setHiresAll] = useState([]);
+  useEffect(()=> subscribeCol("staff", setStaffAll, null, { all:true }), []);
+  useEffect(()=>{ db.collection("newHires").get().then(q => setHiresAll(q.docs.map(d => ({ id:d.id, ...d.data() })))).catch(e => logSystemError("newHires-practice", e)); }, []);
   if(err && /Chỉ quản lý|403/.test(err)) return null;
   if(err) return h("div", { className:"card", style:{ marginBottom:14, color:"#b3261e", fontSize:13 } }, "Không tải được lịch sử luyện tập: " + err);
   if(!data) return h("div", { className:"card", style:{ marginBottom:14, fontSize:13, color:"var(--inkSoft)" } }, "Đang tải lịch sử luyện tập của nhân viên…");
-  const rows = data.rows || []; const shops = [...new Set(rows.map(r => r.shop).filter(Boolean))].sort();
+  const rows = practiceMergeRows(data.rows || [], staffAll, hiresAll); const shops = [...new Set(rows.map(r => r.shop).filter(Boolean))].sort();
   const nq = q.trim().toLowerCase();
   const list = rows.filter(r => (shop === "all" || r.shop === shop) && (!nq || String(r.name).toLowerCase().includes(nq)));
   const sc = (v) => v == null ? h("span", { style:{ color:"var(--inkSoft)" } }, "—") : h("span", { style:{ fontWeight:700, color: v >= (data.pass||70) ? CL360.good : v >= 50 ? CL360.warn : CL360.bad } }, v);
@@ -9800,9 +9837,9 @@ function StaffPracticeOverview(){
     open && h("div", { style:{ overflowX:"auto", marginTop:8 } }, h("table", { style:{ width:"100%", borderCollapse:"collapse" } },
       h("thead", null, h("tr", null, ["Nhân viên","Nhà thuốc","Loại","Đã chấm","7 ngày qua","TB 10 bài gần nhất","Lần gần nhất",""].map(x => h("th", { key:x, style:th }, x)))),
       h("tbody", null, list.map(r => h("tr", { key:r.key },
-        h("td", { style:{ ...td, fontWeight:600 } }, r.name || "—"), h("td", { style:td }, typeof shopLabel === "function" ? shopLabel(r.shop) : r.shop), h("td", { style:{ ...td, fontSize:12, color:"var(--inkSoft)" } }, r.kind),
+        h("td", { style:{ ...td, fontWeight:600 } }, (r.name || "—") + resignedTag(r.staff), r.oldIds.length ? h("div", { style:{ fontSize:11, fontWeight:400, color:"var(--inkSoft)" } }, "gồm bài luyện lúc học việc") : null), h("td", { style:td }, typeof shopLabel === "function" ? shopLabel(r.shop) : r.shop), h("td", { style:{ ...td, fontSize:12, color:"var(--inkSoft)" } }, r.kind),
         h("td", { style:td }, r.graded || h("span", { style:{ color:CL360.bad, fontWeight:600 } }, "0")), h("td", { style:td }, r.week || "—"), h("td", { style:td }, sc(r.avg10)), h("td", { style:{ ...td, whiteSpace:"nowrap" } }, fmt(r.last)),
-        h("td", { style:td }, r.total ? h("button", { className:"btn btnGhost", style:{ fontSize:12, padding:"3px 10px" }, onClick:()=>setHist({ id:r.hireId, name:r.name }) }, "Xem bài") : null)))))),
+        h("td", { style:td }, (r.total || r.oldIds.length) ? h("button", { className:"btn btnGhost", style:{ fontSize:12, padding:"3px 10px" }, onClick:()=>setHist({ id:r.hireId, name:r.name, extraIds:r.oldIds }) }, "Xem bài") : null)))))),
     hist && h(PracticeHistoryModal, { row:hist, onClose:()=>{ setHist(null); load(); } }));
 }
 // 14/10/2026: thuốc nhân viên kê ngoài từ điển → dược sĩ duyệt liều một lần, lần sau chấm theo bảng này
@@ -9938,7 +9975,7 @@ function ProbationView({ isAdmin, myStaff, trainStats, navParam }){
   const stars = (n) => n==null ? "—" : "★".repeat(Math.round(n)) + "☆".repeat(5-Math.round(n));
   const head = (r) => [
     h("div", { key:"a", style:{ display:"flex", justifyContent:"space-between", gap:8, alignItems:"flex-start" } },
-      h("div", null, h("div", { style:{ fontWeight:800, fontSize:14.5 } }, r.name),
+      h("div", null, h("div", { style:{ fontWeight:800, fontSize:14.5 } }, r.name + resignedTagOf(r)),
         h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, `${r.loai==="tts" ? "Thực tập sinh" : "Nhân viên thử việc"} · ${shopLabel(r.shop)} · buddy ${r.buddyName||"—"}`,
           r.auto && h("span", { style:{ marginLeft:6, fontSize:10.5, fontWeight:700, color:"#B45309", background:"#FEF3C7", borderRadius:8, padding:"1px 6px" } }, r.noJoinDate ? "tự thêm · thiếu ngày vào làm" : "tự thêm · chưa gán buddy")),
         h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, `${r.loai==="nvtv" && r.start!==r.joinDate ? "Bắt đầu thử việc" : "Vào"} ${pbDate(r.start)} · ngày thứ ${Math.min(r.day, 60)}/60 · kết thúc ${pbDate(r.end)}`)),
@@ -10173,7 +10210,7 @@ function TrainingView({ isAdmin, myStaff, navParam }){
         return React.createElement("div", { key:h.id, className:"card" }, [
           React.createElement("div", { key:"top", style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:8 } }, [
             React.createElement("div", { key:"l" }, [
-              React.createElement("div", { key:"n", style:{ fontWeight:700, fontSize:14.5 } }, h.name),
+              React.createElement("div", { key:"n", style:{ fontWeight:700, fontSize:14.5 } }, h.name + resignedTagOf(h)),
               React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)" } }, `${h.shop} · Vào làm ${h.joinDate} · Buddy: ${h.buddyName || "chưa gán"}`),
             ]),
             React.createElement("div", { key:"r", style:{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" } }, [
@@ -29197,7 +29234,7 @@ function App(){
     if(authState.status!=="in" || !claimsReady) return;
     if(isAdmin){ setStaffLoaded(true); return; }
     if(!hasStaffClaim){ setStaff([]); setStaffLoaded(true); return; }
-    const unsub = subscribeCol("staff", rows => { setStaff(rows); setStaffLoaded(true); }, null, { all:true });
+    const unsub = subscribeCol("staff", rows => { setStaff(rows); setStaffLoaded(true); window.__STAFF_ALL = rows; }, null, { all:true });
     return unsub;
   }, [authState.status, authState.user && authState.user.uid, isAdmin, claimsReady, hasStaffClaim]);
 
