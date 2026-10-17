@@ -26583,7 +26583,7 @@ function AppMetricsCard(){
   ]);
 }
 // =====================================================================================================
-// ===== 14/10/2026 (chị Hà): AI TỰ GIAO VIỆC cho các phần bổ sung (doanh thu, checklist, CTKM, NT mới, số liệu cũ, KPI) =====
+// ===== 14/10/2026 (chị Hà): AI TỰ GIAO VIỆC cho các phần bổ sung (doanh thu, CTKM, NT mới, số liệu cũ, KPI — KHÔNG gồm checklist) =====
 // Quy tắc an toàn (giống "AI điều hành"): chỉ giao khi có số liệu chứng minh và số liệu đã xác nhận / còn mới; chống giao trùng
 // (việc đang mở cùng nguồn → bỏ qua); giao cho cửa hàng trưởng của nhà thuốc, chưa có CHT thì giao cả nhà thuốc; việc NHÂN SỰ
 // (kế hoạch bù KPI) mặc định CHỜ DUYỆT — chỉ tự giao khi quản lý bật. Mỗi ngày chạy 1 lần khi quản lý mở app (khoá theo ngày ở
@@ -26591,7 +26591,6 @@ function AppMetricsCard(){
 // AA-ENGINE-BEGIN
 const AA_RULES = {
   dt01:{ label:"Kế hoạch bù doanh thu (nhà thuốc nguy cơ cao không đạt)", def:true },
-  checklist:{ label:"Khắc phục lỗi checklist nghiêm trọng lặp lại ≥ 3 ngày", def:true },
   promo:{ label:"Kiểm tra triển khai CTKM tại nhà thuốc yếu (đợt đang chạy)", def:true },
   newshop:{ label:"Tăng tốc nhà thuốc mới dưới kỳ vọng", def:true },
   stale:{ label:"Đồng bộ lại số tồn kho khi số liệu cũ (giao quản lý)", def:true },
@@ -26688,20 +26687,7 @@ function aaPlan(I){
         dupe: t => t.sourceIssueCode==="NS01" && (t.sourceShop===shop || t.shop===shop) });
     });
   }
-  // 3) Checklist — đầu việc NGHIÊM TRỌNG bị bỏ sót ≥ 3 ngày tại cùng nhà thuốc
-  if(on.checklist && I.checklist){
-    const res = clqAnalyze(I.checklist);
-    res.list.filter(x => x.severity==="critical").forEach(x => x.recurringShops.forEach(shop => {
-      const st = x.fixStatus.find(f => f.shop===shop);
-      if(st && st.state==="fixing") return;
-      if(st && st.state==="fixed"){ skipped.push({ rule:"checklist", key:`${x.id}:${shop}`, reason:"Đã khắc phục, chưa thấy tái diễn" }); return; }
-      add({ rule:"checklist", autoKey:`clq:${x.id}:${shop}`, ...aaAssign(I, shop, "now"), mode:"now", module:"Ops", deadline:addDaysAA(today, 1),
-        title:`Khắc phục: "${x.label}" bị bỏ sót ${x.shops[shop]} lần — ${String(shop).replace(/^SHOP0*/, "NT")}`,
-        mota:`AI tự giao. Đầu việc checklist mức NGHIÊM TRỌNG "${x.label}" (vai trò ${x.role}) bị bỏ sót ${x.shops[shop]} lần trong 14 ngày.${st && st.state==="recurred" ? " Đã từng khắc phục nhưng TÁI DIỄN." : ""}\nYêu cầu: tìm nguyên nhân (quy trình / nguồn lực / kỹ năng), khắc phục, gửi ảnh hoặc mô tả. Hệ thống tiếp tục theo dõi để xác minh không tái diễn.`,
-        extra:{ sourceScreen:"checklistQuality", checklistItemId:x.id, checklistItemLabel:x.label },
-        dupe: t => t.sourceScreen==="checklistQuality" && t.checklistItemId===x.id && t.shop===shop });
-    }));
-  }
+  // 3) (17/10/2026) Checklist: KHÔNG còn AI tự giao việc từ kết quả checklist — quản lý tự bấm "Tạo việc khắc phục" ở màn Chất lượng checklist.
   // 4) CTKM — đợt ĐANG CHẠY, nhà thuốc triển khai yếu
   if(on.promo && I.promo && I.promo.camp && I.promo.camp.running){
     const r = pmdDecide(I.promo.camp, I.promo.chainDaily);
