@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261019-1";
+window.__APP_BUILD = "20261019-2";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -37,7 +37,9 @@ window.__APP_BUILD = "20261019-1";
     if(busy) return; busy = true;
     fetch(location.pathname + "?_v=" + Date.now(), { cache:"no-store" }).then(function(r){ return r.ok ? r.text() : ""; }).then(function(t){
       var m = /window\.__APP_BUILD = "([^"]+)"/.exec(t || "");
-      if(m && m[1] !== window.__APP_BUILD){ if(fromResume && !typing()) hardReload(); else banner(); }
+      // 19/10/2026: đang làm dở việc quan trọng (VD bài luyện tình huống — window.__holdReload > 0) → KHÔNG tự tải lại, chỉ hiện thanh
+      // "Có bản mới" (trước đây quay lại app sau khi xem Zalo/tra thuốc là trang tự tải lại, mất bài đang luyện).
+      if(m && m[1] !== window.__APP_BUILD){ if(fromResume && !typing() && !(window.__holdReload > 0)) hardReload(); else banner(); }
     }).catch(function(){}).then(function(){ busy = false; });
   }
   document.addEventListener("visibilitychange", function(){ if(document.visibilityState === "visible") check(true); });
@@ -9610,7 +9612,13 @@ function TtsPracticeModal({ row, onClose, onChanged, groups }){
   const [err, setErr] = useState(null);
   const [hist, setHist] = useState(null);
   const chatRef = useRef(null);
-  async function loadHist(){ try{ setHist(await pbCall("practiceList", { hireId:row.id }, 60000)); } catch(e){ loadFail("practiceHist", "lịch sử luyện tập")(e); } }
+  async function loadHist(){ try{ const r = await pbCall("practiceList", { hireId:row.id }, 60000); setHist(r); return r; } catch(e){ loadFail("practiceHist", "lịch sử luyện tập")(e); return null; } }
+  // 19/10/2026: mở lại bài KHÁCH ẢO đang làm dở (trang bị tải lại / lỡ thoát) — lấy hội thoại đã lưu ở máy chủ, làm tiếp từ lượt cuối
+  async function resume(id, isAdm){ setBusy("new"); setErr(null); setRes(null); setInput(""); setNhanDinh("");
+    try{ const r = await pbCall("practiceDetail", { hireId:row.id, id }, 60000); if(r.ok===false) throw new Error(r.error); const it = r.item;
+      setMode("chat"); setCur({ id:it.id, mode:"chat", title: isAdm ? it.title : "Tự chẩn đoán", hidden: !isAdm, doiTuong:it.doiTuong||"", fromLibrary:it.fromLibrary, scenario:it.scenario||{} });
+      setMsgs([{ who:"kh", t:(it.scenario||{}).loiKhach||"" }, ...(it.transcript||[])]); }
+    catch(e){ setErr("Không mở lại được bài dở: " + (e.message||e)); setBusy(""); return next("chat"); } setBusy(""); }
   async function next(m){ const md = m || mode; setBusy("new"); setErr(null); setRes(null); setInfo(null); setMsgs([]); setInput("");
     setAns({ nhanDinh:"", hoi:"", xuTri:"", thuoc:"", danDo:"" }); setQuiz({ cauHoi:[], xuTri:null, thuoc:[], chanDoan:null }); setNhanDinh(""); setVoiceUrls({}); setLiveDone(false);
     try{ const r = await pbCall("practiceNew", { hireId:row.id, mode:md, groups: groups||[], live: md==="voice" && !p2t }, 120000); if(r.ok===false) throw new Error(r.error); setCur(r); setMsgs([{ who:"kh", t:r.scenario.loiKhach }]);
@@ -9640,7 +9648,11 @@ function TtsPracticeModal({ row, onClose, onChanged, groups }){
     if((mode==="chat" || mode==="voice") && !nhanDinh.trim() && !window.confirm("Bạn chưa ghi nhận định bệnh (khách bị gì) — phần Chẩn đoán sẽ được 0 điểm. Vẫn nộp?")){ setBusy(""); return; }
     try{ const r = await pbCall("practiceSubmit", { hireId:row.id, id:cur.id, answer:ans, quiz, nhanDinh }, 240000); if(r.ok===false) throw new Error(r.error); setRes(r); onChanged && onChanged(); loadHist(); }
     catch(e){ setErr(e.message||String(e)); } setBusy(""); }
-  useEffect(()=>{ loadHist(); next("chat"); }, []);
+  useEffect(()=>{ (async () => { const hl = await loadHist();
+    const lim = Date.now() - 6 * 3600 * 1000; // bài dở trong 6 giờ gần nhất
+    const half = ((hl && hl.rows) || []).find(x => x.status==="open" && x.mode==="chat" && (x.turns||0) >= 1 && Date.parse(x.createdAt||"") > lim);
+    if(half && window.confirm(`Bạn có 1 bài Khách ảo đang làm dở (bắt đầu ${new Date(half.createdAt).toLocaleTimeString("vi-VN", { hour:"2-digit", minute:"2-digit" })}, ${half.turns} lượt).\n\nBấm OK để LÀM TIẾP bài đó, Huỷ để lấy bài mới.`)) resume(half.id, !!hl.isAdmin);
+    else next("chat"); })(); }, []);
   useEffect(()=>{ if(chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight; }, [msgs]);
   const sc = res && res.score;
   const scColor = sc>=80 ? CL360.good : sc>=60 ? CL360.warn : CL360.bad;
@@ -9656,10 +9668,16 @@ function TtsPracticeModal({ row, onClose, onChanged, groups }){
   const nvTurns = msgs.filter(m=>m.who==="nv").length;
   // 19/10/2026: bấm nhầm ra ngoài khung / Đóng / đổi kiểu luyện khi đang làm dở → hỏi lại (trước đây thoát luôn, mất bài đang làm).
   // Bài dở vẫn lưu ở máy chủ — chấm tiếp được ở "Bài đã làm" (nút "Chấm bài này").
-  const inProgress = !!cur && !res && (nvTurns>0 || mode==="write" || mode==="quiz");
+  const inProgress = !!cur && !res && (nvTurns>0 || mode!=="chat"); // giọng nói: cả lúc đang gọi (hội thoại chỉ hiện khi kết thúc cuộc gọi)
   const confirmLeave = (what) => { if(busy==="sub") return false; /* đang chấm — chờ xong */ if(!inProgress) return true;
     return window.confirm(`Bạn đang làm dở bài này. ${what}?\n\nHội thoại đã lưu — mở "Bài đã làm" để chấm tiếp (cần ≥ 2 lượt trao đổi).`); };
   const safeClose = () => { if(confirmLeave("Thoát ra")) onClose(); };
+  // 19/10/2026: đang làm dở → giữ trang, không cho app tự tải lại khi có bản mới; tải lại / đóng tab thì trình duyệt hỏi lại
+  useEffect(()=>{ if(!inProgress) return;
+    window.__holdReload = (window.__holdReload || 0) + 1;
+    const bu = e => { e.preventDefault(); e.returnValue = ""; return ""; };
+    window.addEventListener("beforeunload", bu);
+    return () => { window.__holdReload = Math.max(0, (window.__holdReload || 1) - 1); window.removeEventListener("beforeunload", bu); }; }, [inProgress]);
   return h("div", { className:"modalOverlay", onClick:safeClose },
     h("div", { className:"modal", onClick:e=>e.stopPropagation(), style:{ maxWidth:680, maxHeight:"94vh", overflow:"auto" } },
       h("div", { style:{ fontWeight:800, fontSize:17 } }, "Luyện tình huống cắt liều"),
