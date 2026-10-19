@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261019-4";
+window.__APP_BUILD = "20261019-7";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -54,7 +54,7 @@ window.__APP_BUILD = "20261019-4";
 // 1/10/2026: các function "chạy ngay"/quản trị đã gom vào 1 function runJobNow?job=<tên> — tự đổi địa chỉ gọi ở đây
 // (mọi chỗ trong app vẫn gọi tên cũ, không phải sửa từng nút).
 (function(){
-  var JOBS = new Set(["syncWorkRegistrationsNow", "syncProductCatalogFromApiNow", "syncProductPackagingUnitsNow", "cleanupLegacyCatalogFieldsNow", "syncInventoryNow", "syncSalesOrdersNow", "syncSalesOrdersHeadersOnlyNow", "analyzeWeeklyReportNow", "analyzeManagerWeekNow", "analyzeCustomerOrderTrendsNow", "analyzeComprehensiveNow", "analyzeCommandCenterNow", "analyzeKpiNow", "notifyOverdueTasksNow", "remindDailyChecklistNow", "remindPhotoReportNow", "syncEmployeePlanNow", "syncPointSalesProductsNow", "syncShopPlanNow", "syncInventoryExpiryNow", "syncCustomerLevelUpgradesNow", "notifyDailyKpiPaceNow", "sendTestPushNow", "syncCustomerPurchaseHistoryNow", "backfillCustomerEventsNow", "computeBehaviorAnalyticsNow", "computeRevenueAnalyticsNow", "computeCategoryAnalyticsNow", "debugSalesOrderFieldsNow", "debugRevenueRangeNow", "debugChainDetectFieldNow", "debugReadStoredChainRevenueNow", "computePromoSkuActualsNow", "detectPromoDocUsageNow", "trackPromoByDocumentIdNow", "refreshPromoAutoTrackedSkuActualsNow", "resetCrmActionEngineNow", "computeCrmCampaignStatsNow", "computeCrmStaffEffectivenessNow", "computeCrmActionCenterNow", "syncCrmFollowUpTasksNow", "notifyCrmFollowUpDigestNow", "computeCustomerSegmentsNow", "syncCrmCustomersNow", "autoAssignCrmCustomersNow", "clearDefaultCrmAssignmentsNow", "clearAllCrmAssignmentsNow", "migrateIssueActionsStatusNow", "syncCrmBirthdaysNow", "fillMissingCustomerProfilesNow", "checkCategoryConcentrationNow", "computeInventoryConsumptionNow", "computeShopHealthNow", "syncTransferSuggestionsNow", "computeDailyResultsNow", "computeWorkforceMetricsNow", "explainWorkforceNow", "computeTaskIntelligenceNow", "backfillTaskLifecycleNow", "analyzeTasksNow", "computeCareOutcomesNow", "runRiskEngineNow", "runAiReportNow", "computeReplenishmentNow", "replenishmentList", "replenishmentContact", "replenishmentClaim", "replenishmentSettings", "shopDayEndNow", "buildOpsDaySnapshotNow", "autoMatchPromoCampaignsNow", "functionCostMonthNow", "computeOrderFulfillmentNow", "promoEffectNow", "dataHygieneNow"]);
+  var JOBS = new Set(["crmCareMsgNow","restockNotifyNow", "promoExpiredCleanupNow", "syncWorkRegistrationsNow","syncProductCatalogFromApiNow", "syncProductPackagingUnitsNow", "cleanupLegacyCatalogFieldsNow", "syncInventoryNow", "syncSalesOrdersNow", "syncSalesOrdersHeadersOnlyNow", "analyzeWeeklyReportNow", "analyzeManagerWeekNow", "analyzeCustomerOrderTrendsNow", "analyzeComprehensiveNow", "analyzeCommandCenterNow", "analyzeKpiNow", "notifyOverdueTasksNow", "remindDailyChecklistNow", "remindPhotoReportNow", "syncEmployeePlanNow", "syncPointSalesProductsNow", "syncShopPlanNow", "syncInventoryExpiryNow", "syncCustomerLevelUpgradesNow", "notifyDailyKpiPaceNow", "sendTestPushNow", "syncCustomerPurchaseHistoryNow", "backfillCustomerEventsNow", "computeBehaviorAnalyticsNow", "computeRevenueAnalyticsNow", "computeCategoryAnalyticsNow", "debugSalesOrderFieldsNow", "debugRevenueRangeNow", "debugChainDetectFieldNow", "debugReadStoredChainRevenueNow", "computePromoSkuActualsNow", "detectPromoDocUsageNow", "trackPromoByDocumentIdNow", "refreshPromoAutoTrackedSkuActualsNow", "resetCrmActionEngineNow", "computeCrmCampaignStatsNow", "computeCrmStaffEffectivenessNow", "computeCrmActionCenterNow", "syncCrmFollowUpTasksNow", "notifyCrmFollowUpDigestNow", "computeCustomerSegmentsNow", "syncCrmCustomersNow", "autoAssignCrmCustomersNow", "clearDefaultCrmAssignmentsNow", "clearAllCrmAssignmentsNow", "migrateIssueActionsStatusNow", "syncCrmBirthdaysNow", "fillMissingCustomerProfilesNow", "checkCategoryConcentrationNow", "computeInventoryConsumptionNow", "computeShopHealthNow", "syncTransferSuggestionsNow", "computeDailyResultsNow", "computeWorkforceMetricsNow", "explainWorkforceNow", "computeTaskIntelligenceNow", "backfillTaskLifecycleNow", "analyzeTasksNow", "computeCareOutcomesNow", "runRiskEngineNow", "runAiReportNow", "computeReplenishmentNow", "replenishmentList", "replenishmentContact", "replenishmentClaim", "replenishmentSettings", "shopDayEndNow", "buildOpsDaySnapshotNow", "autoMatchPromoCampaignsNow", "functionCostMonthNow", "computeOrderFulfillmentNow", "promoEffectNow", "dataHygieneNow"]);
   var BASE = "https://asia-southeast1-upharma-176d5.cloudfunctions.net/";
   // 1/10/2026: việc NHẸ chạy ở runJobLight (nhiều yêu cầu/1 máy, ít khởi động lạnh); việc nặng ở runJobNow.
   var LIGHT = new Set(["syncWorkRegistrationsNow", "cleanupLegacyCatalogFieldsNow", "syncInventoryNow", "syncSalesOrdersNow", "syncSalesOrdersHeadersOnlyNow", "notifyOverdueTasksNow", "remindDailyChecklistNow", "remindPhotoReportNow", "syncEmployeePlanNow", "syncPointSalesProductsNow", "syncShopPlanNow", "syncInventoryExpiryNow", "notifyDailyKpiPaceNow", "sendTestPushNow", "debugSalesOrderFieldsNow", "debugRevenueRangeNow", "debugChainDetectFieldNow", "debugReadStoredChainRevenueNow", "computePromoSkuActualsNow", "detectPromoDocUsageNow", "computeCrmActionCenterNow", "syncCrmFollowUpTasksNow", "notifyCrmFollowUpDigestNow", "autoAssignCrmCustomersNow", "clearDefaultCrmAssignmentsNow", "clearAllCrmAssignmentsNow", "migrateIssueActionsStatusNow", "computeShopHealthNow", "computeTaskIntelligenceNow", "replenishmentList", "replenishmentContact", "replenishmentClaim", "replenishmentSettings", "shopDayEndNow", "buildOpsDaySnapshotNow", "functionCostMonthNow"]);
@@ -2662,6 +2662,14 @@ function CustomerOrderView({ isAdmin, myStaff }){
             o.deXuatMoTu && StatusPill("Đề xuất mở tủ", "gold"),
           ]),
           (!isShip && !o.ngayHen && o.cachBao && o.trangThai==="Đang chờ") && React.createElement("div", { key:"cb", style:{ fontSize:12, color:"var(--pine)", fontWeight:600, marginTop:6 } }, `Khi có hàng: ${o.cachBao}`),
+          // 19/10/2026: máy chủ thấy kho nhà thuốc đã có hàng khách hỏi → báo ngay + tin Zalo soạn sẵn (xưng hô theo tên khách)
+          (!isShip && o.trangThai==="Đang chờ" && o.restock && o.restock.ok) && React.createElement("div", { key:"rs", style:{ marginTop:8, background:"#F0FDF4", border:"1px solid #BBF7D0", borderRadius:9, padding:"7px 10px", fontSize:12.5 } }, [
+            React.createElement("div", { key:"t", style:{ fontWeight:700, color:"#15803D" } }, `✓ Kho đã có hàng: ${o.restock.productName}${o.restock.stockQty!=null ? ` · tồn ${o.restock.stockQty} ${o.restock.unit||""}` : ""}`),
+            React.createElement("div", { key:"s", style:{ color:"var(--inkSoft)", marginTop:2 } }, `Hệ thống tự đối chiếu tên hàng (${dashDM(String(o.restock.detectedAt||"").slice(0,10))}) — kiểm tra đúng mã rồi báo khách.`),
+            o.customerPhone && React.createElement("button", { key:"z", type:"button", className:"btn btnPrimary", style:{ padding:"4px 10px", fontSize:12, marginTop:6 }, onClick:async ()=>{
+              const msg = zaloCareMsg({ kind:"restock", name:o.customerName, shop:o.shop, staffName:(myStaff && myStaff.name) || "", items:[{ productName:o.productName, qty:o.soLuong, unit:o.restock.unit, askedOn: dashDM(o.ngayTao) }] });
+              try{ await navigator.clipboard.writeText(msg); alert("Đã chép tin Zalo:\n\n" + msg); }catch(e){ window.prompt("Chép tin này gửi khách:", msg); } } }, "Chép tin Zalo báo về hàng"),
+          ]),
         ]),
         isShip
           ? StatusPill(o.trangThai==="Đang chờ" ? "Chưa gửi hàng" : o.trangThai, (o.trangThai==="Đã giao thành công") ? "good" : (o.trangThai==="Giao thất bại - hoàn hàng" ? "warn" : "neutral"))
@@ -4629,6 +4637,7 @@ function zaloCareMsg(o){
     if(o.tone === "ngan") return `${hi} ${what} ${p} đang dùng ${when}, ${me} giữ sẵn hay gửi tận nhà cho ${p} ạ?${pk}`;
     return `${hi}\n${Me} nhắc ${p}: ${what} ${when} ạ, ${p} dùng đều để thuốc phát huy tác dụng nhé.${pk}\n${P} muốn ${me} giữ sẵn để ghé lấy, hay gửi tận nhà ạ?`;
   }
+  if(o.kind === "restock"){ const it0 = items[0] || {}; return `${hi}\n${it0.productName || "Sản phẩm"} ${p} hỏi${it0.askedOn ? " hôm " + it0.askedOn : " hôm trước"} nhà thuốc đã về hàng rồi ạ, ${me} giữ sẵn ${Number(it0.qty) > 0 ? it0.qty : 1} ${it0.unit || "hộp"} cho ${p} nha.${pk}\n${P} ghé lấy trong 2–3 ngày tới, hay để ${me} gửi tận nhà ạ?`; }
   if(o.kind === "bday") return `${hi}\nChúc ${p} sinh nhật vui, thật nhiều sức khoẻ ạ Nhà thuốc có quà sinh nhật dành riêng cho ${p}, ghé trong tuần này nhận nha.${pk}`;
   if(o.kind === "vip") return `${hi}\nLâu rồi chưa gặp, ${me} hỏi thăm sức khoẻ ${p} và gia đình ạ.${pk}\n${P} có cần ${me} chuẩn bị sẵn thuốc quen dùng không ạ?`;
   if(o.kind === "risk") return `${hi}\n${Me} hỏi thăm ${p} dạo này khoẻ không ạ, thuốc lần trước dùng thấy ổn chứ ạ?${pk}\nCần gì ${p} cứ nhắn, ${me} gửi tận nhà cho tiện ạ.`;
@@ -4665,6 +4674,14 @@ function zaloOptions(o){
     L.push({ k:"v3", label:"Mời ghé lại", text:`Dạ ${N.full} ơi, lâu rồi chưa gặp ${p} ở nhà thuốc ạ.${pk}\n${P} ghé lúc nào báo ${me} trước để ${me} chuẩn bị sẵn nha — ${sign}` });
     L.push({ k:"ngan", label:"Ngắn gọn", text:`${F} ơi, dạo này ${p} khoẻ không ạ? Cần gì cứ nhắn ${me} nha.${pk} — ${sign}` });
     L.push({ k:"caotuoi", label:"Khách lớn tuổi", text:`Dạ con chào ${O.full}, con là ${sign} ạ. Con hỏi thăm ${O.p} dạo này ăn ngủ có ổn không ạ?${pkO} Cần gì ${O.p} cứ gọi con, con gửi thuốc tới tận nhà ạ.` });
+  } else if(o.kind === "restock"){
+    // 19/10/2026: khách từng hỏi hàng nhà thuốc đang hết — nay kho đã có → báo + giữ hàng
+    const it0 = its[0] || {}; const pn = it0.productName || "sản phẩm"; const q = Number(it0.qty) > 0 ? `${it0.qty} ${it0.unit || "hộp"}` : `1 ${it0.unit || "hộp"}`;
+    const ask = it0.askedOn ? ` hôm ${it0.askedOn}` : " hôm trước";
+    L.push({ k:"v1", label:"Báo về hàng + giữ hàng", text:`Dạ ${me} chào ${N.full}, ${me} là ${sign} ạ.\n${pn} ${p} hỏi${ask} nhà thuốc đã về hàng rồi ạ. ${Me} giữ sẵn ${q} cho ${p}, ${p} ghé lấy trong 2–3 ngày tới giúp ${me} nha.${pk}\n${P} bận không ghé được thì ${me} gửi tận nhà cũng được ạ.` });
+    L.push({ k:"v2", label:"Hỏi giao tận nhà", text:`${F} ơi, ${me} ${who} đây ạ. ${pn} ${p} cần${ask} bên ${me} có hàng rồi ạ. ${P} muốn ${me} để riêng chờ ${p} ghé, hay gửi qua nhà luôn ạ?${pk}` });
+    L.push({ k:"ngan", label:"Ngắn gọn", text:`${F} ơi, ${pn} ${p} hỏi${ask} đã về rồi ạ, ${me} giữ sẵn ${q} cho ${p} nha.${pk} — ${sign}` });
+    L.push({ k:"caotuoi", label:"Khách lớn tuổi", text:`Dạ con chào ${O.full}, con là ${sign} ạ. ${pn} ${O.p} hỏi${ask} nhà thuốc về hàng rồi ạ, con để sẵn ${q} cho ${O.p}.${pkO} ${O.p.charAt(0).toUpperCase()+O.p.slice(1)} ngại đi lại thì con mang tới tận nhà ạ.` });
   } else if(o.kind === "bday"){
     L.push({ k:"v1", label:"Chúc mừng", text:`Chúc mừng sinh nhật ${N.full} ạ Chúc ${p} tuổi mới thật khoẻ, nhiều niềm vui!\nNhà thuốc có món quà nhỏ tặng ${p}, tuần này ${p} ghé nhận nha ạ.${pk}\n— ${sign}` });
     L.push({ k:"v2", label:"Ấm áp", text:`Dạ hôm nay sinh nhật ${p} phải không ạ? ${Me} ${who} chúc ${p} luôn mạnh khoẻ, bình an.\n${Me} có để dành quà sinh nhật cho ${p}, ghé lấy giúp ${me} nha ạ.${pk}` });
@@ -4688,8 +4705,17 @@ function ZaloOptionsModal({ o, phone, onClose }){
   const opts0 = zaloOptions({ ...o, vouchers: vs || [] });
   // xếp mẫu có tỉ lệ khách quay lại cao nhất lên đầu (cần ≥ 10 lượt đo)
   const st = (rs && rs.byTpl) || {}; const rk = (x) => { const z = st[`${o.kind}:${x.k}`]; return z && z.n >= 10 ? z.rate : -1; };
-  const opts = opts0.map(x => { const z = st[`${o.kind}:${x.k}`]; return z && z.n >= 10 ? { ...x, label: `${x.label} · ${Math.round(z.rate)}% quay lại` } : x; }).sort((a, b) => rk(b) - rk(a));
-  useEffect(() => { if (!edited) setTxt((opts[sel] || opts[0]).text); }, [sel, vs]);
+  // 19/10/2026: tin AI viết theo nhóm sản phẩm khách hay dùng (như dược sĩ hỏi thăm) — máy chủ không nhận SĐT/họ tên gửi cho AI
+  const [ai, setAi] = useState(null); const [aiBusy, setAiBusy] = useState(false); const [aiErr, setAiErr] = useState("");
+  const optsT = opts0.map(x => { const z = st[`${o.kind}:${x.k}`]; return z && z.n >= 10 ? { ...x, label: `${x.label} · ${Math.round(z.rate)}% quay lại` } : x; }).sort((a, b) => rk(b) - rk(a));
+  const opts = ai ? [{ k:"ai", label:"✨ AI theo sức khoẻ khách", text:ai.tin }, ...optsT] : optsT;
+  async function askAi(){ setAiBusy(true); setAiErr("");
+    try{ const N = zaloCallName(o.name, ""); const p = N.p; const perk = zaloPerks({ ...o, vouchers: vs || [] }, p);
+      const r = await fetch(CF_CLAIMS_BASE + "/crmCareMsgNow", { method:"POST", headers:{ "Content-Type":"application/json", ...(await authHeader()) },
+        body: JSON.stringify({ phone, kind:o.kind, callName:N.full, p, me:zaloSelf(p), sign:zaloSign(o), perk }) }).then(x => x.json());
+      if(!r || r.ok === false) throw new Error((r && r.error) || "AI chưa viết được"); setAi(r); setEdited(false); setSel(0); }
+    catch(e){ setAiErr(e.message || String(e)); } setAiBusy(false); }
+  useEffect(() => { if (!edited) setTxt((opts[sel] || opts[0]).text); }, [sel, vs, ai]);
   const zp = String(phone||"").replace(/\D/g,"");
   const copy = async () => { _zaloTplUsed[String(phone||"")] = `${o.kind}:${(opts[sel]||opts[0]).k}`; try { await navigator.clipboard.writeText(txt); setCopied(true); setTimeout(()=>setCopied(false), 1800); } catch(e){ window.prompt("Sao chép tin nhắn:", txt); } };
   return h("div", { onClick:onClose, style:{ position:"fixed", inset:0, background:"rgba(0,0,0,.35)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:12 } },
@@ -4699,7 +4725,11 @@ function ZaloOptionsModal({ o, phone, onClose }){
         h("button", { className:"btn btnGhost", onClick:onClose }, "Đóng")),
       h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:8 } }, vs == null ? "Đang tra voucher của khách trên POS…" : vs.length ? (() => { const z = zaloVoucherSum(vs); return `Khách đang có ${z.n} voucher chưa dùng${z.total ? ` · tổng ${zaloMoney(z.total)}` : ""}${z.top && z.top.value ? ` · cao nhất ${zaloMoney(z.top.value)}` : ""} — đã đưa vào tin.`; })() : "Khách chưa có voucher nào còn dùng được."),
       h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:8 } }, opts.map((x, i) => h("button", { key:x.k, onClick:()=>{ setEdited(false); setSel(i); },
-        style:{ padding:"5px 11px", borderRadius:16, fontSize:12.5, fontWeight:700, cursor:"pointer", border: sel===i ? "1px solid var(--pine, #178a43)" : "1px solid var(--line)", background: sel===i ? "var(--pine, #178a43)" : "#fff", color: sel===i ? "#fff" : "inherit" } }, x.label))),
+        style:{ padding:"5px 11px", borderRadius:16, fontSize:12.5, fontWeight:700, cursor:"pointer", border: sel===i ? "1px solid var(--pine, #178a43)" : "1px solid var(--line)", background: sel===i ? "var(--pine, #178a43)" : "#fff", color: sel===i ? "#fff" : "inherit" } }, x.label)),
+        !ai && h("button", { onClick:askAi, disabled:aiBusy, title:"AI viết tin hỏi thăm theo nhóm thuốc/sản phẩm khách hay dùng — đọc lại trước khi gửi",
+          style:{ padding:"5px 11px", borderRadius:16, fontSize:12.5, fontWeight:700, cursor:"pointer", border:"1px dashed var(--pine, #178a43)", background:"#F0FDF4", color:"var(--pine, #178a43)" } }, aiBusy ? "AI đang viết…" : "✨ AI viết theo sức khoẻ khách")),
+      aiErr && h("div", { style:{ fontSize:12, color:"#B91C1C", marginBottom:6 } }, aiErr),
+      ai && sel===0 && (ai.basedOn||[]).length>0 && h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginBottom:6 } }, "AI dựa trên: " + ai.basedOn.join(" · ") + " — đọc lại, sửa nếu cần trước khi gửi."),
       h("textarea", { value:txt, onChange:e=>{ setTxt(e.target.value); setEdited(true); }, rows:7, style:{ width:"100%", fontSize:14, lineHeight:1.55, padding:10, borderRadius:10, border:"1px solid var(--line)", fontFamily:"inherit" } }),
       h("div", { style:{ display:"flex", gap:8, marginTop:10, flexWrap:"wrap" } },
         h("button", { className:"btn btnPrimary", onClick:copy }, copied ? "✓ Đã chép" : "Chép tin nhắn"),
@@ -13648,6 +13678,30 @@ function DashMonthlyTrendSection({ shop, onNavigate }){
       series:[ { name:"Chỉ tiêu", color:"#CBD5E1", values: vals.map(v => v ? Number(v.target)||0 : 0) }, { name:"Thực hiện", color:DASH_C.pine, values: vals.map(v => v ? Number(v.actual)||0 : 0) } ] }),
     CK(ChartLegend, { items:[ { label:"Chỉ tiêu", color:"#CBD5E1" }, { label:"Thực hiện", color:DASH_C.pine } ] }));
 }
+// ---- 0) CẢNH BÁO CẦN CAN THIỆP (báo cáo theo ngoại lệ — đặt trên cùng) ----
+// Gom từ các bảng máy chủ đã tính: vấn đề mức ĐỎ/CAM của từng nhà thuốc (shopHealthSummary), nhân viên quá tải và việc vướng > 2 ngày (taskIntelligence).
+function DashRedFlagsSection({ shop, onNavigate }){
+  const CK = React.createElement;
+  const sh = useDashLoad("health", () => dashOpsDoc("shopHealthSummary"));
+  const ti = useDashLoad("taskIntel", () => dashOpsDoc("taskIntelligence"));
+  const flags = [];
+  Object.entries((sh.data && sh.data.shops) || {}).forEach(([s, x]) => { if(shop && s !== shop) return;
+    (x.issues || []).filter(i => i.severity === "red" || i.severity === "orange").forEach(i => flags.push({ sev:i.severity, shop:s, title:i.title || i.code, detail:i.detail || "", tab:i.tab || "shop360" })); });
+  const T = ti.data || {};
+  (T.overloaded || []).forEach(r => { if(shop && r.shop && r.shop !== shop) return; flags.push({ sev:"orange", shop:r.shop || "", title:`${r.label || r.key} đang quá tải`, detail:r.reason || "", tab:"tasks" }); });
+  (T.blockers || []).filter(b => (b.hours || 0) >= 48 && (!shop || b.shop === shop)).forEach(b => flags.push({ sev:"orange", shop:b.shop || "", title:`Việc vướng ${Math.round(b.hours/24)} ngày: ${b.title}`, detail:[b.owner, b.reason].filter(Boolean).join(" · "), tab:"tasks" }));
+  flags.sort((a,b) => (a.sev==="red"?0:1) - (b.sev==="red"?0:1) || String(a.shop).localeCompare(String(b.shop)));
+  const red = flags.filter(f=>f.sev==="red").length;
+  const [all, setAll] = React.useState(false); const shown = all ? flags : flags.slice(0, 8);
+  return CK(DashBox, { title: flags.length ? `⚠ Cần can thiệp: ${red} việc đỏ · ${flags.length - red} việc cam` : "Cần can thiệp", sub:"Điểm bất thường hệ thống tự phát hiện — đọc phần này trước (bấm \"Mở\" để xử lý)", st: sh.loading || ti.loading ? { loading:true } : sh.err ? sh : null,
+      empty: !flags.length ? "Không có điểm bất thường mức đỏ/cam. 👍" : null },
+    CK("div", { style:{ display:"flex", flexDirection:"column", gap:6 } },
+      shown.map((f, i) => CK("div", { key:i, style:{ display:"flex", gap:10, alignItems:"flex-start", padding:"7px 10px", borderRadius:9, border:"1px solid " + (f.sev==="red" ? "#FECACA" : "#FED7AA"), background: f.sev==="red" ? "#FEF2F2" : "#FFF7ED" } },
+        CK("span", { style:{ fontWeight:900, color: f.sev==="red" ? DASH_C.bad : DASH_C.warn, minWidth:16 } }, f.sev==="red" ? "●" : "●"),
+        CK("div", { style:{ flex:1, minWidth:0, fontSize:13 } }, CK("b", null, (f.shop ? shopLabel(f.shop) + " · " : "") + f.title), f.detail && CK("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:1 } }, f.detail)),
+        onNavigate && CK("button", { className:"btn", style:{ padding:"3px 9px", fontSize:12 }, onClick:()=>onNavigate(f.tab) }, "Mở"))),
+      flags.length > 8 && CK("button", { className:"btn btnGhost", style:{ fontSize:12, alignSelf:"flex-start" }, onClick:()=>setAll(!all) }, all ? "Thu gọn" : `Xem thêm ${flags.length - 8} cảnh báo`)));
+}
 // ---- Trang Dashboard tổng hợp ----
 function SummaryDashboardView({ isAdmin, myStaff, onNavigate }){
   const CK = React.createElement;
@@ -13663,6 +13717,7 @@ function SummaryDashboardView({ isAdmin, myStaff, onNavigate }){
         CK("div", { className:"pagesub" }, shop ? `Nhà thuốc ${shopLabel(shop)}` : "Toàn chuỗi — so sánh giữa các nhà thuốc · bấm \"Xem chi tiết\" để mở màn tương ứng")),
       isAdmin && CK("select", { value:pick, onChange:e=>setPick(e.target.value), style:{ padding:"6px 9px", borderRadius:8, border:"1px solid var(--line)" } },
         CK("option", { value:"" }, "Toàn chuỗi"), shopsList.map(s => CK("option", { key:s, value:s }, shopLabel(s) + " · " + s)))),
+    CK(DashRedFlagsSection, p),
     CK("div", { className:"dashGrid", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(min(100%, 520px), 1fr))", gap:14, alignItems:"start" } },
       CK(DashRevenueSection, p), CK(DashHealthSection, p), CK(DashKpiSection, p), CK(DashTaskSection, p),
       CK(DashChecklistSection, p), CK(DashCareSection, p), CK(DashTrainingSection, p), CK(DashMonthlyTrendSection, p)));
@@ -30097,7 +30152,8 @@ function Dashboard({ user, isAdmin, myStaff }){
         activeTab==="temgia" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(TemGiaView, { key:viewResetKey })),
         (isAdmin || isCHT) && activeTab==="baocaotuan" && React.createElement(ErrorBoundary, { key:"ebd_baocaotuan", inline:true }, React.createElement(DashCollapse, { id:"baocaotuan", title:"Biểu đồ doanh thu theo tuần" }, React.createElement(DashWeeklyTrendSection, { shop: isAdmin ? null : (myStaff && myStaff.shop) || null, onNavigate:null }))), // 19/10/2026: biểu đồ tổng hợp
       activeTab==="baocaotuan" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(BaoCaoTuanView, { key:viewResetKey, isAdmin, myStaff })),
-        activeTab==="baocaolanhdao" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(LeaderReportView, { key:viewResetKey, isAdmin })),
+        isAdmin && activeTab==="baocaolanhdao" && React.createElement(ErrorBoundary, { key:"ebd_baocaolanhdao", inline:true }, React.createElement(DashCollapse, { id:"baocaolanhdao", title:"Cảnh báo cần can thiệp (đọc trước)" }, React.createElement(DashRedFlagsSection, { shop:null, onNavigate:setActiveTab }))), // 19/10/2026: báo cáo theo ngoại lệ
+      activeTab==="baocaolanhdao" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(LeaderReportView, { key:viewResetKey, isAdmin })),
         (isAdmin || isCHT) && activeTab==="baocaothang" && React.createElement(ErrorBoundary, { key:"ebd_baocaothang", inline:true }, React.createElement(DashCollapse, { id:"baocaothang", title:"Biểu đồ doanh thu 6 tháng" }, React.createElement(DashMonthlyTrendSection, { shop: isAdmin ? null : (myStaff && myStaff.shop) || null, onNavigate:null }))), // 19/10/2026: biểu đồ tổng hợp
       activeTab==="baocaothang" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(MonthlyReportView, { key:viewResetKey, isAdmin, onNavigate:setActiveTab })),
         activeTab==="nhipvanhanh" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(OpsPulseView, { key:viewResetKey, isAdmin, myStaff })),
