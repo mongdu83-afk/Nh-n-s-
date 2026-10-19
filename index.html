@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261019-2";
+window.__APP_BUILD = "20261019-3";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -9311,6 +9311,22 @@ function TtsVoiceDetail({ it, hireId }){
         it.voiceClips.length > 1 && h("span", null, v.text))),
       err && h("div", { style:{ color:CL360.bad, fontSize:12 } }, err)));
 }
+// 19/10/2026: ĐÁNH GIÁ CHỌN THUỐC — đủ nhóm thuốc ca cần chưa, cần thêm gì, thừa gì (bên cạnh đánh giá liều từng thuốc)
+const TTS_COV_LABEL = { du:["Đủ thuốc","#15803D","#DCFCE7"], thieu:["Thiếu thuốc","#B91C1C","#FEE2E2"], thua:["Thừa thuốc","#A16207","#FEF9C3"], thieuVaThua:["Thiếu & thừa thuốc","#B91C1C","#FEE2E2"] };
+function TtsCoverageBlock({ cov }){
+  const h = React.createElement;
+  if(!cov || (!(cov.nhom||[]).length && !(cov.canThem||[]).length && !(cov.khongCan||[]).length)) return null;
+  const L = TTS_COV_LABEL[cov.muc] || null;
+  const pill = (t, fg, bg) => h("span", { style:{ display:"inline-block", fontSize:11.5, fontWeight:700, color:fg, background:bg, borderRadius:999, padding:"1px 8px", whiteSpace:"nowrap" } }, t);
+  return h("div", { style:{ marginTop:8, border:"1px solid var(--line)", borderRadius:10, padding:"8px 10px", fontSize:13, lineHeight:1.5, background:"#fff" } },
+    h("div", { style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" } }, h("b", null, "Chọn thuốc"), L && pill(L[0], L[1], L[2]), cov.diem!=null && h("span", { style:{ fontSize:12, color:"var(--inkSoft)" } }, `${cov.diem}/12 điểm`)),
+    (cov.nhom||[]).length>0 && h("div", { style:{ marginTop:5, display:"flex", flexDirection:"column", gap:3 } }, cov.nhom.map((g,i) => h("div", { key:i, style:{ display:"flex", gap:6, alignItems:"flex-start" } },
+      h("span", { style:{ fontWeight:800, color: g.nvCo ? "#15803D" : g.canThiet ? "#B91C1C" : "var(--inkSoft)", minWidth:14 } }, g.nvCo ? "✓" : g.canThiet ? "✗" : "–"),
+      h("span", null, h("b", null, g.nhom), !g.canThiet ? " (tuỳ chọn)" : "", ": ", g.nvCo ? (g.thuocNV || "đã tư vấn") : h("span", { style:{ color: g.canThiet ? "#B91C1C" : "var(--inkSoft)" } }, "chưa tư vấn"))))),
+    (cov.canThem||[]).length>0 && h("div", { style:{ marginTop:6 } }, h("b", { style:{ color:"#B91C1C" } }, "Cần thêm: "), h("ul", { style:{ margin:"2px 0 0", paddingLeft:18 } }, cov.canThem.map((x,i)=>h("li", { key:i }, x)))),
+    (cov.khongCan||[]).length>0 && h("div", { style:{ marginTop:6 } }, h("b", { style:{ color:"#A16207" } }, "Không cần / chưa phù hợp: "), h("ul", { style:{ margin:"2px 0 0", paddingLeft:18 } }, cov.khongCan.map((x,i)=>h("li", { key:i }, x)))),
+    cov.nhanXet && h("div", { style:{ marginTop:5, fontSize:12.5, color:"var(--inkSoft)" } }, cov.nhanXet));
+}
 function PracticeDrugReview({ it, isAdmin, hireId, onChanged }){
   const h = React.createElement;
   const [busy, setBusy] = useState(""); const [msg, setMsg] = useState(""); const [lieu, setLieu] = useState({}); const [sc, setSc] = useState(""); const [note, setNote] = useState("");
@@ -9324,7 +9340,8 @@ function PracticeDrugReview({ it, isAdmin, hireId, onChanged }){
   const td = { padding:"5px 6px", fontSize:12.5, borderBottom:"1px solid #F0EEE2", verticalAlign:"top" };
   const secT = (t) => h("div", { style:{ fontSize:12, fontWeight:800, color:"var(--inkSoft)", textTransform:"uppercase", letterSpacing:".04em", margin:"12px 0 5px" } }, t);
   return h("div", null,
-    drugs.length > 0 && h("div", null, secT("Đánh giá từng thuốc"),
+    fb.coverage && h("div", null, secT("Đủ thuốc chưa"), h(TtsCoverageBlock, { cov:fb.coverage })),
+    drugs.length > 0 && h("div", null, secT("Đánh giá liều từng thuốc"),
       h("div", { style:{ overflowX:"auto" } }, h("table", { style:{ width:"100%", borderCollapse:"collapse" } },
         h("thead", null, h("tr", null, ["Thuốc","Nhân viên tư vấn","Liều đúng cho đối tượng","Căn cứ","Kết luận"].map(x => h("th", { key:x, style:th }, x)))),
         h("tbody", null, drugs.map((d,i) => { const k = KL[d.ketLuan] || KL.canXacMinh;
@@ -9741,6 +9758,7 @@ function TtsPracticeModal({ row, onClose, onChanged, groups }){
               res.comm && h(TtsCommBlock, { comm:res.comm }),
               mode==="voice" && h(TtsReplayBtn, { hireId:row.id, id:cur.id }),
               (res.good||[]).length>0 && h("div", { style:{ fontSize:13, marginTop:6 } }, h("b", { style:{ color:CL360.good } }, "Làm tốt: "), res.good.join(" · ")),
+              res.coverage && h(TtsCoverageBlock, { cov:res.coverage }),
               (res.missed||[]).length>0 && h("div", { style:{ marginTop:6 } }, h("b", { style:{ fontSize:13, color:"#B45309" } }, "Câu cần hỏi mà chưa hỏi:"),
                 h("ul", { style:{ margin:"3px 0 0", paddingLeft:18, fontSize:13, lineHeight:1.5 } }, res.missed.map((x,i)=>h("li", { key:i }, x)))),
               (res.fix||[]).length>0 && h("ul", { style:{ margin:"6px 0 0", paddingLeft:18, fontSize:13, lineHeight:1.55, color:"#7F1D1D" } }, res.fix.map((x,i)=>h("li", { key:i }, x))),
