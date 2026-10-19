@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261019-7";
+window.__APP_BUILD = "20261019-10";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -3851,7 +3851,10 @@ function TaskAssignView({ isAdmin, myStaff, navParam, onNavigate, openTasks360 }
   async function submitAssign(e){
     e.preventDefault();
     if(!form.title.trim()) return;
+    if(!(form.ketQuaMongDoi||"").trim()){ window.alert("Ghi rõ \"Xong trông như thế nào\" để người nhận biết khi nào là xong."); return; }
+    const buocLam = String(form.buocText||"").split(/\r?\n/).map(s => s.trim()).filter(Boolean).slice(0, 12).map(t => ({ t, done:false }));
     const base = {
+      actionExpectedResult: (form.ketQuaMongDoi||"").trim(), ...(buocLam.length ? { buocLam } : {}), // 19/10/2026 (thực thi)
       title:form.title.trim(), mota:form.mota.trim(), truocXuLy:(form.truocXuLy||"").trim(), deadline:form.deadline, hanGio:form.hanGio||"", trangThai:"Đang giao", subTrangThai:"Mới giao", ketQua:"", nguoiBaoCao:"", ngayGiao:today,
       // 26/9/2026 (Task Intelligence): loại việc + mức ảnh hưởng — đầu vào điểm ưu tiên Rủi ro × Hạn × Ảnh hưởng.
       module: form.module || "Ops", mucDoAnhHuong: form.mucDoAnhHuong || "Trung bình", createdAtTs: new Date().toISOString(),
@@ -3888,7 +3891,7 @@ function TaskAssignView({ isAdmin, myStaff, navParam, onNavigate, openTasks360 }
         await addDoc("tasks", { ...base, assignType:"staff", staffId:myCht.id, staffName:myCht.name, shop:myStaff.shop });
       }
     }
-    setForm({ ...form, title:"", mota:"", truocXuLy:"", staffIds:[], dinhKemFiles:[], dinhKemLink:"" }); setShowForm(false);
+    setForm({ ...form, title:"", mota:"", truocXuLy:"", ketQuaMongDoi:"", buocText:"", staffIds:[], dinhKemFiles:[], dinhKemLink:"" }); setShowForm(false);
   }
   // ===== P0-3: nộp kết quả KHÔNG còn tự động = "Đã hoàn thành" nữa — chuyển sang "Chờ kiểm tra",
   // chờ quản lý duyệt (approveTask) hoặc từ chối kèm lý do (rejectTask) mới thật sự đóng việc.
@@ -4307,6 +4310,18 @@ function TaskAssignView({ isAdmin, myStaff, navParam, onNavigate, openTasks360 }
         (viewTask.actionRuleId || viewTask.crmSourceId) && React.createElement("div", { key:"rl", style:{ fontSize:11, color:"var(--inkSoft)", marginBottom:5 } }, `Rule nguồn: ${viewTask.actionRuleId || viewTask.crmSourceId}${viewTask.actionTrigger ? ` · trigger ${viewTask.actionTrigger}` : ""}`),
         viewTask.actionExpectedResult && React.createElement("div", { key:"e", style:{ fontSize:12.5 } }, [ React.createElement("b",{key:"b"},"Kỳ vọng: "), viewTask.actionExpectedResult ]),
       ]),
+      // 19/10/2026 (thực thi): "xong trông như thế nào" + các bước tick được (ai xem được việc đều tick được, lưu ngay)
+      !viewTask.crmSourceType && viewTask.actionExpectedResult && React.createElement("div", { key:"xong", style:{ marginBottom:8, fontSize:13, background:"#F0FDF4", border:"1px solid #BBF7D0", borderRadius:8, padding:"7px 10px" } }, [ React.createElement("b",{key:"b"},"Xong khi: "), viewTask.actionExpectedResult ]),
+      Array.isArray(viewTask.buocLam) && viewTask.buocLam.length>0 && (() => { const steps = viewTask.buocLam; const nDone = steps.filter(s=>s.done).length; const pct = Math.round(nDone/steps.length*100);
+        const tog = async (i) => { const next = steps.map((s,k) => k===i ? { ...s, done:!s.done, at: !s.done ? new Date().toISOString() : null, by: !s.done ? ((myStaff && myStaff.name) || (isAdmin ? "Quản lý" : "")) : null } : s);
+          setViewTask(v => ({ ...v, buocLam: next }));
+          try{ await updateDoc("tasks", viewTask.id, { buocLam: next, ...(next.some(s=>s.done) && (viewTask.subTrangThai||"Mới giao")==="Mới giao" ? { subTrangThai:"Đang thực hiện" } : {}) }); }catch(e){ window.alert("Chưa lưu được: " + (e.message||e)); } };
+        return React.createElement("div", { key:"steps", style:{ marginBottom:12, border:"1px solid var(--line)", borderRadius:10, padding:"8px 10px" } }, [
+          React.createElement("div", { key:"h", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 } }, [ React.createElement("b", { key:"t", style:{ fontSize:13 } }, "Các bước"), React.createElement("span", { key:"p", style:{ fontSize:12, fontWeight:700, color: pct===100 ? "#15803D" : "var(--inkSoft)" } }, `${nDone}/${steps.length} bước · ${pct}%`) ]),
+          React.createElement("div", { key:"bar", style:{ height:6, background:"#EEF2F6", borderRadius:4, marginBottom:6 } }, React.createElement("div", { style:{ width:pct+"%", height:6, background:"var(--pine)", borderRadius:4 } })),
+          ...steps.map((s,i) => React.createElement("label", { key:i, style:{ display:"flex", gap:8, alignItems:"flex-start", fontSize:13, padding:"3px 0", cursor:"pointer" } }, [
+            React.createElement("input", { key:"c", type:"checkbox", checked:!!s.done, onChange:()=>tog(i), disabled: viewTask.trangThai!=="Đang giao" }),
+            React.createElement("span", { key:"t", style:{ textDecoration: s.done ? "line-through" : "none", color: s.done ? "var(--inkSoft)" : "var(--ink)" } }, s.t + (s.done && s.by ? ` · ${s.by}` : "")) ])) ]); })(),
       taskRefAttachmentsView(viewTask),
       React.createElement(TaskLifecycleTimeline, { key:"lct", t:viewTask }),
       taskSubStatus(viewTask)==="Bị vướng" && viewTask.lyDoVuong && React.createElement("div", { key:"blk", style:{ marginBottom:10, fontSize:12.5, background:"var(--claySoft)", borderRadius:8, padding:"8px 10px" } }, `Đang bị vướng: ${viewTask.lyDoVuong}`),
@@ -4410,6 +4425,15 @@ function TaskAssignView({ isAdmin, myStaff, navParam, onNavigate, openTasks360 }
         ]),
         React.createElement("div", { key:"title", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Nội dung công việc"), React.createElement("input",{key:"i",value:form.title,onChange:e=>setForm({...form,title:e.target.value}),required:true,placeholder:"VD: Kiểm kê lại lô hàng khuyến mãi tháng này"}) ]),
         React.createElement("div", { key:"mota", className:"field", style:{ marginBottom:10 } }, [ React.createElement("label",{key:"l"},"Mô tả thêm (nếu có)"), React.createElement("textarea",{key:"i",rows:3,value:form.mota,onChange:e=>setForm({...form,mota:e.target.value})}) ]),
+        // 19/10/2026 (thực thi): việc phải nói rõ "xong trông như thế nào" + có thể chia bước nhỏ để tick
+        React.createElement("div", { key:"xong", className:"field", style:{ marginBottom:10 } }, [
+          React.createElement("label",{key:"l"},"Xong trông như thế nào? (bắt buộc — con số hoặc ảnh cần chụp)"),
+          React.createElement("input",{key:"i",value:form.ketQuaMongDoi||"",required:true,onChange:e=>setForm({...form,ketQuaMongDoi:e.target.value}), placeholder:"VD: Quầy thuốc lẻ xếp theo nhóm, chụp 2 ảnh trước/sau · Gọi đủ 10 khách, ghi kết quả từng khách"}),
+        ]),
+        React.createElement("div", { key:"buoc", className:"field", style:{ marginBottom:10 } }, [
+          React.createElement("label",{key:"l"},"Các bước làm (tuỳ chọn — mỗi dòng 1 bước, nhân viên tick từng bước)"),
+          React.createElement("textarea",{key:"i",rows:3,value:form.buocText||"",onChange:e=>setForm({...form,buocText:e.target.value}), placeholder:"Dọn khay\nXếp theo nhóm bệnh\nDán nhãn giá\nChụp ảnh sau khi xong"}),
+        ]),
         // ===== P0-4 (mục XXI): ghi lại tình trạng TRƯỚC khi xử lý ngay lúc giao việc, để sau khi
         // hoàn thành so sánh được trước/sau — không bắt buộc, bỏ trống nếu việc không cần đo lường.
         React.createElement("div", { key:"truoc", className:"field", style:{ marginBottom:10 } }, [
@@ -9659,16 +9683,19 @@ function TtsPracticeModal({ row, onClose, onChanged, groups }){
   const [err, setErr] = useState(null);
   const [hist, setHist] = useState(null);
   const chatRef = useRef(null);
+  const reqRef = useRef(0); const pickedRef = useRef(false);
   async function loadHist(){ try{ const r = await pbCall("practiceList", { hireId:row.id }, 60000); setHist(r); return r; } catch(e){ loadFail("practiceHist", "lịch sử luyện tập")(e); return null; } }
   // 19/10/2026: mở lại bài KHÁCH ẢO đang làm dở (trang bị tải lại / lỡ thoát) — lấy hội thoại đã lưu ở máy chủ, làm tiếp từ lượt cuối
-  async function resume(id, isAdm){ setBusy("new"); setErr(null); setRes(null); setInput(""); setNhanDinh("");
-    try{ const r = await pbCall("practiceDetail", { hireId:row.id, id }, 60000); if(r.ok===false) throw new Error(r.error); const it = r.item;
+  async function resume(id, isAdm){ const my = ++reqRef.current; setBusy("new"); setErr(null); setRes(null); setInput(""); setNhanDinh("");
+    try{ const r = await pbCall("practiceDetail", { hireId:row.id, id }, 60000); if(my !== reqRef.current) return; if(r.ok===false) throw new Error(r.error); const it = r.item;
       setMode("chat"); setCur({ id:it.id, mode:"chat", title: isAdm ? it.title : "Tự chẩn đoán", hidden: !isAdm, doiTuong:it.doiTuong||"", fromLibrary:it.fromLibrary, scenario:it.scenario||{} });
       setMsgs([{ who:"kh", t:(it.scenario||{}).loiKhach||"" }, ...(it.transcript||[])]); }
     catch(e){ setErr("Không mở lại được bài dở: " + (e.message||e)); setBusy(""); return next("chat"); } setBusy(""); }
-  async function next(m){ const md = m || mode; setBusy("new"); setErr(null); setRes(null); setInfo(null); setMsgs([]); setInput("");
+  // 19/10/2026 (sửa lỗi): chỉ nhận kết quả của lần lấy bài MỚI NHẤT — trước đây bấm "Giọng nói" khi màn còn đang tải thì bài Khách ảo
+  // (lấy tự động lúc mở) về sau và đè lên → bấm gọi báo "Bài này không phải bài giọng nói".
+  async function next(m){ const md = m || mode; const my = ++reqRef.current; setMode(md); setBusy("new"); setErr(null); setRes(null); setInfo(null); setMsgs([]); setInput("");
     setAns({ nhanDinh:"", hoi:"", xuTri:"", thuoc:"", danDo:"" }); setQuiz({ cauHoi:[], xuTri:null, thuoc:[], chanDoan:null }); setNhanDinh(""); setVoiceUrls({}); setLiveDone(false);
-    try{ const r = await pbCall("practiceNew", { hireId:row.id, mode:md, groups: groups||[], live: md==="voice" && !p2t }, 120000); if(r.ok===false) throw new Error(r.error); setCur(r); setMsgs([{ who:"kh", t:r.scenario.loiKhach }]);
+    try{ const r = await pbCall("practiceNew", { hireId:row.id, mode:md, groups: groups||[], live: md==="voice" && !p2t }, 120000); if(my !== reqRef.current) return; if(r.ok===false) throw new Error(r.error); setCur(r); setMsgs([{ who:"kh", t:r.scenario.loiKhach }]);
       if(md === "voice" && r.voice && p2t){ const u = ttsPlayVoice(r.voice); if(u) setVoiceUrls({ 0:u }); }
       if(md === "voice" && !p2t) setMsgs([]); } catch(e){ setErr(e.message||String(e)); setCur(null); } setBusy(""); }
   // 14/10/2026: bấm giữ để nói — MediaRecorder (Chrome: webm/opus, iPhone Safari: mp4/aac)
@@ -9695,7 +9722,7 @@ function TtsPracticeModal({ row, onClose, onChanged, groups }){
     if((mode==="chat" || mode==="voice") && !nhanDinh.trim() && !window.confirm("Bạn chưa ghi nhận định bệnh (khách bị gì) — phần Chẩn đoán sẽ được 0 điểm. Vẫn nộp?")){ setBusy(""); return; }
     try{ const r = await pbCall("practiceSubmit", { hireId:row.id, id:cur.id, answer:ans, quiz, nhanDinh }, 240000); if(r.ok===false) throw new Error(r.error); setRes(r); onChanged && onChanged(); loadHist(); }
     catch(e){ setErr(e.message||String(e)); } setBusy(""); }
-  useEffect(()=>{ (async () => { const hl = await loadHist();
+  useEffect(()=>{ (async () => { const hl = await loadHist(); if(pickedRef.current) return; // nhân viên đã tự chọn kiểu luyện trong lúc tải → không lấy đè
     const lim = Date.now() - 6 * 3600 * 1000; // bài dở trong 6 giờ gần nhất
     const half = ((hl && hl.rows) || []).find(x => x.status==="open" && x.mode==="chat" && (x.turns||0) >= 1 && Date.parse(x.createdAt||"") > lim);
     if(half && window.confirm(`Bạn có 1 bài Khách ảo đang làm dở (bắt đầu ${new Date(half.createdAt).toLocaleTimeString("vi-VN", { hour:"2-digit", minute:"2-digit" })}, ${half.turns} lượt).\n\nBấm OK để LÀM TIẾP bài đó, Huỷ để lấy bài mới.`)) resume(half.id, !!hl.isAdmin);
@@ -9729,7 +9756,7 @@ function TtsPracticeModal({ row, onClose, onChanged, groups }){
     h("div", { className:"modal", onClick:e=>e.stopPropagation(), style:{ maxWidth:680, maxHeight:"94vh", overflow:"auto" } },
       h("div", { style:{ fontWeight:800, fontSize:17 } }, "Luyện tình huống cắt liều"),
       h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:8 } }, `${row.name}${hist ? ` · thư viện ${hist.libraryN} tình huống · đã làm ${hist.rows.filter(x=>x.status==="graded" && x.mode!=="quiz").length} bài khách ảo/tự viết${row.id==="self" ? "" : ` (cần ≥ ${hist.minN}, TB ≥ ${hist.pass})`}` : ""}${(groups||[]).length && hist && hist.groups ? " · nhóm: " + hist.groups.filter(g=>groups.includes(g.k)).map(g=>g.label).join(", ") : ""}`),
-      h("div", { style:{ display:"flex", gap:6, marginBottom:10, flexWrap:"wrap" } }, TTS_MODES.map(m => h("button", { key:m.id, disabled:!!busy, onClick:()=>{ if(!confirmLeave("Đổi kiểu luyện (bỏ bài đang làm)")) return; setMode(m.id); next(m.id); }, title:m.sub, style:{
+      h("div", { style:{ display:"flex", gap:6, marginBottom:10, flexWrap:"wrap" } }, TTS_MODES.map(m => h("button", { key:m.id, disabled:!!busy, onClick:()=>{ if(!confirmLeave("Đổi kiểu luyện (bỏ bài đang làm)")) return; pickedRef.current = true; setMode(m.id); next(m.id); }, title:m.sub, style:{
         flex:"1 1 150px", textAlign:"left", padding:"7px 10px", borderRadius:10, cursor:"pointer", fontFamily:"inherit", border:"1.5px solid " + (mode===m.id ? "var(--pine)" : "var(--line)"), background: mode===m.id ? "var(--pineSoft)" : "#fff" } },
         h("div", { style:{ fontWeight:800, fontSize:13 } }, m.label), h("div", { style:{ fontSize:11, color:"var(--inkSoft)" } }, m.sub)))),
       err && h("div", { style:{ color:CL360.bad, fontSize:12.5, marginBottom:8 } }, err),
@@ -13597,6 +13624,29 @@ function DashTaskSection({ shop, onNavigate }){
       !shop && CK(DonutChart, { size:160, items:[ { label:"0–1 ngày", value:ag["0-1"]||0, color:DASH_C.good }, { label:"2–3 ngày", value:ag["2-3"]||0, color:DASH_C.pineL }, { label:"4–7 ngày", value:ag["4-7"]||0, color:DASH_C.warn }, { label:"> 7 ngày", value:ag[">7"]||0, color:DASH_C.bad } ],
         centerTop: String(M.open ?? 0), centerBottom:"việc mở · theo tuổi" })));
 }
+// ---- 4b) PHỄU THỰC THI: được giao → bắt đầu → nộp → được duyệt (taskIntelligence, cửa sổ W ngày) ----
+// Cho biết nhân viên "rơi" ở bước nào: không bắt đầu (không thấy/không rõ việc) · bắt đầu mà không nộp (việc to/vướng) · nộp mà không đạt (không rõ "xong là gì")
+function DashExecSection({ shop, onNavigate }){
+  const CK = React.createElement;
+  const st = useDashLoad("taskIntel", () => dashOpsDoc("taskIntelligence"));
+  const T = st.data || {}; const F = T.funnel || {};
+  const row = shop ? (T.byShop || []).find(r => r.key === shop) || null : null;
+  const f = shop ? (row ? { assigned:row.assigned||0, started:row.started||0, submitted:row.submitted||0, approved:row.approved||0 } : null) : F;
+  const steps = f ? [["Được giao", f.assigned], ["Đã bắt đầu", f.started], ["Đã nộp kết quả", f.submitted], ["Được duyệt (xong)", f.approved]] : [];
+  const drop = (a, b) => a > 0 ? Math.round((1 - b / a) * 100) : null;
+  const drops = f ? [{ k:"Không bắt đầu", v:drop(f.assigned, f.started), fix:"việc không rõ hoặc không thấy việc → nhắc đầu ca, ghi rõ \"xong trông như thế nào\"" },
+    { k:"Bắt đầu mà không nộp", v:drop(f.started, f.submitted), fix:"việc quá to / bị vướng → chia bước nhỏ, gỡ vướng" },
+    { k:"Nộp mà chưa được duyệt", v:drop(f.submitted, f.approved), fix:"chưa đạt hoặc chưa ai duyệt → duyệt trong 24 giờ, nói rõ chỗ cần sửa" }] : [];
+  const worst = drops.filter(d => d.v != null).sort((a,b) => b.v - a.v)[0];
+  const rows = (T.byShop || []).filter(r => r.key && r.key !== "(không rõ)" && (r.assigned || 0) >= 3).sort((a,b) => String(a.key).localeCompare(String(b.key)));
+  return CK(DashBox, { title:"Phễu thực thi công việc", sub:`Việc được giao ${T.windowDays || 30} ngày gần nhất — nhân viên rơi ở bước nào thì sửa ở bước đó`, tab:"tasks", onNavigate, st, empty: !f || !f.assigned ? "Chưa có số liệu phễu công việc." : null },
+    CK(ColumnChart, { labels: steps.map(s => s[0]), height:180, valueLabels:"all", series:[ { name:"Số việc", color:(i)=>[DASH_C.blueL, DASH_C.pineL, DASH_C.pine, DASH_C.good][i], values: steps.map(s => s[1] || 0) } ] }),
+    worst && worst.v > 0 && CK("div", { style:{ marginTop:8, fontSize:13, background:"#FFF7ED", border:"1px solid #FED7AA", borderRadius:8, padding:"7px 10px" } }, CK("b", null, `Rơi nhiều nhất: ${worst.k} (${worst.v}%)`), " — ", worst.fix),
+    !shop && rows.length > 1 && CK("div", { style:{ marginTop:10 } }, CK("div", { style:{ fontSize:12, fontWeight:700, color:"var(--inkSoft)", marginBottom:4 } }, "Theo nhà thuốc: % bắt đầu · % nộp · % xong (trên số việc được giao)"),
+      CK(ColumnChart, { labels: rows.map(r => shopLabel(r.key)), height:180, fmt:(v)=>v+"%", axisFmt:(v)=>Math.round(v)+"%",
+        series:[ { name:"Đã bắt đầu", color:DASH_C.pineL, values: rows.map(r => Math.round((r.started||0)/r.assigned*100)) }, { name:"Đã nộp", color:DASH_C.pine, values: rows.map(r => Math.round((r.submitted||0)/r.assigned*100)) }, { name:"Xong", color:DASH_C.good, values: rows.map(r => Math.round((r.approved||0)/r.assigned*100)) } ] }),
+      CK(ChartLegend, { items:[ { label:"Đã bắt đầu", color:DASH_C.pineL }, { label:"Đã nộp", color:DASH_C.pine }, { label:"Xong", color:DASH_C.good } ] })));
+}
 // ---- 5) Checklist ngày (14 ngày) ----
 function DashChecklistSection({ shop, onNavigate }){
   const CK = React.createElement; const today = todayISO(); const from = dashAddDays(today, -13);
@@ -13678,15 +13728,47 @@ function DashMonthlyTrendSection({ shop, onNavigate }){
       series:[ { name:"Chỉ tiêu", color:"#CBD5E1", values: vals.map(v => v ? Number(v.target)||0 : 0) }, { name:"Thực hiện", color:DASH_C.pine, values: vals.map(v => v ? Number(v.actual)||0 : 0) } ] }),
     CK(ChartLegend, { items:[ { label:"Chỉ tiêu", color:"#CBD5E1" }, { label:"Thực hiện", color:DASH_C.pine } ] }));
 }
+// ---- Kế hoạch xử lý hàng cận date (màn Hàng hoá › Tồn kho) ----
+const EXP_ACTION = { huy:["Tách huỷ / trả NCC","#B91C1C","#FEE2E2"], tra_ncc:["Trả NCC / quà tặng","#B91C1C","#FEE2E2"], khuyen_mai:["Combo / giảm giá cận date","#B45309","#FEF3C7"],
+  tem_can_date:["Tem cận date + tư vấn","#A16207","#FEF9C3"], ban_kip:["Bán kịp — xếp ra trước","#15803D","#DCFCE7"], theo_doi:["Kiểm tra tay","#475569","#F1F5F9"] };
+function ExpiryPlanCard({ rows, showShop }){
+  const CK = React.createElement;
+  const [tier, setTier] = React.useState("risk"); const [all, setAll] = React.useState(false);
+  if(!rows || !rows.length) return null;
+  const f = rows.filter(r => tier==="all" ? true : tier==="risk" ? r.action!=="ban_kip" : r.tier===tier);
+  const sum = (a) => a.reduce((s, r) => s + (r.valueAtRisk || 0), 0);
+  const shown = all ? f : f.slice(0, 25);
+  const cnt = (t) => rows.filter(r => r.tier===t).length;
+  return CK("div", { className:"card", style:{ marginBottom:16 } },
+    CK("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10, flexWrap:"wrap" } },
+      CK("div", null, CK("div", { style:{ fontWeight:700, fontSize:15.5 } }, "Kế hoạch xử lý hàng cận date (≤ 6 tháng)"),
+        CK("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginTop:3 } }, `Hệ thống so tồn từng lô với tốc độ bán thực tế để gợi ý xử lý · Tiền có nguy cơ mất: ${fmtVND(sum(rows))} · ${cnt("het_han")} lô hết hạn, ${cnt("3thang")} lô ≤ 3 tháng, ${cnt("6thang")} lô 3–6 tháng`)),
+      CK(SegToggle, { value:tier, onChange:setTier, options:[{ id:"risk", label:"Cần xử lý" }, { id:"het_han", label:"Hết hạn" }, { id:"3thang", label:"≤ 3 tháng" }, { id:"6thang", label:"3–6 tháng" }, { id:"all", label:"Tất cả" }] })),
+    CK("div", { style:{ overflowX:"auto", marginTop:10 } }, CK("table", { style:{ width:"100%", borderCollapse:"collapse", fontSize:12.5 } },
+      CK("thead", null, CK("tr", null, [showShop && "NT", "Mã / tên hàng", "Lô · HSD", "Tồn", "Bán/ngày", "Gợi ý", "Có nguy cơ mất"].filter(Boolean).map(t => CK("th", { key:t, style:{ textAlign:"left", padding:"5px 6px", borderBottom:"1px solid var(--line)", color:"var(--inkSoft)", fontSize:11.5 } }, t)))),
+      CK("tbody", null, shown.map((r, i) => { const A = EXP_ACTION[r.action] || EXP_ACTION.theo_doi; const td = { padding:"6px", borderBottom:"1px solid #F0EEE2", verticalAlign:"top" };
+        return CK("tr", { key:i }, showShop && CK("td", { style:td }, shopLabel(r.shop)),
+          CK("td", { style:td }, CK("b", null, r.productName), CK("div", { style:{ fontSize:11, color:"var(--inkSoft)" } }, r.productId || "")),
+          CK("td", { style:td }, `${r.lotCode || "—"} · ${String(r.expirationDate||"").slice(0,10).split("-").reverse().join("/")}`, CK("div", { style:{ fontSize:11, fontWeight:700, color: r.daysLeft < 0 ? "#B91C1C" : r.daysLeft <= 90 ? "#B45309" : "var(--inkSoft)" } }, r.daysLeft < 0 ? `Hết hạn ${-r.daysLeft} ngày` : `Còn ${r.daysLeft} ngày`)),
+          CK("td", { style:td }, `${fmtNum(r.qty)} ${r.unit||""}`), CK("td", { style:td }, r.ads == null ? "—" : r.ads),
+          CK("td", { style:td }, CK("span", { style:{ display:"inline-block", fontSize:11, fontWeight:700, color:A[1], background:A[2], borderRadius:999, padding:"1px 8px", marginBottom:2 } }, A[0]), CK("div", null, r.text)),
+          CK("td", { style:{ ...td, fontWeight:700, whiteSpace:"nowrap" } }, r.valueAtRisk ? fmtVND(r.valueAtRisk) : "—")); })))),
+    f.length > 25 && CK("button", { className:"btn btnGhost", style:{ marginTop:8, fontSize:12 }, onClick:()=>setAll(!all) }, all ? "Thu gọn" : `Xem tất cả ${f.length} lô`));
+}
 // ---- 0) CẢNH BÁO CẦN CAN THIỆP (báo cáo theo ngoại lệ — đặt trên cùng) ----
 // Gom từ các bảng máy chủ đã tính: vấn đề mức ĐỎ/CAM của từng nhà thuốc (shopHealthSummary), nhân viên quá tải và việc vướng > 2 ngày (taskIntelligence).
 function DashRedFlagsSection({ shop, onNavigate }){
   const CK = React.createElement;
   const sh = useDashLoad("health", () => dashOpsDoc("shopHealthSummary"));
   const ti = useDashLoad("taskIntel", () => dashOpsDoc("taskIntelligence"));
-  const flags = [];
+  // 19/10/2026: rủi ro mức CAO/NGHIÊM TRỌNG đang mở (gồm cảnh báo bất thường HH07 hỏi hàng thiếu tăng vọt, CP04 bỏ checklist 3 ngày)
+  const rk = useDashLoad("risksHigh", async () => { try{ const s = await db.collection("risks").where("status", "in", ["OPEN","ACK","IN_PROGRESS","REOPENED"]).get();
+    return s.docs.map(d => d.data()).filter(r => r.level === "CRITICAL" || r.level === "HIGH"); }catch(e){ return []; } });
+  const flags = []; const seen = new Set();
+  (rk.data || []).forEach(r => { if(shop && r.shop && r.shop !== shop) return; seen.add(`${r.code}|${r.shop||""}`);
+    flags.push({ sev:"red", shop:r.shop || "", title:r.title || r.ruleName || r.code, detail:[r.ruleName, r.detail].filter(Boolean).join(" · "), tab:(r.link && r.link.tab) || "risk" }); });
   Object.entries((sh.data && sh.data.shops) || {}).forEach(([s, x]) => { if(shop && s !== shop) return;
-    (x.issues || []).filter(i => i.severity === "red" || i.severity === "orange").forEach(i => flags.push({ sev:i.severity, shop:s, title:i.title || i.code, detail:i.detail || "", tab:i.tab || "shop360" })); });
+    (x.issues || []).filter(i => (i.severity === "red" || i.severity === "orange") && !seen.has(`${i.code}|${s}`)).forEach(i => flags.push({ sev:i.severity, shop:s, title:i.title || i.code, detail:i.detail || "", tab:i.tab || "shop360" })); });
   const T = ti.data || {};
   (T.overloaded || []).forEach(r => { if(shop && r.shop && r.shop !== shop) return; flags.push({ sev:"orange", shop:r.shop || "", title:`${r.label || r.key} đang quá tải`, detail:r.reason || "", tab:"tasks" }); });
   (T.blockers || []).filter(b => (b.hours || 0) >= 48 && (!shop || b.shop === shop)).forEach(b => flags.push({ sev:"orange", shop:b.shop || "", title:`Việc vướng ${Math.round(b.hours/24)} ngày: ${b.title}`, detail:[b.owner, b.reason].filter(Boolean).join(" · "), tab:"tasks" }));
@@ -13719,7 +13801,7 @@ function SummaryDashboardView({ isAdmin, myStaff, onNavigate }){
         CK("option", { value:"" }, "Toàn chuỗi"), shopsList.map(s => CK("option", { key:s, value:s }, shopLabel(s) + " · " + s)))),
     CK(DashRedFlagsSection, p),
     CK("div", { className:"dashGrid", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(min(100%, 520px), 1fr))", gap:14, alignItems:"start" } },
-      CK(DashRevenueSection, p), CK(DashHealthSection, p), CK(DashKpiSection, p), CK(DashTaskSection, p),
+      CK(DashRevenueSection, p), CK(DashHealthSection, p), CK(DashKpiSection, p), CK(DashTaskSection, p), CK(DashExecSection, p),
       CK(DashChecklistSection, p), CK(DashCareSection, p), CK(DashTrainingSection, p), CK(DashMonthlyTrendSection, p)));
 }
 function ChartCard({ title, sub, right, children, style }){
@@ -15877,6 +15959,8 @@ function InventoryHealthView({ isAdmin, myStaff }){
       React.createElement(StatTile, { key:"t3", label:"Cận hạn trong 90 ngày", value:`${fmtNum(near90Rows.length)} lô`, sub:fmtVND(near90Value), tint: near90Rows.length>0?"#fff4e0":"var(--pineSoft)" }),
       React.createElement(StatTile, { key:"t4", label:"Kỳ dữ liệu", value: latestSync ? new Date(latestSync).toLocaleDateString("vi-VN") : "—", sub: latestSync ? `Đồng bộ ${new Date(latestSync).toLocaleTimeString("vi-VN",{hour:"2-digit",minute:"2-digit"})}` : "Chưa đồng bộ" }),
     ]),
+    // 19/10/2026: KẾ HOẠCH XỬ LÝ HÀNG CẬN DATE (máy chủ tính theo quy tắc, không AI) — lô ≤ 6 tháng, xếp theo tiền có nguy cơ mất
+    React.createElement(ExpiryPlanCard, { key:"expplan", rows: shopsToShow.flatMap(sh => ((expiryByShop[sh] && expiryByShop[sh].expiryPlan) || []).map(r => ({ ...r, shop:sh }))), showShop:isAll }),
     // Biểu đồ theo nhà thuốc (chỉ có ý nghĩa khi xem toàn chuỗi)
     isAll && React.createElement("div", { key:"chartcard", className:"card", style:{ marginBottom:16 } }, [
       React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:15.5, marginBottom:4 } }, "Giá trị tồn kho theo nhà thuốc"),
@@ -28171,7 +28255,7 @@ function OpsOperatorConfig({ onMsg }){
             dirty && h("button", { className:"btn btnPrimary", style:{ padding:"3px 10px", fontSize:12.5 }, disabled:busy===t, onClick:()=>savePb(t) }, busy===t ? "Đang lưu…" : "Lưu"))); })));
 }
 // 5/10/2026 (Phương — "Đề xuất nâng cấp AI 2026"): Học từ kết quả (P0) · Quyết định hàng hoá · Nhà thuốc mẫu & nhân bản (P1)
-const OPS_TYPE_LABEL_UI = { rv:"Xem lại phương án chưa hiệu quả", DT01:"Doanh thu tháng dự kiến hụt", DT02:"Doanh thu ngày giảm", NS01:"NV chậm KPI", PP01:"Tăng ca bất thường", PP02:"Thiếu người trực", PP03:"Năng suất thấp", TK01:"Việc tồn đọng", TK02:"Người hay quá hạn", VH01:"Việc quá hạn", KH01:"Khách VIP im lặng", KH02:"Khách nguy cơ rời bỏ", HH01:"Thiếu hàng bán chạy", HH02:"Sắp thiếu hàng", HH03:"Tồn cao bán chậm", HH04:"Hàng không bán", HH06:"Cận date", CP01:"Không nộp checklist", CP02:"Thiếu bằng chứng", CP03:"Sai lệch kiểm kê", prob:"Kèm cặp thử việc", promo:"Bỏ lỡ khuyến mại", transfer:"Điều chuyển hàng", pace:"DT trong ngày dưới nhịp", bp:"Áp dụng thực hành chuẩn" };
+const OPS_TYPE_LABEL_UI = { rv:"Xem lại phương án chưa hiệu quả", DT01:"Doanh thu tháng dự kiến hụt", DT02:"Doanh thu ngày giảm", NS01:"NV chậm KPI", PP01:"Tăng ca bất thường", PP02:"Thiếu người trực", PP03:"Năng suất thấp", TK01:"Việc tồn đọng", TK02:"Người hay quá hạn", VH01:"Việc quá hạn", KH01:"Khách VIP im lặng", KH02:"Khách nguy cơ rời bỏ", HH01:"Thiếu hàng bán chạy", HH02:"Sắp thiếu hàng", HH03:"Tồn cao bán chậm", HH04:"Hàng không bán", HH06:"Cận date", CP01:"Không nộp checklist", CP02:"Thiếu bằng chứng", CP03:"Sai lệch kiểm kê", HH07:"Hỏi hàng thiếu tăng đột biến", CP04:"Bỏ checklist 3 ngày liền", prob:"Kèm cặp thử việc", promo:"Bỏ lỡ khuyến mại", transfer:"Điều chuyển hàng", pace:"DT trong ngày dưới nhịp", bp:"Áp dụng thực hành chuẩn" };
 const LEARN_API = "https://asia-southeast1-upharma-176d5.cloudfunctions.net/runJobNow?job=aiLearningApiNow";
 const learnCall = (action, payload, ms) => callCf(LEARN_API, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ action, ...(payload||{}) }) }, ms||540000);
 const LC_LABEL = { PROPOSED:"Đề xuất", APPROVED:"Đã duyệt", EXECUTED:"Đã làm", MEASURED:"Đã đo", LEARNED:"Đã học", UNMEASURED:"Chưa đo được", REJECTED:"Từ chối", EXPIRED:"Hết hạn" };
@@ -30138,7 +30222,7 @@ function Dashboard({ user, isAdmin, myStaff }){
         activeTab==="photos" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(ImageReportView, { key:viewResetKey, isAdmin, myStaff })),
         activeTab==="hanghoa" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(HangHoaView, { key:viewResetKey, isAdmin, myStaff, navParam })),
         activeTab==="donthuoc" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(PrescriptionLibraryView, { key:viewResetKey, isAdmin, myStaff })),
-        (isAdmin || isCHT) && activeTab==="tasks" && React.createElement(ErrorBoundary, { key:"ebd_tasks", inline:true }, React.createElement(DashCollapse, { id:"tasks", title:"Biểu đồ công việc" }, React.createElement(DashTaskSection, { shop: isAdmin ? null : (myStaff && myStaff.shop) || null, onNavigate:null }))), // 19/10/2026: biểu đồ tổng hợp
+        (isAdmin || isCHT) && activeTab==="tasks" && React.createElement(ErrorBoundary, { key:"ebd_tasks", inline:true }, React.createElement(DashCollapse, { id:"tasks", title:"Biểu đồ công việc & phễu thực thi" }, React.createElement(DashTaskSection, { shop: isAdmin ? null : (myStaff && myStaff.shop) || null, onNavigate:null }), React.createElement(DashExecSection, { shop: isAdmin ? null : (myStaff && myStaff.shop) || null, onNavigate:null }))), // 19/10/2026: biểu đồ tổng hợp
       activeTab==="tasks" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(TaskAssignView, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab, openTasks360 })),
         (isAdmin || isCHT) && activeTab==="kpi" && React.createElement(ErrorBoundary, { key:"ebd_kpi", inline:true }, React.createElement(DashCollapse, { id:"kpi", title:"Biểu đồ KPI dự kiến" }, React.createElement(DashKpiSection, { shop: isAdmin ? null : (myStaff && myStaff.shop) || null, onNavigate:null }))), // 19/10/2026: biểu đồ tổng hợp
       activeTab==="kpi" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(KpiView, { key:viewResetKey, isAdmin, myStaff })),
