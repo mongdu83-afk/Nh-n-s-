@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261019-13";
+window.__APP_BUILD = "20261019-14";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -9359,6 +9359,7 @@ function TtsVoiceDetail({ it, hireId }){
     fb.parts && h("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", marginTop:8 } }, h("b", null, "Điểm từng phần: "), ttsPartsText(fb.parts)),
     fb.diagnosis && h("div", { style:{ fontSize:13, marginTop:4 } }, h("b", null, "Chẩn đoán: "), TTS_DX_LABEL[fb.diagnosis.muc] || fb.diagnosis.muc, fb.diagnosis.nv ? ` · nhân viên nhận định: "${fb.diagnosis.nv}"` : "", fb.diagnosis.nhanXet ? " — " + fb.diagnosis.nhanXet : ""),
     fb.comm && h(TtsCommBlock, { comm:fb.comm }),
+    it.liveEndReason && h("div", { style:{ fontSize:12.5, color:"#B45309", marginTop:4 } }, "⚠ Cuộc gọi tự kết thúc: " + it.liveEndReason),
     (it.voiceClips||[]).length > 0 && h("div", null, secT(it.voiceClips.length === 1 && it.mode === "voice" && it.liveSec != null ? "Ghi âm cuộc gọi" : "Ghi âm của nhân viên"),
       it.voiceClips.map(v => h("div", { key:v.n, style:{ display:"flex", gap:8, alignItems:"flex-start", fontSize:12.5, marginBottom:4 } },
         !v.has ? null : urls[v.n] ? h("div", { style:{ display:"flex", gap:8, alignItems:"center", flex: it.voiceClips.length === 1 ? 1 : "none", minWidth:0 } }, h("audio", { src:urls[v.n], controls:true, autoPlay:true, style:{ width: it.voiceClips.length === 1 ? "100%" : 220, height:36 } }), ttsDlBtn(h, urls[v.n], `ghi-am-tinh-huong-${it.id}` + (it.voiceClips.length > 1 ? `-luot${v.n}` : "")))
@@ -9554,7 +9555,7 @@ function ttsF32ToB64Pcm16(f32){ const b = new ArrayBuffer(f32.length * 2); const
 function TtsLiveCall({ row, cur, onDone, onFallback }){
   const h = React.createElement;
   const [st, setSt] = useState("idle"); // idle | connecting | live | ending | done | error
-  const [lines, setLines] = useState([]); const [sec, setSec] = useState(0); const [err, setErr] = useState(""); const [speaking, setSpeaking] = useState(""); const [maxSec, setMaxSec] = useState(480);
+  const [lines, setLines] = useState([]); const [sec, setSec] = useState(0); const [err, setErr] = useState(""); const [speaking, setSpeaking] = useState(""); const [maxSec, setMaxSec] = useState(480); const [warn, setWarn] = useState("");
   const R = useRef({}); const boxRef = useRef(null);
   useEffect(()=>{ if(boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight; }, [lines]);
   // 19/10/2026 (chi phí): THOÁT GIỮA CUỘC GỌI → vẫn báo máy chủ (lời chép + thời lượng + token Google đã tính) để ghi đúng chi phí, giữ hội thoại
@@ -9564,7 +9565,10 @@ function TtsLiveCall({ row, cur, onDone, onFallback }){
       pbCall("practiceLiveEnd", { hireId:row.id, id:cur.id, transcript, durationSec: Math.round((Date.now() - r.t0) / 1000), audio:"", mime:"", usage: r.use || null, aborted:true }, 60000).catch(()=>{}); } }catch(e){}
     try{ cleanup(); }catch(e){} }, []);
   // Khoá màn hình / chuyển sang ứng dụng khác khi đang gọi → tự kết thúc (không để cuộc gọi treo tốn phí)
-  useEffect(()=>{ const onVis = () => { const r = R.current; if(document.visibilityState === "hidden" && r && r.t0 && !r.ended) finish("Rời màn hình — cuộc gọi tự kết thúc"); };
+  // 19/10/2026: chờ 60 giây mới kết thúc (nhân viên hay mở tab khác tra thuốc) — quay lại kịp thì gọi tiếp
+  useEffect(()=>{ const onVis = () => { const r = R.current; if(!r || !r.t0 || r.ended) return;
+      if(document.visibilityState === "hidden"){ clearTimeout(r.hideT); r.hideT = setTimeout(() => { if(!r.ended) finish("Rời màn hình quá 60 giây — cuộc gọi tự kết thúc"); }, 60000); }
+      else { clearTimeout(r.hideT); r.hideT = null; } };
     document.addEventListener("visibilitychange", onVis); return () => document.removeEventListener("visibilitychange", onVis); }, []);
   const push = (who, t) => { if(!t) return; const L = R.current.lines || (R.current.lines = []);
     const last = L[L.length-1]; if(last && last.who === who && !last.closed) last.t += t; else L.push({ who, t: t.replace(/^\s+/, "") });
@@ -9576,7 +9580,7 @@ function TtsLiveCall({ row, cur, onDone, onFallback }){
     for(let i=0;i<n;i++){ let v = bin.charCodeAt(i*2) | (bin.charCodeAt(i*2+1) << 8); if(v >= 0x8000) v -= 0x10000; ch[i] = v / 0x8000; }
     const s = ctx.createBufferSource(); s.buffer = buf; s.connect(ctx.destination); if(r.mixDest) s.connect(r.mixDest); const t = Math.max(ctx.currentTime + 0.03, r.nextT || 0); s.start(t); r.nextT = t + buf.duration;
     r.srcs = (r.srcs || []).concat([s]); r.playing = true; r.lastAct = Date.now(); setSpeaking("kh");
-    s.onended = () => { r.srcs = (r.srcs || []).filter(x => x !== s); if(!r.srcs.length){ r.playing = false; setSpeaking(""); } }; }
+    s.onended = () => { r.srcs = (r.srcs || []).filter(x => x !== s); if(!r.srcs.length){ r.playing = false; r.lastAct = Date.now(); setSpeaking(""); } }; } // 19/10/2026: tính im lặng từ lúc khách NÓI XONG
   function cleanup(){ const r = R.current; clearInterval(r.timer); try{ r.ws && r.ws.readyState <= 1 && r.ws.close(); }catch(e){} try{ r.node && r.node.disconnect(); }catch(e){} try{ r.stream && r.stream.getTracks().forEach(t => t.stop()); }catch(e){} stopPlayback(); try{ r.ctx && r.ctx.close(); }catch(e){} }
   async function start(){
     setErr(""); setSt("connecting"); const r = R.current = { lines: [], srcs: [], q: [] };
@@ -9645,16 +9649,19 @@ function TtsLiveCall({ row, cur, onDone, onFallback }){
     r.t0 = Date.now(); r.lastAct = Date.now(); setSt("live");
     r.timer = setInterval(() => { const s2 = Math.round((Date.now() - r.t0) / 1000); setSec(s2);
       if(s2 >= (tk.maxSec || 480)) finish("Hết thời gian tối đa của cuộc gọi");
-      else if(!r.playing && Date.now() - (r.lastAct || r.t0) > (tk.silenceSec || 60) * 1000) finish("Im lặng quá lâu — tự kết thúc"); }, 1000);
+      else { // 19/10/2026: im lặng tối thiểu 60 giây (khi im không gửi âm thanh nên gần như không tốn phí) + báo trước 20 giây
+        const lim = Math.max(Number(tk.silenceSec) || 60, 60), idle = r.playing ? 0 : (Date.now() - (r.lastAct || r.t0)) / 1000;
+        if(idle > lim) finish("Im lặng quá " + lim + " giây — tự kết thúc");
+        else setWarn(idle > lim - 20 ? `Bạn im lặng khá lâu — cuộc gọi tự kết thúc sau ${Math.ceil(lim - idle)} giây nếu không nói tiếp.` : (s2 >= (tk.maxSec || 480) - 30 ? `Còn ${(tk.maxSec || 480) - s2} giây — hãy chốt tư vấn và dặn dò khách.` : "")); } }, 1000);
   }
   async function finish(reason){
-    const r = R.current; if(r.ended) return; r.ended = true; setSt("ending"); if(reason) setErr(reason === "Bấm kết thúc" ? "" : reason);
+    const r = R.current; if(r.ended) return; r.ended = true; clearTimeout(r.hideT); setWarn(""); setSt("ending"); if(reason) setErr(reason === "Bấm kết thúc" ? "" : reason);
     const dur = r.t0 ? Math.round((Date.now() - r.t0) / 1000) : 0;
     let blob = null; if(r.rec && r.rec.state === "recording"){ await new Promise(res => { r.rec.onstop = res; try{ r.rec.stop(); }catch(e){ res(); } }); blob = new Blob(r.chunks || [], { type: r.rec.mimeType || "audio/webm" }); }
     cleanup();
     const transcript = (r.lines || []).map(x => ({ who:x.who, t:x.t.trim() })).filter(x => x.t);
     try{ const audio = blob && blob.size > 2000 ? await ttsBlobToB64(blob) : "";
-      const res = await pbCall("practiceLiveEnd", { hireId:row.id, id:cur.id, transcript, durationSec:dur, audio, mime: blob ? blob.type : "", usage: r.use || null }, 120000); if(res.ok === false) throw new Error(res.error);
+      const res = await pbCall("practiceLiveEnd", { hireId:row.id, id:cur.id, transcript, durationSec:dur, audio, mime: blob ? blob.type : "", usage: r.use || null, endReason: reason || "" }, 120000); if(res.ok === false) throw new Error(res.error);
       setSt("done"); onDone && onDone(transcript); }
     catch(e){ setErr("Không lưu được cuộc gọi: " + (e.message || e)); setSt("done"); onDone && onDone(transcript); }
   }
@@ -9674,6 +9681,7 @@ function TtsLiveCall({ row, cur, onDone, onFallback }){
           h("button", { className:"btn", style:{ color:"#fff", background:"#DC2626", borderColor:"#DC2626", borderRadius:999, padding:"8px 18px" }, onClick:()=>finish("Bấm kết thúc") }, "Kết thúc cuộc gọi"))
       : st === "ending" ? h("span", { style:{ fontSize:13, color:"var(--inkSoft)" } }, "Đang lưu cuộc gọi…")
       : h("span", { style:{ fontSize:13, color:"#15803D", fontWeight:700 } }, "Đã kết thúc cuộc gọi — ghi nhận định rồi bấm \"Kết thúc & chấm\".")),
+    st === "live" && warn && h("div", { style:{ fontSize:12.5, color:"#B45309", fontWeight:700, marginTop:6, textAlign:"center" } }, warn),
     err && h("div", { style:{ fontSize:12.5, color: st === "done" ? "var(--inkSoft)" : "#B91C1C", marginTop:6, textAlign:"center" } }, err),
     (st === "error" || st === "idle") && onFallback && h("div", { style:{ textAlign:"center", marginTop:6 } }, h("button", { className:"btn btnGhost", style:{ fontSize:12 }, onClick:onFallback }, "Dùng cách bấm giữ để nói thay thế")));
 }
