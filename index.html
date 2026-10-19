@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261019-3";
+window.__APP_BUILD = "20261019-4";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -13441,6 +13441,232 @@ function DeltaBadge({ pct, pp, invert, small }){
   const txt = `${flat ? "■" : (v>=0 ? "▲" : "▼")} ${Math.abs(v).toLocaleString("vi-VN",{maximumFractionDigits:1})}${pp!=null ? " điểm %" : "%"}`;
   return CK("span", { style:{ display:"inline-block", fontSize:small?10.5:11.5, fontWeight:700, color, background:bg, padding:"1px 7px", borderRadius:999, whiteSpace:"nowrap" } }, txt);
 }
+// =====================================================================================================
+// 19/10/2026 (Phương): DASHBOARD TỔNG HỢP + BIỂU ĐỒ CHO CÁC MÀN BÁO CÁO. Mỗi khối là 1 thành phần độc lập (tự tải số liệu
+// từ các bảng máy chủ đã tính sẵn — ít lượt đọc), dùng chung cho trang "Dashboard tổng hợp" và gắn vào đầu các màn chi tiết.
+// shop = null → toàn chuỗi (quản lý); shop = "SHOPxxxx" → chỉ nhà thuốc đó (cửa hàng trưởng / quản lý lọc).
+// =====================================================================================================
+const DASH_C = { pine:"#0f6b5c", pineL:"#8CC7B8", good:"#16A34A", warn:"#D97706", bad:"#DC2626", gray:"#94A3B8", blue:"#2563EB", blueL:"#93C5FD" };
+const dashPct = (v) => v == null || isNaN(v) ? null : Math.round(Number(v) * 10) / 10;         // số đã là % (doanh thu: 87,3)
+const dashFrac = (v) => v == null || isNaN(v) ? null : Math.round(Number(v) * 1000) / 10;      // tỉ lệ 0–1 → % (KPI 0,87 · đúng hạn 0,92)
+const dashFmtPct = (v) => v == null ? "—" : String(Math.round(v)) + "%";
+const dashDM = (iso) => iso ? `${iso.slice(8,10)}/${iso.slice(5,7)}` : "";
+function dashAddDays(iso, n){ const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
+function dashMonday(iso){ const d = new Date(iso + "T00:00:00"); const wd = (d.getDay() + 6) % 7; d.setDate(d.getDate() - wd); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
+// Tải 1 lần, dùng lại trong phiên (nhiều khối cùng đọc 1 doc tổng hợp)
+const DASH_CACHE = {};
+function useDashLoad(key, loader, deps){
+  const [st, setSt] = React.useState({ data: DASH_CACHE[key] ? DASH_CACHE[key].data : null, err:null, loading: !DASH_CACHE[key] });
+  React.useEffect(()=>{ let off = false; const c = DASH_CACHE[key];
+    if(c && Date.now() - c.at < 5 * 60 * 1000){ setSt({ data:c.data, err:null, loading:false }); return; }
+    setSt(s => ({ ...s, loading:true }));
+    loader().then(d => { DASH_CACHE[key] = { data:d, at:Date.now() }; if(!off) setSt({ data:d, err:null, loading:false }); })
+      .catch(e => { if(!off) setSt({ data:null, err:(e && e.message) || String(e), loading:false }); });
+    return () => { off = true; }; }, deps || [key]);
+  return st;
+}
+const dashOpsDoc = (id) => db.collection("opsConfig").doc(id).get().then(d => d.exists ? d.data() : null);
+function DashStat({ label, value, sub, color }){
+  const CK = React.createElement;
+  return CK("div", { style:{ flex:"1 1 130px", minWidth:120, background:"#F8FAF9", border:"1px solid var(--line)", borderRadius:10, padding:"8px 11px" } },
+    CK("div", { style:{ fontSize:11, fontWeight:700, color:"var(--inkSoft)", textTransform:"uppercase", letterSpacing:".03em" } }, label),
+    CK("div", { style:{ fontSize:21, fontWeight:900, color: color || "var(--ink)", marginTop:2 } }, value),
+    sub && CK("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, sub));
+}
+function DashStats({ items }){ return React.createElement("div", { style:{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12 } }, items.filter(Boolean).map((it,i) => React.createElement(DashStat, { key:i, ...it }))); }
+function DashBox({ title, sub, tab, onNavigate, st, children, empty }){
+  const CK = React.createElement;
+  const right = onNavigate && tab ? CK("button", { className:"btn", style:{ padding:"4px 10px", fontSize:12 }, onClick:()=>onNavigate(tab) }, "Xem chi tiết →") : null;
+  return CK(ChartCard, { title, sub, right },
+    st && st.loading ? CK("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", padding:"18px 0" } }, "Đang tải số liệu…")
+    : st && st.err ? CK("div", { style:{ fontSize:12.5, color:DASH_C.bad } }, "Chưa tải được: " + st.err)
+    : empty ? CK("div", { style:{ fontSize:12.5, color:"var(--inkSoft)", padding:"12px 0" } }, empty) : children);
+}
+// Gói gọn để gắn vào đầu các màn chi tiết — bấm để ẩn/hiện, nhớ lựa chọn trên máy
+function DashCollapse({ id, title, children }){
+  const CK = React.createElement; const k = "dashOpen_" + id;
+  const [open, setOpen] = React.useState(() => { try{ return localStorage.getItem(k) !== "0"; }catch(e){ return true; } });
+  const tog = () => { const v = !open; setOpen(v); try{ localStorage.setItem(k, v ? "1" : "0"); }catch(e){} };
+  return CK("div", { style:{ marginBottom:14 } },
+    CK("button", { onClick:tog, style:{ border:"none", background:"transparent", cursor:"pointer", fontWeight:700, fontSize:13, color:"var(--pine)", padding:"2px 0", fontFamily:"inherit" } }, (open ? "▾ " : "▸ ") + (title || "Biểu đồ tổng hợp")),
+    open && CK("div", { style:{ marginTop:6 } }, children));
+}
+
+// ---- 1) Doanh thu tháng so mục tiêu ----
+function DashRevenueSection({ shop, onNavigate }){
+  const CK = React.createElement;
+  const st = useDashLoad("rev", () => dashOpsDoc("revenueAnalytics"));
+  const mt = st.data && st.data.monthTracking; const by = (mt && mt.byShop) || {};
+  const shops = Object.keys(by).filter(s => by[s] && by[s].revenue && by[s].revenue.target > 0).sort();
+  const ch = mt && mt.chain && mt.chain.revenue; const me = shop ? (by[shop] || {}).revenue : null;
+  const cur = me || ch || {};
+  const chainAvg = shops.length ? shops.reduce((a,s)=>a+(Number(by[s].revenue.projectedPct)||0),0)/shops.length : null;
+  const list = shop ? (by[shop] && by[shop].revenue && by[shop].revenue.target > 0 ? [shop] : []) : shops;
+  return CK(DashBox, { title:"Doanh thu tháng so mục tiêu", sub: mt ? `Tháng ${String(mt.month||"").slice(5)} · đã qua ${mt.daysElapsed||0}/${mt.daysInMonth||0} ngày · cột nhạt = đã đạt tới hôm nay, cột đậm = dự kiến cuối tháng` : "", tab:"revenueAnalytics", onNavigate, st, empty: !mt ? "Chưa có số liệu doanh thu tháng." : null },
+    CK(DashStats, { items:[
+      { label: shop ? "Đã đạt (NT)" : "Đã đạt (chuỗi)", value: dashFmtPct(dashPct(cur.pct)), sub: cur.actual ? fmtVND(cur.actual) : null },
+      { label:"Dự kiến cuối tháng", value: dashFmtPct(dashPct(cur.projectedPct)), color: dashPct(cur.projectedPct) >= 100 ? DASH_C.good : dashPct(cur.projectedPct) >= 90 ? DASH_C.warn : DASH_C.bad, sub: cur.target ? "Mục tiêu " + fmtVND(cur.target) : null },
+      shop && chainAvg != null && { label:"TB các nhà thuốc", value: dashFmtPct(dashPct(chainAvg)), sub:"dự kiến cuối tháng" } ] }),
+    list.length > 0 && CK(ColumnChart, { labels: list.map(shopLabel), height:210, fmt:(v)=>dashFmtPct(v), axisFmt:(v)=>Math.round(v)+"%",
+      series:[ { name:"Đã đạt tới hôm nay", color:DASH_C.pineL, values: list.map(s => dashPct(by[s].revenue.pct) || 0) },
+               { name:"Dự kiến cuối tháng", color:(i,v) => v >= 100 ? DASH_C.good : v >= 90 ? DASH_C.warn : DASH_C.bad, values: list.map(s => dashPct(by[s].revenue.projectedPct) || 0) } ] }),
+    CK(ChartLegend, { items:[ { label:"Đã đạt tới hôm nay", color:DASH_C.pineL }, { label:"Dự kiến ≥ 100%", color:DASH_C.good }, { label:"90–99%", color:DASH_C.warn }, { label:"< 90%", color:DASH_C.bad } ] }));
+}
+// ---- 2) Sức khoẻ nhà thuốc ----
+function DashHealthSection({ shop, onNavigate }){
+  const CK = React.createElement;
+  const st = useDashLoad("health", () => dashOpsDoc("shopHealthSummary"));
+  const S = (st.data && st.data.shops) || {};
+  const list = (shop ? [shop] : Object.keys(S).sort()).filter(s => S[s] && S[s].score != null);
+  const col = (v) => v >= 85 ? DASH_C.good : v >= 70 ? DASH_C.warn : DASH_C.bad;
+  const avg = list.length ? Math.round(list.reduce((a,s)=>a+S[s].score,0)/list.length) : null;
+  return CK(DashBox, { title:"Sức khoẻ nhà thuốc", sub:"Điểm 0–100 tổng hợp doanh số, vận hành, nhân sự, khách hàng… (≥ 85 tốt · 70–84 cần chú ý · < 70 đáng lo)", tab:"shop360", onNavigate, st, empty: !list.length ? "Chưa có điểm sức khoẻ." : null },
+    CK(DashStats, { items:[ { label: shop ? "Điểm nhà thuốc" : "Điểm TB", value: avg ?? "—", color: avg != null ? col(avg) : null },
+      !shop && { label:"Đáng lo (< 70)", value: list.filter(s=>S[s].score<70).length, color:DASH_C.bad },
+      { label:"Vấn đề đang mở", value: list.reduce((a,s)=>a+(S[s].issueCount||0),0) } ] }),
+    CK(ColumnChart, { labels: list.map(shopLabel), height:190, valueLabels: list.length <= 14 ? "all" : "max", series:[ { name:"Điểm", color:(i,v)=>col(v), values: list.map(s=>S[s].score) } ] }));
+}
+// ---- 3) KPI dự kiến cuối tháng (theo nhân viên) ----
+function DashKpiSection({ shop, onNavigate }){
+  const CK = React.createElement;
+  const st = useDashLoad("kpi_" + (shop||"all"), async () => { let q = db.collection("dailyKpiPace"); if(shop) q = q.where("shop", "==", shop); const s = await q.get(); return s.docs.map(d => d.data()); }, [shop]);
+  const rows = (st.data || []).filter(r => !r.kpiKhongXet && r.kpiPctProjected != null && r.thang === todayISO().slice(0,7));
+  const pass = KPI_PASS_PCT, ok = rows.filter(r=>r.kpiPctProjected>=pass), near = rows.filter(r=>r.kpiPctProjected<pass && r.kpiPctProjected>=pass-0.15), low = rows.filter(r=>r.kpiPctProjected<pass-0.15);
+  const byShop = {}; rows.forEach(r => { const k = r.shop || "?"; (byShop[k] = byShop[k] || []).push(r.kpiPctProjected); });
+  const shops = Object.keys(byShop).sort();
+  const staffSorted = rows.slice().sort((a,b)=>a.kpiPctProjected-b.kpiPctProjected);
+  return CK(DashBox, { title:"KPI dự kiến cuối tháng", sub:`Mốc đạt ${Math.round(pass*100)}% · tính theo nhịp làm việc tới hôm nay (cập nhật mỗi ngày)`, tab:"kpi", onNavigate, st, empty: !rows.length ? "Chưa có số KPI tháng này." : null },
+    CK("div", { style:{ display:"flex", gap:16, flexWrap:"wrap", alignItems:"center" } },
+      CK(DonutChart, { size:170, items:[ { label:"Đạt mốc", value:ok.length, color:DASH_C.good }, { label:"Sát mốc (−15%)", value:near.length, color:DASH_C.warn }, { label:"Còn xa", value:low.length, color:DASH_C.bad } ], centerTop: `${ok.length}/${rows.length}`, centerBottom:"nhân viên đạt" }),
+      CK("div", { style:{ flex:"1 1 320px", minWidth:260 } },
+        shop ? CK(ColumnChart, { labels: staffSorted.map(r => String(r.staffName||"").split(" ").slice(-1)[0]), height:200, fmt:(v)=>dashFmtPct(v), axisFmt:(v)=>Math.round(v)+"%",
+                 tooltipRows:(i)=>[{ label:staffSorted[i].staffName, value:dashFmtPct(dashFrac(staffSorted[i].kpiPctProjected)) }],
+                 series:[ { name:"KPI dự kiến", color:(i,v)=> v>=pass*100 ? DASH_C.good : v>=(pass-0.15)*100 ? DASH_C.warn : DASH_C.bad, values: staffSorted.map(r=>dashFrac(r.kpiPctProjected)) } ] })
+             : CK(ColumnChart, { labels: shops.map(shopLabel), height:200, fmt:(v)=>dashFmtPct(v), axisFmt:(v)=>Math.round(v)+"%",
+                 series:[ { name:"KPI dự kiến TB", color:(i,v)=> v>=pass*100 ? DASH_C.good : v>=(pass-0.15)*100 ? DASH_C.warn : DASH_C.bad, values: shops.map(s => dashFrac(byShop[s].reduce((a,v)=>a+v,0)/byShop[s].length)) } ] }))),
+    CK(ChartLegend, { items:[ { label:"Đạt mốc", color:DASH_C.good }, { label:"Sát mốc", color:DASH_C.warn }, { label:"Còn xa", color:DASH_C.bad } ] }));
+}
+// ---- 4) Công việc ----
+function DashTaskSection({ shop, onNavigate }){
+  const CK = React.createElement;
+  const st = useDashLoad("taskIntel", () => dashOpsDoc("taskIntelligence"));
+  const T = st.data || {}; const M = T.metrics || {};
+  const rows = (T.byShop || []).filter(r => r && r.key && r.key !== "(không rõ)" && (!shop || r.key === shop)).sort((a,b)=>String(a.key).localeCompare(String(b.key)));
+  const me = shop ? rows[0] || {} : null;
+  const ag = T.agingBuckets || {};
+  return CK(DashBox, { title:"Công việc", sub:`Việc đang mở, quá hạn và tỷ lệ đúng hạn ${T.windowDays ? T.windowDays + " ngày gần nhất" : ""}`, tab:"tasks", onNavigate, st, empty: !T.computedAt ? "Chưa có số liệu công việc." : null },
+    CK(DashStats, { items:[
+      { label:"Đang mở", value: shop ? (me.open ?? 0) : (M.open ?? 0) },
+      { label:"Quá hạn", value: shop ? (me.overdue ?? 0) : (M.overdue ?? 0), color:DASH_C.bad },
+      { label:"Đúng hạn", value: dashFmtPct(dashFrac(shop ? me.onTimeRate : M.onTimeRate)), color:DASH_C.good },
+      !shop && { label:"Chờ duyệt", value: M.awaitingReview ?? 0 } ] }),
+    CK("div", { style:{ display:"flex", gap:16, flexWrap:"wrap", alignItems:"center" } },
+      rows.length > 0 && CK("div", { style:{ flex:"1 1 360px", minWidth:260 } }, CK(ColumnChart, { labels: rows.map(r=>shopLabel(r.key)), stacked:true, height:200,
+        series:[ { name:"Quá hạn", color:DASH_C.bad, values: rows.map(r=>r.overdue||0) }, { name:"Còn hạn", color:DASH_C.pineL, values: rows.map(r=>Math.max(0,(r.open||0)-(r.overdue||0))) } ] }),
+        CK(ChartLegend, { items:[ { label:"Quá hạn", color:DASH_C.bad }, { label:"Đang mở, còn hạn", color:DASH_C.pineL } ] })),
+      !shop && CK(DonutChart, { size:160, items:[ { label:"0–1 ngày", value:ag["0-1"]||0, color:DASH_C.good }, { label:"2–3 ngày", value:ag["2-3"]||0, color:DASH_C.pineL }, { label:"4–7 ngày", value:ag["4-7"]||0, color:DASH_C.warn }, { label:"> 7 ngày", value:ag[">7"]||0, color:DASH_C.bad } ],
+        centerTop: String(M.open ?? 0), centerBottom:"việc mở · theo tuổi" })));
+}
+// ---- 5) Checklist ngày (14 ngày) ----
+function DashChecklistSection({ shop, onNavigate }){
+  const CK = React.createElement; const today = todayISO(); const from = dashAddDays(today, -13);
+  const st = useDashLoad("cl_" + today, async () => { const s = await db.collection("dailyReports").where("ngay", ">=", from).get(); return s.docs.map(d => d.data()); }, [shop, today]);
+  const rows = (st.data || []).filter(r => !shop || r.shop === shop);
+  const days = []; for(let d = from; d <= today; d = dashAddDays(d, 1)) days.push(d);
+  const by = {}; rows.forEach(r => { const x = by[r.ngay] = by[r.ngay] || { n:0, sub:0, sc:0, scN:0 }; x.n++; if(r.trangThai === "Đã nộp") x.sub++; if(r.diemChu != null){ x.sc += Number(r.diemChu)||0; x.scN++; } });
+  const rate = days.map(d => by[d] && by[d].n ? Math.round(by[d].sub / by[d].n * 100) : 0);
+  const tot = rows.length, sub = rows.filter(r=>r.trangThai==="Đã nộp").length;
+  const shopRate = {}; if(!shop) rows.forEach(r => { if(!r.shop) return; const x = shopRate[r.shop] = shopRate[r.shop] || { n:0, sub:0 }; x.n++; if(r.trangThai==="Đã nộp") x.sub++; });
+  const sk = Object.keys(shopRate).sort();
+  return CK(DashBox, { title:"Checklist ngày — 14 ngày gần nhất", sub:"Tỷ lệ nộp checklist mỗi ngày (số phiếu đã nộp / số phiếu đã mở)", tab:"checklist", onNavigate, st, empty: !rows.length ? "Chưa có checklist trong 14 ngày." : null },
+    CK(DashStats, { items:[ { label:"Tỷ lệ nộp 14 ngày", value: tot ? Math.round(sub/tot*100) + "%" : "—", color: tot && sub/tot >= 0.9 ? DASH_C.good : DASH_C.warn }, { label:"Phiếu đã nộp", value: sub, sub:`/ ${tot} phiếu` } ] }),
+    CK(ColumnChart, { labels: days.map(dashDM), height:180, labelEvery:2, fmt:(v)=>v+"%", axisFmt:(v)=>Math.round(v)+"%", avgLine:true,
+      tooltipRows:(i)=>[{ label:"Đã nộp", value:`${(by[days[i]]||{}).sub||0}/${(by[days[i]]||{}).n||0}` }, { label:"Tỷ lệ", value:rate[i]+"%" }],
+      series:[ { name:"Tỷ lệ nộp", color:(i,v)=> v>=90 ? DASH_C.good : v>=70 ? DASH_C.warn : DASH_C.bad, values: rate } ] }),
+    sk.length > 1 && CK("div", { style:{ marginTop:10 } }, CK("div", { style:{ fontSize:12, fontWeight:700, color:"var(--inkSoft)", marginBottom:4 } }, "Theo nhà thuốc (14 ngày)"),
+      CK(ColumnChart, { labels: sk.map(shopLabel), height:160, fmt:(v)=>v+"%", axisFmt:(v)=>Math.round(v)+"%", series:[ { name:"Tỷ lệ nộp", color:(i,v)=> v>=90 ? DASH_C.good : v>=70 ? DASH_C.warn : DASH_C.bad, values: sk.map(s => Math.round(shopRate[s].sub/shopRate[s].n*100)) } ] })));
+}
+// ---- 6) Chăm sóc khách (Danh sách gọi hôm nay) ----
+function DashCareSection({ shop, onNavigate }){
+  const CK = React.createElement;
+  const st = useDashLoad("care", () => dashOpsDoc("careDailyStats"));
+  const D = (st.data && st.data.days) || {}; const days = Object.keys(D).sort().slice(-14);
+  const sumOf = (d, k) => Object.entries(D[d] || {}).filter(([s]) => !shop || s === shop).reduce((a,[,x])=>a+(Number(x && x[k])||0),0);
+  const quota = days.map(d=>sumOf(d,"quota")), done = days.map(d=>sumOf(d,"done"));
+  const tq = quota.reduce((a,b)=>a+b,0), td = done.reduce((a,b)=>a+b,0);
+  return CK(DashBox, { title:"Chăm sóc khách — Danh sách gọi hôm nay", sub:"Số khách được giao gọi mỗi ngày và số đã gọi (ghi kết quả)", tab:"taimua", onNavigate, st, empty: !days.length ? "Chưa có số liệu danh sách gọi." : null },
+    CK(DashStats, { items:[ { label:"Đã gọi / được giao", value: tq ? Math.round(td/tq*100) + "%" : "—", sub:`${td}/${tq} khách · ${days.length} ngày`, color: tq && td/tq >= 0.8 ? DASH_C.good : DASH_C.warn } ] }),
+    CK(ColumnChart, { labels: days.map(dashDM), height:180, labelEvery:2,
+      series:[ { name:"Được giao", color:DASH_C.blueL, values: quota }, { name:"Đã gọi", color:DASH_C.pine, values: done } ] }),
+    CK(ChartLegend, { items:[ { label:"Được giao", color:DASH_C.blueL }, { label:"Đã gọi", color:DASH_C.pine } ] }));
+}
+// ---- 7) Đào tạo — luyện tình huống (8 tuần) ----
+function DashTrainingSection({ shop, onNavigate }){
+  const CK = React.createElement; const today = todayISO(); const from = dashAddDays(dashMonday(today), -49);
+  const st = useDashLoad("tts_" + today, async () => { const s = await db.collection("ttsPractice").where("date", ">=", from).get(); return s.docs.map(d => { const x = d.data(); return { date:x.date, shop:x.shop, score:x.score, status:x.status, mode:x.mode, hireId:x.hireId, errors:x.errors || [] }; }); }, [shop, today]);
+  const rows = (st.data || []).filter(r => (!shop || r.shop === shop) && r.status === "graded" && r.score != null);
+  const weeks = []; for(let w = dashMonday(from); w <= today; w = dashAddDays(w, 7)) weeks.push(w);
+  const wk = weeks.map(w => rows.filter(r => r.date >= w && r.date < dashAddDays(w, 7)));
+  const avg = wk.map(a => a.length ? Math.round(a.reduce((s,r)=>s+r.score,0)/a.length) : 0);
+  const errC = {}; rows.forEach(r => r.errors.forEach(e => { errC[e] = (errC[e]||0) + 1; }));
+  const ERR_VI = { sangloc:"Thiếu sàng lọc", lieu:"Sai liều", trunghc:"Trùng hoạt chất", dikham:"Lẽ ra khuyên đi khám", huongdan:"Thiếu hướng dẫn", hhs1:"Chưa gợi ý HHS1", chandoan:"Chẩn đoán sai", thieuthuoc:"Thiếu thuốc cần thiết" };
+  const errs = Object.entries(errC).sort((a,b)=>b[1]-a[1]).slice(0, 6);
+  return CK(DashBox, { title:"Đào tạo — luyện tình huống (8 tuần)", sub:"Điểm trung bình các bài đã chấm theo tuần (cột) và số bài (dưới cột); lỗi hay gặp", tab:"training", onNavigate, st, empty: !rows.length ? "Chưa có bài luyện được chấm trong 8 tuần." : null },
+    CK(DashStats, { items:[ { label:"Bài đã chấm", value: rows.length, sub:`${new Set(rows.map(r=>r.hireId)).size} người luyện` }, { label:"Điểm TB", value: rows.length ? Math.round(rows.reduce((s,r)=>s+r.score,0)/rows.length) : "—", color:DASH_C.pine } ] }),
+    CK(ColumnChart, { labels: weeks.map(w => "T" + dashDM(w)), height:190, subLabels: wk.map(a => ({ text: a.length + " bài" })), valueLabels:"all",
+      series:[ { name:"Điểm TB", color:(i,v)=> v>=80 ? DASH_C.good : v>=60 ? DASH_C.warn : DASH_C.bad, values: avg } ] }),
+    errs.length > 0 && CK("div", { style:{ marginTop:10 } }, CK("div", { style:{ fontSize:12, fontWeight:700, color:"var(--inkSoft)", marginBottom:4 } }, "Lỗi hay gặp"),
+      CK(ColumnChart, { labels: errs.map(([k]) => ERR_VI[k] || k), height:170, valueLabels:"all", series:[ { name:"Số bài mắc", color:DASH_C.bad, values: errs.map(([,n]) => n) } ] })));
+}
+// ---- Báo cáo tuần: doanh thu thực hiện theo tuần (8 tuần) ----
+function DashWeeklyTrendSection({ shop, onNavigate }){
+  const CK = React.createElement; const today = todayISO(); const from = dashAddDays(dashMonday(today), -49);
+  const st = useDashLoad("wr_" + from, async () => { const s = await db.collection("weeklyReports").where("tuanNgay", ">=", from).get(); return s.docs.map(d => d.data()); }, [shop, from]);
+  const rows = (st.data || []).filter(r => !shop || r.shop === shop);
+  const weeks = []; for(let w = from; w <= today; w = dashAddDays(w, 7)) weeks.push(w);
+  const val = (r, k) => Number((r[k] || {}).actualWeek) || 0, tgt = (r, k) => Number((r[k] || {}).target) || 0;
+  const rev = weeks.map(w => rows.filter(r => r.tuanNgay === w).reduce((a,r)=>a+val(r,"revenueProgress"),0));
+  const tg = weeks.map(w => rows.filter(r => r.tuanNgay === w).reduce((a,r)=>a+tgt(r,"revenueProgress"),0));
+  const nRep = weeks.map(w => rows.filter(r => r.tuanNgay === w).length);
+  const hasT = tg.some(v => v > 0);
+  return CK(DashBox, { title:"Doanh thu theo tuần (từ báo cáo tuần)", sub:"Doanh thu thực hiện mỗi tuần do nhà thuốc báo cáo" + (hasT ? " so với chỉ tiêu tuần" : "") + "; dưới cột là số báo cáo đã nộp", tab:"baocaotuan", onNavigate, st, empty: !rows.length ? "Chưa có báo cáo tuần trong 8 tuần." : null },
+    CK(ColumnChart, { labels: weeks.map(w => "T" + dashDM(w)), height:200, fmt:fmtVND, axisFmt:(v)=> v>=1e9 ? (v/1e9).toFixed(1)+" tỷ" : Math.round(v/1e6)+"tr", subLabels: nRep.map(n => ({ text: n + " BC" })),
+      series: hasT ? [ { name:"Chỉ tiêu", color:"#CBD5E1", values: tg }, { name:"Thực hiện", color:DASH_C.pine, values: rev } ] : [ { name:"Thực hiện", color:DASH_C.pine, values: rev } ] }),
+    hasT && CK(ChartLegend, { items:[ { label:"Chỉ tiêu", color:"#CBD5E1" }, { label:"Thực hiện", color:DASH_C.pine } ] }));
+}
+// ---- Báo cáo tháng: doanh thu 6 tháng gần nhất so chỉ tiêu ----
+function DashMonthlyTrendSection({ shop, onNavigate }){
+  const CK = React.createElement; const now = new Date();
+  const months = []; for(let i = 5; i >= 0; i--){ const d = new Date(now.getFullYear(), now.getMonth() - i, 1); months.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`); }
+  const st = useDashLoad("mon_" + months[5], async () => { const out = {}; await Promise.all(months.map(async m => { try{ const d = await db.collection("opsConfig").doc("revenueAnalyticsMonths").collection("months").doc(m).get(); out[m] = d.exists ? d.data() : null; }catch(e){ out[m] = null; } })); return out; }, [months[5]]);
+  const M = st.data || {};
+  const pick = (m) => { const x = M[m]; if(!x) return null; if(shop) return ((x.byShop||{})[shop]||{}).revenue || null; const by = x.byShop || {}; let t = 0, a = 0; Object.values(by).forEach(b => { if(b && b.revenue){ t += Number(b.revenue.target)||0; a += Number(b.revenue.actual)||0; } }); return { target:t, actual:a, pct: t ? a/t*100 : null }; };
+  const vals = months.map(pick);
+  return CK(DashBox, { title:"Doanh thu 6 tháng gần nhất", sub:"Thực hiện so chỉ tiêu từng tháng (tháng hiện tại: tới hôm nay); dưới cột là % đạt", tab:"revenueAnalytics", onNavigate, st, empty: !vals.some(Boolean) ? "Chưa có số liệu doanh thu theo tháng." : null },
+    CK(ColumnChart, { labels: months.map(m => "Th" + Number(m.slice(5))), height:210, fmt:fmtVND, axisFmt:(v)=> v>=1e9 ? (v/1e9).toFixed(1)+" tỷ" : Math.round(v/1e6)+"tr",
+      subLabels: vals.map(v => ({ text: v && v.pct != null ? Math.round(dashPct(v.pct)) + "%" : "—", color: v && dashPct(v.pct) >= 100 ? DASH_C.good : DASH_C.bad })),
+      series:[ { name:"Chỉ tiêu", color:"#CBD5E1", values: vals.map(v => v ? Number(v.target)||0 : 0) }, { name:"Thực hiện", color:DASH_C.pine, values: vals.map(v => v ? Number(v.actual)||0 : 0) } ] }),
+    CK(ChartLegend, { items:[ { label:"Chỉ tiêu", color:"#CBD5E1" }, { label:"Thực hiện", color:DASH_C.pine } ] }));
+}
+// ---- Trang Dashboard tổng hợp ----
+function SummaryDashboardView({ isAdmin, myStaff, onNavigate }){
+  const CK = React.createElement;
+  const own = !isAdmin && myStaff ? myStaff.shop : null;
+  const [pick, setPick] = React.useState("");
+  const [shopsList, setShopsList] = React.useState([]);
+  React.useEffect(()=>{ if(!isAdmin) return; dashOpsDoc("revenueAnalytics").then(d => { const by = (d && d.monthTracking && d.monthTracking.byShop) || {}; setShopsList(Object.keys(by).sort()); }).catch(()=>{}); }, [isAdmin]);
+  const shop = own || pick || null;
+  const p = { shop, onNavigate };
+  return CK("div", null,
+    CK("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", gap:10, flexWrap:"wrap", marginBottom:12 } },
+      CK("div", null, CK("h2", { className:"pagetitle", style:{ margin:0 } }, "Dashboard tổng hợp"),
+        CK("div", { className:"pagesub" }, shop ? `Nhà thuốc ${shopLabel(shop)}` : "Toàn chuỗi — so sánh giữa các nhà thuốc · bấm \"Xem chi tiết\" để mở màn tương ứng")),
+      isAdmin && CK("select", { value:pick, onChange:e=>setPick(e.target.value), style:{ padding:"6px 9px", borderRadius:8, border:"1px solid var(--line)" } },
+        CK("option", { value:"" }, "Toàn chuỗi"), shopsList.map(s => CK("option", { key:s, value:s }, shopLabel(s) + " · " + s)))),
+    CK("div", { className:"dashGrid", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(min(100%, 520px), 1fr))", gap:14, alignItems:"start" } },
+      CK(DashRevenueSection, p), CK(DashHealthSection, p), CK(DashKpiSection, p), CK(DashTaskSection, p),
+      CK(DashChecklistSection, p), CK(DashCareSection, p), CK(DashTrainingSection, p), CK(DashMonthlyTrendSection, p)));
+}
 function ChartCard({ title, sub, right, children, style }){
   const CK = React.createElement;
   return CK("div", { className:"card", style:{ marginBottom:16, ...(style||{}) } }, [
@@ -18132,6 +18358,7 @@ function ProductDictionaryAddModal({ onClose, onPick }){
 const STAFF_TABS = ["homnay","checklist","photos","hanghoa","tudien","tasks","kpi","crm","cust360","taimua","training","kudos","temgia","revenueAnalytics","nhanvien","ctkm","baocaotuan","sales"]; // 27/9/2026: bỏ "Kinh nghiệm vận hành" khỏi giao diện nhân viên/CHT
 const OPS_TABS = [
   { id:"command", label:"Tổng quan điều hành" },
+  { id:"dashboard", label:"Dashboard tổng hợp" }, // 19/10/2026: biểu đồ tổng hợp (quản lý + cửa hàng trưởng)
   { id:"shop360", label:"Hồ sơ nhà thuốc" },
   { id:"kiemtra", label:"Kiểm tra nhà thuốc" }, // 7/10/2026: phiếu chấm điểm khi quản lý khu vực đi thăm
   { id:"risk", label:"Danh sách rủi ro & cảnh báo" },
@@ -18184,7 +18411,7 @@ const OPS_TABS = [
 //  Tổng quan = điều hành + nhịp + rủi ro + AI (đọc 15 phút mỗi sáng) · Nhà thuốc = hồ sơ + kiểm tra khi đi thăm + checklist/ảnh
 //  Con người = KPI/NV/đào tạo/ghi nhận · Khách hàng & Kinh doanh · Hàng hoá & Báo cáo · Hệ thống (+ lịch sử kinh nghiệm)
 const OPS_GROUPS_ADMIN_V2 = [
-  { id:"command",      label:"Tổng quan",                  tabs:["command","nhipvanhanh","risk","ai"] },
+  { id:"command",      label:"Tổng quan",                  tabs:["command","dashboard","nhipvanhanh","risk","ai"] },
   { id:"nhathuoc",     label:"Nhà thuốc",                  tabs:["shop360","kiemtra","checklist","photos","homnay"] },
   { id:"congviec",     label:"Công việc",                  tabs:["tasks"] },
   { id:"nhansu",       label:"Nhân sự",                    tabs:["kpi","emp360","training","nhanvien","kudos"] },
@@ -18196,7 +18423,7 @@ const OPS_GROUPS_ADMIN_V2 = [
   { id:"hethong",      label:"Hệ thống",                   tabs:["hethong","kinhnghiem"] },
 ];
 const OPS_GROUPS_STAFF_V2 = [
-  { id:"nhathuoc",     label:"Nhà thuốc",    tabs:["homnay","checklist","photos","shop360","kiemtra","risk"] }, // shop360/kiemtra/risk: chỉ CHT (lọc ở leafTabs)
+  { id:"nhathuoc",     label:"Nhà thuốc",    tabs:["homnay","dashboard","checklist","photos","shop360","kiemtra","risk"] }, // shop360/kiemtra/risk/dashboard: chỉ CHT (lọc ở leafTabs)
   { id:"congviec",     label:"Công việc",    tabs:["tasks"] },
   { id:"nhansu",       label:"Nhân sự",      tabs:["kpi","nhanvien","training","kudos"] },
   { id:"khachhang",    label:"Khách hàng",   tabs:["taimua","crm"] },
@@ -20946,6 +21173,7 @@ const TAB_STYLE = {
   baocaolanhdao:    { icon:"", color:"#178a43" },
   baocaothang:      { icon:"", color:"#0f766e" },
   nhipvanhanh:      { icon:"", color:"#B91C1C" },
+  dashboard:        { icon:"", color:"#0f6b5c" },
   ketquangay:       { icon:"", color:"#c8503a" },
 };
 
@@ -20987,6 +21215,7 @@ const TAB_ICON_SVG = {
   baocaotuan: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
   baocaolanhdao: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg>',
   nhipvanhanh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>',
+  dashboard: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
   ketquangay: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>',
 };
 const TAB_ICON_ALIAS = { baocaothang:"baocaolanhdao", xemthem:"hethong", kiemtra:"checklist", congviec:"tasks", kinhdoanh:"revenueAnalytics", baocao:"baocaotuan", ruiro:"risk" };
@@ -29601,7 +29830,7 @@ function Dashboard({ user, isAdmin, myStaff }){
   // tài khoản quản lý không gắn nhà thuốc nên không có gì để nhập/xem, ẩn hẳn khỏi menu quản lý.
   // 3/10/2026 (mục B1): CỬA HÀNG TRƯỞNG thấy thêm Hồ sơ nhà thuốc + Rủi ro & cảnh báo của nhà thuốc mình
   const isCHT = !isAdmin && !!myStaff && myStaff.role==="Cửa hàng trưởng";
-  const leafTabs = isAdmin ? OPS_TABS.filter(t => t.id!=="sales" && t.id!=="donthuoc") : OPS_TABS.filter(t => STAFF_TABS.includes(t.id) || (isCHT && (t.id==="shop360" || t.id==="risk" || t.id==="kiemtra")));
+  const leafTabs = isAdmin ? OPS_TABS.filter(t => t.id!=="sales" && t.id!=="donthuoc") : OPS_TABS.filter(t => STAFF_TABS.includes(t.id) || (isCHT && (t.id==="shop360" || t.id==="risk" || t.id==="kiemtra" || t.id==="dashboard")));
   // 20/9/2026: quản lý thấy sidebar GOM NHÓM theo mẫu mockup (7 nhóm thay vì 14 tab phẳng); nhân
   // viên KHÔNG đổi gì — mỗi tab của nhân viên coi như 1 "nhóm" chỉ có đúng 1 tab bên trong, để dùng
   // chung 1 đoạn code render sidebar/topnav/lưới điện thoại cho cả 2 vai trò.
@@ -29839,6 +30068,7 @@ function Dashboard({ user, isAdmin, myStaff }){
           active: TAB_PARENT[activeTab] && !activeGroup.tabs.includes(activeTab) ? TAB_PARENT[activeTab] : activeTab, onChange:setActiveTab,
         }),
         activeTab==="command" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(ExecOverviewView, { key:viewResetKey, isAdmin, myStaff, onNavigate:setActiveTab })),
+      activeTab==="dashboard" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(SummaryDashboardView, { key:viewResetKey, isAdmin, myStaff, onNavigate:setActiveTab })),
         activeTab==="risk" && (isAdmin || isCHT) && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(RiskCenterView, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab })),
         activeTab==="shop360" && (isAdmin || isCHT) && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(ShopProfileView, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab })),
         activeTab==="kiemtra" && (isAdmin || isCHT) && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(StoreVisitView, { key:viewResetKey, isAdmin, myStaff })),
@@ -29847,21 +30077,29 @@ function Dashboard({ user, isAdmin, myStaff }){
         activeTab==="cust360" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(Customer360View, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab })),
         activeTab==="prod360" && isAdmin && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(Product360View, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab })),
         activeTab==="tudien" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(ProductDictionaryHub, { key:viewResetKey, isAdmin, myStaff, navParam })),
-        activeTab==="checklist" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(DailyChecklistView, { key:viewResetKey, isAdmin, myStaff })),
+        (isAdmin || isCHT) && activeTab==="checklist" && React.createElement(ErrorBoundary, { key:"ebd_checklist", inline:true }, React.createElement(DashCollapse, { id:"checklist", title:"Biểu đồ checklist 14 ngày" }, React.createElement(DashChecklistSection, { shop: isAdmin ? null : (myStaff && myStaff.shop) || null, onNavigate:null }))), // 19/10/2026: biểu đồ tổng hợp
+      activeTab==="checklist" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(DailyChecklistView, { key:viewResetKey, isAdmin, myStaff })),
         activeTab==="homnay" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(TodayShopTasksView, { key:viewResetKey, isAdmin, myStaff, onNavigate:setActiveTab })),
         activeTab==="photos" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(ImageReportView, { key:viewResetKey, isAdmin, myStaff })),
         activeTab==="hanghoa" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(HangHoaView, { key:viewResetKey, isAdmin, myStaff, navParam })),
         activeTab==="donthuoc" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(PrescriptionLibraryView, { key:viewResetKey, isAdmin, myStaff })),
-        activeTab==="tasks" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(TaskAssignView, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab, openTasks360 })),
-        activeTab==="kpi" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(KpiView, { key:viewResetKey, isAdmin, myStaff })),
-        activeTab==="taimua" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(ReplenishView, { key:viewResetKey, isAdmin, myStaff, onNavigate:setActiveTab })),
-        activeTab==="crm" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(CrmView, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab })),
-        activeTab==="training" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(TrainingView, { key:viewResetKey, isAdmin, myStaff, navParam })),
+        (isAdmin || isCHT) && activeTab==="tasks" && React.createElement(ErrorBoundary, { key:"ebd_tasks", inline:true }, React.createElement(DashCollapse, { id:"tasks", title:"Biểu đồ công việc" }, React.createElement(DashTaskSection, { shop: isAdmin ? null : (myStaff && myStaff.shop) || null, onNavigate:null }))), // 19/10/2026: biểu đồ tổng hợp
+      activeTab==="tasks" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(TaskAssignView, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab, openTasks360 })),
+        (isAdmin || isCHT) && activeTab==="kpi" && React.createElement(ErrorBoundary, { key:"ebd_kpi", inline:true }, React.createElement(DashCollapse, { id:"kpi", title:"Biểu đồ KPI dự kiến" }, React.createElement(DashKpiSection, { shop: isAdmin ? null : (myStaff && myStaff.shop) || null, onNavigate:null }))), // 19/10/2026: biểu đồ tổng hợp
+      activeTab==="kpi" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(KpiView, { key:viewResetKey, isAdmin, myStaff })),
+        (isAdmin || isCHT) && activeTab==="taimua" && React.createElement(ErrorBoundary, { key:"ebd_taimua", inline:true }, React.createElement(DashCollapse, { id:"taimua", title:"Biểu đồ chăm sóc khách" }, React.createElement(DashCareSection, { shop: isAdmin ? null : (myStaff && myStaff.shop) || null, onNavigate:null }))), // 19/10/2026: biểu đồ tổng hợp
+      activeTab==="taimua" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(ReplenishView, { key:viewResetKey, isAdmin, myStaff, onNavigate:setActiveTab })),
+        (isAdmin || isCHT) && activeTab==="crm" && React.createElement(ErrorBoundary, { key:"ebd_crm", inline:true }, React.createElement(DashCollapse, { id:"crm", title:"Biểu đồ chăm sóc khách" }, React.createElement(DashCareSection, { shop: isAdmin ? null : (myStaff && myStaff.shop) || null, onNavigate:null }))), // 19/10/2026: biểu đồ tổng hợp
+      activeTab==="crm" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(CrmView, { key:viewResetKey, isAdmin, myStaff, navParam, onNavigate:setActiveTab })),
+        (isAdmin || isCHT) && activeTab==="training" && React.createElement(ErrorBoundary, { key:"ebd_training", inline:true }, React.createElement(DashCollapse, { id:"training", title:"Biểu đồ luyện tình huống" }, React.createElement(DashTrainingSection, { shop: isAdmin ? null : (myStaff && myStaff.shop) || null, onNavigate:null }))), // 19/10/2026: biểu đồ tổng hợp
+      activeTab==="training" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(TrainingView, { key:viewResetKey, isAdmin, myStaff, navParam })),
         activeTab==="kudos" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(KudosView, { key:viewResetKey, isAdmin, myStaff })),
         activeTab==="temgia" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(TemGiaView, { key:viewResetKey })),
-        activeTab==="baocaotuan" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(BaoCaoTuanView, { key:viewResetKey, isAdmin, myStaff })),
+        (isAdmin || isCHT) && activeTab==="baocaotuan" && React.createElement(ErrorBoundary, { key:"ebd_baocaotuan", inline:true }, React.createElement(DashCollapse, { id:"baocaotuan", title:"Biểu đồ doanh thu theo tuần" }, React.createElement(DashWeeklyTrendSection, { shop: isAdmin ? null : (myStaff && myStaff.shop) || null, onNavigate:null }))), // 19/10/2026: biểu đồ tổng hợp
+      activeTab==="baocaotuan" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(BaoCaoTuanView, { key:viewResetKey, isAdmin, myStaff })),
         activeTab==="baocaolanhdao" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(LeaderReportView, { key:viewResetKey, isAdmin })),
-        activeTab==="baocaothang" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(MonthlyReportView, { key:viewResetKey, isAdmin, onNavigate:setActiveTab })),
+        (isAdmin || isCHT) && activeTab==="baocaothang" && React.createElement(ErrorBoundary, { key:"ebd_baocaothang", inline:true }, React.createElement(DashCollapse, { id:"baocaothang", title:"Biểu đồ doanh thu 6 tháng" }, React.createElement(DashMonthlyTrendSection, { shop: isAdmin ? null : (myStaff && myStaff.shop) || null, onNavigate:null }))), // 19/10/2026: biểu đồ tổng hợp
+      activeTab==="baocaothang" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(MonthlyReportView, { key:viewResetKey, isAdmin, onNavigate:setActiveTab })),
         activeTab==="nhipvanhanh" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(OpsPulseView, { key:viewResetKey, isAdmin, myStaff })),
         activeTab==="kinhnghiem" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(KinhNghiemVanHanhView, { key:viewResetKey, isAdmin, myStaff, navParam })),
         activeTab==="revenueAnalytics" && React.createElement(ErrorBoundary, { key:"eb_"+activeTab, inline:true }, React.createElement(RevenueAnalyticsView, { key:viewResetKey, isAdmin, myStaff, navParam })),
