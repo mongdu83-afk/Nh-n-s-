@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261019-10";
+window.__APP_BUILD = "20261019-11";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -9979,7 +9979,8 @@ function StaffPracticeOverview(){
   if(err && /Chỉ quản lý|403/.test(err)) return null;
   if(err) return h("div", { className:"card", style:{ marginBottom:14, color:"#b3261e", fontSize:13 } }, "Không tải được lịch sử luyện tập: " + err);
   if(!data) return h("div", { className:"card", style:{ marginBottom:14, fontSize:13, color:"var(--inkSoft)" } }, "Đang tải lịch sử luyện tập của nhân viên…");
-  const rows = practiceMergeRows(data.rows || [], staffAll, hiresAll); const shops = [...new Set(rows.map(r => r.shop).filter(Boolean))].sort();
+  // 19/10/2026 (chị Phương): người đã nghỉ việc bỏ hẳn khỏi bảng (trước đây chỉ ghi "(nghỉ dd/mm)")
+  const rows = practiceMergeRows(data.rows || [], staffAll, hiresAll).filter(r => !(r.staff && isStaffResigned(r.staff))); const shops = [...new Set(rows.map(r => r.shop).filter(Boolean))].sort();
   const nq = q.trim().toLowerCase();
   const list = rows.filter(r => (shop === "all" || r.shop === shop) && (!nq || String(r.name).toLowerCase().includes(nq)));
   const sc = (v) => v == null ? h("span", { style:{ color:"var(--inkSoft)" } }, "—") : h("span", { style:{ fontWeight:700, color: v >= (data.pass||70) ? CL360.good : v >= 50 ? CL360.warn : CL360.bad } }, v);
@@ -10271,9 +10272,13 @@ function ProbationView({ isAdmin, myStaff, trainStats, navParam }){
 function TrainingView({ isAdmin, myStaff, navParam }){
   // 4/10/2026 (Phương): mọi thứ về đào tạo ở 1 chỗ — Nhân sự › Đào tạo.
   const TR_SUBS = ["tracuu","tailieu","phacdo","trieuchung","tinhhuong","khoahoc","checklist","thuviec"];
+  // 19/10/2026 (chị Phương): học việc/thử việc gắn với nhân viên ĐÃ NGHỈ (hoặc tự ghi ngày nghỉ) → không hiện trong Đào tạo
+  const [leftIds, setLeftIds] = useState(new Set());
+  useEffect(()=> subscribeCol("staff", rows => setLeftIds(new Set(rows.filter(isStaffResigned).map(s => s.id))), null, { all:true }), []);
   const [trSub, setTrSub] = useState((navParam && TR_SUBS.includes(navParam.sub)) ? navParam.sub : (isAdmin ? "checklist" : "tracuu"));
   useEffect(()=>{ if(navParam && TR_SUBS.includes(navParam.sub)) setTrSub(navParam.sub); }, [navParam]);
-  const [hires, setHires] = useState([]);
+  const [hiresRaw, setHires] = useState([]);
+  const hires = useMemo(() => hiresRaw.filter(hh => !(hh.staffId && leftIds.has(hh.staffId)) && !isStaffResigned(hh)), [hiresRaw, leftIds]);
   const [staff, setStaff] = useState([]);
   const [checklistTpl, setChecklistTpl] = useState(DEFAULT_CHECKLIST);
   const [progressDocs, setProgressDocs] = useState({});
