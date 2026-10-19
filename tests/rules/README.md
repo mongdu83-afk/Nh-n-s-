@@ -5,6 +5,7 @@ Chạy trên Firebase Emulator, không đụng dữ liệu thật. Cần Java + 
 ```
 # đặt firestore.rules / storage.rules (bản trong upharma-cloud-functions) cạnh 2 file test, rồi:
 npx firebase emulators:exec --project upharma-test --only firestore "node rules.test.js"
+npx firebase emulators:exec --project upharma-test --only firestore "node crm.test.js"   # dữ liệu khách hàng (CRM mục 8)
 npx firebase emulators:exec --project upharma-test --only storage "node storage.test.js"
 ```
 

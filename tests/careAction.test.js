@@ -96,3 +96,11 @@ test("Không liên hệ được: gọi lại hôm sau, đủ 3 lần liên ti�
   const r = T.careBuildRow({ phone:"0907", cust:{ careLast:{ code:"khong_lien_he", noContactCount:1 } }, repl:{ phone:"0907", items:[item({ contact:{ result:"Không liên hệ được" } })] } }, today);
   assert.equal(r.reasons[0].code, "den_ky"); assert.equal(r.noContact, 1);
 });
+
+test("Hồ sơ trùng không hiện; 'đã liên hệ hôm nay' tính theo ngày giờ Việt Nam", () => {
+  assert.equal(T.careBuildRow({ phone:"0908", cust:{ duplicateOf:"0909", segments:["Có nguy cơ rời bỏ"] } }, today).excluded, "duplicate");
+  const segs = ["Có nguy cơ rời bỏ"];
+  // 23h ngày 18 (giờ VN) = 16h UTC ngày 18 → chưa phải hôm nay; 6h sáng 19 (VN) = 23h UTC ngày 18 → là hôm nay
+  assert.equal(T.careBuildRow({ phone:"0910", cust:{ segments:segs, lastInteractionTs:"2026-10-18T16:00:00.000Z" } }, today).doneToday, false);
+  assert.equal(T.careBuildRow({ phone:"0910", cust:{ segments:segs, lastInteractionTs:"2026-10-18T23:00:00.000Z" } }, today).doneToday, true);
+});
