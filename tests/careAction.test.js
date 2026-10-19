@@ -9,7 +9,7 @@ const HTML = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
 const b = HTML.indexOf("\n// CAREACT-ENGINE-BEGIN\n"), e = HTML.indexOf("\n// CAREACT-ENGINE-END");
 assert.ok(b > 0 && e > b);
 const ctx = vm.createContext({});
-vm.runInContext(HTML.slice(b, e) + "\n;globalThis.__t = { CARE_OUTCOMES, careBuildRow, careOutcomeEffect, careSuggestion, careTrustedCycle, careItemTrusted, careIsRxText };", ctx);
+vm.runInContext(HTML.slice(b, e) + "\n;globalThis.__t = { CARE_OUTCOMES, careBuildRow, careOutcomeEffect, careSuggestion, careTrustedCycle, careItemTrusted, careIsRxText, careAssignOptions };", ctx);
 const T = ctx.__t;
 const today = "2026-10-19";
 const item = (o) => ({ productId:"P1", productName:"Thuốc A", lastDate:"2026-09-19", lastQty:2, unit:"hộp", confidence:"Cao", daysLeft:0, runOutDate:"2026-10-19", ...o });
@@ -103,4 +103,21 @@ test("Hồ sơ trùng không hiện; 'đã liên hệ hôm nay' tính theo ngày
   // 23h ngày 18 (giờ VN) = 16h UTC ngày 18 → chưa phải hôm nay; 6h sáng 19 (VN) = 23h UTC ngày 18 → là hôm nay
   assert.equal(T.careBuildRow({ phone:"0910", cust:{ segments:segs, lastInteractionTs:"2026-10-18T16:00:00.000Z" } }, today).doneToday, false);
   assert.equal(T.careBuildRow({ phone:"0910", cust:{ segments:segs, lastInteractionTs:"2026-10-18T23:00:00.000Z" } }, today).doneToday, true);
+});
+
+test("Giao khách theo khối lượng: ít việc trước, bỏ người nghỉ việc / khác nhà thuốc / QLKV, báo quá tải", () => {
+  const staff = [{ id:"a", name:"An", shop:"S1" }, { id:"b", name:"Bình", shop:"S1" }, { id:"c", name:"Chi", shop:"S1", ngayNghiViec:"2026-10-01" },
+    { id:"d", name:"Dung", shop:"S2" }, { id:"e", name:"QL", shop:"S1", role:"Quản lý khu vực" }, { id:"f", name:"Phúc", shop:"S1" }];
+  const o = T.careAssignOptions(staff, "S1", { a:{ n:16 }, b:{ n:3, late:1 }, f:{ n:3 } }, today);
+  assert.deepEqual([...o.map(x => x.id)], ["f", "b", "a"]);
+  assert.equal(o[0].suggest, true); assert.equal(o[2].over, true);
+  // mọi người đều quá tải → không gợi ý ai
+  assert.equal(T.careAssignOptions(staff, "S1", { a:{ n:20 }, b:{ n:20 }, f:{ n:15 } }, today).some(x => x.suggest), false);
+  assert.equal(T.careAssignOptions([], "S1", {}, today).length, 0);
+});
+
+test("Dữ liệu thiếu: khách không có hồ sơ, không có ngày mua → không đoán, vẫn có lý do rõ", () => {
+  const r = T.careBuildRow({ phone:"0911", cust:null, repl:null, appt:{ nextFollowUpDate:"2026-10-19", createdAtTs:"2026-10-12T01:00:00Z" } }, today);
+  assert.equal(r.reasons[0].code, "hen"); assert.equal(r.name, ""); assert.equal(r.excluded, undefined);
+  assert.equal(T.careBuildRow({ phone:"0912", cust:{ segments:[] } }, today).excluded, "none");
 });
