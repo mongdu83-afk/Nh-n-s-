@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261019-16";
+window.__APP_BUILD = "20261019-17";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -4773,7 +4773,9 @@ function MyDayCard({ isAdmin, myStaff, onNavigate }){
     const u1a = tq.onSnapshot(s => { T.a = s.docs.map(d => ({ id:d.id, ...d.data() })); merge(); }, (e) => { logSystemError("MyDayCard.tasks", e); T.a = []; merge(); });
     const u1b = (!isAdmin && me) ? db.collection("tasks").where("staffId", "==", me).where("trangThai", "==", "Đang giao").onSnapshot(s => { T.b = s.docs.map(d => ({ id:d.id, ...d.data() })); merge(); }, () => {}) : null;
     const u1 = () => { u1a(); u1b && u1b(); };
-    const u2 = db.collection("careDaily").where("date", "==", today).onSnapshot(s => setCare(s.docs.map(d => d.data())), () => setCare([]));
+    // 19/10/2026: nhân viên chỉ được đọc danh sách gọi của nhà thuốc mình (luật Firestore) → đọc đúng 1 tài liệu
+    const u2 = isAdmin ? db.collection("careDaily").where("date", "==", today).onSnapshot(s => setCare(s.docs.map(d => d.data())), () => setCare([]))
+      : db.collection("careDaily").doc(`${today}_${myShop || "__none__"}`).onSnapshot(d => setCare(d.exists ? [d.data()] : []), () => setCare([]));
     const u3 = db.collection("opsConfig").doc("posDraftConfig").onSnapshot(d => setPd(d.exists ? d.data() : {}), () => setPd({}));
     const u4 = isAdmin ? db.collection("opsProposals").where("status", "==", "pending").onSnapshot(s => setPend(s.size), () => {}) : () => {};
     // Mục tiêu NGÀY của từng nhân viên = (chỉ tiêu tháng − đã đạt) ÷ số ngày còn lại — đã tính sẵn lúc 8h (dailyKpiPace)
@@ -4883,9 +4885,23 @@ function CareTodayCard({ isAdmin, myStaff }){
   const [lists, setLists] = useState(null); const [done, setDone] = useState({}); const [showAll, setShowAll] = useState(false); const [zf, setZf] = useState(null); const [careFor, setCareFor] = useState(null);
   const myShop = myStaff && myStaff.shop;
   useEffect(() => {
-    let q = db.collection("careDaily").where("date", "==", today);
-    const u1 = q.onSnapshot(s => setLists(s.docs.map(d => ({ id:d.id, ...d.data() })).filter(x => isAdmin || x.shop === myShop)), () => setLists([]));
     const start = new Date(today + "T00:00:00+07:00").toISOString();
+    if (!isAdmin) {
+      // 19/10/2026: nhân viên chỉ đọc được danh sách + liên hệ của nhà thuốc mình → đọc tài liệu careDaily của shop,
+      // "đã gọi hôm nay" lấy từ hồ sơ khách (lastInteractionTs/careLast) thay vì quét toàn bộ crmInteractions
+      let subs = [];
+      const u1 = db.collection("careDaily").doc(`${today}_${myShop || "__none__"}`).onSnapshot(d => {
+        const L = d.exists ? [{ id:d.id, ...d.data() }] : []; setLists(L);
+        subs.forEach(f => f()); subs = [];
+        const phones = [...new Set(((L[0] && L[0].items) || []).map(it => it.phone).filter(Boolean))].slice(0, 200);
+        subs = phones.map(p => db.collection("crmCustomers").doc(p).onSnapshot(cd => {
+          const c = cd.exists ? cd.data() : null; const ts = String((c && c.lastInteractionTs) || "");
+          setDone(m => { const n = { ...m }; if (ts && ts >= start) n[p] = { staffName:(c.careLast && c.careLast.by) || "", result:(c.careLast && String(c.careLast.at || "") >= start && c.careLast.label) || "" }; else delete n[p]; return n; });
+        }, () => {}));
+      }, () => setLists([]));
+      return () => { u1(); subs.forEach(f => f()); };
+    }
+    const u1 = db.collection("careDaily").where("date", "==", today).onSnapshot(s => setLists(s.docs.map(d => ({ id:d.id, ...d.data() }))), () => setLists([]));
     const u2 = db.collection("crmInteractions").where("createdAtTs", ">=", start).onSnapshot(s => { const m = {}; s.forEach(d => { const x = d.data(); if (x.phone) m[x.phone] = x; }); setDone(m); }, () => {});
     return () => { u1(); u2(); };
   }, []);
@@ -7092,7 +7108,7 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
             : selectedInteractions.map(n => React.createElement("div", { key:n.id, style:{ borderTop:"1px solid var(--line)", padding:"8px 0", fontSize:12.5 } }, [
                 React.createElement("div", { key:"m" }, n.note),
                 React.createElement("div", { key:"meta", style:{ color:"var(--inkSoft)", fontSize:11 } },
-                  `${n.staffName||""} · ${(n.createdAtTs||"").slice(0,16).replace("T"," ")}${n.nextFollowUpDate?` · Hẹn lại: ${n.nextFollowUpDate}`:""}${n.followUpTaskId?" · ✓ Đã tạo việc nhắc":""}`),
+                  `${n.staffName||""} · ${(n.createdAtTs||"").slice(0,16).replace("T"," ")}${n.nextFollowUpDate?` · Hẹn lại: ${n.nextFollowUpDate}`:""}${n.followUpTaskId && n.followUpTaskId !== "careActionCenter"?" · ✓ Đã tạo việc nhắc":""}${carePosLabel(n)}`),
               ]))
         ),
 
@@ -26254,7 +26270,7 @@ function CustomerCarePanel({ cust, careTasks, inter }){
       rc(Head360, { key:"h", title:"Lịch sử ghi chú chăm sóc" }),
       (inter||[]).length===0 ? rc("div", { key:"e", className:"emptyState" }, "Chưa có ghi chú.")
         : inter.slice().sort((a,b) => String(b.createdAtTs||"").localeCompare(String(a.createdAtTs||""))).slice(0, 20).map((x, i) =>
-            rc(Row360, { key:x.id || i, title:x.note || "(không ghi chú)", sub:`${x.staffName || "Nhân viên"} · ${dmy360(x.createdAtTs)}${x.nextFollowUpDate ? ` · hẹn ${dmy360(x.nextFollowUpDate)}` : ""}` })),
+            rc(Row360, { key:x.id || i, title:x.note || "(không ghi chú)", sub:`${x.staffName || "Nhân viên"} · ${dmy360(x.createdAtTs)}${x.nextFollowUpDate ? ` · hẹn ${dmy360(x.nextFollowUpDate)}` : ""}${carePosLabel(x)}${x.closedTaskIds && x.closedTaskIds.length ? ` · tự đóng ${x.closedTaskIds.length} việc` : ""}` })),
     ]),
   ]);
 }
@@ -26846,6 +26862,8 @@ function careBuildRow(x, today){
   const name = c.name || (r && r.name) || ""; const shop = c.shop || (r && r.shop) || "";
   const care = c.careLast || null;
   if(c.careOptOut) return { phone:x.phone, name, shop, excluded:"optOut" };
+  // hồ sơ trùng (cùng SĐT sau chuẩn hoá) — chăm sóc ở hồ sơ chính, không hiện 2 lần
+  if(c.duplicateOf) return { phone:x.phone, name, shop, excluded:"duplicate", of:c.duplicateOf };
   const lastPurchase = String(st.lastPurchaseAt || (r && r.lastVisit && r.lastVisit.date) || "").slice(0,10) || null;
   const daysSince = lastPurchase ? careDaysBetween(lastPurchase, today) : null;
   const cycle = careTrustedCycle(I);
@@ -26904,7 +26922,7 @@ function careBuildRow(x, today){
     careLast:care, lastInteractionTs:c.lastInteractionTs || null,
     noContact: noContactN,
     nextDate:(care && care.next && care.next > today) ? care.next : null,
-    openTask:x.openTask || (r && r.openTask) || null, inDaily:!!x.inDaily, doneToday:!!x.doneToday || lastInter.slice(0,10) === today,
+    openTask:x.openTask || (r && r.openTask) || null, inDaily:!!x.inDaily, doneToday:!!x.doneToday || (!!lastInter && lastInter >= new Date(today + "T00:00:00+07:00").toISOString()),
     items:[...due, ...late, ...soon, ...guessDue],
   };
 }
@@ -26953,6 +26971,8 @@ function careSuggestion(row, needConfirmed, rxOf){
   return { ask, offer, safety, zaloKind };
 }
 // CAREACT-ENGINE-END
+// 19/10/2026: "Đã mua tại Upharma" là lời khách → máy chủ đối soát với đơn POS thật (crmInteractions.posCheck)
+const carePosLabel = (x) => !x || x.careOutcome !== "da_mua" ? "" : x.posCheck === "matched" ? " · ✓ Đã thấy đơn POS" : x.posCheck === "unmatched" ? " · Chưa thấy đơn POS" : " · Chờ đối soát POS";
 // Ghi 1 kết quả chăm sóc theo BỘ KẾT QUẢ CHUẨN — dùng chung cho mọi nơi ghi kết quả liên hệ khách:
 //  • sản phẩm nhắc tái mua → replenishmentContact (giữ nguyên đo "khách mua lại sau liên hệ"; "Không còn nhu cầu"/"không muốn nhận tin" = Ngưng dùng)
 //  • 1 dòng crmInteractions có cấu trúc (careOutcome, nextFollowUpDate → cơ chế lịch hẹn đang có)
@@ -27131,8 +27151,11 @@ function CareActionCenter({ isAdmin, myStaff, shop, repl, onNavigate, onReplCont
     const startTs = new Date(today + "T00:00:00+07:00").toISOString();
     Promise.all([
       Promise.all(CARE_SEGS.map(seg)),
-      db.collection("crmInteractions").where("nextFollowUpDate", ">=", careAddDays(today, -30)).where("nextFollowUpDate", "<=", today).get().catch(() => null),
-      db.collection("crmInteractions").where("createdAtTs", ">=", startTs).get().catch(() => null),
+      // 19/10/2026: nhân viên chỉ đọc được liên hệ của nhà thuốc mình (luật Firestore) → lọc theo shop + 30 ngày hẹn gần nhất (không cần chỉ mục ghép);
+      // "đã liên hệ hôm nay" của nhân viên lấy từ hồ sơ khách (lastInteractionTs) trong careBuildRow
+      isAdmin ? db.collection("crmInteractions").where("nextFollowUpDate", ">=", careAddDays(today, -30)).where("nextFollowUpDate", "<=", today).get().catch(() => null)
+        : scopeShop ? db.collection("crmInteractions").where("shop", "==", scopeShop).where("nextFollowUpDate", "in", Array.from({ length:30 }, (_, i) => careAddDays(today, -i))).get().catch(() => null) : Promise.resolve(null),
+      isAdmin ? db.collection("crmInteractions").where("createdAtTs", ">=", startTs).get().catch(() => null) : Promise.resolve(null),
       tq.get().catch(() => null),
       (scopeShop ? db.collection("careDaily").doc(`${today}_${scopeShop}`).get().then(d => d.exists ? [d.data()] : []) : db.collection("careDaily").where("date", "==", today).get().then(s => s.docs.map(d => d.data()))).catch(() => []),
     ]).then(async ([segSnaps, apptSnap, todaySnap, taskSnap, daily]) => {
