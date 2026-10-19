@@ -26970,6 +26970,17 @@ function careSuggestion(row, needConfirmed, rxOf){
   const zaloKind = needConfirmed && its.length ? "refill" : top === "sinh_nhat" ? "bday" : (top === "vip" || top === "vip_im_lang") ? "vip" : top === "moi" ? "care" : "risk";
   return { ask, offer, safety, zaloKind };
 }
+// 19/10/2026 (CRM mục 7 — giao theo khối lượng việc): danh sách nhân viên để giao khách, ít việc chăm sóc đang mở trước;
+// bỏ người đã nghỉ việc / khác nhà thuốc / quản lý khu vực; đánh dấu người đang quá tải (≥ cap việc chưa xong hôm nay).
+const CARE_LOAD_CAP = 15;
+function careAssignOptions(staff, shop, loadById, today, cap){
+  const C = cap || CARE_LOAD_CAP;
+  const list = (staff || []).filter(x => x && x.id && x.shop === shop && x.role !== "Quản lý khu vực" && !(x.ngayNghiViec && x.ngayNghiViec <= today))
+    .map(x => { const L = (loadById || {})[x.id] || {}; const open = L.n || 0; return { id:x.id, name:x.name || x.id, role:x.role || "", open, late:L.late || 0, over: open >= C }; })
+    .sort((a, b) => (a.over - b.over) || (a.open - b.open) || (a.late - b.late) || String(a.name).localeCompare(String(b.name), "vi"));
+  if(list.length && !list[0].over) list[0].suggest = true;
+  return list;
+}
 // CAREACT-ENGINE-END
 // 19/10/2026: "Đã mua tại Upharma" là lời khách → máy chủ đối soát với đơn POS thật (crmInteractions.posCheck)
 const carePosLabel = (x) => !x || x.careOutcome !== "da_mua" ? "" : x.posCheck === "matched" ? " · ✓ Đã thấy đơn POS" : x.posCheck === "unmatched" ? " · Chưa thấy đơn POS" : " · Chờ đối soát POS";
@@ -27097,6 +27108,50 @@ function careReportCompute(inp){
   return { metrics, trend, byStaff, actions, missing, counts:{ events:events.length, due:due.length, risk:riskRows.length } };
 }
 // CAREREPORT-ENGINE-END
+// "Kiểm tra dữ liệu CRM" (quản lý): soi dữ liệu thật sau mỗi lần cập nhật — khách từ chối/trùng còn trong danh sách gọi, dòng lịch sử trùng,
+// việc tự đóng, đối soát POS. Chỉ đọc, không sửa gì.
+function CareDataCheck(){
+  const rc = React.createElement; const [res, setRes] = useState(null); const [busy, setBusy] = useState(false);
+  async function run(){
+    setBusy(true); const out = []; const today = todayISO(); const startTs = new Date(careAddDays(today, -7) + "T00:00:00+07:00").toISOString();
+    const add = (ok, label, detail) => out.push({ ok, label, detail });
+    try{
+      const opt = await db.collection("crmCustomers").where("careOptOut", "==", true).get();
+      const optSet = new Set(opt.docs.map(d => d.id));
+      add(true, "Khách đã báo không muốn nhận thông tin", `${opt.size} khách`);
+      const dl = await db.collection("careDaily").where("date", "==", today).get();
+      const bad = []; dl.forEach(d => (d.data().items || []).forEach(it => { if(it.kind !== "restock" && optSet.has(it.phone)) bad.push(`${it.phone} (${d.data().shop})`); }));
+      add(bad.length === 0, "Danh sách gọi hôm nay không có khách đã từ chối", bad.length ? `Còn ${bad.length}: ${bad.slice(0, 5).join(", ")} — danh sách dựng lúc 7h30, nếu dựng trước khi cập nhật thì mai sẽ hết` : `${dl.size} nhà thuốc, không có`);
+      const rd = await Promise.all([...optSet].slice(0, 200).map(p => db.collection("replenishDue").doc(p).get().then(x => x.exists ? p : null).catch(() => null)));
+      const rdBad = rd.filter(Boolean);
+      add(rdBad.length === 0, "Nhắc tái mua không có khách đã từ chối", rdBad.length ? `Còn ${rdBad.length}: ${rdBad.slice(0, 5).join(", ")} — danh sách tái mua tính lại mỗi đêm` : "Không có");
+      const it = await db.collection("crmInteractions").where("createdAtTs", ">=", startTs).get();
+      const rows = it.docs.map(d => d.data());
+      const care = rows.filter(x => x.careOutcome);
+      const dupRepl = care.filter(c => rows.some(x => !x.careOutcome && x.phone === c.phone && /^\[Nhắc tái mua\]/.test(x.note || "") && Math.abs(Date.parse(x.createdAtTs) - Date.parse(c.createdAtTs)) < 120000));
+      add(dupRepl.length === 0, "Không ghi trùng dòng lịch sử khi ghi kết quả tái mua (7 ngày)", dupRepl.length ? `${dupRepl.length} lần còn trùng — nếu đều trước lúc chạy DEPLOY thì bình thường` : `${care.length} lần ghi kết quả, không trùng`);
+      add(care.filter(x => !x.phone).length === 0, "Kết quả chăm sóc đều có số điện thoại", `${care.filter(x => !x.phone).length} dòng thiếu`);
+      const sameDay = {}; care.forEach(x => { const k = x.phone + "|" + crDay(x.createdAtTs); sameDay[k] = (sameDay[k] || 0) + 1; });
+      const multi = Object.values(sameDay).filter(n => n > 1).length;
+      add(true, "Khách được ghi kết quả nhiều lần trong 1 ngày (báo cáo chỉ tính 1)", `${multi} trường hợp`);
+      const pc = { pending:0, matched:0, unmatched:0, none:0 }; care.filter(x => x.careOutcome === "da_mua").forEach(x => { pc[x.posCheck || "none"] = (pc[x.posCheck || "none"] || 0) + 1; });
+      add(pc.none === 0 || care.filter(x => x.careOutcome === "da_mua").length === 0, "\"Đã mua tại Upharma\" có trạng thái đối soát POS", `chờ ${pc.pending} · thấy đơn ${pc.matched} · chưa thấy ${pc.unmatched} · chưa đánh dấu ${pc.none} (dòng ghi trước lúc DEPLOY sẽ không có)`);
+      const closed = care.filter(x => (x.closedTaskIds || []).length).length;
+      add(true, "Việc chăm sóc tự đóng khi ghi kết quả (7 ngày)", `${closed} lần ghi kết quả đã tự đóng việc`);
+      const spawned = care.filter(x => x.followUpTaskId && x.followUpTaskId !== "careActionCenter").length;
+      add(spawned === 0, "Lịch hẹn từ kết quả chuẩn không sinh thêm việc", spawned ? `${spawned} dòng đã sinh việc (trước lúc DEPLOY)` : "Không có");
+    } catch(e){ add(false, "Không đọc được dữ liệu", e.message || String(e)); }
+    setRes({ out, at:new Date() }); setBusy(false);
+  }
+  return rc("div", { className:"card", style:{ marginBottom:12 } }, [
+    rc("div", { key:"h", style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" } }, [
+      rc("b", { key:"t" }, "Kiểm tra dữ liệu CRM"),
+      rc("button", { key:"b", className:"btn btnGhost", disabled:busy, style:{ fontSize:12, padding:"3px 10px" }, onClick:run }, busy ? "Đang kiểm tra…" : res ? "Kiểm tra lại" : "Chạy kiểm tra"),
+      res && rc("span", { key:"a", style:{ fontSize:11.5, color:"var(--inkSoft)" } }, `lúc ${res.at.toLocaleTimeString("vi-VN", { hour:"2-digit", minute:"2-digit" })}`)]),
+    res && rc("div", { key:"r", style:{ marginTop:6, fontSize:12.5 } }, res.out.map((x, i) => rc("div", { key:i, style:{ padding:"3px 0", borderTop:"1px solid var(--line)" } }, [
+      rc("span", { key:"i", style:{ color: x.ok ? "#15803d" : "#b91c1c", fontWeight:700 } }, x.ok ? "✓ " : "⚠ "), rc("b", { key:"l" }, x.label), rc("span", { key:"d", style:{ color:"var(--inkSoft)" } }, " — " + x.detail)]))),
+  ]);
+}
 // Màn "Báo cáo chăm sóc" cho quản lý khu vực: 6 chỉ số có công thức/tử số/mẫu số/nguồn, lọc nhà thuốc–nhân viên–phân khúc–thời gian,
 // xu hướng theo tuần và danh sách việc cần xử lý. Chỉ đọc dữ liệu (không tạo việc, không ghi gì).
 function CareReportView({ onNavigate }){
@@ -27181,6 +27236,7 @@ function CareReportView({ onNavigate }){
   const miss = rep.missing;
   return rc("div", { key:"rep" }, [
     filters,
+    rc(CareDataCheck, { key:"chk" }),
     rc("div", { key:"m", style:{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(230px, 1fr))", gap:10, marginBottom:12 } }, rep.metrics.map(card)),
     (miss.noPhone || miss.noProfile || miss.noPurchaseData) ? rc("div", { key:"ms", className:"card", style:{ fontSize:12.5, marginBottom:12, borderLeft:"4px solid #b45309" } },
       `Dữ liệu thiếu (không tính vào chỉ số): ${miss.noPhone ? `${miss.noPhone} kết quả không có SĐT · ` : ""}${miss.noProfile ? `${miss.noProfile} khách không có hồ sơ CRM · ` : ""}${miss.noPurchaseData ? `${miss.noPurchaseData} khách chưa có lịch sử mua đồng bộ` : ""}`) : null,
@@ -27455,11 +27511,14 @@ function CareActionCenter({ isAdmin, myStaff, shop, repl, onNavigate, onReplCont
   const todo = built ? all.filter(r => !r.doneToday).length : null;
   useEffect(()=>{ if(onCount && todo != null) onCount(todo); }, [todo]);
   // Việc chăm sóc hôm nay theo nhân viên (cửa hàng trưởng / quản lý)
-  const load = {};
+  const load = {}, loadById = {};
   if(built && (isAdmin || isCHT)) all.forEach(r => { const k = r.ownerName || "(Chưa ai nhận)"; const z = load[k] || (load[k] = { n:0, late:0, high:0, done:0 });
-    if(r.doneToday){ z.done++; return; } z.n++; if(r.prio.key === "cao") z.high++; if(r.reasons.some(x => x.code === "hen" && /trễ/.test(x.detail))) z.late++; });
+    const zi = r.ownerId ? (loadById[r.ownerId] || (loadById[r.ownerId] = { n:0, late:0 })) : null;
+    if(r.doneToday){ z.done++; return; } z.n++; if(zi) zi.n++; if(r.prio.key === "cao") z.high++; if(r.reasons.some(x => x.code === "hen" && /trễ/.test(x.detail))){ z.late++; if(zi) zi.late++; } });
   async function assignTo(r, st){
-    if(!st) return; setAssignBusy(r.phone);
+    if(!st) return;
+    if(st.over && !window.confirm(`${st.name} đang có ${st.open} khách chưa chăm sóc hôm nay (từ ${CARE_LOAD_CAP} trở lên là nhiều). Vẫn giao?`)) return;
+    setAssignBusy(r.phone);
     try{
       const nowTs = new Date().toISOString();
       await db.collection("crmCustomers").doc(r.phone).update({ assignedStaffId:st.id, assignedStaffName:st.name || "", assignedStaffIsDefault:false, assignedAt:nowTs, assignedBy:(myStaff && myStaff.name) || "Quản lý khu vực" });
@@ -27478,9 +27537,11 @@ function CareActionCenter({ isAdmin, myStaff, shop, repl, onNavigate, onReplCont
     const smallBtn = (key, text, onClick, primary) => rc("button", { key, type:"button", className: primary ? "btn btnPrimary" : "btn btnGhost", disabled:assignBusy===r.phone, style:{ fontSize:11, padding:"2px 8px", marginLeft:6 }, onClick }, assignBusy===r.phone ? "…" : text);
     if(isAdmin || isCHT){
       if(assignRow === r.phone){
-        const opts = staffAll.filter(x => x.shop === r.shop && x.role !== "Quản lý khu vực").sort((a,b) => (a.name || "").localeCompare(b.name || "", "vi"));
+        // ít việc chăm sóc đang mở trước; người đã nghỉ việc không hiện; người quá tải ghi rõ
+        const opts = careAssignOptions(staffAll, r.shop, loadById, today);
         return rc("select", { key:"sel", autoFocus:true, defaultValue:"", onChange:e=>assignTo(r, opts.find(x => x.id === e.target.value)), onBlur:()=>setAssignRow(null), style:{ fontSize:12, padding:"3px 6px", border:"1px solid var(--line)", borderRadius:6 } },
-          [rc("option", { key:"", value:"" }, "— chọn nhân viên —"), ...opts.map(x => rc("option", { key:x.id, value:x.id }, `${x.name} · ${x.role || ""}`))]);
+          [rc("option", { key:"", value:"" }, opts.length ? "— chọn nhân viên (ít việc trước) —" : "— nhà thuốc chưa có nhân viên —"),
+           ...opts.map(x => rc("option", { key:x.id, value:x.id }, `${x.suggest ? "★ " : ""}${x.name} · ${x.open} khách chưa chăm sóc hôm nay${x.late ? `, ${x.late} trễ hẹn` : ""}${x.over ? " · đang nhiều việc" : ""}`))]);
       }
       return [label, smallBtn("g", r.ownerId ? "Đổi" : "Giao", ()=>setAssignRow(r.phone), !r.ownerId)];
     }
