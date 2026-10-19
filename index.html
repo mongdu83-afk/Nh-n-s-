@@ -7108,7 +7108,7 @@ function CrmView({ isAdmin, myStaff, navParam, onNavigate }){
             : selectedInteractions.map(n => React.createElement("div", { key:n.id, style:{ borderTop:"1px solid var(--line)", padding:"8px 0", fontSize:12.5 } }, [
                 React.createElement("div", { key:"m" }, n.note),
                 React.createElement("div", { key:"meta", style:{ color:"var(--inkSoft)", fontSize:11 } },
-                  `${n.staffName||""} · ${(n.createdAtTs||"").slice(0,16).replace("T"," ")}${n.nextFollowUpDate?` · Hẹn lại: ${n.nextFollowUpDate}`:""}${n.followUpTaskId?" · ✓ Đã tạo việc nhắc":""}`),
+                  `${n.staffName||""} · ${(n.createdAtTs||"").slice(0,16).replace("T"," ")}${n.nextFollowUpDate?` · Hẹn lại: ${n.nextFollowUpDate}`:""}${n.followUpTaskId && n.followUpTaskId !== "careActionCenter"?" · ✓ Đã tạo việc nhắc":""}${carePosLabel(n)}`),
               ]))
         ),
 
@@ -26270,7 +26270,7 @@ function CustomerCarePanel({ cust, careTasks, inter }){
       rc(Head360, { key:"h", title:"Lịch sử ghi chú chăm sóc" }),
       (inter||[]).length===0 ? rc("div", { key:"e", className:"emptyState" }, "Chưa có ghi chú.")
         : inter.slice().sort((a,b) => String(b.createdAtTs||"").localeCompare(String(a.createdAtTs||""))).slice(0, 20).map((x, i) =>
-            rc(Row360, { key:x.id || i, title:x.note || "(không ghi chú)", sub:`${x.staffName || "Nhân viên"} · ${dmy360(x.createdAtTs)}${x.nextFollowUpDate ? ` · hẹn ${dmy360(x.nextFollowUpDate)}` : ""}` })),
+            rc(Row360, { key:x.id || i, title:x.note || "(không ghi chú)", sub:`${x.staffName || "Nhân viên"} · ${dmy360(x.createdAtTs)}${x.nextFollowUpDate ? ` · hẹn ${dmy360(x.nextFollowUpDate)}` : ""}${carePosLabel(x)}${x.closedTaskIds && x.closedTaskIds.length ? ` · tự đóng ${x.closedTaskIds.length} việc` : ""}` })),
     ]),
   ]);
 }
@@ -26971,6 +26971,8 @@ function careSuggestion(row, needConfirmed, rxOf){
   return { ask, offer, safety, zaloKind };
 }
 // CAREACT-ENGINE-END
+// 19/10/2026: "Đã mua tại Upharma" là lời khách → máy chủ đối soát với đơn POS thật (crmInteractions.posCheck)
+const carePosLabel = (x) => !x || x.careOutcome !== "da_mua" ? "" : x.posCheck === "matched" ? " · ✓ Đã thấy đơn POS" : x.posCheck === "unmatched" ? " · Chưa thấy đơn POS" : " · Chờ đối soát POS";
 // Ghi 1 kết quả chăm sóc theo BỘ KẾT QUẢ CHUẨN — dùng chung cho mọi nơi ghi kết quả liên hệ khách:
 //  • sản phẩm nhắc tái mua → replenishmentContact (giữ nguyên đo "khách mua lại sau liên hệ"; "Không còn nhu cầu"/"không muốn nhận tin" = Ngưng dùng)
 //  • 1 dòng crmInteractions có cấu trúc (careOutcome, nextFollowUpDate → cơ chế lịch hẹn đang có)
