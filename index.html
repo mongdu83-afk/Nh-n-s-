@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261020-2";
+window.__APP_BUILD = "20261020-3";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -19575,19 +19575,23 @@ function fitText(root){
 
 // ---------- TRẠNG THÁI ----------
 // 20/10/2026: GIỚI HẠN chống treo — file Excel thật (cả bảng giá, cột "Số lượng" là tồn kho) từng tạo hàng chục nghìn tem,
-// bản nháp lưu lại nên mỗi lần mở tab Tem giá lại đơ. Nhập tối đa 300 dòng/lần (danh sách ≤ 600 dòng), mỗi dòng ≤ 100 tem, xem trước ≤ 120 tem/nhóm.
-const MAX_IMPORT_ROWS = 300, MAX_DRAFT_ROWS = 600, MAX_QTY = 100, PREVIEW_MAX_TAGS = 120;
+// bản nháp lưu lại nên mỗi lần mở tab Tem giá lại đơ. Nhập tối đa 1000 dòng/lần (danh sách ≤ 1000 dòng), mỗi dòng ≤ 100 tem, xem trước ≤ 120 tem/nhóm.
+const MAX_IMPORT_ROWS = 1000, MAX_DRAFT_ROWS = 1000, MAX_QTY = 100, PREVIEW_MAX_TAGS = 120;
+// Bảng sản phẩm chỉ vẽ 100 dòng/lần: 600 dòng × 2 ô chọn ngày làm trình duyệt vẽ lại mất ~7 giây mỗi lần.
+const TABLE_PAGE = 100;
 const clampQty = (v) => Math.min(MAX_QTY, Math.max(0, Math.floor(Number(v)) || 0));
 function sanitizeRows(list){
   if(!Array.isArray(list)) return [];
-  return list.filter(r => r && typeof r === "object").slice(0, MAX_DRAFT_ROWS).map(r => ({ ...r, id: r.id || uid(), qty: clampQty(r.qty) }));
+  // Danh sách nhập trước bản 20261020-2 còn giá theo nghìn đồng (40 / 12.35) → tự đổi ra đồng khi mở tab.
+  const fixK = (r) => { if(r.tpl === "combo" || r.tpl === "gift") return r; const o = { ...r }; ["price","promo"].forEach(f => { const v = num(o[f]); if(v != null && v > 0 && v < 1000) o[f] = kVnd(v); }); return o; };
+  return list.filter(r => r && typeof r === "object").slice(0, MAX_DRAFT_ROWS).map(r => ({ ...fixK(r), id: r.id || uid(), qty: clampQty(r.qty) }));
 }
 const S = { me:null, book:null, bookByCode:{}, catalog:null, topShop:[], sets:[],
   rows: sanitizeRows(lsGet("temgia.draft", [])),
   papers: lsGet("temgia.papers", {}),
   cut: lsGet("temgia.cut", true), brand: lsGet("temgia.brand", true),
   defGia: lsGet("temgia.defGia", "classic"), defKm: lsGet("temgia.defKm", "pct"),
-  q:"", hl:0, sel:{}, loading:"",
+  q:"", hl:0, sel:{}, loading:"", showN: TABLE_PAGE,
 };
 function saveDraft(){ lsSet("temgia.draft", S.rows); }
 function newRow(o){ return { id:uid(), tpl:"classic", name:"", code:"", unit:"", price:"", promo:"", from:"", to:"", qty:1, use:"", ...o }; }
@@ -19686,8 +19690,9 @@ function render(){
     </div>
     ${rows.length ? `
     <table class="tbl"><thead><tr><th style="width:22px"><input type="checkbox" id="tg-selAll" ${selN===rows.length?"checked":""}></th><th>Sản phẩm</th><th style="width:78px;text-align:right">Giá gốc</th><th style="width:78px;text-align:right">Giá KM</th><th style="width:132px">Mẫu tem</th><th style="width:46px">SL</th><th style="width:22px"></th></tr></thead><tbody>
-    ${rows.map(r => rowHtml(r, tplOpts)).join("")}
+    ${rows.slice(0, S.showN).map(r => rowHtml(r, tplOpts)).join("")}
     </tbody></table>
+    ${rows.length > S.showN ? `<div class="bar"><span class="note">Đang hiện ${S.showN}/${rows.length} dòng cho nhẹ máy — chọn tất cả, đổi mẫu, in vẫn áp dụng cho cả ${rows.length} dòng.</span><span><button class="btn sm" id="tg-more">Hiện thêm ${Math.min(TABLE_PAGE, rows.length - S.showN)} dòng</button></span></div>` : ""}
     <div class="bar">
       <span>Đã chọn ${selN}: <select id="tg-bulkTpl"><option value="">Đổi mẫu thành…</option>${tplOpts("")}</select> <button class="btn sm" id="tg-bulkDel" ${!selN?"disabled":""}>Xoá</button></span>
       <span>${lowN ? `<button class="btn sm" id="tg-fixK" title="Giá dưới 1.000đ là ghi theo nghìn đồng — nhân 1.000">Sửa ${lowN} dòng thiếu số 0</button> ` : ""}<button class="btn sm" id="tg-clearAll">Xoá hết</button> <button class="btn sm" id="tg-saveSet">Lưu thành bộ tem</button></span>
@@ -19763,6 +19768,7 @@ function bindMain(){
     $("#tg-bulkDel").onclick = () => { S.rows = S.rows.filter(r => !S.sel[r.id]); S.sel = {}; saveDraft(); render(); };
     $("#tg-clearAll").onclick = () => { if(confirm("Xoá toàn bộ danh sách tem?")){ S.rows = []; S.sel = {}; saveDraft(); render(); } };
     $("#tg-saveSet").onclick = saveSetPrompt;
+    if($("#tg-more")) $("#tg-more").onclick = () => { S.showN += TABLE_PAGE; render(); };
     if($("#tg-fixK")) $("#tg-fixK").onclick = () => { let n = 0; S.rows.forEach(r => { if(!isLowPrice(r)) return; ["price","promo"].forEach(f => { const v = num(r[f]); if(v != null && v > 0 && v < 1000) r[f] = kVnd(v); }); n++; }); saveDraft(); render(); toast(`Đã sửa giá ${n} dòng (×1.000)`); };
     $("#tg-defGia").onchange = (e) => { S.defGia = e.target.value; lsSet("temgia.defGia", S.defGia); };
     $("#tg-defKm").onchange = (e) => { S.defKm = e.target.value; lsSet("temgia.defKm", S.defKm); };
@@ -19892,7 +19898,7 @@ function loadXlsx(){
 // 30/9/2026: nhập Excel — KÉO THẢ file vào tab hoặc vào ô trong hộp thoại, hoặc bấm chọn file. Tự tìm dòng tiêu đề
 // (file có dòng tiêu đề/tên bảng phía trên vẫn đọc được), nhận cả cột của app tem giá cũ (Loại tem, Giá thường, % giảm, Tiền giảm).
 // 20/10/2026: chỉ đọc 2000 dòng × 40 cột đầu (file có vùng dữ liệu "ảo" tới hàng triệu dòng/16 nghìn cột từng làm đơ máy),
-// bỏ dòng trống, nhận tối đa 300 dòng; SL > 100 coi là số tồn kho chứ không phải số tem → để 1 tem.
+// bỏ dòng trống, nhận tối đa 1000 dòng; SL > 100 coi là số tồn kho chứ không phải số tem → để 1 tem.
 async function importExcelFile(f, onStep){
   if(f.size > 15 * 1024 * 1024) throw new Error("File quá lớn (" + Math.round(f.size / 1048576) + " MB) — chỉ để lại các dòng cần in tem rồi lưu file mới.");
   await loadXlsx();
@@ -19921,7 +19927,8 @@ async function importExcelFile(f, onStep){
   const kPct = find(/% ?giam|phan tram/), kOff = find(/tien giam/), kType = find(/loai tem|^loai/);
   const kFrom = find(/tu ngay|bat dau|from/), kTo = find(/den ngay|ket thuc|^to$/), kQty = find(/^sl|so tem|so luong|qty/), kTpl = find(/^mau/);
   const tplByName = {}; Object.entries(TPL).forEach(([k,t]) => { tplByName[strip(t.name)] = k; tplByName[strip(t.name.split(" (")[0])] = k; });
-  const dv = (v) => v instanceof Date ? new Date(v.getTime() - v.getTimezoneOffset()*60000).toISOString().slice(0,10) : (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(String(v).trim()) ? String(v).trim().split("/").reverse().map(x => x.padStart(2,"0")).join("-") : String(v||"").trim());
+  // 20/10/2026: ô ngày Excel đọc ra lệch vài chục giây (23/10 00:00 → 22/10 23:59:30) nên tem lùi 1 ngày — làm tròn tới giờ gần nhất.
+  const dv = (v) => v instanceof Date ? new Date(Math.round((v.getTime() - v.getTimezoneOffset()*60000) / 3600000) * 3600000).toISOString().slice(0,10) : (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(String(v).trim()) ? String(v).trim().split("/").reverse().map(x => x.padStart(2,"0")).join("-") : String(v||"").trim());
   const rows = data.map(d => {
     const code = String(kCode ? d[kCode] : "").trim(); const b = code && S.bookByCode[code.toLowerCase()] ? S.bookByCode[code.toLowerCase()][0] : null;
     const price = kVnd(num(kPrice ? d[kPrice] : null)) ?? (b ? b[3] : null);
