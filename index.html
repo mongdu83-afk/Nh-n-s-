@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261020-1";
+window.__APP_BUILD = "20261020-2";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -19475,7 +19475,10 @@ const DICT_API = "https://asia-southeast1-upharma-176d5.cloudfunctions.net/produ
 const $ = (s, r) => (r || document).querySelector(s);
 let ROOT = null;
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const num = (v) => { if (v == null || v === "") return null; const n = Number(String(v).replace(/[^\d.-]/g, "")); return isFinite(n) && String(v).trim() !== "" ? n : null; };
+// 20/10/2026: "12.350" / "13.000" / "1,250,000" là cách viết tiền Việt (dấu phân nghìn) — trước đây bị hiểu là 12,35 / 13 nên tem mất số 0.
+const num = (v) => { if (v == null || v === "") return null; if (typeof v === "number") return isFinite(v) ? v : null; let t = String(v).trim().replace(/\s|đ|vnd/gi, ""); if (/^-?\d{1,3}([.,]\d{3})+$/.test(t)) t = t.replace(/[.,]/g, ""); else t = t.replace(/[^\d.,-]/g, "").replace(",", "."); const n = Number(t); return isFinite(n) && t !== "" ? n : null; };
+// Giá trong Excel ghi theo NGHÌN đồng (13 → 13.000đ, 12.35 → 12.350đ — Excel bỏ số 0 cuối khi hiểu "12.350" là số thập phân). Không có giá thuốc nào dưới 1.000đ.
+const kVnd = (n) => n == null ? null : (n > 0 && n < 1000 ? Math.round(n * 1000) : Math.round(n));
 const vnd = (n) => Math.round(n).toLocaleString("vi-VN");
 const M = (n) => `<span class="money">${vnd(n)}<sup>đ</sup></span>`;
 const Mp = (n) => vnd(n) + "đ";
@@ -19633,6 +19636,7 @@ async function loadUseTexts(){
 }
 
 // ---------- CẢNH BÁO ----------
+function isLowPrice(r){ if(r.tpl === "combo" || r.tpl === "gift") return false; const p = num(r.price), k = num(r.promo); return (p != null && p > 0 && p < 1000) || (k != null && k > 0 && k < 1000); }
 function warnings(r){
   const w = [], cat = (TPL[r.tpl]||{}).cat, p = num(r.price), k = num(r.promo);
   if(r.tpl === "gift"){ if(!num(r.min)) w.push("Chưa nhập mức hoá đơn"); if(!r.gift) w.push("Chưa nhập quà tặng"); }
@@ -19640,6 +19644,8 @@ function warnings(r){
   else {
     if(!r.name) w.push("Chưa có tên sản phẩm");
     if(p == null) w.push("Chưa có giá");
+    else if(p > 0 && p < 1000) w.push(`Giá ${p}đ quá thấp — thiếu số 0? (VD 12.35 phải là 12.350)`);
+    if(k != null && k > 0 && k < 1000) w.push(`Giá KM ${k}đ quá thấp — thiếu số 0?`);
     if(cat === "km" && r.tpl !== "bxgy"){
       if(k == null) w.push("Mẫu khuyến mãi nhưng chưa có giá KM");
       else if(p != null && k >= p) w.push(`Giá KM (${vnd(k)}) không thấp hơn giá gốc (${vnd(p)})`);
@@ -19656,6 +19662,7 @@ function render(){
   const rows = S.rows;
   const total = rows.reduce((s,r) => s + Math.max(0, Number(r.qty)||0), 0);
   const selN = rows.filter(r => S.sel[r.id]).length;
+  const lowN = rows.filter(isLowPrice).length;
   const tplOpts = (cur) => Object.entries(TPL).map(([k,t]) => `<option value="${k}"${k===cur?" selected":""}>${t.name}</option>`).join("");
   const promoCampaigns = S.book ? Object.values(S.book.filter(b => b[5] != null).reduce((m,b) => { const k = b[6] || "Khuyến mãi (chưa rõ tên)"; (m[k] = m[k] || { name:k, n:0 }).n++; return m; }, {})) : [];
   ROOT.innerHTML = `
@@ -19683,7 +19690,7 @@ function render(){
     </tbody></table>
     <div class="bar">
       <span>Đã chọn ${selN}: <select id="tg-bulkTpl"><option value="">Đổi mẫu thành…</option>${tplOpts("")}</select> <button class="btn sm" id="tg-bulkDel" ${!selN?"disabled":""}>Xoá</button></span>
-      <span><button class="btn sm" id="tg-clearAll">Xoá hết</button> <button class="btn sm" id="tg-saveSet">Lưu thành bộ tem</button></span>
+      <span>${lowN ? `<button class="btn sm" id="tg-fixK" title="Giá dưới 1.000đ là ghi theo nghìn đồng — nhân 1.000">Sửa ${lowN} dòng thiếu số 0</button> ` : ""}<button class="btn sm" id="tg-clearAll">Xoá hết</button> <button class="btn sm" id="tg-saveSet">Lưu thành bộ tem</button></span>
     </div>
     <div class="bar"><span>Mẫu mặc định khi thêm: giá thường <select id="tg-defGia">${Object.entries(TPL).filter(([,t])=>t.cat==="gia").map(([k,t])=>`<option value="${k}"${k===S.defGia?" selected":""}>${t.name}</option>`).join("")}</select>
       · khuyến mãi <select id="tg-defKm">${Object.entries(TPL).filter(([,t])=>t.cat==="km").map(([k,t])=>`<option value="${k}"${k===S.defKm?" selected":""}>${t.name}</option>`).join("")}</select></span></div>
@@ -19756,6 +19763,7 @@ function bindMain(){
     $("#tg-bulkDel").onclick = () => { S.rows = S.rows.filter(r => !S.sel[r.id]); S.sel = {}; saveDraft(); render(); };
     $("#tg-clearAll").onclick = () => { if(confirm("Xoá toàn bộ danh sách tem?")){ S.rows = []; S.sel = {}; saveDraft(); render(); } };
     $("#tg-saveSet").onclick = saveSetPrompt;
+    if($("#tg-fixK")) $("#tg-fixK").onclick = () => { let n = 0; S.rows.forEach(r => { if(!isLowPrice(r)) return; ["price","promo"].forEach(f => { const v = num(r[f]); if(v != null && v > 0 && v < 1000) r[f] = kVnd(v); }); n++; }); saveDraft(); render(); toast(`Đã sửa giá ${n} dòng (×1.000)`); };
     $("#tg-defGia").onchange = (e) => { S.defGia = e.target.value; lsSet("temgia.defGia", S.defGia); };
     $("#tg-defKm").onchange = (e) => { S.defKm = e.target.value; lsSet("temgia.defKm", S.defKm); };
   }
@@ -19916,9 +19924,9 @@ async function importExcelFile(f, onStep){
   const dv = (v) => v instanceof Date ? new Date(v.getTime() - v.getTimezoneOffset()*60000).toISOString().slice(0,10) : (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(String(v).trim()) ? String(v).trim().split("/").reverse().map(x => x.padStart(2,"0")).join("-") : String(v||"").trim());
   const rows = data.map(d => {
     const code = String(kCode ? d[kCode] : "").trim(); const b = code && S.bookByCode[code.toLowerCase()] ? S.bookByCode[code.toLowerCase()][0] : null;
-    const price = num(kPrice ? d[kPrice] : null) ?? (b ? b[3] : null);
-    let promo = num(kKm ? d[kKm] : null);
-    if(promo == null && price != null){ const pc = num(kPct ? d[kPct] : null), off = num(kOff ? d[kOff] : null); if(pc) promo = Math.round(price * (1 - pc/100) / 100) * 100; else if(off) promo = price - off; }
+    const price = kVnd(num(kPrice ? d[kPrice] : null)) ?? (b ? b[3] : null);
+    let promo = kVnd(num(kKm ? d[kKm] : null));
+    if(promo == null && price != null){ const pc = num(kPct ? d[kPct] : null), off = kVnd(num(kOff ? d[kOff] : null)); if(pc) promo = Math.round(price * (1 - pc/100) / 100) * 100; else if(off) promo = price - off; }
     const isKmType = kType && /km|khuyen/.test(strip(d[kType]));
     const tpl = (kTpl && tplByName[strip(d[kTpl])]) || ((promo != null || isKmType) ? S.defKm : S.defGia);
     return newRow({ tpl, code, name: String(kName ? d[kName] : "").trim() || (b ? b[1] : ""), unit: String(kUnit ? d[kUnit] : "").trim() || (b ? b[2] : ""), price: price ?? "", promo: promo ?? "", from: dv(kFrom ? d[kFrom] : ""), to: dv(kTo ? d[kTo] : ""), qty: (() => { const q = Math.max(1, Math.floor(Number(kQty ? d[kQty] : 1)) || 1); if(q > MAX_QTY){ info.capped++; return 1; } return q; })() });
