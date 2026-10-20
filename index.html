@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261019-18";
+window.__APP_BUILD = "20261020-1";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -19571,8 +19571,16 @@ function fitText(root){
 }
 
 // ---------- TRẠNG THÁI ----------
+// 20/10/2026: GIỚI HẠN chống treo — file Excel thật (cả bảng giá, cột "Số lượng" là tồn kho) từng tạo hàng chục nghìn tem,
+// bản nháp lưu lại nên mỗi lần mở tab Tem giá lại đơ. Nhập tối đa 300 dòng/lần (danh sách ≤ 600 dòng), mỗi dòng ≤ 100 tem, xem trước ≤ 120 tem/nhóm.
+const MAX_IMPORT_ROWS = 300, MAX_DRAFT_ROWS = 600, MAX_QTY = 100, PREVIEW_MAX_TAGS = 120;
+const clampQty = (v) => Math.min(MAX_QTY, Math.max(0, Math.floor(Number(v)) || 0));
+function sanitizeRows(list){
+  if(!Array.isArray(list)) return [];
+  return list.filter(r => r && typeof r === "object").slice(0, MAX_DRAFT_ROWS).map(r => ({ ...r, id: r.id || uid(), qty: clampQty(r.qty) }));
+}
 const S = { me:null, book:null, bookByCode:{}, catalog:null, topShop:[], sets:[],
-  rows: lsGet("temgia.draft", []),
+  rows: sanitizeRows(lsGet("temgia.draft", [])),
   papers: lsGet("temgia.papers", {}),
   cut: lsGet("temgia.cut", true), brand: lsGet("temgia.brand", true),
   defGia: lsGet("temgia.defGia", "classic"), defKm: lsGet("temgia.defKm", "pct"),
@@ -19586,9 +19594,11 @@ function fromBook(b){ // b = [mã, tên, ĐVT, giá, SL30, giá KM, tên CTKM, t
 }
 function addRows(list, msg){
   const before = S.rows.length;
-  list.forEach(r => S.rows.push(r));
+  const room = Math.max(0, MAX_DRAFT_ROWS - before);
+  list.slice(0, room).forEach(r => S.rows.push({ ...r, qty: clampQty(r.qty) }));
+  if(list.length > room){ toast(`Danh sách đã tới giới hạn ${MAX_DRAFT_ROWS} dòng — bỏ bớt ${list.length - room} dòng. In xong rồi xoá bớt để thêm tiếp.`, 6000); msg = false; }
   saveDraft(); render(); loadUseTexts();
-  if(msg !== false) toast(msg || `Đã thêm ${S.rows.length - before} tem`);
+  if(msg !== false) toast(msg || `Đã thêm ${S.rows.length - before} tem`, msg && msg.length > 60 ? 8000 : undefined);
 }
 
 // ---------- DỮ LIỆU ----------
@@ -19709,7 +19719,7 @@ function rowHtml(r, tplOpts){
     <td class="num">${isSpecial?"":`<input type="text" data-f="price" value="${esc(r.price)}">`}</td>
     <td class="num pk">${t==="gift"?"":`<input type="text" data-f="promo" value="${esc(r.promo)}" placeholder="${t==="combo"?"Giá combo":""}">`}</td>
     <td><select data-f="tpl">${tplOpts(t)}</select></td>
-    <td><input type="number" min="0" data-f="qty" value="${esc(r.qty)}"></td>
+    <td><input type="number" min="0" max="${MAX_QTY}" data-f="qty" value="${esc(r.qty)}"></td>
     <td><button class="btn sm" data-del title="Xoá dòng">✕</button></td></tr>
     ${ex ? `<tr class="ex" data-id="${r.id}"><td></td><td colspan="6"><div class="exg">${ex}</div></td></tr>` : ""}`;
 }
@@ -19760,7 +19770,8 @@ function onCell(e, typing){
   const f = e.target.dataset.f; if(!f) return;
   let v = e.target.value;
   if(f === "itemsTxt"){ r.items = v.split("\n").map(l => { const [a, b] = l.split("|"); return [String(a||"").trim(), String(b||"").trim()]; }).filter(i => i[0] || i[1]); }
-  else r[f] = (f === "qty") ? Math.max(0, Number(v)||0) : v;
+  else r[f] = (f === "qty") ? clampQty(v) : v;
+  if(f === "qty" && Number(v) > MAX_QTY){ e.target.value = r.qty; toast(`Mỗi dòng tối đa ${MAX_QTY} tem.`); }
   saveDraft();
   // Chỉ vẽ lại toàn bảng khi đổi MẪU (các ô thêm khác nhau). Sửa chữ/số thì cập nhật tại chỗ để KHÔNG mất con trỏ
   // khi người dùng bấm sang ô kế tiếp.
@@ -19856,19 +19867,45 @@ function openPasteModal(){
     };
   });
 }
-function loadXlsx(){ return new Promise((ok, no) => { if(window.XLSX) return ok(); const s = document.createElement("script"); s.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"; s.onload = ok; s.onerror = () => no(new Error("Không tải được thư viện Excel")); document.head.appendChild(s); }); }
+// 20/10/2026: tải thư viện có HẠN GIỜ (trước đây mạng chậm/treo thì hộp thoại kẹt mãi ở "Đang đọc…"), dùng chung
+// promise với bản tải nền của app; lần tải hỏng không bị nhớ lại nên bấm lại là tải lại.
+function withTimeout(p, ms, msg){ let t; return Promise.race([p, new Promise((_, no) => { t = setTimeout(() => no(new Error(msg)), ms); })]).finally(() => clearTimeout(t)); }
+const nextTick = () => new Promise(r => setTimeout(r, 0));
+let xlsxP = null;
+function loadXlsx(){
+  if(window.XLSX) return Promise.resolve();
+  if(xlsxP) return xlsxP;
+  const cdnjs = () => new Promise((ok, no) => { const s = document.createElement("script"); s.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"; s.onload = () => window.XLSX ? ok() : no(new Error("Thư viện Excel tải về bị lỗi")); s.onerror = () => no(new Error("Không tải được thư viện Excel")); document.head.appendChild(s); });
+  const shared = typeof window.__loadXlsx === "function" ? Promise.resolve().then(() => window.__loadXlsx()).catch(() => { window.__xlsxP = null; return cdnjs(); }) : cdnjs();
+  xlsxP = withTimeout(shared.then(() => { if(!window.XLSX) throw new Error("Thư viện Excel chưa sẵn sàng"); }), 25000, "Tải thư viện Excel quá lâu (mạng chậm?) — kiểm tra mạng rồi thử lại.")
+    .catch(e => { xlsxP = null; if(!window.XLSX) window.__xlsxP = null; throw e; });
+  return xlsxP;
+}
 // 30/9/2026: nhập Excel — KÉO THẢ file vào tab hoặc vào ô trong hộp thoại, hoặc bấm chọn file. Tự tìm dòng tiêu đề
 // (file có dòng tiêu đề/tên bảng phía trên vẫn đọc được), nhận cả cột của app tem giá cũ (Loại tem, Giá thường, % giảm, Tiền giảm).
-async function importExcelFile(f){
+// 20/10/2026: chỉ đọc 2000 dòng × 40 cột đầu (file có vùng dữ liệu "ảo" tới hàng triệu dòng/16 nghìn cột từng làm đơ máy),
+// bỏ dòng trống, nhận tối đa 300 dòng; SL > 100 coi là số tồn kho chứ không phải số tem → để 1 tem.
+async function importExcelFile(f, onStep){
+  if(f.size > 15 * 1024 * 1024) throw new Error("File quá lớn (" + Math.round(f.size / 1048576) + " MB) — chỉ để lại các dòng cần in tem rồi lưu file mới.");
   await loadXlsx();
-  const wb = XLSX.read(await f.arrayBuffer(), { type:"array", cellDates:true });
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  const aoa = XLSX.utils.sheet_to_json(ws, { header:1, defval:"", raw:true, blankrows:false });
+  const buf = await withTimeout(f.arrayBuffer(), 20000, "Không đọc được file từ máy — thử chọn lại file.");
+  if(onStep) onStep("Đang phân tích " + f.name + "…");
+  await nextTick();
+  const wb = XLSX.read(buf, { type:"array", cellDates:true, sheetRows:2000, cellStyles:false, cellFormula:false, cellHTML:false });
+  const sheetOf = (n) => { const ws = wb.Sheets[n]; if(!ws || !ws["!ref"]) return null;
+    const rg = XLSX.utils.decode_range(ws["!ref"]); rg.e.c = Math.min(rg.e.c, rg.s.c + 39); rg.e.r = Math.min(rg.e.r, rg.s.r + 1999); ws["!ref"] = XLSX.utils.encode_range(rg); return ws; };
+  const ws = (wb.SheetNames || []).map(sheetOf).find(Boolean);
+  if(!ws) throw new Error("File không có trang tính nào có dữ liệu.");
+  await nextTick();
+  const aoa = XLSX.utils.sheet_to_json(ws, { header:1, defval:"", raw:true, blankrows:false }).filter(r => r.some(c => String(c == null ? "" : c).trim() !== ""));
+  if(!aoa.length) throw new Error("File trống.");
   let hi = aoa.findIndex(r => r.some(c => /^(ten|ma)\b|ten san pham|ma sp/.test(strip(c))));
   if(hi < 0) hi = 0;
   const head = aoa[hi].map(c => String(c).trim());
-  const data = aoa.slice(hi + 1).map(r => { const o = {}; head.forEach((k, i) => { if(k) o[k] = r[i]; }); return o; });
+  let data = aoa.slice(hi + 1).map(r => { const o = {}; head.forEach((k, i) => { if(k) o[k] = r[i]; }); return o; });
   if(!data.length) throw new Error("File không có dòng dữ liệu dưới dòng tiêu đề.");
+  const info = { more: data.length > MAX_IMPORT_ROWS, capped: 0 };
+  data = data.slice(0, MAX_IMPORT_ROWS);
   const keys = head.filter(Boolean); const find = (...res) => keys.find(k => res.some(re => re.test(strip(k))));
   const kCode = find(/^ma( sp| san pham| hang)?$/, /^code|sku/, /^ma\b/), kName = find(/^ten/, /name/), kUnit = find(/dvt|don vi/);
   const kKm = find(/gia km|khuyen mai|gia giam|gia ban km/);
@@ -19877,20 +19914,34 @@ async function importExcelFile(f){
   const kFrom = find(/tu ngay|bat dau|from/), kTo = find(/den ngay|ket thuc|^to$/), kQty = find(/^sl|so tem|so luong|qty/), kTpl = find(/^mau/);
   const tplByName = {}; Object.entries(TPL).forEach(([k,t]) => { tplByName[strip(t.name)] = k; tplByName[strip(t.name.split(" (")[0])] = k; });
   const dv = (v) => v instanceof Date ? new Date(v.getTime() - v.getTimezoneOffset()*60000).toISOString().slice(0,10) : (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(String(v).trim()) ? String(v).trim().split("/").reverse().map(x => x.padStart(2,"0")).join("-") : String(v||"").trim());
-  return data.map(d => {
+  const rows = data.map(d => {
     const code = String(kCode ? d[kCode] : "").trim(); const b = code && S.bookByCode[code.toLowerCase()] ? S.bookByCode[code.toLowerCase()][0] : null;
     const price = num(kPrice ? d[kPrice] : null) ?? (b ? b[3] : null);
     let promo = num(kKm ? d[kKm] : null);
     if(promo == null && price != null){ const pc = num(kPct ? d[kPct] : null), off = num(kOff ? d[kOff] : null); if(pc) promo = Math.round(price * (1 - pc/100) / 100) * 100; else if(off) promo = price - off; }
     const isKmType = kType && /km|khuyen/.test(strip(d[kType]));
     const tpl = (kTpl && tplByName[strip(d[kTpl])]) || ((promo != null || isKmType) ? S.defKm : S.defGia);
-    return newRow({ tpl, code, name: String(kName ? d[kName] : "").trim() || (b ? b[1] : ""), unit: String(kUnit ? d[kUnit] : "").trim() || (b ? b[2] : ""), price: price ?? "", promo: promo ?? "", from: dv(kFrom ? d[kFrom] : ""), to: dv(kTo ? d[kTo] : ""), qty: Math.max(1, Number(kQty ? d[kQty] : 1) || 1) });
+    return newRow({ tpl, code, name: String(kName ? d[kName] : "").trim() || (b ? b[1] : ""), unit: String(kUnit ? d[kUnit] : "").trim() || (b ? b[2] : ""), price: price ?? "", promo: promo ?? "", from: dv(kFrom ? d[kFrom] : ""), to: dv(kTo ? d[kTo] : ""), qty: (() => { const q = Math.max(1, Math.floor(Number(kQty ? d[kQty] : 1)) || 1); if(q > MAX_QTY){ info.capped++; return 1; } return q; })() });
   }).filter(r => r.name || r.code);
+  return { rows, info };
 }
 function isExcelFile(f){ return f && /\.(xlsx|xls|csv)$/i.test(f.name || ""); }
-async function importAndAdd(f, onErr){
-  try{ const add = await importExcelFile(f); if(!add.length) throw new Error("Không đọc được dòng nào — kiểm tra file có cột Tên hoặc Mã."); addRows(add, `Đã nhập ${add.length} dòng từ ${f.name}`); return true; }
-  catch(err){ (onErr || ((m) => toast(m, 5000)))("Lỗi: " + (err.message || err)); return false; }
+let importing = false;
+async function importAndAdd(f, onErr, onStep){
+  const say = onErr || ((m) => toast(m, 6000));
+  if(importing){ say("Đang nhập một file khác — chờ chút rồi thử lại."); return false; }
+  importing = true;
+  try{
+    const { rows: add, info } = await withTimeout(importExcelFile(f, onStep), 60000, "Đọc file quá lâu — file có thể quá nặng. Chỉ để lại các dòng cần in rồi thử lại.");
+    if(!add.length) throw new Error("Không đọc được dòng nào — kiểm tra file có cột Tên hoặc Mã.");
+    const notes = [];
+    if(info.more) notes.push(`chỉ lấy ${MAX_IMPORT_ROWS} dòng đầu`);
+    if(info.capped) notes.push(`${info.capped} dòng có SL > ${MAX_QTY} (giống số tồn kho) nên để 1 tem — cột SL là số tem cần in`);
+    addRows(add, `Đã nhập ${add.length} dòng từ ${f.name}` + (notes.length ? " — " + notes.join("; ") : ""));
+    return true;
+  }
+  catch(err){ say("Lỗi: " + ((err && err.message) || err)); return false; }
+  finally{ importing = false; }
 }
 function openExcel(){
   modal(`<h3>Nhập Excel / CSV</h3><div class="note">Các cột app tự nhận: <b>Mã</b>, <b>Tên</b>, <b>Giá</b> (giá gốc), <b>Giá KM</b> (hoặc <b>% giảm</b> / <b>Tiền giảm</b>), <b>ĐVT</b>, <b>Từ ngày</b>, <b>Đến ngày</b>, <b>SL</b> (số tem), <b>Mẫu</b>. Thiếu giá mà có mã → tự lấy từ sổ giá. Dùng được cả file của app tem giá cũ.</div>
@@ -19900,13 +19951,14 @@ function openExcel(){
     <div class="btns"><button class="btn" id="tg-xTpl">Tải file mẫu</button></div>
     <div id="tg-xm" class="note" style="margin-top:8px;color:var(--tg-bad)"></div><div class="bar"><span></span><button class="btn" data-close>Đóng</button></div>`, (bg, close) => {
     bg.querySelector("#tg-xTpl").onclick = async () => {
-      await loadXlsx();
+      try{ msg("Đang tải thư viện Excel…", true); await loadXlsx(); msg(""); }catch(e){ return msg("Lỗi: " + e.message); }
       const ws = XLSX.utils.aoa_to_sheet([["Mã","Tên","ĐVT","Giá","Giá KM","Từ ngày","Đến ngày","SL","Mẫu"],["PA0012","Panadol Extra","Hộp",215000,189000,"2026-10-01","2026-10-31",2,"Giảm %"],["PR0100","Siro ho Prospan 100ml","Chai",95000,"","","",1,"Cổ điển"]]);
       const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Tem"); XLSX.writeFile(wb, "mau-tem-gia.xlsx");
     };
-    const msg = (m) => { bg.querySelector("#tg-xm").textContent = m; };
-    const go = async (f) => { if(!f) return; if(!isExcelFile(f)) return msg("Chỉ nhận file .xlsx, .xls hoặc .csv."); msg("Đang đọc " + f.name + "…"); if(await importAndAdd(f, msg)) close(); };
-    bg.querySelector("#tg-xf").onchange = (e) => go(e.target.files[0]);
+    const xm = bg.querySelector("#tg-xm");
+    const msg = (m, busy) => { xm.textContent = m; xm.style.color = busy ? "var(--tg-muted)" : ""; };
+    const go = async (f) => { if(!f) return; if(!isExcelFile(f)) return msg("Chỉ nhận file .xlsx, .xls hoặc .csv."); msg("Đang đọc " + f.name + "…", true); if(await importAndAdd(f, msg, (m) => msg(m, true))) close(); };
+    bg.querySelector("#tg-xf").onchange = (e) => { const f = e.target.files[0]; e.target.value = ""; go(f); };
     const dz = bg.querySelector("#tg-xdrop");
     ["dragenter","dragover"].forEach(ev => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.style.background = "#E4EFEC"; }));
     ["dragleave","drop"].forEach(ev => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.style.background = "#F6FBF8"; }));
@@ -19939,9 +19991,11 @@ function buildGroups(){
   const order = ["f18:gia","f18:km","f8:cb","f40:gia","fth:gia","fa5:km"];
   return Object.values(groups).sort((a,b) => order.indexOf(a.key) - order.indexOf(b.key));
 }
-function sheetsHtml(g, forPrint){
+const pageCount = (g) => Math.ceil(g.tags.length / FMT[g.fmt].per);
+function sheetsHtml(g, forPrint, maxTags){
   const f = FMT[g.fmt]; const pages = [];
-  for(let i = 0; i < g.tags.length; i += f.per) pages.push(g.tags.slice(i, i + f.per));
+  const n = maxTags ? Math.min(g.tags.length, Math.max(f.per, Math.ceil(maxTags / f.per) * f.per)) : g.tags.length;
+  for(let i = 0; i < n; i += f.per) pages.push(g.tags.slice(i, i + f.per));
   const bg = forPrint ? "" : `background:${(S.papers[g.key] || (g.cat==="km" ? "#FFF1A8" : g.cat==="cb" ? "#FFD6DE" : "#tg-FFFFFF"))}`;
   return pages.map(p => {
     const cells = p.map(r => renderTag(r, { brand:S.brand }));
@@ -19954,12 +20008,13 @@ function renderPreview(){
   const gs = buildGroups();
   if(!gs.length){ box.innerHTML = `<div class="empty">Thêm sản phẩm ở bên trái để xem trước tem.</div>`; return; }
   box.innerHTML = gs.map((g, gi) => {
-    const f = FMT[g.fmt]; const sh = sheetsHtml(g, false);
+    const f = FMT[g.fmt]; const sh = sheetsHtml(g, false, PREVIEW_MAX_TAGS); const np = pageCount(g); const un = g.fmt==="fth"?"nhãn":"tờ";
     const cur = S.papers[g.key] || (g.cat==="km" ? "#FFF1A8" : g.cat==="cb" ? "#FFD6DE" : "#tg-FFFFFF");
     const paperName = (PAPERS.find(p => p[1] === cur) || ["Trắng"])[0];
-    return `<div class="grp" data-g="${g.key}"><div class="gh"><b>${gi+1}. ${CAT[g.cat]}</b><span class="pill2">${f.label}</span><span class="note">${g.tags.length} tem · ${sh.length} ${g.fmt==="fth"?"nhãn":"tờ"}</span>
+    return `<div class="grp" data-g="${g.key}"><div class="gh"><b>${gi+1}. ${CAT[g.cat]}</b><span class="pill2">${f.label}</span><span class="note">${g.tags.length} tem · ${np} ${un}</span>
       <span style="margin-left:auto" class="note">Giấy bìa:</span>${PAPERS.map(p => `<span class="sw${p[1]===cur?" on":""}" title="${p[0]}" data-paper="${p[1]}" style="background:${p[1]}"></span>`).join("")}
-      <button class="btn pri sm" data-print="${g.key}">In ${sh.length} ${g.fmt==="fth"?"nhãn":"tờ"} · giấy ${paperName.toLowerCase()}</button></div>
+      <button class="btn pri sm" data-print="${g.key}">In ${np} ${un} · giấy ${paperName.toLowerCase()}</button></div>
+      ${sh.length < np ? `<div class="note" style="margin:4px 0">Xem trước ${sh.length}/${np} ${un} đầu cho nhẹ máy — bấm In vẫn in đủ ${np} ${un}.</div>` : ""}
       <div class="sheets"><div class="zoomwrap" style="display:flex;gap:10mm;flex-wrap:wrap">${sh.join("")}</div></div></div>`;
   }).join("") + (gs.length > 1 ? `<div class="bar"><span class="note">Mỗi nhóm in riêng để kịp thay giấy bìa đúng màu.</span><button class="btn pri" id="tg-printAll">In lần lượt tất cả</button></div>` : "");
   box.querySelectorAll("[data-paper]").forEach(el => el.onclick = () => { const g = el.closest("[data-g]").dataset.g; S.papers[g] = el.dataset.paper; lsSet("temgia.papers", S.papers); renderPreview(); });
@@ -19970,6 +20025,8 @@ function renderPreview(){
 }
 function printGroups(keys){
   const gs = buildGroups().filter(g => keys.includes(g.key));
+  const allPages = gs.reduce((s, g) => s + pageCount(g), 0);
+  if(allPages > 60 && !confirm(`Sắp in ${allPages} tờ/nhãn — máy có thể chậm vài chục giây khi chuẩn bị bản in. Tiếp tục?`)) return;
   const bad = S.rows.filter(r => (Number(r.qty)||0) > 0 && keys.includes((TPL[r.tpl]||TPL.classic).fmt + ":" + (TPL[r.tpl]||TPL.classic).cat) && warnings(r).length);
   const go = (i) => {
     if(i >= gs.length) return;
@@ -20010,15 +20067,19 @@ function ensurePrintArea(){
 function onDocClick(e){ if(!e.target.closest || !e.target.closest(".srch")){ const dd = $("#tg-dd"); if(dd) dd.innerHTML = ""; } }
 return {
   mount(el){
-    ensureStyle(); ROOT = el; render();
+    ensureStyle(); ROOT = el;
+    // 20/10/2026: bản nháp hỏng/quá nặng không được làm kẹt tab — vẽ lỗi thì làm trống danh sách và báo.
+    try{ render(); }
+    catch(err){ console.error("Tem giá render:", err); S.rows = []; S.sel = {}; saveDraft(); try{ render(); }catch(e2){} toast("Danh sách tem lưu tạm bị lỗi nên đã làm trống — thêm lại sản phẩm giúp em.", 7000); }
     // Kéo thả file Excel thẳng vào tab Tem giá
     const onOver = (e) => { if(e.dataTransfer && [...(e.dataTransfer.types||[])].includes("Files")){ e.preventDefault(); el.style.outline = "3px dashed #0D5C4F"; el.style.outlineOffset = "-6px"; } };
     const onLeave = (e) => { if(!el.contains(e.relatedTarget)) el.style.outline = ""; };
-    const onDrop = (e) => { el.style.outline = ""; const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]; if(!f) return; e.preventDefault(); if(!isExcelFile(f)) return toast("Chỉ nhận file .xlsx, .xls hoặc .csv"); importAndAdd(f); };
+    const onDrop = (e) => { el.style.outline = ""; const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]; if(!f) return; e.preventDefault(); if(!isExcelFile(f)) return toast("Chỉ nhận file .xlsx, .xls hoặc .csv"); toast("Đang đọc " + f.name + "…"); importAndAdd(f); };
     el.addEventListener("dragover", onOver); el.addEventListener("dragleave", onLeave); el.addEventListener("drop", onDrop);
     if(!S.book) loadBook(); else loadSets().then(render);
     document.addEventListener("click", onDocClick);
-    return { unmount(){ document.removeEventListener("click", onDocClick); ROOT = null; } };
+    return { unmount(){ document.removeEventListener("click", onDocClick); el.removeEventListener("dragover", onOver); el.removeEventListener("dragleave", onLeave); el.removeEventListener("drop", onDrop);
+      document.querySelectorAll("body > .tg-modalwrap").forEach(w => w.remove()); clearTimeout(previewTimer); ROOT = null; } };
   },
 };
 
