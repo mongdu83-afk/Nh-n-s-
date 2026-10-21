@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261021-2";
+window.__APP_BUILD = "20261021-3";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -19927,11 +19927,19 @@ async function importExcelFile(f, onStep){
   data = data.slice(0, MAX_IMPORT_ROWS);
   const keys = head.filter(Boolean); const find = (...res) => keys.find(k => res.some(re => re.test(strip(k))));
   const kCode = find(/^ma( sp| san pham| hang)?$/, /^code|sku/, /^ma\b/), kName = find(/^ten/, /name/), kUnit = find(/dvt|don vi/);
-  const kKm = find(/gia km|khuyen mai|gia giam|gia ban km/);
-  const kPrice = keys.find(k => /^gia|price/.test(strip(k)) && k !== kKm);
+  const kKm = find(/gia km|khuyen mai|gia giam|gia ban km|gia combo/);
+  // 21/10/2026 (file mẫu Combo): cột "SP 1 / Giá lẻ 1 …" hoặc 1 cột "Sản phẩm trong combo" (mỗi dòng/dấu ; một SP: Tên | Giá lẻ)
+  const isItemCol = (k) => /^(sp|san pham) ?\d+$|^gia le ?\d+$|san pham trong combo/.test(strip(k));
+  const kPrice = find(/^tong gia le/) || keys.find(k => /^gia|price/.test(strip(k)) && k !== kKm && !isItemCol(k));
+  const itemCols = keys.map(k => { const m = strip(k).match(/^(?:sp|san pham) ?(\d+)$/); return m ? { n:+m[1], k, p: keys.find(x => strip(x).replace(/ /g,"") === "giale" + m[1]) } : null; }).filter(Boolean).sort((a,b) => a.n - b.n);
+  const kItemsTxt = find(/san pham trong combo/);
+  const money = (v) => { const n = kVnd(num(v)); return n == null ? "" : String(n); };
+  const itemsOf = (d) => { const out = itemCols.map(c => [String(d[c.k] ?? "").trim(), c.p ? money(d[c.p]) : ""]).filter(i => i[0]);
+    if(kItemsTxt) String(d[kItemsTxt] ?? "").split(/\r?\n|;/).forEach(l => { const [a, b] = l.split("|"); const nm = String(a||"").trim(); if(nm) out.push([nm, money(b)]); });
+    return out; };
   const kPct = find(/% ?giam|phan tram/), kOff = find(/tien giam/), kType = find(/loai tem|^loai/);
   const kFrom = find(/tu ngay|bat dau|from/), kTo = find(/den ngay|ket thuc|^to$/), kQty = find(/^sl|so tem|so luong|qty/), kTpl = find(/^mau/);
-  const tplByName = {}; Object.entries(TPL).forEach(([k,t]) => { tplByName[strip(t.name)] = k; tplByName[strip(t.name.split(" (")[0])] = k; });
+  const tplByName = {}; Object.entries(TPL).forEach(([k,t]) => { tplByName[strip(t.name)] = k; tplByName[strip(t.name.split(" (")[0])] = k; }); tplByName["combo"] = "combo"; tplByName["qua tang"] = "gift";
   // 20/10/2026: ô ngày Excel đọc ra lệch vài chục giây (23/10 00:00 → 22/10 23:59:30) nên tem lùi 1 ngày — làm tròn tới giờ gần nhất.
   const dv = (v) => v instanceof Date ? new Date(Math.round((v.getTime() - v.getTimezoneOffset()*60000) / 3600000) * 3600000).toISOString().slice(0,10) : (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(String(v).trim()) ? String(v).trim().split("/").reverse().map(x => x.padStart(2,"0")).join("-") : String(v||"").trim());
   const rows = data.map(d => {
@@ -19940,10 +19948,26 @@ async function importExcelFile(f, onStep){
     let promo = kVnd(num(kKm ? d[kKm] : null));
     if(promo == null && price != null){ const pc = num(kPct ? d[kPct] : null), off = kVnd(num(kOff ? d[kOff] : null)); if(pc) promo = Math.round(price * (1 - pc/100) / 100) * 100; else if(off) promo = price - off; }
     const isKmType = kType && /km|khuyen/.test(strip(d[kType]));
-    const tpl = (kTpl && tplByName[strip(d[kTpl])]) || ((promo != null || isKmType) ? S.defKm : S.defGia);
-    return newRow({ tpl, code, name: String(kName ? d[kName] : "").trim() || (b ? b[1] : ""), unit: String(kUnit ? d[kUnit] : "").trim() || (b ? b[2] : ""), price: price ?? "", promo: promo ?? "", from: dv(kFrom ? d[kFrom] : ""), to: dv(kTo ? d[kTo] : ""), qty: (() => { const q = Math.max(1, Math.floor(Number(kQty ? d[kQty] : 1)) || 1); if(q > MAX_QTY){ info.capped++; return 1; } return q; })() });
+    const items = itemsOf(d);
+    const tpl = (kTpl && tplByName[strip(d[kTpl])]) || (items.length ? "combo" : (promo != null || isKmType) ? S.defKm : S.defGia);
+    return newRow({ ...(tpl === "combo" ? { items: items.length ? items : [["",""],["",""]] } : {}), tpl, code, name: String(kName ? d[kName] : "").trim() || (b ? b[1] : ""), unit: String(kUnit ? d[kUnit] : "").trim() || (b ? b[2] : ""), price: price ?? "", promo: promo ?? "", from: dv(kFrom ? d[kFrom] : ""), to: dv(kTo ? d[kTo] : ""), qty: (() => { const q = Math.max(1, Math.floor(Number(kQty ? d[kQty] : 1)) || 1); if(q > MAX_QTY){ info.capped++; return 1; } return q; })() });
   }).filter(r => r.name || r.code);
   return { rows, info };
+}
+// 21/10/2026: file Excel mẫu cho tem Combo ưu đãi — 1 dòng = 1 combo, tối đa 5 sản phẩm (SP n / Giá lẻ n). Giá ghi đủ đồng (VD 25000).
+const COMBO_HEAD = ["Mẫu","Tên combo","Giá combo","Tổng giá lẻ","Từ ngày","Đến ngày","SL","SP 1","Giá lẻ 1","SP 2","Giá lẻ 2","SP 3","Giá lẻ 3","SP 4","Giá lẻ 4","SP 5","Giá lẻ 5"];
+const COMBO_GUIDE = [["Cách điền file mẫu tem Combo ưu đãi"],[""],
+  ["Mỗi dòng ở trang \"Combo\" là 1 combo. Giữ nguyên dòng tiêu đề, xoá 2 dòng ví dụ rồi điền combo của mình."],
+  ["Mẫu","Để \"Combo ưu đãi\"."],["Tên combo","Tên in to trên tem, VD: Combo ho cảm cúm."],["Giá combo","Giá bán cả combo (đồng), VD 120000."],
+  ["Tổng giá lẻ","Không bắt buộc. Để trống thì app tự cộng các cột Giá lẻ — tem hiện \"Mua lẻ\" gạch ngang và \"Tiết kiệm\"."],
+  ["Từ ngày / Đến ngày","Ngày áp dụng, dạng 22/10/2026."],["SL","Số tem cần in cho combo đó (1–100)."],
+  ["SP 1 … SP 5","Tên từng sản phẩm trong combo (tối đa 5; ít hơn thì để trống)."],["Giá lẻ 1 … Giá lẻ 5","Giá bán lẻ của sản phẩm tương ứng (đồng)."]];
+function comboTemplateSheet(){
+  const ws = XLSX.utils.aoa_to_sheet([COMBO_HEAD,
+    ["Combo ưu đãi","Combo ho cảm cúm",120000,"","22/10/2026","19/11/2026",4,"Panadol Extra hộp 12 viên",25000,"Siro ho Prospan 100ml",95000,"Khẩu trang y tế 5 cái",15000,"","","",""],
+    ["Combo ưu đãi","Combo chăm sóc da mùa hanh khô",350000,"","22/10/2026","19/11/2026",2,"Sữa rửa mặt Cetaphil 125ml",180000,"Kem dưỡng ẩm Cetaphil 50g",150000,"Son dưỡng Vaseline",45000,"Xịt khoáng La Roche-Posay 50ml",120000,"",""]]);
+  ws["!cols"] = COMBO_HEAD.map((h, i) => ({ wch: i === 1 ? 32 : /^SP/.test(h) ? 28 : 12 }));
+  return ws;
 }
 function isExcelFile(f){ return f && /\.(xlsx|xls|csv)$/i.test(f.name || ""); }
 let importing = false;
@@ -19968,12 +19992,18 @@ function openExcel(){
     <label id="tg-xdrop" style="display:block;margin-top:10px;border:2px dashed #b9d6cc;border-radius:12px;padding:22px 12px;text-align:center;cursor:pointer;background:#F6FBF8">
       <div style="font-size:15px;font-weight:700">Kéo thả file Excel vào đây</div><div class="note">hoặc bấm để chọn file (.xlsx, .xls, .csv)</div>
       <input type="file" id="tg-xf" accept=".xlsx,.xls,.csv" style="display:none"></label>
-    <div class="btns"><button class="btn" id="tg-xTpl">Tải file mẫu</button></div>
+    <div class="btns"><button class="btn" id="tg-xTpl">Tải file mẫu</button><button class="btn" id="tg-xTplCb">Tải file mẫu Combo</button></div>
+    <div class="note" style="margin-top:6px">Tem <b>Combo</b>: mỗi combo 1 dòng — <b>Tên combo</b>, <b>Giá combo</b>, sản phẩm ở các cột <b>SP 1</b> / <b>Giá lẻ 1</b>, <b>SP 2</b> / <b>Giá lẻ 2</b>… (hoặc 1 cột <b>Sản phẩm trong combo</b>, mỗi SP một dòng <i>Tên | Giá lẻ</i>).</div>
     <div id="tg-xm" class="note" style="margin-top:8px;color:var(--tg-bad)"></div><div class="bar"><span></span><button class="btn" data-close>Đóng</button></div>`, (bg, close) => {
     bg.querySelector("#tg-xTpl").onclick = async () => {
       try{ msg("Đang tải thư viện Excel…", true); await loadXlsx(); msg(""); }catch(e){ return msg("Lỗi: " + e.message); }
       const ws = XLSX.utils.aoa_to_sheet([["Mã","Tên","ĐVT","Giá","Giá KM","Từ ngày","Đến ngày","SL","Mẫu"],["PA0012","Panadol Extra","Hộp",215000,189000,"2026-10-01","2026-10-31",2,"Giảm %"],["PR0100","Siro ho Prospan 100ml","Chai",95000,"","","",1,"Cổ điển"]]);
       const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Tem"); XLSX.writeFile(wb, "mau-tem-gia.xlsx");
+    };
+    bg.querySelector("#tg-xTplCb").onclick = async () => {
+      try{ msg("Đang tải thư viện Excel…", true); await loadXlsx(); msg(""); }catch(e){ return msg("Lỗi: " + e.message); }
+      const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, comboTemplateSheet(), "Combo"); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(COMBO_GUIDE), "Hướng dẫn");
+      XLSX.writeFile(wb, "mau-tem-combo.xlsx");
     };
     const xm = bg.querySelector("#tg-xm");
     const msg = (m, busy) => { xm.textContent = m; xm.style.color = busy ? "var(--tg-muted)" : ""; };
