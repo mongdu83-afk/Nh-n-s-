@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261021-3";
+window.__APP_BUILD = "20261022-1";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -28464,7 +28464,8 @@ function aaPlan(I){
   }
   // 3) (17/10/2026) Checklist: KHÔNG còn AI tự giao việc từ kết quả checklist — quản lý tự bấm "Tạo việc khắc phục" ở màn Chất lượng checklist.
   // 4) CTKM — đợt ĐANG CHẠY, nhà thuốc triển khai yếu
-  if(on.promo && I.promo && I.promo.camp && I.promo.camp.running){
+  // 22/10/2026 (Phương): kỳ CTKM MỚI BẮT ĐẦU — chờ đủ 3 ngày dữ liệu mới đánh giá nhà thuốc "triển khai yếu" (tránh kết luận sớm)
+  if(on.promo && I.promo && I.promo.camp && I.promo.camp.running && (I.promo.camp.startedDays == null || I.promo.camp.startedDays >= 3)){
     const r = pmdDecide(I.promo.camp, I.promo.chainDaily);
     r.weakShops.forEach(w => add({ rule:"promo", autoKey:`promo:${I.promo.campKey}:${w.shop}`, ...aaAssign(I, w.shop, "now"), mode:"now", module:"Khác", deadline:addDaysAA(today, 2),
       title:`Kiểm tra triển khai ${I.promo.camp.label || "khuyến mại"} — ${String(w.shop).replace(/^SHOP0*/, "NT")}`,
