@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261029-1";
+window.__APP_BUILD = "20261102-1";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -16937,6 +16937,268 @@ function mrFmtPct(v, sign){ return v==null ? "—" : (sign && v>0 ? "+" : "") + 
 function mrRate(a, b){ return b ? Math.round(a/b*100) + "%" : "—"; }
 function mrMonthsBack(today, n){ const out = []; let [y, m] = today.slice(0,7).split("-").map(Number); for(let i=0;i<n;i++){ out.push(`${y}-${String(m).padStart(2,"0")}`); m--; if(m===0){ m=12; y--; } } return out; }
 // MONTHUI-ENGINE-END
+// RPT-ENGINE-BEGIN
+// 02/11/2026 (chị Hà): BÁO CÁO TUẦN / THÁNG XUẤT FILE HTML theo mẫu "Báo cáo tháng — KV Hưng Yên · Ninh Bình" (anh Luận).
+// Hàm thuần: rptBuild() gom số liệu đã đọc sẵn → DATA; rptHtml(DATA) → 1 file HTML tự chứa (không cần mạng, in / lưu PDF được).
+// Không có công thức KPI riêng: % = thực tế ÷ chỉ tiêu (giống bảng Chỉ tiêu tháng); tỷ trọng hàng hệ số = HHS ÷ doanh số.
+//
+// I = { kind:"month"|"week", label, sub, prevLabel, nextLabel, cutoff (YYYY-MM-DD), author, area, partial (bool),
+//       shops:[mã], shopName:{mã:tên}, regionOf:{mã:"khu vực"},
+//       cur:{mã:{ds,hhs,tds,ths}}, prev:{mã:{ds,hhs}}, next:{mã:{tds,ths}},
+//       plans:[{EmployeeName,ShopCode,Amount,AmountR,PointRatio,PointRatioR}], plansNote, staff:[...], expiry:{mã:doc}, skuByShop:{mã:n},
+//       urgent:[{shopCode,productName,stockQty,ads30,doi}], notes:"", actions:"" }
+const RPT_HHS_STD = 35; // % tỷ trọng hàng hệ số chuẩn chuỗi (theo mẫu)
+function rptNum(v){ const n = Number(v); return isFinite(n) ? n : 0; }
+function rptPct(a, t){ return t ? Math.round(rptNum(a) / rptNum(t) * 100) : null; }
+function rptDaysBetween(a, b){ return Math.round((Date.parse(b + "T00:00:00Z") - Date.parse(String(a).slice(0,10) + "T00:00:00Z")) / 86400000); }
+function rptNorm(s){ return String(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/\s+/g, " ").trim(); }
+function rptBuild(I){
+  const shops = (I.shops || []).filter(s => I.cur && I.cur[s]);
+  const lbl = (c) => { const m = /^SHOP0*(\d+)$/i.exec(String(c||"")); return m ? "NT" + m[1] : String(c||""); };
+  const today = I.cutoff;
+  const staffAll = I.staff || [];
+  const out = shops.map(ma => {
+    const c = I.cur[ma] || {}, p = (I.prev || {})[ma] || null, n = (I.next || {})[ma] || null;
+    const ds = rptNum(c.ds), hhs = rptNum(c.hhs), tds = rptNum(c.tds), ths = rptNum(c.ths);
+    const nv = (I.plans || []).filter(r => r.ShopCode === ma).map(r => {
+      const ct = rptNum(r.Amount), dt = rptNum(r.AmountR), it = rptNum(r.PointRatio), jp = rptNum(r.PointRatioR);
+      return { name:r.EmployeeName || "—", ct, dt, it, jp, pct: ct ? rptPct(dt, ct) : null, ph: it ? rptPct(jp, it) : null, ty: dt ? Math.round(jp / dt * 1000) / 10 : 0 };
+    }).sort((a, b) => b.dt - a.dt);
+    // tồn kho theo nhóm hạn dùng (lồng nhau: hết hạn ⊂ <3 tháng ⊂ <6 tháng ⊂ <12 tháng)
+    const ex = (I.expiry || {})[ma] || null, list = ex && Array.isArray(ex.expiryDetailAll) ? ex.expiryDetailAll : [];
+    const bucket = (maxDays) => list.reduce((a, it) => { const d = it.expirationDate ? rptDaysBetween(today, String(it.expirationDate).slice(0,10)) : null; return a + (d != null && d < maxDays ? rptNum(it.value) : 0); }, 0);
+    const inv = ex ? { tong: rptNum(ex.totalValue), hethan: bucket(0), d3: bucket(91), d6: bucket(183), d12: bucket(366), ma: (I.skuByShop || {})[ma] != null ? (I.skuByShop || {})[ma] : null, full: Array.isArray(ex.expiryDetailAll) } : null;
+    // định biên: nhân viên còn làm trong kỳ (nghỉ từ ngày chốt trở đi vẫn tính)
+    const st = staffAll.filter(x => x.shop === ma && !(x.ngayNghiViec && x.ngayNghiViec < (I.from || today)));
+    const role = (r) => st.filter(x => x.role === r).length;
+    const dinhbien = { nvbh: role("Nhân viên bán hàng"), cht: role("Cửa hàng trưởng"), tts: role("Nhân viên học việc"), tong: st.length, chay: nv.filter(x => x.ct > 0).length,
+      nghi: st.filter(x => x.ngayNghiViec && x.ngayNghiViec <= today).map(x => x.name) };
+    const urgent = (I.urgent || []).filter(u => u.shopCode === ma).sort((a, b) => rptNum(a.doi) - rptNum(b.doi));
+    return { ma, ten: (I.shopName || {})[ma] || lbl(ma), kv: (I.regionOf || {})[ma] || "Chưa phân vùng",
+      cur:{ ds, hhs, tds, ths, pct: rptPct(ds, tds), ph: rptPct(hhs, ths), ty: ds ? Math.round(hhs / ds * 1000) / 10 : 0, nv },
+      prev: p ? { ds: rptNum(p.ds), hhs: rptNum(p.hhs) } : null, next: n && (n.tds || n.ths) ? { tds: rptNum(n.tds), ths: rptNum(n.ths) } : null,
+      inv, dinhbien, urgent };
+  });
+  // người bán ở ≥ 2 nhà thuốc trong kỳ (theo bảng chỉ tiêu)
+  const by = {}; (I.plans || []).forEach(r => { const k = rptNorm(r.EmployeeName); if(!k) return; (by[k] = by[k] || { name:r.EmployeeName, shops:new Set(), main:null, ct:0 }); by[k].shops.add(r.ShopCode); if(rptNum(r.Amount) > by[k].ct){ by[k].ct = rptNum(r.Amount); by[k].main = r.ShopCode; } });
+  const multi = Object.values(by).filter(x => x.shops.size > 1).map(x => ({ name:x.name, main:x.main, shops:[...x.shops] }));
+  const sum = (f) => out.reduce((a, s) => a + f(s), 0);
+  const region = { ds: sum(s => s.cur.ds), tds: sum(s => s.cur.tds), hhs: sum(s => s.cur.hhs), ths: sum(s => s.cur.ths),
+    prevDs: out.every(s => s.prev) ? sum(s => s.prev.ds) : null, prevHhs: out.every(s => s.prev) ? sum(s => s.prev.hhs) : null,
+    nextTds: out.some(s => s.next) ? sum(s => s.next ? s.next.tds : 0) : null, nextThs: out.some(s => s.next) ? sum(s => s.next ? s.next.ths : 0) : null };
+  const kvs = [...new Set(out.map(s => s.kv))];
+  return { cfg:{ kind:I.kind, label:I.label, sub:I.sub || "", prevLabel:I.prevLabel, nextLabel:I.nextLabel, cutoff:I.cutoff, author:I.author || "", area:I.area || "", partial:!!I.partial,
+    plansNote:I.plansNote || "", notes:I.notes || "", actions:I.actions || "" }, shops:out, region, kvs, multi };
+}
+// ---------- dựng HTML (giao diện chung của báo cáo app — cùng bộ CSS với Báo cáo tổng hợp, truyền vào qua tham số css) ----------
+const RPT_CSS_EXTRA = `.tbl tr.shop td{font-weight:700;background:#f3f8f5}.tbl td.nv{padding-left:22px;color:var(--soft)}.prow{margin:7px 0}.ptop{display:flex;justify-content:space-between;gap:10px;font-size:13px}
+.kv{font-size:12.5px;font-weight:700;letter-spacing:.04em;color:var(--soft);margin:16px 0 6px;text-transform:uppercase}.mgr li{margin:5px 0}`;
+function rptHtml(D, css){
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+  const fx = (v, d) => (Math.round(v * Math.pow(10, d)) / Math.pow(10, d)).toLocaleString("vi-VN", { maximumFractionDigits:d });
+  const tr = (n) => fx(rptNum(n) / 1e6, 1) + " tr", tr0 = (n) => Math.round(rptNum(n) / 1e6).toLocaleString("vi-VN") + " tr";
+  const pc = (p) => p == null ? "—" : Math.round(p) + "%";
+  const pcls = (p) => p == null ? "" : p >= 100 ? "up" : "down";
+  const tone = (p) => p == null ? "info" : p >= 100 ? "good" : p >= 90 ? "warn" : "bad";
+  const pill = (p) => p == null ? '<span class="pill p-gr">Chưa có chỉ tiêu</span>' : p >= 100 ? '<span class="pill p-g">Đạt</span>' : p >= 90 ? '<span class="pill p-amb">Gần đạt</span>' : '<span class="pill p-red">Chưa đạt</span>';
+  const bar = (p, cls) => '<div class="bar"><i class="' + (cls != null ? cls : (p == null ? "a" : p >= 100 ? "" : p >= 90 ? "a" : "r")) + '" style="width:' + Math.max(2, Math.min(100, p || 0)) + '%"></i></div>';
+  const tile = (l, v, sub, t) => '<div class="card tile ' + (t || "info") + '"><div class="l">' + esc(l) + '</div><div class="v">' + v + '</div><div class="s">' + sub + '</div></div>';
+  let secN = 0; const H2 = (t) => '<h2><span class="n">' + (++secN) + '</span>' + esc(t) + '</h2>';
+  const C = D.cfg, R = D.region, S = D.shops;
+  const sumOf = (arr, f) => arr.reduce((a, x) => a + f(x), 0);
+  const agg = (arr) => ({ ds: sumOf(arr, s => s.cur.ds), tds: sumOf(arr, s => s.cur.tds), hhs: sumOf(arr, s => s.cur.hhs), ths: sumOf(arr, s => s.cur.ths) });
+  const growth = (a, b) => b ? (a / b - 1) * 100 : null, sg = (g) => g == null ? "—" : (g >= 0 ? "+" : "") + fx(g, 1) + "%", gcls = (g) => g == null ? "" : g >= 0 ? "up" : "down";
+  const bulletList = (txt) => String(txt || "").split(/\n+/).map(x => x.replace(/^[-•*\s]+/, "").trim()).filter(Boolean);
+  const shopTable = (arr) => '<div class="scroll"><table class="tbl"><thead><tr><th>Nhà thuốc / nhân viên</th><th class="num">Doanh số</th><th class="num">Kế hoạch DS</th><th class="num">%</th><th class="num">Hàng hệ số</th><th class="num">Kế hoạch HHS</th><th class="num">%</th><th class="num">Tỷ trọng HHS</th><th>Trạng thái</th></tr></thead><tbody>'
+    + arr.map(s => { const o = s.cur;
+      return '<tr class="shop"><td>' + esc(s.ten) + '</td><td class="num">' + tr(o.ds) + '</td><td class="num">' + (o.tds ? tr0(o.tds) : "—") + '</td><td class="num ' + pcls(o.pct) + '">' + pc(o.pct) + '</td><td class="num">' + tr(o.hhs) + '</td><td class="num">' + (o.ths ? tr0(o.ths) : "—") + '</td><td class="num ' + pcls(o.ph) + '">' + pc(o.ph) + '</td><td class="num">' + fx(o.ty, 1) + '%</td><td>' + pill(o.pct) + '</td></tr>'
+        + o.nv.map(n => '<tr><td class="nv">' + esc(n.name) + '</td><td class="num">' + tr(n.dt) + '</td><td class="num">' + (n.ct ? tr0(n.ct) : "—") + '</td><td class="num ' + pcls(n.pct) + '">' + pc(n.pct) + '</td><td class="num">' + tr(n.jp) + '</td><td class="num">' + (n.it ? tr0(n.it) : "—") + '</td><td class="num ' + pcls(n.ph) + '">' + pc(n.ph) + '</td><td class="num">' + fx(n.ty, 1) + '%</td><td></td></tr>').join(""); }).join("")
+    + '</tbody></table></div>';
+  const bars = (arr, val, ref) => arr.map(s => { const v = val(s), q = ref ? (v == null ? null : v / ref * 100) : v;
+    return '<div class="prow"><div class="ptop"><span>' + esc(s.ten) + '</span><b class="' + pcls(q) + '">' + (v == null ? "—" : fx(v, ref ? 1 : 0) + "%") + '</b></div>' + bar(q) + '</div>'; }).join("");
+  const p = rptPct(R.ds, R.tds), ph = rptPct(R.hhs, R.ths), tyR = R.ds ? R.hhs / R.ds * 100 : 0, g = growth(R.ds, R.prevDs);
+  const miss = S.filter(s => s.cur.pct != null && s.cur.pct < 100).sort((a, b) => a.cur.pct - b.cur.pct);
+  const cut = String(C.cutoff || "").split("-").reverse().join("/");
+  let h = '<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Báo cáo ' + esc(C.label) + '</title><style>' + (css || "") + RPT_CSS_EXTRA + '</style></head><body><div class="wrap">';
+  h += '<header class="top"><div class="k">Upharma · Báo cáo ' + (C.kind === "week" ? "tuần" : "tháng") + '</div><h1>Báo cáo kinh doanh ' + esc(C.label) + '</h1><div class="meta">' + (C.area ? esc(C.area) + " · " : "") + S.length + ' nhà thuốc' + (C.author ? " · Người lập: " + esc(C.author) : "") + ' · Chốt số liệu ' + esc(cut) + (C.partial ? " (tạm tính, kỳ chưa kết thúc)" : "") + '</div></header>';
+  // 1. Tổng quan
+  h += H2("Tổng quan " + C.label);
+  h += '<div class="exec"><ol><li>Toàn khu vực đạt <b>' + pc(p) + '</b> kế hoạch doanh số (' + tr(R.ds) + ' / ' + tr0(R.tds) + ') và <b>' + pc(ph) + '</b> hàng hệ số; tỷ trọng hàng hệ số <b>' + fx(tyR, 1) + '%</b> (chuẩn ' + RPT_HHS_STD + '%).</li>'
+    + (g != null ? '<li>' + (g >= 0 ? "Tăng" : "Giảm") + ' <b>' + fx(Math.abs(g), 1) + '%</b> doanh số so với ' + esc(C.prevLabel) + ' (' + tr0(R.prevDs) + ' → ' + tr0(R.ds) + ').</li>' : "")
+    + '<li>' + (miss.length ? 'Chưa đạt kế hoạch: <b>' + miss.map(s => esc(s.ten) + " (" + pc(s.cur.pct) + ")").join(", ") + '</b>.' : 'Tất cả nhà thuốc đạt kế hoạch doanh số.') + '</li></ol></div>';
+  h += '<div class="grid g4" style="margin-top:12px">' + tile("Doanh số", pc(p), tr(R.ds) + " / " + tr0(R.tds), tone(p)) + tile("Hàng hệ số", pc(ph), tr(R.hhs) + " / " + tr0(R.ths), tone(ph))
+    + tile("Tỷ trọng hàng hệ số", fx(tyR, 1) + "%", "chuẩn " + RPT_HHS_STD + "%", tyR >= RPT_HHS_STD ? "good" : "warn")
+    + tile("So " + C.prevLabel, sg(g), R.prevDs != null ? tr0(R.prevDs) + " → " + tr0(R.ds) : "chưa có số kỳ trước", g == null ? "info" : g >= 0 ? "good" : "bad") + '</div>';
+  if(D.kvs.length > 1) h += '<div class="scroll" style="margin-top:12px"><table class="tbl"><thead><tr><th>Khu vực</th><th class="num">Doanh số</th><th class="num">Kế hoạch</th><th class="num">%</th><th class="num">Hàng hệ số</th><th class="num">%</th><th class="num">Tỷ trọng</th><th>Nhà chưa đạt</th></tr></thead><tbody>'
+    + D.kvs.map(k => { const a = S.filter(s => s.kv === k), o = agg(a), q = rptPct(o.ds, o.tds), qh = rptPct(o.hhs, o.ths); return '<tr><td>' + esc(k) + '</td><td class="num">' + tr(o.ds) + '</td><td class="num">' + tr0(o.tds) + '</td><td class="num ' + pcls(q) + '">' + pc(q) + '</td><td class="num">' + tr(o.hhs) + '</td><td class="num ' + pcls(qh) + '">' + pc(qh) + '</td><td class="num">' + (o.ds ? fx(o.hhs / o.ds * 100, 1) : 0) + '%</td><td>' + esc(a.filter(s => s.cur.pct != null && s.cur.pct < 100).map(s => s.ten).join(", ") || "—") + '</td></tr>'; }).join("")
+    + '<tr class="total"><td>Toàn khu vực</td><td class="num">' + tr(R.ds) + '</td><td class="num">' + tr0(R.tds) + '</td><td class="num">' + pc(p) + '</td><td class="num">' + tr(R.hhs) + '</td><td class="num">' + pc(ph) + '</td><td class="num">' + fx(tyR, 1) + '%</td><td></td></tr></tbody></table></div>';
+  h += '<div class="grid g2" style="margin-top:12px"><div class="card"><h3 style="margin-top:0">% hoàn thành kế hoạch doanh số</h3>' + bars(S.slice().sort((a, b) => (b.cur.pct || 0) - (a.cur.pct || 0)), s => s.cur.pct) + '</div>'
+    + '<div class="card"><h3 style="margin-top:0">% hoàn thành hàng hệ số</h3>' + bars(S.slice().sort((a, b) => (b.cur.ph || 0) - (a.cur.ph || 0)), s => s.cur.ph) + '</div></div>';
+  if(String(C.notes || "").trim()) h += '<div class="ask" style="margin-top:12px"><b>Ghi chú của quản lý</b><ul class="mgr">' + bulletList(C.notes).map(x => '<li>' + esc(x) + '</li>').join("") + '</ul></div>';
+  // 2. Chi tiết nhà thuốc & nhân viên
+  h += H2("Doanh số & hàng hệ số theo nhà thuốc và nhân viên");
+  D.kvs.forEach(k => { const a = S.filter(s => s.kv === k), o = agg(a); if(D.kvs.length > 1) h += '<div class="kv">Khu vực ' + esc(k) + ' — doanh số ' + tr(o.ds) + ' (' + pc(rptPct(o.ds, o.tds)) + '), hàng hệ số ' + tr(o.hhs) + ' (' + pc(rptPct(o.hhs, o.ths)) + ')</div>'; h += shopTable(a.slice().sort((x, y) => (y.cur.pct || 0) - (x.cur.pct || 0))); });
+  h += '<p class="sub">Doanh số và hàng hệ số nhà thuốc lấy từ hệ thống bán hàng. ' + esc(C.plansNote) + ' Cột % = thực tế ÷ chỉ tiêu đã giao.</p>';
+  // 3. Hàng hệ số
+  { const low = S.filter(s => s.cur.ty < RPT_HHS_STD);
+    h += H2("Hàng hệ số") + '<div class="grid g4">' + tile("Hàng hệ số toàn vùng", pc(ph), tr(R.hhs) + " / " + tr0(R.ths), tone(ph)) + tile("Tỷ trọng / doanh số", fx(tyR, 1) + "%", "chuẩn " + RPT_HHS_STD + "%", tyR >= RPT_HHS_STD ? "good" : "warn")
+      + tile("Nhà đạt hàng hệ số", S.filter(s => s.cur.ph != null && s.cur.ph >= 100).length + "/" + S.length, "≥ 100% kế hoạch", "good") + tile("Tỷ trọng dưới chuẩn", low.length + " nhà", esc(low.map(s => s.ten).slice(0, 4).join(" · ") || "—"), low.length ? "warn" : "good") + '</div>';
+    h += '<div class="card" style="margin-top:12px"><h3 style="margin-top:0">Tỷ trọng hàng hệ số trên doanh số (so chuẩn ' + RPT_HHS_STD + '%)</h3>' + bars(S.slice().sort((a, b) => b.cur.ty - a.cur.ty), s => s.cur.ty, RPT_HHS_STD) + '</div>'; }
+  // 4. Tồn kho
+  { const W = S.filter(s => s.inv); h += H2("Tồn kho & hạn dùng");
+    if(!W.length) h += '<p class="sub">Chưa có dữ liệu tồn kho theo hạn dùng.</p>';
+    else { const K = { tong: sumOf(W, s => s.inv.tong), het: sumOf(W, s => s.inv.hethan), d3: sumOf(W, s => s.inv.d3), d6: sumOf(W, s => s.inv.d6), d12: sumOf(W, s => s.inv.d12) };
+      const share = (v) => K.tong ? fx(v / K.tong * 100, 1) + "% tổng tồn" : "—";
+      h += '<div class="grid g4">' + tile("Tổng tồn kho", tr0(K.tong), W.length + " nhà thuốc có số liệu", "info") + tile("Hàng đã hết hạn", tr(K.het), esc(K.het > 0 ? W.filter(s => s.inv.hethan > 0).map(s => s.ten).join(", ") : "không có"), K.het > 0 ? "bad" : "good")
+        + tile("Cận hạn dưới 3 tháng", tr(K.d3), share(K.d3), "warn") + tile("Cận hạn dưới 6 tháng", tr(K.d6), share(K.d6), "info") + '</div>';
+      h += '<div class="scroll" style="margin-top:12px"><table class="tbl"><thead><tr><th>Nhà thuốc</th><th class="num">Số mã</th><th class="num">Tổng tồn</th><th class="num">Đã hết hạn</th><th class="num">Dưới 3 tháng</th><th class="num">Dưới 6 tháng</th><th class="num">Dưới 12 tháng</th></tr></thead><tbody>'
+        + W.map(s => { const k = s.inv; return '<tr><td>' + esc(s.ten) + '</td><td class="num">' + (k.ma != null ? Number(k.ma).toLocaleString("vi-VN") : "—") + '</td><td class="num">' + tr(k.tong) + '</td><td class="num ' + (k.hethan > 0 ? "down" : "") + '">' + (k.hethan > 0 ? tr(k.hethan) : "0") + '</td><td class="num">' + tr(k.d3) + '</td><td class="num">' + tr(k.d6) + '</td><td class="num">' + tr(k.d12) + '</td></tr>'; }).join("")
+        + '</tbody></table></div><p class="sub">Nhóm hạn dùng lồng nhau: hết hạn ⊂ dưới 3 tháng ⊂ dưới 6 tháng ⊂ dưới 12 tháng. Tồn kho là số mới nhất lúc xuất báo cáo.' + (W.some(s => !s.inv.full) ? " Một số nhà thuốc mới có danh sách hạn dùng rút gọn (top 20) nên nhóm hạn dùng có thể thấp hơn thực tế." : "") + '</p>'; } }
+  // 5. Nhân sự
+  { const t = { nvbh: sumOf(S, s => s.dinhbien.nvbh), cht: sumOf(S, s => s.dinhbien.cht), tts: sumOf(S, s => s.dinhbien.tts), tong: sumOf(S, s => s.dinhbien.tong), chay: sumOf(S, s => s.dinhbien.chay) };
+    h += H2("Nhân sự") + '<div class="grid g4">' + tile("Nhân viên bán hàng", t.nvbh, "toàn khu vực", "info") + tile("Cửa hàng trưởng", t.cht, "", "info") + tile("Học việc", t.tts, "đang đào tạo", "info") + tile("Người chạy chỉ tiêu", t.chay + "/" + t.tong, "trên tổng nhân sự", "info") + '</div>';
+    h += '<div class="scroll" style="margin-top:12px"><table class="tbl"><thead><tr><th>Nhà thuốc</th><th class="num">NVBH</th><th class="num">CHT</th><th class="num">Học việc</th><th class="num">Tổng</th><th class="num">Chạy chỉ tiêu</th><th class="num">Năng suất/người</th><th>Nghỉ việc trong kỳ</th></tr></thead><tbody>'
+      + S.map(s => { const d = s.dinhbien; return '<tr><td>' + esc(s.ten) + '</td><td class="num">' + d.nvbh + '</td><td class="num">' + (d.cht || "—") + '</td><td class="num">' + (d.tts || "—") + '</td><td class="num">' + d.tong + '</td><td class="num">' + d.chay + '</td><td class="num">' + (d.chay ? tr(s.cur.ds / d.chay) : "—") + '</td><td class="sub">' + esc(d.nghi.join(", ")) + '</td></tr>'; }).join("") + '</tbody></table></div>';
+    if(D.multi.length) { const lb = (c) => { const x = S.find(y => y.ma === c); return x ? x.ten : c; };
+      h += '<h3>Nhân viên bán ở nhiều nhà thuốc</h3><div class="scroll"><table class="tbl"><thead><tr><th>Nhân viên</th><th>Nhà chính (chỉ tiêu lớn nhất)</th><th>Điểm bán kèm</th></tr></thead><tbody>'
+        + D.multi.map(m => '<tr><td>' + esc(m.name) + '</td><td>' + esc(lb(m.main)) + '</td><td>' + esc(m.shops.filter(x => x !== m.main).map(lb).join(", ")) + '</td></tr>').join("") + '</tbody></table></div>'; } }
+  // 6. So sánh kỳ trước
+  { const W = S.filter(s => s.prev); h += H2("So sánh với " + C.prevLabel);
+    if(!W.length) h += '<p class="sub">Chưa có số liệu ' + esc(C.prevLabel) + ' để so sánh.</p>';
+    else { const p9 = sumOf(W, s => s.prev.ds), p10 = sumOf(W, s => s.cur.ds), h9 = sumOf(W, s => s.prev.hhs), h10 = sumOf(W, s => s.cur.hhs);
+      h += '<div class="grid g4">' + tile("Tăng trưởng doanh số", sg(growth(p10, p9)), tr0(p9) + " → " + tr0(p10), p10 >= p9 ? "good" : "bad") + tile("Tăng trưởng hàng hệ số", sg(growth(h10, h9)), tr0(h9) + " → " + tr0(h10), h10 >= h9 ? "good" : "bad")
+        + tile("Doanh số tăng thêm", tr0(p10 - p9), "so với " + esc(C.prevLabel), "info") + tile("Hàng hệ số tăng thêm", tr0(h10 - h9), "so với " + esc(C.prevLabel), "info") + '</div>';
+      h += '<div class="scroll" style="margin-top:12px"><table class="tbl"><thead><tr><th>Nhà thuốc</th><th class="num">DS kỳ trước</th><th class="num">DS kỳ này</th><th class="num">Tăng/giảm</th><th class="num">HHS kỳ trước</th><th class="num">HHS kỳ này</th><th class="num">Tăng/giảm</th></tr></thead><tbody>'
+        + W.slice().sort((a, b) => (growth(b.cur.ds, b.prev.ds) || 0) - (growth(a.cur.ds, a.prev.ds) || 0)).map(s => { const x = growth(s.cur.ds, s.prev.ds), xh = growth(s.cur.hhs, s.prev.hhs);
+          return '<tr><td>' + esc(s.ten) + '</td><td class="num">' + tr(s.prev.ds) + '</td><td class="num">' + tr(s.cur.ds) + '</td><td class="num ' + gcls(x) + '">' + sg(x) + '</td><td class="num">' + tr(s.prev.hhs) + '</td><td class="num">' + tr(s.cur.hhs) + '</td><td class="num ' + gcls(xh) + '">' + sg(xh) + '</td></tr>'; }).join("")
+        + '<tr class="total"><td>Toàn khu vực</td><td class="num">' + tr0(p9) + '</td><td class="num">' + tr0(p10) + '</td><td class="num">' + sg(growth(p10, p9)) + '</td><td class="num">' + tr0(h9) + '</td><td class="num">' + tr0(h10) + '</td><td class="num">' + sg(growth(h10, h9)) + '</td></tr></tbody></table></div>'
+        + (C.partial ? '<div class="note" style="margin-top:8px">Kỳ này chưa hết nên so sánh tổng chưa cân số ngày — chỉ để tham khảo.</div>' : ""); } }
+  // 7. Kế hoạch kỳ sau
+  { const W = S.filter(s => s.next); h += H2("Kế hoạch " + C.nextLabel);
+    h += '<div class="grid g4">' + tile("Mục tiêu doanh số", R.nextTds != null ? tr0(R.nextTds) : "—", R.nextTds != null && R.tds ? sg(growth(R.nextTds, R.tds)) + " so kế hoạch kỳ này" : "chưa có chỉ tiêu", "info")
+      + tile("Mục tiêu hàng hệ số", R.nextThs != null ? tr0(R.nextThs) : "—", R.nextThs != null && R.nextTds ? fx(R.nextThs / R.nextTds * 100, 0) + "% doanh số" : "", "info")
+      + tile("Hàng cần nhập gấp", sumOf(S, s => s.urgent.length) + " mã", "sắp hết theo tốc độ bán", sumOf(S, s => s.urgent.length) ? "warn" : "good")
+      + tile("Nhà chưa đạt kỳ này", miss.length + "/" + S.length, "cần kế hoạch kèm cặp", miss.length ? "warn" : "good") + '</div>';
+    if(W.length) h += '<div class="scroll" style="margin-top:12px"><table class="tbl"><thead><tr><th>Nhà thuốc</th><th class="num">Mục tiêu doanh số</th><th class="num">Mục tiêu HHS</th><th class="num">Thực hiện kỳ này</th><th class="num">Mức tăng cần</th></tr></thead><tbody>'
+      + W.map(s => { const inc = growth(s.next.tds, s.cur.ds); return '<tr><td>' + esc(s.ten) + '</td><td class="num">' + tr0(s.next.tds) + '</td><td class="num">' + tr(s.next.ths) + '</td><td class="num">' + tr(s.cur.ds) + '</td><td class="num ' + (inc > 0 ? "down" : "up") + '">' + sg(inc) + '</td></tr>'; }).join("") + '</tbody></table></div>';
+    else h += '<p class="sub">Chưa có chỉ tiêu ' + esc(C.nextLabel) + ' trên hệ thống.</p>';
+    const acts = bulletList(C.actions), auto = [];
+    S.filter(s => s.cur.pct != null && s.cur.pct < 90).sort((a, b) => a.cur.pct - b.cur.pct).slice(0, 3).forEach(s => auto.push('<b>' + esc(s.ten) + ' (' + pc(s.cur.pct) + ')</b> — dưới 90% kế hoạch, cần kế hoạch kèm cặp riêng.'));
+    S.filter(s => s.cur.ty < RPT_HHS_STD - 5).slice(0, 3).forEach(s => auto.push('<b>' + esc(s.ten) + '</b> — tỷ trọng hàng hệ số ' + fx(s.cur.ty, 1) + '%, thấp hơn chuẩn ' + RPT_HHS_STD + '%.'));
+    S.filter(s => s.inv && s.inv.hethan > 0).forEach(s => auto.push('<b>' + esc(s.ten) + '</b> — còn ' + tr(s.inv.hethan) + ' hàng đã hết hạn, xử lý dứt điểm.'));
+    h += '<h3>Trọng tâm hành động</h3><div class="exec"><ul>' + acts.map(a => '<li>' + esc(a) + '</li>').join("") + auto.map(a => '<li>' + a + '</li>').join("") + (acts.length || auto.length ? "" : '<li>Không có điểm nóng theo quy tắc tự động.</li>') + '</ul></div>'
+      + (auto.length ? '<p class="sub">Dòng có tên nhà thuốc in đậm do app tự lọc theo quy tắc cố định (dưới 90% kế hoạch; tỷ trọng HHS thấp hơn chuẩn trên 5 điểm; còn hàng hết hạn). Dòng thường là kế hoạch quản lý tự ghi.</p>' : "");
+    const U = S.filter(s => s.urgent.length);
+    if(U.length) h += '<h3>Hàng sắp hết — cần nhập</h3><div class="grid g2">' + U.map(s => '<div class="card"><b>' + esc(s.ten) + '</b> — ' + s.urgent.length + ' mã<table class="tbl" style="margin-top:6px"><tbody>'
+      + s.urgent.slice(0, 6).map(it => '<tr><td>' + esc(it.productName || it.productId) + '</td><td class="num">' + (it.doi != null ? fx(rptNum(it.doi), 1) + " ngày" : "—") + '</td></tr>').join("") + '</tbody></table></div>').join("") + '</div><p class="sub">Số ngày = số ngày còn đủ hàng theo tốc độ bán 30 ngày.</p>'; }
+  h += '<footer>Upharma · Báo cáo ' + esc(C.label) + ' · Nguồn: app Upharma Ops (hệ thống bán hàng, chỉ tiêu nhân viên, tồn kho) · Chốt ' + esc(cut) + '</footer></div></body></html>';
+  return h;
+}
+// RPT-ENGINE-END
+// 02/11/2026 (chị Hà): đọc số liệu cho báo cáo tuần / tháng xuất HTML (RPT-ENGINE). Chỉ ĐỌC, không ghi gì.
+async function rptLoadInputs({ kind, period, area }){
+  const today = todayISO(), yesterday = addDays(today, -1);
+  const getDoc = async (ref) => { const d = await ref.get(); return d.exists ? d.data() : null; };
+  const monthDoc = (m) => getDoc(db.collection("opsConfig").doc("revenueAnalyticsMonths").collection("months").doc(m)).catch(loadFail("rptMonth", "số liệu tháng " + m));
+  const plansOf = async (m) => {
+    try{ let rows = (await db.collection("externalEmployeePlan").where("planMonth", "==", m).get()).docs.map(d => d.data());
+      if(!rows.length) rows = (await db.collection("externalEmployeePlan").get()).docs.map(d => d.data()).filter(r => empPlanRecordMonthFE(r) === m);
+      return rows; }catch(e){ loadFail("rptPlans", "chỉ tiêu nhân viên")(e); return []; } };
+  const [staff, expSnap, invSum, urgentSnap] = await Promise.all([
+    db.collection("staff").get().then(q => q.docs.map(d => ({ id:d.id, ...d.data() }))),
+    db.collection("externalInventoryExpiry").get().catch(e => { loadFail("rptExpiry", "tồn kho theo hạn dùng")(e); return null; }),
+    getDoc(db.collection("opsConfig").doc("inventoryConsumptionSummary")).catch(() => null),
+    db.collection("inventoryMetrics").where("stockStatus", "==", "URGENT_REPLENISH").limit(500).get().catch(() => null),
+  ]);
+  // khu vực của nhà thuốc = "khu vực" ghi nhiều nhất trong hồ sơ nhân viên của nhà thuốc đó
+  const regionOf = {}; DEFAULT_SHOPS.forEach(s => { const c = {}; staff.filter(x => x.shop === s && x.khuVuc && !isStaffResigned(x)).forEach(x => { c[x.khuVuc] = (c[x.khuVuc]||0) + 1; });
+    const best = Object.keys(c).sort((a, b) => c[b] - c[a])[0]; regionOf[s] = best || "Chưa phân vùng"; });
+  const shops = DEFAULT_SHOPS.filter(s => !area || area === "all" || regionOf[s] === area);
+  const expiry = {}; if(expSnap) expSnap.forEach(d => { const x = d.data(); expiry[x.shopCode || d.id] = x; });
+  const skuByShop = {}; Object.entries((invSum && invSum.byShop) || {}).forEach(([k, v]) => { if(v && (v.skuInStock != null || v.totalSKU != null)) skuByShop[k] = v.skuInStock != null ? v.skuInStock : v.totalSKU; });
+  const urgent = urgentSnap ? urgentSnap.docs.map(d => d.data()) : [];
+  const cur = {}, prev = {}, next = {};
+  let I;
+  if(kind === "month"){
+    const m = period, pm = addMonthsToKey(m, -1), nm = addMonthsToKey(m, 1);
+    const [md, pmd, nmd, plans, plansNext] = await Promise.all([monthDoc(m), monthDoc(pm), monthDoc(nm), plansOf(m), plansOf(nm)]);
+    if(!md || !md.byShop) throw new Error("Chưa có số liệu tháng " + m.slice(5) + "/" + m.slice(0,4) + " (Doanh thu → Theo kỳ chưa tính tháng này).");
+    shops.forEach(s => { const r = md.byShop[s]; if(!r) return; cur[s] = { ds:(r.revenue||{}).actual, tds:(r.revenue||{}).target, hhs:(r.hangHeSo||{}).actual, ths:(r.hangHeSo||{}).target };
+      const pr = pmd && pmd.byShop && pmd.byShop[s]; if(pr) prev[s] = { ds:(pr.revenue||{}).actual, hhs:(pr.hangHeSo||{}).actual };
+      const np = plansNext.filter(x => x.ShopCode === s); if(np.length) next[s] = { tds: np.reduce((a, x) => a + (Number(x.Amount)||0), 0), ths: np.reduce((a, x) => a + (Number(x.PointRatio)||0), 0) };
+      else { const nr = nmd && nmd.byShop && nmd.byShop[s]; if(nr) next[s] = { tds:(nr.revenue||{}).target, ths:(nr.hangHeSo||{}).target }; } });
+    const partial = !!md.isCurrentMonth || (md.daysElapsed && md.daysInMonth && md.daysElapsed < md.daysInMonth);
+    const lab = (k) => "tháng " + Number(k.slice(5)) + "/" + k.slice(0,4);
+    I = { kind, label:lab(m), prevLabel:lab(pm), nextLabel:lab(nm), cutoff: partial ? yesterday : lastDayOfMonthOf(m + "-01"), from: m + "-01", partial,
+      plans: plans.filter(r => shops.includes(r.ShopCode)), plansNote:"Doanh số và hàng hệ số từng nhân viên lấy từ hệ thống chỉ tiêu (đồng bộ 6h / 12h / 18h)." };
+  } else {
+    const W = period, W2 = addDays(W, 6), cutoff = W2 < yesterday ? W2 : yesterday;
+    const [ra, wt, wtNext] = await Promise.all([getDoc(db.collection("opsConfig").doc("revenueAnalytics")), getDoc(db.collection("weeklyTargets").doc(W)).catch(() => null), getDoc(db.collection("weeklyTargets").doc(addDays(W, 7))).catch(() => null)]);
+    if(!ra || !ra.byShop) throw new Error("Chưa có số liệu doanh thu theo ngày.");
+    const m = cutoff.slice(0,7), md = await monthDoc(m), plans = await plansOf(m);
+    const sumDays = (map, a, b) => { let t = 0; for(let d = a; d <= b; d = addDays(d, 1)) t += Number((map || {})[d]) || 0; return t; };
+    let prorated = false;
+    shops.forEach(s => { const b = ra.byShop[s]; if(!b) return;
+      const t = wt && wt.byShop && wt.byShop[s];
+      let tds = t ? t.rev : null, ths = t ? t.hhs : null;
+      if(tds == null && md && md.byShop && md.byShop[s]){ const dim = md.daysInMonth || daysInMonthOf(m + "-01"); tds = ((md.byShop[s].revenue||{}).target || 0) * 7 / dim; ths = ((md.byShop[s].hangHeSo||{}).target || 0) * 7 / dim; prorated = true; }
+      cur[s] = { ds: sumDays(b.revenueByDay, W, cutoff), hhs: sumDays(b.hhsRevenueByDay, W, cutoff), tds, ths };
+      const pa = addDays(W, -7), pb = addDays(W, -1);
+      if(b.revenueByDay && b.revenueByDay[pa] != null) prev[s] = { ds: sumDays(b.revenueByDay, pa, pb), hhs: sumDays(b.hhsRevenueByDay, pa, pb) };
+      const tn = wtNext && wtNext.byShop && wtNext.byShop[s]; if(tn) next[s] = { tds: tn.rev, ths: tn.hhs }; });
+    I = { kind, label:"tuần " + lrDM(W) + " – " + lrDM(W2) + "/" + W2.slice(0,4), prevLabel:"tuần trước", nextLabel:"tuần sau", cutoff, from: W, partial: cutoff < W2,
+      plans: plans.filter(r => shops.includes(r.ShopCode)),
+      plansNote: (prorated ? "Kế hoạch tuần chưa chốt nên tạm tính = kế hoạch tháng × 7 ÷ số ngày trong tháng. " : "Kế hoạch tuần lấy từ mục tiêu tuần đã chốt. ") + "Số từng nhân viên là LŨY KẾ THÁNG " + Number(m.slice(5)) + " tới ngày chốt (hệ thống chưa có số theo tuần cho từng người)." };
+  }
+  return { ...I, shops, regionOf, cur, prev, next, staff, expiry, skuByShop, urgent, area: area && area !== "all" ? "Khu vực " + area : "" };
+}
+function AreaReportExportCard({ defaultKind }){
+  const h = React.createElement;
+  const today = todayISO();
+  const [kind, setKind] = useState(defaultKind || "month");
+  const months = mrMonthsBack(today, 6), weeks = Array.from({ length:8 }, (_, i) => addDays(mondayOf(today), -7 * i));
+  const [month, setMonth] = useState(today.slice(8) <= "05" ? months[1] : months[0]);
+  const [week, setWeek] = useState(addDays(mondayOf(today), -7));
+  const [areas, setAreas] = useState([]); const [area, setArea] = useState("all");
+  const [author, setAuthor] = useState(() => { try{ return localStorage.getItem("rptAuthor") || ""; }catch(e){ return ""; } });
+  const [notes, setNotes] = useState(""); const [actions, setActions] = useState("");
+  const [busy, setBusy] = useState(""); const [msg, setMsg] = useState(""); const [open, setOpen] = useState(false);
+  useEffect(()=>{ db.collection("staff").get().then(q => setAreas([...new Set(q.docs.map(d => d.data().khuVuc).filter(Boolean))].sort())).catch(() => {}); }, []);
+  async function make(mode){
+    setBusy(mode); setMsg("");
+    try{
+      const I = await rptLoadInputs({ kind, period: kind === "month" ? month : week, area });
+      const D = rptBuild({ ...I, author, notes, actions });
+      if(!D.shops.length) throw new Error("Không có nhà thuốc nào có số liệu trong kỳ / khu vực đã chọn.");
+      const html = rptHtml(D, LR_CSS);
+      try{ localStorage.setItem("rptAuthor", author); }catch(e){}
+      const blob = new Blob([html], { type:"text/html;charset=utf-8" }); const url = URL.createObjectURL(blob);
+      if(mode === "view"){ window.open(url, "_blank"); }
+      else { const a = document.createElement("a"); a.href = url; a.download = `Bao-cao-${kind === "month" ? "thang-" + month.slice(5) + "-" + month.slice(0,4) : "tuan-" + lrDM(week).replace("/","-") + "-" + lrDM(addDays(week, 6)).replace("/","-") + "-" + week.slice(0,4)}${area !== "all" ? "-" + area.replace(/\s+/g, "") : ""}.html`; a.click(); }
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      setMsg(`Đã tạo báo cáo ${D.cfg.label}: ${D.shops.length} nhà thuốc${D.cfg.partial ? " (tạm tính, kỳ chưa kết thúc)" : ""}.`);
+    }catch(e){ setMsg("Không tạo được: " + (e.message || e)); }
+    setBusy("");
+  }
+  const sel = { padding:"7px 9px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 };
+  return h("div", { className:"card", style:{ marginBottom:12, borderLeft:"4px solid var(--pine)" } },
+    h("div", { style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" } },
+      h("b", { style:{ fontSize:14.5 } }, "Xuất báo cáo tuần / tháng (file HTML)"),
+      h("select", { value:kind, onChange:e=>setKind(e.target.value), style:sel }, h("option", { value:"week" }, "Báo cáo tuần"), h("option", { value:"month" }, "Báo cáo tháng")),
+      kind === "month"
+        ? h("select", { value:month, onChange:e=>setMonth(e.target.value), style:sel }, months.map(m => h("option", { key:m, value:m }, "Tháng " + Number(m.slice(5)) + "/" + m.slice(0,4))))
+        : h("select", { value:week, onChange:e=>setWeek(e.target.value), style:sel }, weeks.map(w => h("option", { key:w, value:w }, `${lrDM(w)} – ${lrDM(addDays(w, 6))}${w === mondayOf(today) ? " (tuần này)" : ""}`))),
+      h("select", { value:area, onChange:e=>setArea(e.target.value), style:sel }, h("option", { value:"all" }, "Tất cả nhà thuốc"), areas.map(a => h("option", { key:a, value:a }, "Khu vực " + a))),
+      h("button", { type:"button", className:"btn btnGhost", onClick:()=>setOpen(o => !o), style:{ fontSize:12.5 } }, open ? "Ẩn ghi chú" : "Thêm ghi chú / kế hoạch"),
+      h("button", { type:"button", className:"btn", disabled:!!busy, onClick:()=>make("view"), style:{ fontSize:12.5 } }, busy === "view" ? "Đang tạo…" : "Xem trước"),
+      h("button", { type:"button", className:"btn btnPrimary", disabled:!!busy, onClick:()=>make("download"), style:{ fontSize:12.5 } }, busy === "download" ? "Đang tạo…" : "Tải file HTML")),
+    open && h("div", { style:{ display:"grid", gap:8, marginTop:10 } },
+      h("input", { value:author, onChange:e=>setAuthor(e.target.value), placeholder:"Người lập (VD: Nguyễn Văn A — Quản lý khu vực)", style:{ ...sel, width:"100%" } }),
+      h("textarea", { value:notes, onChange:e=>setNotes(e.target.value), rows:3, placeholder:"Ghi chú / nhận định của quản lý (mỗi dòng 1 ý) — hiện ở phần Tổng quan", style:{ ...sel, width:"100%", fontFamily:"inherit" } }),
+      h("textarea", { value:actions, onChange:e=>setActions(e.target.value), rows:3, placeholder:"Kế hoạch hành động kỳ tới (mỗi dòng 1 ý) — hiện ở phần Kế hoạch", style:{ ...sel, width:"100%", fontFamily:"inherit" } })),
+    h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)", marginTop:6 } }, "Gồm: tổng quan & từng khu vực · doanh số, hàng hệ số theo nhà thuốc và nhân viên · tồn kho & hạn dùng · nhân sự · so sánh kỳ trước · kế hoạch kỳ sau. File mở được không cần mạng, in / lưu PDF được."),
+    msg && h("div", { style:{ fontSize:12.5, marginTop:6, color: /^Không/.test(msg) ? "#B91C1C" : "var(--pine)" } }, msg));
+}
 function MonthlyReportView({ isAdmin, onNavigate }){
   const h = React.createElement;
   const months = mrMonthsBack(todayISO(), 6);
@@ -16948,17 +17210,18 @@ function MonthlyReportView({ isAdmin, onNavigate }){
   const stat = (k, label, val, tone) => h("div", { key:k, style:{ border:"1px solid var(--line)", borderRadius:8, padding:"6px 10px", minWidth:120 } }, h("div", { style:{ fontSize:11.5, color:"var(--inkSoft)" } }, label), h("div", { style:{ fontWeight:800, fontSize:16, color:tone } }, val));
   const tbl = (head, rows) => h("div", { style:{ overflowX:"auto" } }, h("table", { style:{ width:"100%", borderCollapse:"collapse" } }, h("thead", null, h("tr", null, head.map(x => h("th", { key:x, style:th }, x)))), h("tbody", null, rows)));
   const pctCol = v => v==null ? undefined : v>=100 ? "#15803D" : v>=90 ? "#B45309" : "#B91C1C";
+  const exportCard = isAdmin && h(AreaReportExportCard, { defaultKind:"month" }); // 02/11/2026: xuất báo cáo tuần/tháng HTML
   const head = h("div", { style:{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", marginBottom:12 } },
     h("select", { value:mk, onChange:e=>setMk(e.target.value), style:{ padding:"8px 10px", borderRadius:8, border:"1px solid var(--line)", fontSize:13 } }, months.map(m => h("option", { key:m, value:m }, "Tháng " + m.slice(5) + "/" + m.slice(0,4)))),
     isAdmin && h("button", { type:"button", className:"btn btnPrimary", disabled:busy, onClick:run, style:{ fontSize:12.5 } }, busy ? "Đang tính..." : "Tính lại"),
     R && h("button", { type:"button", className:"btn btnGhost", onClick:()=>window.print(), style:{ fontSize:12.5 } }, "In / lưu PDF"),
     msg && h("span", { style:{ fontSize:12, color:"var(--inkSoft)" } }, msg));
-  if(R===undefined) return h("div", null, h(PageTitle, null, "Báo cáo tháng"), head, h(EmptyState, { kind:"loading" }));
-  if(R===null) return h("div", null, h(PageTitle, null, "Báo cáo tháng"), head, h("div", { className:"emptyState" }, "Chưa có báo cáo tháng này. " + (isAdmin ? "Chị bấm “Tính lại” để tính ngay, hoặc chờ máy chủ tự tính lúc 7h50 sáng." : "")));
+  if(R===undefined) return h("div", null, h(PageTitle, null, "Báo cáo tháng"), exportCard, head, h(EmptyState, { kind:"loading" }));
+  if(R===null) return h("div", null, h(PageTitle, null, "Báo cáo tháng"), exportCard, head, h("div", { className:"emptyState" }, "Chưa có báo cáo tháng này. " + (isAdmin ? "Chị bấm “Tính lại” để tính ngay, hoặc chờ máy chủ tự tính lúc 7h50 sáng." : "")));
   const A = R.ai || {}; const C = A.control || {}; const shops = Object.values(R.shops || {}).sort((a,b) => ((a.revenue||{}).projectedPct ?? 999) - ((b.revenue||{}).projectedPct ?? 999));
   const chain = R.chain || {}; const cr = chain.revenue || {};
   return h("div", null,
-    h(PageTitle, null, "Báo cáo tháng"), head,
+    h(PageTitle, null, "Báo cáo tháng"), exportCard, head,
     h("div", { style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:10 } }, `${R.isFinal ? "Đã chốt cả tháng" : `Tạm tính ${R.daysElapsed||"—"}/${R.daysInMonth||"—"} ngày có số bán hàng`} · tính lúc ${opsWhen(R.computedAt)}. Toàn bộ là số hệ thống tính, không có phần AI viết.`),
     (R.flags||[]).length>0 && card("flags", "Cần quan tâm tháng tới", "Hệ thống tự lọc theo quy tắc cố định trên số liệu, mỗi dòng ghi rõ quy tắc. Đây là chỗ cần xem, chưa phải kết luận nguyên nhân.",
       h("div", null, R.flags.map((f,i) => h("div", { key:i, style:{ fontSize:12.5, padding:"4px 0", borderTop: i ? "1px dashed var(--line)" : "none" } },
@@ -17081,6 +17344,7 @@ function LeaderReportView({ isAdmin }){
   const ta = (k, ph, rows) => h("textarea", { value: M[k], onChange: e => setF(k, e.target.value), placeholder: ph, rows: rows || 3, style:{ width:"100%", fontSize:13, padding:8, borderRadius:8, border:"1px solid var(--line)", fontFamily:"inherit" } });
   const lbl = (t, sub) => h("div", { style:{ fontWeight:700, fontSize:13.5, margin:"12px 0 4px" } }, t, sub && h("span", { style:{ fontWeight:400, color:"var(--inkSoft)", fontSize:12 } }, " · " + sub));
   return h("div", null,
+    h(AreaReportExportCard, { defaultKind:"week" }),
     h("p", { className:"pagesub" }, "Tự tổng hợp báo cáo tuần gửi Ban lãnh đạo từ số liệu trong app (doanh số, hàng hệ số, TB bill, số đơn từ đầu tháng; khách hàng; hàng hoá; nhân sự; kế hoạch hành động). Chỉ cần nhập thêm phần tuyển dụng, cơ sở vật chất, đề xuất — bấm Lưu, rồi Tải file HTML hoặc In / PDF."),
     h("div", { className:"card", style:{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap", marginBottom:12 } },
       h("span", { style:{ fontWeight:700 } }, "Tuần bắt đầu (thứ Hai):"),
@@ -30557,7 +30821,8 @@ function DecisionsCard({ isAdmin, myStaff }){
 // ================= 7/10/2026 (tinh gọn): MENU GỌN — màn ít dùng chuyển vào nhóm "Xem thêm" =================
 // opsConfig/menuLayout.hidden = { ql:[tab], cht:[tab], nv:[tab] } — quản lý chỉnh ở Hệ thống › Mức dùng app.
 const MENU_ROLE_LABEL = { ql:"Quản lý", cht:"CHT", nv:"Nhân viên" };
-const MENU_NEVER_HIDE = ["command", "homnay", "hethong", "tasks", "checklist"];
+// 02/11/2026 (chị Hà): các màn báo cáo luôn hiện trong nhóm Báo cáo — không bị "menu gọn" đẩy vào "Xem thêm"
+const MENU_NEVER_HIDE = ["command", "homnay", "hethong", "tasks", "checklist", "baocaotuan", "baocaolanhdao", "baocaothang"];
 function menuRoleKey(isAdmin, myStaff){ return isAdmin ? "ql" : (myStaff && myStaff.role === "Cửa hàng trưởng" ? "cht" : "nv"); }
 function useMenuLayout(){
   const [m, setM] = useState({ hidden:{} });
