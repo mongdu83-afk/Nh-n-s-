@@ -56,3 +56,11 @@ test("File HTML có đủ 7 phần, ghi chú quản lý, việc tự lọc theo 
   assert.ok(!html.includes("<script>alert(1)"), "phải thoát ký tự");
   assert.ok(html.startsWith("<!doctype html>") && html.trim().endsWith("</html>"));
 });
+
+test("Hệ số của nhân viên là ĐIỂM: không đổi ra triệu, không tính tỷ trọng; mục tiêu HHS tháng sau không cộng điểm", () => {
+  const D = rptBuild(I());
+  const nv = D.shops.find(s => s.ma === "SHOP0061").cur.nv[0];
+  assert.equal(nv.ty, null); assert.equal(nv.ph, 125);
+  const html = rptHtml(D, "");
+  assert.ok(html.includes("86.900.000 <span class=\"sub\">điểm</span>"));
+});
