@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261102-1";
+window.__APP_BUILD = "20261103-1";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -16962,7 +16962,8 @@ function rptBuild(I){
     const ds = rptNum(c.ds), hhs = rptNum(c.hhs), tds = rptNum(c.tds), ths = rptNum(c.ths);
     const nv = (I.plans || []).filter(r => r.ShopCode === ma).map(r => {
       const ct = rptNum(r.Amount), dt = rptNum(r.AmountR), it = rptNum(r.PointRatio), jp = rptNum(r.PointRatioR);
-      return { name:r.EmployeeName || "—", ct, dt, it, jp, pct: ct ? rptPct(dt, ct) : null, ph: it ? rptPct(jp, it) : null, ty: dt ? Math.round(jp / dt * 1000) / 10 : 0 };
+      // 03/11/2026: PointRatio/PointRatioR của từng nhân viên là ĐIỂM hệ số (không phải tiền) → chỉ so % đạt, không tính tỷ trọng / không đổi ra triệu
+      return { name:r.EmployeeName || "—", ct, dt, it, jp, pct: ct ? rptPct(dt, ct) : null, ph: it ? rptPct(jp, it) : null, ty: null };
     }).sort((a, b) => b.dt - a.dt);
     // tồn kho theo nhóm hạn dùng (lồng nhau: hết hạn ⊂ <3 tháng ⊂ <6 tháng ⊂ <12 tháng)
     const ex = (I.expiry || {})[ma] || null, list = ex && Array.isArray(ex.expiryDetailAll) ? ex.expiryDetailAll : [];
@@ -17012,7 +17013,7 @@ function rptHtml(D, css){
   const shopTable = (arr) => '<div class="scroll"><table class="tbl"><thead><tr><th>Nhà thuốc / nhân viên</th><th class="num">Doanh số</th><th class="num">Kế hoạch DS</th><th class="num">%</th><th class="num">Hàng hệ số</th><th class="num">Kế hoạch HHS</th><th class="num">%</th><th class="num">Tỷ trọng HHS</th><th>Trạng thái</th></tr></thead><tbody>'
     + arr.map(s => { const o = s.cur;
       return '<tr class="shop"><td>' + esc(s.ten) + '</td><td class="num">' + tr(o.ds) + '</td><td class="num">' + (o.tds ? tr0(o.tds) : "—") + '</td><td class="num ' + pcls(o.pct) + '">' + pc(o.pct) + '</td><td class="num">' + tr(o.hhs) + '</td><td class="num">' + (o.ths ? tr0(o.ths) : "—") + '</td><td class="num ' + pcls(o.ph) + '">' + pc(o.ph) + '</td><td class="num">' + fx(o.ty, 1) + '%</td><td>' + pill(o.pct) + '</td></tr>'
-        + o.nv.map(n => '<tr><td class="nv">' + esc(n.name) + '</td><td class="num">' + tr(n.dt) + '</td><td class="num">' + (n.ct ? tr0(n.ct) : "—") + '</td><td class="num ' + pcls(n.pct) + '">' + pc(n.pct) + '</td><td class="num">' + tr(n.jp) + '</td><td class="num">' + (n.it ? tr0(n.it) : "—") + '</td><td class="num ' + pcls(n.ph) + '">' + pc(n.ph) + '</td><td class="num">' + fx(n.ty, 1) + '%</td><td></td></tr>').join(""); }).join("")
+        + o.nv.map(n => '<tr><td class="nv">' + esc(n.name) + '</td><td class="num">' + tr(n.dt) + '</td><td class="num">' + (n.ct ? tr0(n.ct) : "—") + '</td><td class="num ' + pcls(n.pct) + '">' + pc(n.pct) + '</td><td class="num">' + (n.jp ? Math.round(n.jp).toLocaleString("vi-VN") + ' <span class="sub">điểm</span>' : "—") + '</td><td class="num">' + (n.it ? Math.round(n.it).toLocaleString("vi-VN") + ' <span class="sub">điểm</span>' : "—") + '</td><td class="num ' + pcls(n.ph) + '">' + pc(n.ph) + '</td><td class="num">—</td><td></td></tr>').join(""); }).join("")
     + '</tbody></table></div>';
   const bars = (arr, val, ref) => arr.map(s => { const v = val(s), q = ref ? (v == null ? null : v / ref * 100) : v;
     return '<div class="prow"><div class="ptop"><span>' + esc(s.ten) + '</span><b class="' + pcls(q) + '">' + (v == null ? "—" : fx(v, ref ? 1 : 0) + "%") + '</b></div>' + bar(q) + '</div>'; }).join("");
@@ -17038,7 +17039,7 @@ function rptHtml(D, css){
   // 2. Chi tiết nhà thuốc & nhân viên
   h += H2("Doanh số & hàng hệ số theo nhà thuốc và nhân viên");
   D.kvs.forEach(k => { const a = S.filter(s => s.kv === k), o = agg(a); if(D.kvs.length > 1) h += '<div class="kv">Khu vực ' + esc(k) + ' — doanh số ' + tr(o.ds) + ' (' + pc(rptPct(o.ds, o.tds)) + '), hàng hệ số ' + tr(o.hhs) + ' (' + pc(rptPct(o.hhs, o.ths)) + ')</div>'; h += shopTable(a.slice().sort((x, y) => (y.cur.pct || 0) - (x.cur.pct || 0))); });
-  h += '<p class="sub">Doanh số và hàng hệ số nhà thuốc lấy từ hệ thống bán hàng. ' + esc(C.plansNote) + ' Cột % = thực tế ÷ chỉ tiêu đã giao.</p>';
+  h += '<p class="sub">Doanh số và hàng hệ số nhà thuốc lấy từ hệ thống bán hàng (tiền). ' + esc(C.plansNote) + ' Với từng nhân viên, cột hàng hệ số là <b>điểm hệ số</b> trên hệ thống chỉ tiêu (không quy ra tiền) nên chỉ so % đạt. Cột % = thực tế ÷ chỉ tiêu đã giao.</p>';
   // 3. Hàng hệ số
   { const low = S.filter(s => s.cur.ty < RPT_HHS_STD);
     h += H2("Hàng hệ số") + '<div class="grid g4">' + tile("Hàng hệ số toàn vùng", pc(ph), tr(R.hhs) + " / " + tr0(R.ths), tone(ph)) + tile("Tỷ trọng / doanh số", fx(tyR, 1) + "%", "chuẩn " + RPT_HHS_STD + "%", tyR >= RPT_HHS_STD ? "good" : "warn")
@@ -17125,8 +17126,10 @@ async function rptLoadInputs({ kind, period, area }){
     if(!md || !md.byShop) throw new Error("Chưa có số liệu tháng " + m.slice(5) + "/" + m.slice(0,4) + " (Doanh thu → Theo kỳ chưa tính tháng này).");
     shops.forEach(s => { const r = md.byShop[s]; if(!r) return; cur[s] = { ds:(r.revenue||{}).actual, tds:(r.revenue||{}).target, hhs:(r.hangHeSo||{}).actual, ths:(r.hangHeSo||{}).target };
       const pr = pmd && pmd.byShop && pmd.byShop[s]; if(pr) prev[s] = { ds:(pr.revenue||{}).actual, hhs:(pr.hangHeSo||{}).actual };
-      const np = plansNext.filter(x => x.ShopCode === s); if(np.length) next[s] = { tds: np.reduce((a, x) => a + (Number(x.Amount)||0), 0), ths: np.reduce((a, x) => a + (Number(x.PointRatio)||0), 0) };
-      else { const nr = nmd && nmd.byShop && nmd.byShop[s]; if(nr) next[s] = { tds:(nr.revenue||{}).target, ths:(nr.hangHeSo||{}).target }; } });
+      // mục tiêu tháng sau: doanh số = tổng chỉ tiêu nhân viên (tiền) nếu chưa có số nhà thuốc; hàng hệ số CHỈ lấy chỉ tiêu tiền của nhà thuốc (điểm hệ số nhân viên không cộng được ra tiền)
+      const nr = nmd && nmd.byShop && nmd.byShop[s], np = plansNext.filter(x => x.ShopCode === s);
+      const ntds = nr && (nr.revenue||{}).target ? nr.revenue.target : (np.length ? np.reduce((a, x) => a + (Number(x.Amount)||0), 0) : 0);
+      if(ntds) next[s] = { tds: ntds, ths: nr ? (nr.hangHeSo||{}).target || 0 : 0 }; });
     const partial = !!md.isCurrentMonth || (md.daysElapsed && md.daysInMonth && md.daysElapsed < md.daysInMonth);
     const lab = (k) => "tháng " + Number(k.slice(5)) + "/" + k.slice(0,4);
     I = { kind, label:lab(m), prevLabel:lab(pm), nextLabel:lab(nm), cutoff: partial ? yesterday : lastDayOfMonthOf(m + "-01"), from: m + "-01", partial,
