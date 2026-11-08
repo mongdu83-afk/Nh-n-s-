@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261103-1";
+window.__APP_BUILD = "20261109-1";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -641,42 +641,56 @@ async function compressImage(file, maxDim, quality){
   }
 }
 // 3/10/2026: báo lỗi tải ảnh rõ ràng cho nhân viên (trước đây lỗi chỉ âm thầm ghi vào nhật ký, người dùng không biết ảnh không lên)
-function alertUploadError(err){
+async function alertUploadError(err){
   const code = (err && err.code) || "";
-  const msg = code==="storage/unauthorized" ? "Không tải được ảnh: hệ thống chưa cho phép lưu ảnh (lỗi phân quyền). Vui lòng báo quản lý."
+  // 9/11/2026: lỗi 403 của kho ảnh có 2 nguyên nhân rất khác nhau → ghi rõ để quản lý xử lý đúng chỗ:
+  // (a) tài khoản thanh toán Google Cloud bị tạm ngừng (thẻ không trừ được tiền) → kho ảnh từ chối MỌI người;
+  // (b) tài khoản đăng nhập thiếu quyền nhân viên (claim staffId).
+  const server = String((err && (err.serverResponse || (err.customData && err.customData.serverResponse))) || "");
+  const billing = /billing|account.*(disabled|suspended|closed)|402/i.test(server + " " + ((err && err.message) || ""));
+  let tokStaff = "?";
+  try{ const tr = await auth.currentUser.getIdTokenResult(); tokStaff = tr.claims.staffId || (tr.claims.admin ? "admin" : "THIẾU"); }catch(e){}
+  try{ db.collection("systemErrors").add({ source:"uploadDenied", code, billing, message:String((err && err.message) || "").slice(0,300), server:server.slice(0,500),
+    tokenStaffId:tokStaff, userEmail:(auth.currentUser && auth.currentUser.email) || null, build:window.__APP_BUILD || null, url:location.href,
+    createdAtTs:firebase.firestore.FieldValue.serverTimestamp() }).catch(()=>{}); }catch(_){}
+  const msg = billing ? "Không tải được ảnh: tài khoản thanh toán Google Cloud của hệ thống đang bị tạm ngừng. Vui lòng báo quản lý (không phải lỗi của bạn)."
+    : code==="storage/unauthorized" ? "Không tải được ảnh: hệ thống chưa cho phép lưu ảnh (lỗi phân quyền). Vui lòng báo quản lý.\n[mã NV trên tài khoản: " + tokStaff + "]"
     : code==="storage/canceled" ? "Đã huỷ tải ảnh."
     : "Không tải được ảnh: " + ((err && err.message) || err) + "\nKiểm tra mạng rồi thử lại.";
   try{ logSystemError("uploadImage", err); } catch(_){}
   window.alert(msg);
 }
+// 9/11/2026: kho ảnh từ chối (storage/unauthorized) → làm mới quyền tài khoản từ máy chủ rồi thử lại đúng 1 lần
+// (giống ghi Firestore — token cũ / thiếu claim staffId sau khi đổi hồ sơ nhân viên).
+async function putWithClaimRetry(path, blob, meta, onProgress){
+  const once = async () => {
+    const ref = storage.ref().child(path);
+    const task = ref.put(blob, meta);
+    await new Promise((resolve, reject) => {
+      task.on("state_changed",
+        snap => { if(onProgress && snap.totalBytes) onProgress(Math.round(snap.bytesTransferred/snap.totalBytes*100)); },
+        reject,
+        resolve
+      );
+    });
+    return await ref.getDownloadURL();
+  };
+  try{ return await once(); }
+  catch(err){
+    if(err && err.code === "storage/unauthorized"){ await syncMyClaims(); return await once(); }
+    throw err;
+  }
+}
 async function uploadImageFile(file, path, onProgress){
   const toUpload = (file.type && file.type.startsWith("image/")) ? await compressImage(file) : file;
-  const ref = storage.ref().child(path);
-  const task = ref.put(toUpload, { contentType:"image/jpeg" });
-  await new Promise((resolve, reject) => {
-    task.on("state_changed",
-      snap => { if(onProgress && snap.totalBytes) onProgress(Math.round(snap.bytesTransferred/snap.totalBytes*100)); },
-      reject,
-      resolve
-    );
-  });
-  return await ref.getDownloadURL();
+  return await putWithClaimRetry(path, toUpload, { contentType:"image/jpeg" }, onProgress);
 }
 async function uploadTaskAttachmentFile(file, path, onProgress){
   // Giống uploadImageFile nhưng giữ nguyên loại tệp (ảnh sẽ được nén,
   // các tệp khác như PDF/Word/Excel được tải lên nguyên bản).
   const isImage = file.type && file.type.startsWith("image/");
   const toUpload = isImage ? await compressImage(file) : file;
-  const ref = storage.ref().child(path);
-  const task = ref.put(toUpload, { contentType: isImage ? "image/jpeg" : (file.type || "application/octet-stream") });
-  await new Promise((resolve, reject) => {
-    task.on("state_changed",
-      snap => { if(onProgress && snap.totalBytes) onProgress(Math.round(snap.bytesTransferred/snap.totalBytes*100)); },
-      reject,
-      resolve
-    );
-  });
-  const url = await ref.getDownloadURL();
+  const url = await putWithClaimRetry(path, toUpload, { contentType: isImage ? "image/jpeg" : (file.type || "application/octet-stream") }, onProgress);
   return { url, name:file.name, type: isImage ? "image" : "file" };
 }
 
