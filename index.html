@@ -18,7 +18,7 @@
 // 3/10/2026: TỰ CẬP NHẬT BẢN MỚI — iPhone giữ app (thêm vào màn hình chính) chạy bản cũ trong bộ nhớ nhiều ngày,
 // nên nhân viên vẫn gặp lỗi đã sửa (VD checklist báo permission-denied). Khi mở lại app (từ nền) hoặc mỗi 10 phút,
 // so mã bản dựng với trang trên máy chủ: khác → tự tải lại nếu đang không gõ dở; đang gõ thì hiện thanh "Có bản mới".
-window.__APP_BUILD = "20261109-1";
+window.__APP_BUILD = "20261109-2";
 (function(){
   var busy = false;
   // 15/10/2026: trang app được lưu sẵn trên máy (service worker) — khi cập nhật bản mới phải xoá bản lưu rồi mới tải lại
@@ -11286,7 +11286,7 @@ function JobStatusPanel(){
   const jobs = (d && d.jobs) || {}; const lc = d && d.lastCheck;
   const names = Object.keys(jobs).sort((a,b) => (jobs[a].ok === jobs[b].ok ? a.localeCompare(b) : jobs[a].ok ? 1 : -1));
   const lateSet = new Set(((lc && lc.late) || []).map(x => x.name));
-  const rows = showAll ? names : names.filter(n => jobs[n].ok === false || lateSet.has(n));
+  const rows = showAll ? [...names].sort((a,b) => ((jobs[b].reads||0) + 3*(jobs[b].writes||0)) - ((jobs[a].reads||0) + 3*(jobs[a].writes||0))) : names.filter(n => jobs[n].ok === false || lateSet.has(n));
   const fmtAt = s => s ? new Date(s).toLocaleString("vi-VN", { hour:"2-digit", minute:"2-digit", day:"2-digit", month:"2-digit" }) : "—";
   return React.createElement("div", { className:"card", style:{ marginBottom:16 } }, [
     React.createElement("div", { key:"t", style:{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, flexWrap:"wrap", marginBottom:4 } }, [
@@ -11305,13 +11305,15 @@ function JobStatusPanel(){
         React.createElement("span", { key:"at", style:{ color:"var(--inkSoft)" } }, `kiểm tra lúc ${fmtAt(lc.checkedAt)}`),
       ]),
       rows.length ? React.createElement("div", { key:"tbl", className:"tableWrap", style:{ maxHeight:360, overflowY:"auto" } }, React.createElement("table", { className:"data tblCompact" }, [
-        React.createElement("thead", { key:"h" }, React.createElement("tr", null, ["Job", "Lịch", "Lần chạy gần nhất", "Thời gian", "Kết quả"].map(h => React.createElement("th", { key:h }, h)))),
+        React.createElement("thead", { key:"h" }, React.createElement("tr", null, ["Job", "Lịch", "Lần chạy gần nhất", "Thời gian", "Đọc", "Ghi", "Kết quả"].map(h => React.createElement("th", { key:h }, h)))),
         React.createElement("tbody", { key:"b" }, rows.map(n => { const j = jobs[n]; const late = lateSet.has(n);
           return React.createElement("tr", { key:n }, [
             React.createElement("td", { key:"n" }, n),
             React.createElement("td", { key:"s", className:"nw", style:{ fontSize:11 } }, j.schedule || "—"),
             React.createElement("td", { key:"a", className:"nw" }, fmtAt(j.at)),
             React.createElement("td", { key:"m", className:"nw" }, j.ms != null ? `${(j.ms/1000).toFixed(1)}s` : "—"),
+            React.createElement("td", { key:"rd", className:"nw" }, j.reads != null ? j.reads.toLocaleString("vi-VN") : "—"),
+            React.createElement("td", { key:"wr", className:"nw" }, j.writes != null ? j.writes.toLocaleString("vi-VN") : "—"),
             React.createElement("td", { key:"r", style:{ color: j.ok === false ? CL360.bad : late ? CL360.warn : CL360.good, fontSize:12 } }, j.ok === false ? "" + (j.error || "lỗi") : late ? "quá hạn chưa chạy lại" : "OK"),
           ]); })),
       ])) : React.createElement("div", { key:"none", className:"emptyState" }, "Không có job lỗi."),
@@ -11319,8 +11321,43 @@ function JobStatusPanel(){
     ]),
   ]);
 }
+// 9/11/2026 (Phương: giảm chi phí): lượt đọc/ghi dữ liệu theo NGÀY của từng API / trigger (máy chủ cộng dồn vào systemStatus/rwStats_<ngày>).
+// Ghi tốn gấp 3 đọc → xếp theo "đọc + 3×ghi". Kèm ước tính tiền theo giá Firestore (đọc 0,06$/100.000, ghi 0,18$/100.000).
+function RwStatsPanel(){
+  const [day, setDay] = useState(todayISO());
+  const [d, setD] = useState(null);
+  const [jobs, setJobs] = useState({});
+  useEffect(()=>db.collection("systemStatus").doc("rwStats_" + day).onSnapshot(s => setD(s.exists ? s.data() : null), err => console.error("rwStats", err)), [day]);
+  useEffect(()=>db.collection("systemStatus").doc("jobStatus").onSnapshot(s => setJobs((s.exists && s.data().jobs) || {}), () => {}), []);
+  const items = Object.entries((d && d.items) || {}).map(([k,v]) => ({ k, r:v.r||0, w:v.w||0, n:v.n||0 }));
+  Object.entries(jobs).forEach(([k,j]) => { if(j.reads != null && String(j.at||"").slice(0,10) >= addDays(day,-1)) items.push({ k:"job:" + k, r:j.reads||0, w:j.writes||0, n:1 }); });
+  items.sort((a,b) => (b.r + 3*b.w) - (a.r + 3*a.w));
+  const usd = x => (x.r * 0.06 + x.w * 0.18) / 100000;
+  const tot = items.reduce((t,x) => ({ r:t.r+x.r, w:t.w+x.w }), { r:0, w:0 });
+  const vnd = u => Math.round(u * 26000).toLocaleString("vi-VN") + "đ";
+  return React.createElement("div", { className:"card", style:{ marginBottom:16 } }, [
+    React.createElement("div", { key:"t", style:{ fontWeight:700, fontSize:16, marginBottom:4 } }, "Đọc/ghi dữ liệu theo việc (máy chủ)"),
+    React.createElement("div", { key:"s", style:{ fontSize:12, color:"var(--inkSoft)", marginBottom:8 } }, "Phần lớn hoá đơn Google là đọc/ghi dữ liệu. Bảng này cho biết việc nào tốn nhất trong ngày (job theo lịch + nút bấm/màn hình gọi máy chủ). Chưa gồm phần trình duyệt nhân viên tự đọc."),
+    React.createElement("div", { key:"r", style:{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap", marginBottom:8, fontSize:13 } }, [
+      React.createElement("input", { key:"d", type:"date", value:day, onChange:e=>setDay(e.target.value), style:{ padding:"5px 8px", fontSize:12, borderRadius:8, border:"1px solid var(--line)" } }),
+      React.createElement("span", { key:"x", style:{ fontWeight:700 } }, `Tổng: ${tot.r.toLocaleString("vi-VN")} đọc · ${tot.w.toLocaleString("vi-VN")} ghi ≈ ${vnd(usd(tot))}/ngày`),
+    ]),
+    !items.length ? React.createElement("div", { key:"e", className:"emptyState" }, "Chưa có số liệu — có sau khi deploy bản máy chủ mới.")
+    : React.createElement("div", { key:"tb", className:"tableWrap", style:{ maxHeight:360, overflowY:"auto" } }, React.createElement("table", { className:"data tblCompact" }, [
+      React.createElement("thead", { key:"h" }, React.createElement("tr", null, ["Việc", "Số lần", "Đọc", "Ghi", "≈ Tiền"].map(h => React.createElement("th", { key:h }, h)))),
+      React.createElement("tbody", { key:"b" }, items.slice(0, 60).map(x => React.createElement("tr", { key:x.k }, [
+        React.createElement("td", { key:"k", style:{ fontSize:12 } }, x.k),
+        React.createElement("td", { key:"n", className:"nw" }, x.n.toLocaleString("vi-VN")),
+        React.createElement("td", { key:"r", className:"nw" }, x.r.toLocaleString("vi-VN")),
+        React.createElement("td", { key:"w", className:"nw" }, x.w.toLocaleString("vi-VN")),
+        React.createElement("td", { key:"u", className:"nw" }, vnd(usd(x))),
+      ]))),
+    ])),
+  ]);
+}
 function DataSyncSection(){
   return React.createElement(React.Fragment, null, [
+    React.createElement(RwStatsPanel, { key:"rw" }),
     React.createElement(FunctionCostPanel, { key:"cost" }),
     React.createElement(JobStatusPanel, { key:"jobs" }),
     React.createElement(SyncHealthPanel, { key:"health" }),
